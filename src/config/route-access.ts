@@ -17,6 +17,7 @@ export const DEV_ROUTES = [
   '/dev/token-search',
   '/dev/ohlc-labels',
   '/dev/arbitrage',
+  '/search-token',
 ] as const;
 
 export type WalletRequiredRoute = (typeof WALLET_REQUIRED_ROUTES)[number];

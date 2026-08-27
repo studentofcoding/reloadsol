@@ -74,7 +74,7 @@ export default function RhClmmPanel() {
     if (!wallet.address) throw new Error('Connect Rabby first')
     const walletClient = await wallet.getWalletClient()
     return {
-      publicClient: wallet.publicClient,
+      publicClient: wallet.getPublicClient(),
       walletClient,
       owner: wallet.address,
     }

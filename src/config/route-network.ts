@@ -13,10 +13,19 @@ export type NetworkRouteEntry = {
 /** Batch 1: RH only buy/sell/dlmm (+ charts handled outside trade nav). */
 export const ROUTE_NETWORK_REGISTRY: readonly NetworkRouteEntry[] = [
   { path: '/buy', networks: ['sol', 'robinhood'] },
+  { path: '/buy/solana', networks: ['sol', 'robinhood'] },
+  { path: '/buy/robinhood', networks: ['sol', 'robinhood'] },
   { path: '/sell', networks: ['sol', 'robinhood'] },
+  { path: '/sell/solana', networks: ['sol', 'robinhood'] },
+  { path: '/sell/robinhood', networks: ['sol', 'robinhood'] },
   { path: '/swap', networks: ['sol', 'robinhood'] },
+  { path: '/swap/solana', networks: ['sol', 'robinhood'] },
+  { path: '/swap/robinhood', networks: ['sol', 'robinhood'] },
   { path: '/history', networks: ['sol', 'robinhood'] },
   { path: '/pnl', networks: ['sol', 'robinhood'] },
+  { path: '/search-token', networks: ['sol', 'robinhood'] },
+  { path: '/search-token/solana', networks: ['sol', 'robinhood'] },
+  { path: '/search-token/robinhood', networks: ['sol', 'robinhood'] },
   // Strategy hubs are open on RH, but RH definitions are paper-only (sim_only).
   { path: '/dev/signals', networks: ['sol', 'robinhood'] },
   { path: '/dev/algo-tester', networks: ['sol', 'robinhood'] },

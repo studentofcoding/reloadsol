@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   createPublicClient,
   createWalletClient,
@@ -187,14 +187,19 @@ export function useRhEvmWallet() {
 
   // ArrowRPC has no CORS headers, so reads must go through our proxy
   // (/api/rh/rpc) instead of the browser POSTing to the RPC directly.
-  const publicClient: PublicClient = useMemo(
-    () =>
+  // Defer creation until after mount: viem's createPublicClient internally
+  // uses Math.random() for the request id, and Next 16 cacheComponents flags
+  // any non-stable value (Date.now / random) read during a client component's
+  // render as an unstable prerender value.
+  const [publicClient, setPublicClient] = useState<PublicClient | null>(null)
+  useEffect(() => {
+    setPublicClient(
       createPublicClient({
         chain: RH_CHAIN,
         transport: http('/api/rh/rpc'),
       }),
-    [],
-  )
+    )
+  }, [])
 
   const getWalletClient = useCallback(async (): Promise<WalletClient> => {
     const eth = getEthereumProvider()
@@ -213,6 +218,14 @@ export function useRhEvmWallet() {
     })
   }, [ensureChain])
 
+  const getPublicClient = useCallback((): PublicClient => {
+    if (publicClient) return publicClient
+    return createPublicClient({
+      chain: RH_CHAIN,
+      transport: http('/api/rh/rpc'),
+    })
+  }, [publicClient])
+
   return {
     address,
     chainId,
@@ -224,6 +237,7 @@ export function useRhEvmWallet() {
     ensureChain,
     refresh,
     publicClient,
+    getPublicClient,
     getWalletClient,
   }
 }

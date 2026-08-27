@@ -1,6 +1,6 @@
 import React, { Suspense } from 'react'
 import TokenSkeleton from '@/components/TokenSkeleton'
-import BuyPageClient from './BuyPageClient'
+import BuyDispatcher from './Dispatcher'
 import { Metadata } from 'next'
 
 export const metadata: Metadata = {
@@ -15,7 +15,7 @@ export const metadata: Metadata = {
 export default function BuyPage() {
   return (
     <Suspense fallback={<TokenSkeleton count={3} variant="progressive" />}>
-      <BuyPageClient />
+      <BuyDispatcher />
     </Suspense>
   )
-} 
+}

@@ -164,7 +164,7 @@ export default function RhGmgnSwapPanel({
         let sim
         if (isParent) {
           sim = await simulateRhParentSellLeg({
-            publicClient: rh.publicClient,
+            publicClient: rh.getPublicClient(),
             account: from as Address,
             tokenAddress: addr,
             percent: pct,
@@ -173,7 +173,7 @@ export default function RhGmgnSwapPanel({
             tokenDecimals,
           })
         } else {
-          const bal = (await rh.publicClient.readContract({
+          const bal = (await rh.getPublicClient().readContract({
             address: addr as Address,
             abi: erc20Abi,
             functionName: 'balanceOf',
@@ -234,7 +234,7 @@ export default function RhGmgnSwapPanel({
         if (isParent) {
           const wc = await rh.getWalletClient()
           ;({ results, success } = await executeRhParentKyberBuy({
-            publicClient: rh.publicClient,
+            publicClient: rh.getPublicClient(),
             walletClient: wc,
             account: from as Address,
             amountHuman: human,
@@ -297,7 +297,7 @@ export default function RhGmgnSwapPanel({
         if (isParent) {
           const wc = await rh.getWalletClient()
           ;({ results, success } = await executeRhParentKyberSell({
-            publicClient: rh.publicClient,
+            publicClient: rh.getPublicClient(),
             walletClient: wc,
             account: from as Address,
             legs: [{ tokenAddress: addr, percent: pct }],

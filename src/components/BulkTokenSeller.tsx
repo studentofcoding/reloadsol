@@ -810,7 +810,7 @@ export default function BulkTokenSeller() {
       if (useRhParentPath) {
         const wc = await rhWallet.getWalletClient();
         ({ results, success } = await executeRhParentKyberSell({
-          publicClient: rhWallet.publicClient,
+          publicClient: rhWallet.getPublicClient(),
           walletClient: wc,
           account: tradeFromAddress as Address,
           legs,
@@ -985,7 +985,7 @@ export default function BulkTokenSeller() {
           try {
             if (useRhParentPath) {
               const sim = await simulateRhParentSellLeg({
-                publicClient: rhWallet.publicClient,
+                publicClient: rhWallet.getPublicClient(),
                 account: tradeFromAddress as Address,
                 tokenAddress: t.mintAddress,
                 percent: pct,
@@ -998,7 +998,7 @@ export default function BulkTokenSeller() {
               priceImpactPct = sim.priceImpactPct;
               estOut = sim.amountOutRaw ?? undefined;
             } else {
-              const bal = (await rhWallet.publicClient.readContract({
+              const bal = (await rhWallet.getPublicClient().readContract({
                 address: t.mintAddress as Address,
                 abi: erc20Abi,
                 functionName: "balanceOf",
@@ -1463,7 +1463,7 @@ export default function BulkTokenSeller() {
     isSolTrade,
     solGmgnSynced,
     rhQuoteCurrency,
-    rhWallet.publicClient,
+    rhWallet.getPublicClient(),
   ]);
 
   /** Close emptied ATAs offered on the post-sell success modal. */

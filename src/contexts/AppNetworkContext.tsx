@@ -15,12 +15,15 @@ import {
   type AppNetwork,
 } from '@/utils/app-network'
 import { resolveNetworkOnRhGateChange } from '@/utils/app-network-gate'
+import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
 
 type AppNetworkContextValue = {
   network: AppNetwork
   setNetwork: (n: AppNetwork, opts?: { skipCoerce?: boolean }) => void
   isDevUser: boolean
   canUseRh: boolean
+  /** Canonical chain for trade APIs: 'sol' if gated, else the active network. */
+  effectiveChain: GmgnTradeChain
 }
 
 const AppNetworkContext = createContext<AppNetworkContextValue | null>(null)
@@ -66,7 +69,13 @@ export function AppNetworkProvider({
   )
 
   const value = useMemo(
-    () => ({ network, setNetwork, isDevUser, canUseRh }),
+    () => ({
+      network,
+      setNetwork,
+      isDevUser,
+      canUseRh,
+      effectiveChain: (canUseRh ? network : 'sol') as GmgnTradeChain,
+    }),
     [network, setNetwork, isDevUser, canUseRh],
   )
 

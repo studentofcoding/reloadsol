@@ -232,7 +232,8 @@ export default function RhUniv2LpSheet({
       const wc = await wallet.getWalletClient()
       const account = (wc.account?.address ?? wallet.address) as Address | undefined
       if (!account) throw new Error('Wallet not connected')
-      const { publicClient } = wallet
+      const { getPublicClient } = wallet
+      const publicClient = getPublicClient()
 
       const decimals = (await publicClient.readContract({
         address: resolved.quoteAddress,
@@ -295,7 +296,7 @@ export default function RhUniv2LpSheet({
       const wc = await wallet.getWalletClient()
       const account = (wc.account?.address ?? wallet.address) as Address | undefined
       if (!account) throw new Error('Wallet not connected')
-      const { publicClient } = wallet
+      const publicClient = wallet.getPublicClient()
       const lp = closePosition.lp_token_address as Address
 
       setStep('batch')

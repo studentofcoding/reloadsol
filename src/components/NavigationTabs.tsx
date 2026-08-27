@@ -42,6 +42,7 @@ export default function NavigationTabs({
     "/swap",
     "/history",
     "/pnl",
+    "/search-token",
     "/dev/signals",
     "/dev/algo-tester",
     "/dev/dlmm",
@@ -149,6 +150,34 @@ export default function NavigationTabs({
                       />
                     </svg>
                     <span>Swap</span>
+                  </div>
+                </Link>
+                ) : null}
+
+                {can("/search-token") ? (
+                <Link
+                  href="/search-token"
+                  className={`px-3 py-3 rounded-lg font-semibold transition-all duration-200 ${
+                    isActive("/search-token")
+                      ? "bg-white text-black"
+                      : "text-gray-400 hover:text-white hover:bg-gray-700"
+                  }`}
+                >
+                  <div className="flex items-center space-x-2">
+                    <svg
+                      className="w-5 h-5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z"
+                      />
+                    </svg>
+                    <span>Search</span>
                   </div>
                 </Link>
                 ) : null}
@@ -286,15 +315,15 @@ export default function NavigationTabs({
                       </svg>
                     </Link>
                     ) : null}
-                    {can("/dev/token-search") ? (
+                    {can("/search-token") ? (
                     <Link
-                      href="/dev/token-search"
+                      href="/search-token"
                       className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
-                        isActive("/dev/token-search")
+                        isActive("/search-token")
                           ? "bg-gray-700 text-white"
                           : "text-gray-400 hover:text-white hover:bg-gray-800"
                       }`}
-                      title="Token map"
+                      title="Search token"
                     >
                       <svg
                         className="w-5 h-5"
@@ -547,6 +576,30 @@ export default function NavigationTabs({
             </Link>
             ) : null}
 
+            {can("/search-token") ? (
+            <Link
+              href="/search-token"
+              className={`flex shrink-0 flex-col items-center px-4 py-2 rounded-lg transition-all duration-200 ${
+                isActive("/search-token") ? "bg-white text-black" : "text-gray-400"
+              }`}
+            >
+              <svg
+                className="w-6 h-6 mb-1"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z"
+                />
+              </svg>
+              <span className="text-xs font-medium">Search</span>
+            </Link>
+            ) : null}
+
             {mounted && isDevUser && (
               <>
                 {can("/dev/signals") ? (
@@ -682,9 +735,9 @@ export default function NavigationTabs({
                 ) : null}
                 {can("/dev/token-search") ? (
                 <Link
-                  href="/dev/token-search"
+                  href="/search-token"
                   className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
-                    isActive("/dev/token-search")
+                    isActive("/search-token")
                       ? "bg-white text-black"
                       : "text-gray-400"
                   }`}
@@ -699,10 +752,10 @@ export default function NavigationTabs({
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       strokeWidth={2}
-                      d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                      d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z"
                     />
                   </svg>
-                  <span className="text-xs font-medium">Locate</span>
+                  <span className="text-xs font-medium">Search</span>
                 </Link>
                 ) : null}
                 {can("/dev/ohlc-labels") ? (

@@ -147,7 +147,7 @@ function DlmmFastSwapModalBody({
     enabled: isRh && rhQuote === 'ETH' && Boolean(fromRh),
     staleTime: 15_000,
     queryFn: async () => {
-      const wei = await rh.publicClient.getBalance({
+      const wei = await rh.getPublicClient().getBalance({
         address: fromRh as Address,
       })
       return Number(formatEther(wei))
@@ -312,7 +312,7 @@ function DlmmFastSwapModalBody({
         if (isParent) {
           const wc = await rh.getWalletClient()
           ;({ results, success } = await executeRhParentKyberBuy({
-            publicClient: rh.publicClient,
+            publicClient: rh.getPublicClient(),
             walletClient: wc,
             account: fromRh as Address,
             amountHuman: human,

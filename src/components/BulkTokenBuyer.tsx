@@ -700,7 +700,7 @@ export default function BulkTokenBuyer() {
       if (useRhParentPath) {
         const wc = await rhWallet.getWalletClient();
         ({ results, success } = await executeRhParentKyberBuy({
-          publicClient: rhWallet.publicClient,
+          publicClient: rhWallet.getPublicClient(),
           walletClient: wc,
           account: tradeFromAddress as Address,
           amountHuman: perTokenHuman,

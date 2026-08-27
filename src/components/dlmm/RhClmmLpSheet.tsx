@@ -65,7 +65,7 @@ function RhClmmLpSheetBody({
     const walletClient = await wallet.getWalletClient()
     const owner = (walletClient.account?.address ?? wallet.address) as Address
     return {
-      publicClient: wallet.publicClient,
+      publicClient: wallet.getPublicClient(),
       walletClient,
       owner,
     }

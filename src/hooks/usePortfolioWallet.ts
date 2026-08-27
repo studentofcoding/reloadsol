@@ -91,7 +91,7 @@ export function usePortfolioWallet(): {
     refetchInterval: isRh && rhAddress ? 30_000 : false,
     queryFn: async () => {
       if (!rhAddress) return null
-      const wei = await rh.publicClient.getBalance({ address: rhAddress })
+      const wei = await rh.getPublicClient().getBalance({ address: rhAddress })
       return Number(formatEther(wei))
     },
   })
@@ -103,7 +103,7 @@ export function usePortfolioWallet(): {
     refetchInterval: isRh && rhAddress ? 30_000 : false,
     queryFn: async () => {
       if (!rhAddress) return null
-      const raw = await rh.publicClient.readContract({
+      const raw = await rh.getPublicClient().readContract({
         address: RH_USDG,
         abi: erc20Abi,
         functionName: 'balanceOf',
@@ -120,7 +120,7 @@ export function usePortfolioWallet(): {
     refetchInterval: isRh && rhAddress ? 30_000 : false,
     queryFn: async () => {
       if (!rhAddress) return null
-      const raw = await rh.publicClient.readContract({
+      const raw = await rh.getPublicClient().readContract({
         address: RH_WETH,
         abi: erc20Abi,
         functionName: 'balanceOf',

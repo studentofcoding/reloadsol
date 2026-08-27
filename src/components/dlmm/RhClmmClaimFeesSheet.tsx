@@ -104,7 +104,7 @@ export default function RhClmmClaimFeesSheet({
     if (!wallet.address) throw new Error('Connect Rabby first')
     const walletClient = await wallet.getWalletClient()
     return {
-      publicClient: wallet.publicClient,
+      publicClient: wallet.getPublicClient(),
       walletClient,
       owner: wallet.address,
     }
@@ -137,7 +137,7 @@ export default function RhClmmClaimFeesSheet({
         if (amountIn > BigInt(0) && !sameAddr(tokenIn, tokenOut)) {
           const wc = await wallet.getWalletClient()
           await executeRhParentKyberSwap({
-            publicClient: wallet.publicClient,
+            publicClient: wallet.getPublicClient(),
             walletClient: wc,
             account: wallet.address as Address,
             tokenIn,

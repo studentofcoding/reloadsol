@@ -1,8 +1,7 @@
-import React from 'react'
-import { Metadata } from 'next'
-import SwapPageClient from './SwapPageClient'
-import { Suspense } from 'react'
+import React, { Suspense } from 'react'
 import TokenSkeleton from '@/components/TokenSkeleton'
+import SwapDispatcher from './Dispatcher'
+import { Metadata } from 'next'
 
 export const metadata: Metadata = {
   title: 'Swap individual token - ReloadSOL',
@@ -16,7 +15,7 @@ export const metadata: Metadata = {
 export default function SwapPage() {
   return (
     <Suspense fallback={<TokenSkeleton count={3} variant="progressive" />}>
-      <SwapPageClient />
+      <SwapDispatcher />
     </Suspense>
   )
 }
