@@ -48,7 +48,10 @@ describe('resolveNetworkOnRhGateChange', () => {
     ).toEqual({ network: 'robinhood', shouldWrite: true })
   })
 
-  it('forces sol when access revoked', () => {
+  it('keeps current network when access revoked (URL is source of truth)', () => {
+    // /buy/robinhood should still render even if the user disconnected Rabby;
+    // the trade gates will block actual execution but the page must not be
+    // silently coerced to the Sol branch.
     expect(
       resolveNetworkOnRhGateChange({
         prevCanUseRh: true,
@@ -56,6 +59,6 @@ describe('resolveNetworkOnRhGateChange', () => {
         current: 'robinhood',
         stored: 'robinhood',
       }),
-    ).toEqual({ network: 'sol', shouldWrite: true })
+    ).toEqual({ network: 'robinhood', shouldWrite: false })
   })
 })

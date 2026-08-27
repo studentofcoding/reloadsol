@@ -4,8 +4,12 @@ import {
 } from '@/utils/app-network'
 
 /**
- * When RH access flips, restore stored preference on grant; force sol on revoke.
- * Does not touch storage when the gate is unchanged (avoids clobber on disconnect).
+ * When RH access flips, restore the user's stored preference on grant; keep
+ * the current network on revoke (don't clobber). The per-chain pages are now
+ * the source of truth — `/buy/robinhood` should still render even if the user
+ * disconnected Rabby. The setNetwork() callback still coerces manual
+ * selections, so a user without RH access who manually picks Robinhood gets
+ * flipped back to sol.
  */
 export function resolveNetworkOnRhGateChange(params: {
   prevCanUseRh: boolean
@@ -22,5 +26,5 @@ export function resolveNetworkOnRhGateChange(params: {
       shouldWrite: true,
     }
   }
-  return { network: 'sol', shouldWrite: true }
+  return { network: params.current, shouldWrite: false }
 }

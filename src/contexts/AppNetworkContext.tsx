@@ -74,7 +74,12 @@ export function AppNetworkProvider({
       setNetwork,
       isDevUser,
       canUseRh,
-      effectiveChain: (canUseRh ? network : 'sol') as GmgnTradeChain,
+      // The active network IS the effective chain — the per-chain pages
+      // (NetworkPreface) ensure this matches the URL on mount, and the
+      // setNetwork() callback still coerces manual selections. We no longer
+      // force RH to 'sol' when canUseRh is false; that would clobber
+      // /buy/robinhood for a user who hasn't connected a wallet yet.
+      effectiveChain: network as GmgnTradeChain,
     }),
     [network, setNetwork, isDevUser, canUseRh],
   )

@@ -1,9 +1,9 @@
 'use client';
-
 import Link from 'next/link';
 import UniversalWalletButton from '@/components/UniversalWalletButton';
 import {
-  useDevWalletAccess,
+  useDevUserAccess,
+  useRhWalletAddress,
   useWalletAddress,
 } from '@/components/WalletProvider';
 
@@ -12,10 +12,12 @@ export default function DevRouteGate({
 }: {
   children: React.ReactNode;
 }) {
-  const address = useWalletAddress();
-  const isDevUser = useDevWalletAccess();
+  const solAddress = useWalletAddress();
+  const evmAddress = useRhWalletAddress();
+  const connectedAddress = solAddress ?? evmAddress;
+  const isDevUser = useDevUserAccess();
 
-  if (!address) {
+  if (!connectedAddress) {
     return (
       <div className="mx-auto max-w-lg rounded-lg border border-gray-700 bg-gray-900 p-8 text-center text-gray-300">
         <p className="text-lg font-medium text-white">Connect your wallet</p>
@@ -38,7 +40,7 @@ export default function DevRouteGate({
           not on the dev allowlist.
         </p>
         <p className="mt-4 text-xs text-gray-500 font-mono break-all">
-          {address}
+          {connectedAddress}
         </p>
         <Link
           href="/buy"

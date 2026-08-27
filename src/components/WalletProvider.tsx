@@ -39,7 +39,7 @@ const WALLET_APP_URL =
 
 /** DEV list or RH_WHITELIST (Sol / Parent / Bound EVM). */
 export function useRhNetworkAccess(): boolean {
-  const isDevUser = useDevWalletAccess();
+  const isDevUser = useDevUserAccess();
   const solAddress = useWalletAddress();
   const rh = useRhEvmWallet();
   const bound = useGmgnBoundWallets();
@@ -53,7 +53,7 @@ export function useRhNetworkAccess(): boolean {
 }
 
 function AppNetworkBridge({ children }: { children: React.ReactNode }) {
-  const isDevUser = useDevWalletAccess();
+  const isDevUser = useDevUserAccess();
   const canUseRh = useRhNetworkAccess();
   return (
     <AppNetworkProvider isDevUser={isDevUser} canUseRh={canUseRh}>
@@ -193,8 +193,30 @@ export function useWalletAddress(): string | null {
 }
 
 /**
- * True when a dev-listed wallet is connected.
- * Uses adapter.connected as well as context.connected (Jupiter quirk).
+ * Resolved EVM (RH parent) address from the Rabby/EVM wallet. Null when no
+ * EVM wallet is connected or the provider isn't installed. Mirrors
+ * `useWalletAddress()` but for the Robinhood side.
+ */
+export function useRhWalletAddress(): string | null {
+  const rh = useRhEvmWallet();
+  return rh.address ?? null;
+}
+
+/**
+ * True when a dev-listed wallet is connected (Sol OR EVM). Either address
+ * matching the allowlist is enough — dev wallets can be on either chain.
+ */
+export function useDevUserAccess(): boolean {
+  const solAddress = useWalletAddress();
+  const evmAddress = useRhWalletAddress();
+  if (solAddress && isDevWallet(solAddress)) return true;
+  if (evmAddress && isDevWallet(evmAddress)) return true;
+  return false;
+}
+
+/**
+ * @deprecated Use `useDevUserAccess` instead. Kept for Sol-only call sites
+ * that legitimately need to check the Jupiter wallet specifically.
  */
 export function useDevWalletAccess(): boolean {
   const address = useWalletAddress();
