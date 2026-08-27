@@ -38,18 +38,27 @@ interface WalletProviderProps {
 const WALLET_APP_URL =
   process.env.NEXT_PUBLIC_SITE_URL ?? "https://reloadsol.app";
 
-/** DEV list or RH_WHITELIST (Sol / Parent / Bound EVM). */
+/**
+ * Whether the Robinhood network is usable at all.
+ *
+ * The two wallets are fully independent — no Solana wallet is required to
+ * trade on Robinhood. Any user with a Rabby (or EVM) provider present can
+ * use the RH network; dev/whitelist users retain access even without a
+ * provider installed (e.g. bound-wallet trades).
+ */
 export function useRhNetworkAccess(): boolean {
   const isDevUser = useDevUserAccess();
   const solAddress = useWalletAddress();
   const rh = useRhEvmWallet();
   const bound = useGmgnBoundWallets();
   return (
+    rh.hasProvider ||
     canUseRobinhoodNetwork({
       solAddress,
       evmAddress: rh.address,
       isDevUser,
-    }) || isRhWhitelisted(bound.evm)
+    }) ||
+    isRhWhitelisted(bound.evm)
   );
 }
 

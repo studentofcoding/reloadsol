@@ -30,7 +30,6 @@ import { useRhEvmWallet } from "@/hooks/useRhEvmWallet";
 import { useRhWalletTokens } from "@/hooks/useRhWalletTokens";
 import { useQuery } from "@tanstack/react-query";
 import type { Address } from "viem";
-import type { GmgnTradeChain } from "@/utils/gmgn-currencies";
 import {
   GMGN_RH_USDG,
   GMGN_RH_WETH,
@@ -160,7 +159,7 @@ export default function BulkTokenSeller() {
   const [slippage, setSlippage] = useState<number>(200); // 2%
   const [priorityFee, setPriorityFee] = useState<number>(30000); // 0.00003 SOL
   const isDevUser = useDevWalletAccess();
-  const { network, canUseRh } = useAppNetwork();
+  const { effectiveChain, canUseRh } = useAppNetwork();
   const { mode: rhMode } = useRhWalletMode();
   const rhWallet = useRhEvmWallet();
   const [useGmgnOnSol, setUseGmgnOnSol] = useState(false);
@@ -170,7 +169,8 @@ export default function BulkTokenSeller() {
   const [rhQuoteCurrency, setRhQuoteCurrency] =
     useState<RhSwapQuote>("ETH");
   const boundWallets = useGmgnBoundWallets();
-  const effectiveChain: GmgnTradeChain = canUseRh ? network : "sol";
+  // App network (header) is source of truth; the per-chain pages ensure
+  // `effectiveChain` matches the URL. No local canUseRh coercion here.
   const isRhChain = effectiveChain === "robinhood";
   /** Sol-only: Raptor quotes + Jupiter/Sol RPC sell. Never true on Robinhood. */
   const isSolTrade = effectiveChain === "sol";

@@ -65,7 +65,6 @@ import {
   type AddTokenToBuyDetail,
 } from "@/utils/add-token-to-buy";
 import {
-  type GmgnTradeChain,
   GMGN_CHAIN_CURRENCIES,
   GMGN_RH_USDG,
   GMGN_RH_WETH,
@@ -106,7 +105,7 @@ export default function BulkTokenBuyer() {
   const triggerPostBuyRefresh = usePostBuyRefresh();
   const { showOutcome, outcomeModalProps } = useTradeOutcome();
   const searchParams = useSearchParams();
-  const { network, canUseRh } = useAppNetwork();
+  const { network, effectiveChain, canUseRh } = useAppNetwork();
   const { mode: rhMode } = useRhWalletMode();
   const rhWallet = useRhEvmWallet();
 
@@ -148,8 +147,8 @@ export default function BulkTokenBuyer() {
   const [gmgnConfirmLegs, setGmgnConfirmLegs] = useState<GmgnConfirmLeg[]>([]);
   const [gmgnConfirmBusy, setGmgnConfirmBusy] = useState(false);
   const boundWallets = useGmgnBoundWallets();
-  // App network (header) is source of truth; !canUseRh coerced to sol in context.
-  const effectiveChain: GmgnTradeChain = canUseRh ? network : "sol";
+  // App network (header) is source of truth; the per-chain pages ensure
+  // `effectiveChain` matches the URL. No local canUseRh coercion here.
   const isRhChain = effectiveChain === "robinhood";
   /** Sol-only: Jupiter/Raptor buy. Never true on Robinhood. */
   const isSolTrade = effectiveChain === "sol";
