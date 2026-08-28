@@ -266,6 +266,10 @@ export async function simulateRhParentSellLeg(params: {
   quote: RhSwapQuote
   ethUsd: number
   tokenDecimals?: number
+  /** Override the destination token (token-to-token mode). */
+  outputToken?: string
+  /** Decimals of the destination token (defaults to quote decimals). */
+  outputDecimals?: number
 }): Promise<RhTradeSimLeg> {
   const { erc20Abi } = await import('@/utils/dlmm/rh-univ2')
   const bal = (await params.publicClient.readContract({
@@ -279,7 +283,8 @@ export async function simulateRhParentSellLeg(params: {
   if (amountIn <= BigInt(0)) {
     throw new Error('No token balance to sell')
   }
-  const tokenOut = kyberQuoteTokenAddress(params.quote)
+  const isTokenToToken = Boolean(params.outputToken)
+  const tokenOut = params.outputToken ?? kyberQuoteTokenAddress(params.quote)
   const route = await clientKyberRoute({
     tokenIn: params.tokenAddress,
     tokenOut,
@@ -288,16 +293,37 @@ export async function simulateRhParentSellLeg(params: {
   const dec = params.tokenDecimals ?? 18
   const inHuman = rawAmountToHuman(amountIn.toString(), dec)
   const tokenUsd = await fetchTokenUsd(params.tokenAddress)
-  const fromUsd =
-    tokenUsd != null ? inHuman * tokenUsd : null
+  const fromUsd = tokenUsd != null ? inHuman * tokenUsd : null
   const outRaw = route.amountOut ?? null
-  const outDec = kyberQuoteDecimals(params.quote)
-  const outHuman =
-    outRaw != null ? rawAmountToHuman(outRaw, outDec) : null
-  const toUsd =
-    outHuman != null
-      ? outHuman * quoteCurrencyUsdPerUnit(params.quote, params.ethUsd)
-      : null
+  let outHuman: number | null = null
+  let toUsd: number | null = null
+  if (isTokenToToken) {
+    // Token-to-token: use API-reported `amountOutUsd` when available, else
+    // look up the destination token's USD price.
+    const summary = route.routeSummary as Record<string, unknown>
+    const apiOutUsd = numField(summary, ['amountOutUsd', 'amount_out_usd'])
+    if (apiOutUsd != null) {
+      toUsd = apiOutUsd
+    } else {
+      const outUsd = await fetchTokenUsd(params.outputToken!)
+      if (outRaw != null && outUsd != null) {
+        const outDec = params.outputDecimals ?? 18
+        const outH = rawAmountToHuman(outRaw, outDec)
+        toUsd = outH * outUsd
+        outHuman = outH
+      }
+    }
+    if (outRaw != null && outHuman == null) {
+      outHuman = rawAmountToHuman(outRaw, params.outputDecimals ?? 18)
+    }
+  } else {
+    const outDec = kyberQuoteDecimals(params.quote)
+    outHuman = outRaw != null ? rawAmountToHuman(outRaw, outDec) : null
+    toUsd =
+      outHuman != null
+        ? outHuman * quoteCurrencyUsdPerUnit(params.quote, params.ethUsd)
+        : null
+  }
   const summary = route.routeSummary as Record<string, unknown>
   const impact =
     impactFromRouteSummary(summary) ??
@@ -325,8 +351,13 @@ export async function simulateRhBoundSellLeg(params: {
   /** Raw amount already computed by caller (preferred). */
   amountRaw?: string
   tokenDecimals?: number
+  /** Override the destination token (token-to-token mode). */
+  outputToken?: string
+  /** Decimals of the destination token. */
+  outputDecimals?: number
 }): Promise<RhTradeSimLeg> {
-  const outputToken = gmgnQuoteToken(params.quote)
+  const isTokenToToken = Boolean(params.outputToken)
+  const outputToken = params.outputToken ?? gmgnQuoteToken(params.quote)
   const amount = params.amountRaw ?? '0'
   if (!amount || amount === '0') {
     throw new Error('Sell amount required for sim')
@@ -358,13 +389,23 @@ export async function simulateRhBoundSellLeg(params: {
       : q.output_amount != null
         ? String(q.output_amount)
         : null
-  const outDec = gmgnTokenDecimals('robinhood', outputToken)
-  const outHuman =
-    outRaw != null ? rawAmountToHuman(outRaw, outDec) : null
-  const toUsd =
-    outHuman != null
-      ? outHuman * quoteCurrencyUsdPerUnit(params.quote, params.ethUsd)
-      : numField(q, ['to_usd', 'amount_out_usd'])
+  const outDec = isTokenToToken
+    ? (params.outputDecimals ?? gmgnTokenDecimals('robinhood', outputToken))
+    : gmgnTokenDecimals('robinhood', outputToken)
+  const outHuman = outRaw != null ? rawAmountToHuman(outRaw, outDec) : null
+  let toUsd: number | null = null
+  if (isTokenToToken) {
+    toUsd = numField(q, ['to_usd', 'amount_out_usd', 'output_usd'])
+    if (toUsd == null && outHuman != null) {
+      const outUsd = await fetchTokenUsd(outputToken)
+      if (outUsd != null) toUsd = outHuman * outUsd
+    }
+  } else {
+    toUsd =
+      outHuman != null
+        ? outHuman * quoteCurrencyUsdPerUnit(params.quote, params.ethUsd)
+        : numField(q, ['to_usd', 'amount_out_usd'])
+  }
   const inHuman = rawAmountToHuman(amount, params.tokenDecimals ?? 18)
   const tokenUsd = await fetchTokenUsd(params.tokenAddress)
   const fromUsd = tokenUsd != null ? inHuman * tokenUsd : null

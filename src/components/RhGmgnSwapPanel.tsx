@@ -20,6 +20,7 @@ import {
   GMGN_RH_USDG,
   GMGN_RH_WETH,
   gmgnNativeToken,
+  gmgnTokenDecimals,
   isValidTradeTokenAddress,
 } from '@/utils/gmgn-currencies'
 import type { RhSwapQuote } from '@/utils/dlmm/rh-univ2-swap'
@@ -39,10 +40,12 @@ import {
 import {
   buildRhBuyToken,
   buildRhSellToken,
+  buildRhTokenToTokenSwap,
   rhQuoteUsdPerUnit,
 } from '@/utils/rh-trade-record'
 
 type Side = 'buy' | 'sell'
+type SwapMode = 'quote' | 'tokenToToken'
 
 function gmgnQuoteToken(quote: RhSwapQuote): string {
   if (quote === 'USDG') return GMGN_RH_USDG
@@ -53,8 +56,10 @@ function gmgnQuoteToken(quote: RhSwapQuote): string {
 /** Single-leg RH swap: Bound=GMGN server-sign, Parent=Kyber + Rabby. */
 export default function RhGmgnSwapPanel({
   initialToken = '',
+  initialFromToken = '',
 }: {
   initialToken?: string
+  initialFromToken?: string
 }) {
   const { network } = useAppNetwork()
   const { mode: rhMode } = useRhWalletMode()
@@ -65,9 +70,13 @@ export default function RhGmgnSwapPanel({
   const isParent = rhMode === 'parent'
   const holdings = useRhWalletTokens()
 
+  const [mode, setMode] = useState<SwapMode>(
+    initialFromToken && initialToken ? 'tokenToToken' : 'quote',
+  )
   const [side, setSide] = useState<Side>('buy')
   const [quote, setQuote] = useState<RhSwapQuote>('ETH')
   const [token, setToken] = useState(initialToken)
+  const [fromToken, setFromToken] = useState(initialFromToken)
   const [amount, setAmount] = useState('0.01')
   const [sellPct, setSellPct] = useState('100')
   const [slippageBps, setSlippageBps] = useState(200)
@@ -100,6 +109,104 @@ export default function RhGmgnSwapPanel({
       )
       return
     }
+    // ── Token-to-token mode ────────────────────────────────────────────
+    if (mode === 'tokenToToken') {
+      const fromAddr = fromToken.trim()
+      const toAddr = token.trim()
+      if (!isValidTradeTokenAddress('robinhood', fromAddr)) {
+        setError('Enter a valid From token address')
+        return
+      }
+      if (!isValidTradeTokenAddress('robinhood', toAddr)) {
+        setError('Enter a valid To token address')
+        return
+      }
+      if (fromAddr.toLowerCase() === toAddr.toLowerCase()) {
+        setError('From and To tokens must differ')
+        return
+      }
+      const pct = parseFloat(sellPct)
+      if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
+        setError('Sell % must be 1–100')
+        return
+      }
+      setBusy(true)
+      try {
+        const ethUsd = await fetchEthUsdSpot()
+        const fromHeld = holdings.tokens.find(
+          (t) => t.mintAddress.toLowerCase() === fromAddr.toLowerCase(),
+        )
+        const toHeld = holdings.tokens.find(
+          (t) => t.mintAddress.toLowerCase() === toAddr.toLowerCase(),
+        )
+        const fromTokenDecimals = fromHeld?.decimals ?? 18
+        const toTokenDecimals = toHeld?.decimals ?? 18
+        let amountRaw = '0'
+        if (!isParent) {
+          const bal = (await rh.getPublicClient().readContract({
+            address: fromAddr as Address,
+            abi: erc20Abi,
+            functionName: 'balanceOf',
+            args: [from as Address],
+          })) as bigint
+          amountRaw = (
+            (bal * BigInt(Math.floor(pct * 100))) /
+            BigInt(10_000)
+          ).toString()
+        }
+        const sim = isParent
+          ? await simulateRhParentSellLeg({
+              publicClient: rh.getPublicClient(),
+              account: from as Address,
+              tokenAddress: fromAddr,
+              percent: pct,
+              quote: 'ETH', // dummy; outputToken overrides below
+              ethUsd,
+              tokenDecimals: fromTokenDecimals,
+              outputToken: toAddr,
+              outputDecimals: toTokenDecimals,
+            })
+          : await simulateRhBoundSellLeg({
+              from,
+              tokenAddress: fromAddr,
+              percent: pct,
+              quote: 'ETH',
+              slippageBps,
+              ethUsd,
+              amountRaw,
+              tokenDecimals: fromTokenDecimals,
+              outputToken: toAddr,
+              outputDecimals: toTokenDecimals,
+            })
+        const fromSym = fromHeld?.symbol ?? 'token'
+        const toSym = toHeld?.symbol ?? 'token'
+        const leg: GmgnConfirmLeg = {
+          tokenAddress: fromAddr,
+          amountLabel: `${pct}% ${fromSym} → ${toSym}${isParent ? ' · Kyber' : ' · GMGN'}`,
+          side: 'sell',
+          estOut: sim.amountOutRaw ?? undefined,
+          fromUsd: sim.fromUsd,
+          toUsd: sim.toUsd,
+          priceImpactPct: sim.priceImpactPct,
+        }
+        setPendingSim({
+          side: 'sell',
+          ethUsd,
+          estOutRaw: sim.amountOutRaw,
+          amountOutHuman: sim.amountOutHuman,
+          amountInHuman: sim.amountInHuman,
+          toUsd: sim.toUsd,
+        })
+        setConfirmLegs([leg])
+        setConfirmOpen(true)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err))
+      } finally {
+        setBusy(false)
+      }
+      return
+    }
+    // ── Quote-pair mode (existing behavior) ────────────────────────────
     const addr = token.trim()
     if (!isValidTradeTokenAddress('robinhood', addr)) {
       setError('Enter a valid Robinhood token address')
@@ -227,6 +334,84 @@ export default function RhGmgnSwapPanel({
     setBusy(true)
     setError('')
     try {
+      // ── Token-to-token mode ──────────────────────────────────────────
+      if (mode === 'tokenToToken') {
+        const fromAddr = fromToken.trim()
+        const toAddr = addr
+        const pct = parseFloat(sellPct)
+        let results: Awaited<ReturnType<typeof executeGmgnBulkSell>>['results']
+        let success: boolean
+        if (isParent) {
+          const wc = await rh.getWalletClient()
+          ;({ results, success } = await executeRhParentKyberSell({
+            publicClient: rh.getPublicClient(),
+            walletClient: wc,
+            account: from as Address,
+            legs: [{ tokenAddress: fromAddr, percent: pct }],
+            slippageBps,
+            quote: 'ETH',
+            outputToken: toAddr,
+          }))
+        } else {
+          ;({ results, success } = await executeGmgnBulkSell({
+            chain: 'robinhood',
+            from,
+            legs: [{ tokenAddress: fromAddr, percent: pct }],
+            outputToken: toAddr,
+            slippageBps,
+          }))
+        }
+        const ok = results.filter((r) => r.success)
+        if (ok.length > 0) {
+          const fromHeld = holdings.tokens.find(
+            (t) => t.mintAddress.toLowerCase() === fromAddr.toLowerCase(),
+          )
+          const toHeld = holdings.tokens.find(
+            (t) => t.mintAddress.toLowerCase() === toAddr.toLowerCase(),
+          )
+          const sold = pendingSim?.amountInHuman ?? undefined
+          const received = pendingSim?.amountOutHuman ?? undefined
+          const built = ok.map((r) =>
+            buildRhTokenToTokenSwap({
+              from: {
+                mintAddress: r.tokenAddress,
+                symbol: fromHeld?.symbol,
+                amount: sold,
+              },
+              to: {
+                mintAddress: toAddr,
+                symbol: toHeld?.symbol,
+                amount: received,
+              },
+              fromUsd: pendingSim ? sold : undefined,
+              toUsd: pendingSim?.toUsd ?? null,
+            }),
+          )
+          const totalUsd = built.reduce((s, b) => s + b.usdValue, 0)
+          await trackOperation({
+            walletAddress: from,
+            operationType: 'sell',
+            chain: 'robinhood',
+            tokens: built.flatMap((b) => b.tokens),
+            successCount: ok.length,
+            failureCount: results.length - ok.length,
+            totalTokens: results.length,
+            solAmount: received,
+            totalUsdValue: totalUsd > 0 ? totalUsd : undefined,
+            solPriceUsd: undefined,
+            feesPaid: 0,
+            signatures: ok
+              .map((r) => r.orderId || r.hash)
+              .filter((id): id is string => Boolean(id)),
+            slippage: slippageBps / 100,
+          })
+        }
+        if (!success) throw new Error(results[0]?.error || 'Swap failed')
+        setOkMsg('Swap confirmed')
+        setConfirmOpen(false)
+        return
+      }
+      // ── Quote-pair mode (existing behavior) ──────────────────────────
       if (side === 'buy') {
         const human = parseFloat(amount)
         let results: Awaited<ReturnType<typeof executeGmgnBulkBuy>>['results']
@@ -382,149 +567,273 @@ export default function RhGmgnSwapPanel({
       </div>
       <p className="text-xs text-gray-400">
         {isParent ? 'Kyber · Rabby sign' : 'GMGN · bound server-sign'} ·{' '}
-        {quote} ↔ token ·{' '}
+        {mode === 'quote' ? `${quote} ↔ token` : 'Token → Token'} ·{' '}
         <span className="font-mono text-gray-300">
           {from ? `${from.slice(0, 6)}…${from.slice(-4)}` : 'none'}
         </span>
       </p>
 
-      <div className="flex rounded-lg border border-gray-600 overflow-hidden text-sm">
-        {(['buy', 'sell'] as const).map((s) => (
+      <div className="flex rounded-lg border border-gray-600 overflow-hidden text-xs">
+        {(['quote', 'tokenToToken'] as const).map((m) => (
           <button
-            key={s}
+            key={m}
             type="button"
-            onClick={() => setSide(s)}
-            className={`flex-1 py-2 font-medium ${
-              side === s
+            onClick={() => setMode(m)}
+            className={`flex-1 py-1.5 font-medium ${
+              mode === m
                 ? 'bg-white text-black'
                 : 'bg-black text-gray-400 hover:text-white'
             }`}
           >
-            {s === 'buy'
-              ? `Buy (${quote} → token)`
-              : `Sell (token → ${quote})`}
+            {m === 'quote' ? 'Quote pair' : 'Token → Token'}
           </button>
         ))}
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 text-xs text-gray-300">
-        <span>Quote:</span>
-        {(['ETH', 'USDG', 'WETH'] as const).map((q) => (
+      {mode === 'quote' ? (
+        <>
+          <div className="flex rounded-lg border border-gray-600 overflow-hidden text-sm">
+            {(['buy', 'sell'] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setSide(s)}
+                className={`flex-1 py-2 font-medium ${
+                  side === s
+                    ? 'bg-white text-black'
+                    : 'bg-black text-gray-400 hover:text-white'
+                }`}
+              >
+                {s === 'buy'
+                  ? `Buy (${quote} → token)`
+                  : `Sell (token → ${quote})`}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 text-xs text-gray-300">
+            <span>Quote:</span>
+            {(['ETH', 'USDG', 'WETH'] as const).map((q) => (
+              <button
+                key={q}
+                type="button"
+                onClick={() => setQuote(q)}
+                className={`px-2 py-0.5 rounded font-mono ${
+                  quote === q
+                    ? 'bg-white text-black'
+                    : 'bg-gray-700 text-gray-300 hover:text-white'
+                }`}
+              >
+                {q}
+              </button>
+            ))}
+          </div>
+
+          <label className="block text-xs text-gray-400">
+            Token address
+            <input
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              className="mt-1 w-full rounded-lg bg-gray-800 border border-gray-600 px-3 py-2 text-white font-mono text-sm"
+              placeholder="0x…"
+            />
+          </label>
+
+          {from && holdings.tokens.length > 0 ? (
+            <HoldingsPicker
+              tokens={holdings.tokens}
+              active={token.trim()}
+              onPick={setToken}
+              source={holdings.source}
+            />
+          ) : from && holdings.isLoading ? (
+            <p className="text-xs text-gray-500">Loading holdings…</p>
+          ) : null}
+
+          {side === 'buy' ? (
+            <label className="block text-xs text-gray-400">
+              {quote} amount
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                className="mt-1 w-full rounded-lg bg-gray-800 border border-gray-600 px-3 py-2 text-white"
+              />
+            </label>
+          ) : (
+            <label className="block text-xs text-gray-400">
+              Sell %
+              <input
+                type="number"
+                min="1"
+                max="100"
+                value={sellPct}
+                onChange={(e) => setSellPct(e.target.value)}
+                className="mt-1 w-full rounded-lg bg-gray-800 border border-gray-600 px-3 py-2 text-white"
+              />
+            </label>
+          )}
+
+          <label className="block text-xs text-gray-400">
+            Slippage (bps)
+            <input
+              type="number"
+              min="1"
+              value={slippageBps}
+              onChange={(e) => setSlippageBps(Number(e.target.value) || 200)}
+              className="mt-1 w-full rounded-lg bg-gray-800 border border-gray-600 px-3 py-2 text-white"
+            />
+          </label>
+
+          {error ? <p className="text-sm text-red-400">{error}</p> : null}
+          {okMsg ? <p className="text-sm text-emerald-400">{okMsg}</p> : null}
+
           <button
-            key={q}
             type="button"
-            onClick={() => setQuote(q)}
-            className={`px-2 py-0.5 rounded font-mono ${
-              quote === q
-                ? 'bg-white text-black'
-                : 'bg-gray-700 text-gray-300 hover:text-white'
-            }`}
+            disabled={busy || !from}
+            onClick={() => void openConfirm()}
+            className="w-full rounded-xl bg-white py-3 font-semibold text-gray-900 disabled:bg-gray-600 disabled:text-gray-400"
           >
-            {q}
+            {busy ? 'Quoting…' : side === 'buy' ? 'Review buy' : 'Review sell'}
           </button>
-        ))}
-      </div>
-
-      <label className="block text-xs text-gray-400">
-        Token address
-        <input
-          value={token}
-          onChange={(e) => setToken(e.target.value)}
-          className="mt-1 w-full rounded-lg bg-gray-800 border border-gray-600 px-3 py-2 text-white font-mono text-sm"
-          placeholder="0x…"
-        />
-      </label>
-
-      {from && holdings.tokens.length > 0 ? (
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between text-[10px] uppercase text-gray-500">
-            <span>Holdings</span>
-            {holdings.source ? <span>via {holdings.source}</span> : null}
-          </div>
-          <div className="max-h-36 overflow-y-auto space-y-1 rounded-lg border border-gray-700 p-1.5">
-            {holdings.tokens.slice(0, 40).map((t) => {
-              const usd =
-                t.usdValue > 0
-                  ? `$${t.usdValue.toLocaleString(undefined, {
-                      maximumFractionDigits: 2,
-                    })}`
-                  : '$—'
-              const active =
-                token.trim().toLowerCase() === t.mintAddress.toLowerCase()
-              return (
-                <button
-                  key={t.mintAddress}
-                  type="button"
-                  onClick={() => setToken(t.mintAddress)}
-                  className={`w-full flex items-center justify-between rounded-md px-2 py-1.5 text-left text-xs ${
-                    active
-                      ? 'bg-white text-black'
-                      : 'bg-gray-800/80 text-gray-200 hover:bg-gray-800'
-                  }`}
-                >
-                  <span className="font-medium truncate">
-                    {t.symbol || '???'}
-                  </span>
-                  <span className={active ? 'text-gray-700' : 'text-gray-400'}>
-                    {usd}
-                  </span>
-                </button>
-              )
-            })}
-          </div>
-        </div>
-      ) : from && holdings.isLoading ? (
-        <p className="text-xs text-gray-500">Loading holdings…</p>
-      ) : null}
-
-      {side === 'buy' ? (
-        <label className="block text-xs text-gray-400">
-          {quote} amount
-          <input
-            type="number"
-            min="0"
-            step="any"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            className="mt-1 w-full rounded-lg bg-gray-800 border border-gray-600 px-3 py-2 text-white"
-          />
-        </label>
+        </>
       ) : (
-        <label className="block text-xs text-gray-400">
-          Sell %
-          <input
-            type="number"
-            min="1"
-            max="100"
-            value={sellPct}
-            onChange={(e) => setSellPct(e.target.value)}
-            className="mt-1 w-full rounded-lg bg-gray-800 border border-gray-600 px-3 py-2 text-white"
-          />
-        </label>
+        <>
+          <label className="block text-xs text-gray-400">
+            From token address
+            <input
+              value={fromToken}
+              onChange={(e) => setFromToken(e.target.value)}
+              className="mt-1 w-full rounded-lg bg-gray-800 border border-gray-600 px-3 py-2 text-white font-mono text-sm"
+              placeholder="0x…"
+            />
+          </label>
+
+          <label className="block text-xs text-gray-400">
+            To token address
+            <input
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              className="mt-1 w-full rounded-lg bg-gray-800 border border-gray-600 px-3 py-2 text-white font-mono text-sm"
+              placeholder="0x…"
+            />
+          </label>
+
+          {from && holdings.tokens.length > 0 ? (
+            <div className="grid grid-cols-2 gap-2">
+              <HoldingsPicker
+                title="From"
+                tokens={holdings.tokens}
+                active={fromToken.trim()}
+                onPick={setFromToken}
+                source={holdings.source}
+              />
+              <HoldingsPicker
+                title="To"
+                tokens={holdings.tokens}
+                active={token.trim()}
+                onPick={setToken}
+                source={holdings.source}
+              />
+            </div>
+          ) : from && holdings.isLoading ? (
+            <p className="text-xs text-gray-500">Loading holdings…</p>
+          ) : null}
+
+          <label className="block text-xs text-gray-400">
+            Sell %
+            <input
+              type="number"
+              min="1"
+              max="100"
+              value={sellPct}
+              onChange={(e) => setSellPct(e.target.value)}
+              className="mt-1 w-full rounded-lg bg-gray-800 border border-gray-600 px-3 py-2 text-white"
+            />
+          </label>
+
+          <label className="block text-xs text-gray-400">
+            Slippage (bps)
+            <input
+              type="number"
+              min="1"
+              value={slippageBps}
+              onChange={(e) => setSlippageBps(Number(e.target.value) || 200)}
+              className="mt-1 w-full rounded-lg bg-gray-800 border border-gray-600 px-3 py-2 text-white"
+            />
+          </label>
+
+          {error ? <p className="text-sm text-red-400">{error}</p> : null}
+          {okMsg ? <p className="text-sm text-emerald-400">{okMsg}</p> : null}
+
+          <button
+            type="button"
+            disabled={busy || !from}
+            onClick={() => void openConfirm()}
+            className="w-full rounded-xl bg-white py-3 font-semibold text-gray-900 disabled:bg-gray-600 disabled:text-gray-400"
+          >
+            {busy
+              ? 'Quoting…'
+              : `Review ${fromToken.trim() ? 'swap' : 'token → token'}`}
+          </button>
+        </>
       )}
+    </div>
+  )
+}
 
-      <label className="block text-xs text-gray-400">
-        Slippage (bps)
-        <input
-          type="number"
-          min="1"
-          value={slippageBps}
-          onChange={(e) => setSlippageBps(Number(e.target.value) || 200)}
-          className="mt-1 w-full rounded-lg bg-gray-800 border border-gray-600 px-3 py-2 text-white"
-        />
-      </label>
-
-      {error ? <p className="text-sm text-red-400">{error}</p> : null}
-      {okMsg ? <p className="text-sm text-emerald-400">{okMsg}</p> : null}
-
-      <button
-        type="button"
-        disabled={busy || !from}
-        onClick={() => void openConfirm()}
-        className="w-full rounded-xl bg-white py-3 font-semibold text-gray-900 disabled:bg-gray-600 disabled:text-gray-400"
-      >
-        {busy ? 'Quoting…' : side === 'buy' ? 'Review buy' : 'Review sell'}
-      </button>
+/** Compact picker for holdings; supports an optional title (used in 2×2 layout). */
+function HoldingsPicker({
+  title,
+  tokens,
+  active,
+  onPick,
+  source,
+}: {
+  title?: string
+  tokens: { mintAddress: string; symbol?: string; usdValue: number }[]
+  active: string
+  onPick: (addr: string) => void
+  source?: string
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between text-[10px] uppercase text-gray-500">
+        <span>{title ?? 'Holdings'}</span>
+        {title == null && source ? <span>via {source}</span> : null}
+      </div>
+      <div className="max-h-36 overflow-y-auto space-y-1 rounded-lg border border-gray-700 p-1.5">
+        {tokens.slice(0, 40).map((t) => {
+          const usd =
+            t.usdValue > 0
+              ? `$${t.usdValue.toLocaleString(undefined, {
+                  maximumFractionDigits: 2,
+                })}`
+              : '$—'
+          const isActive = active.toLowerCase() === t.mintAddress.toLowerCase()
+          return (
+            <button
+              key={t.mintAddress}
+              type="button"
+              onClick={() => onPick(t.mintAddress)}
+              className={`w-full flex items-center justify-between rounded-md px-2 py-1.5 text-left text-xs ${
+                isActive
+                  ? 'bg-white text-black'
+                  : 'bg-gray-800/80 text-gray-200 hover:bg-gray-800'
+              }`}
+            >
+              <span className="font-medium truncate">
+                {t.symbol || '???'}
+              </span>
+              <span className={isActive ? 'text-gray-700' : 'text-gray-400'}>
+                {usd}
+              </span>
+            </button>
+          )
+        })}
+      </div>
     </div>
   )
 }

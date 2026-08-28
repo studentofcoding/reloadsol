@@ -16,58 +16,82 @@ type SwapPreset = {
 export default function SolSwapClient() {
   const searchParams = useSearchParams()
   const requestedTokenMint = searchParams.get('tokenMint')?.trim() ?? ''
+  const requestedFromMint = searchParams.get('fromMint')?.trim() ?? ''
+  const requestedToMint = searchParams.get('toMint')?.trim() ?? ''
   const tokenMint =
     requestedTokenMint &&
     requestedTokenMint !== TOKENS.SOL &&
     requestedTokenMint !== TOKENS.USDC
       ? requestedTokenMint
       : null
+  const fromMint =
+    requestedFromMint &&
+    requestedFromMint !== TOKENS.SOL &&
+    requestedFromMint !== TOKENS.USDC
+      ? requestedFromMint
+      : null
+  const toMint =
+    requestedToMint &&
+    requestedToMint !== TOKENS.SOL &&
+    requestedToMint !== TOKENS.USDC
+      ? requestedToMint
+      : null
 
-  const swapPresets = useMemo<SwapPreset[]>(
-    () =>
-      tokenMint
-        ? [
-            {
-              key: 'sol-to-token',
-              label: 'SOL -> Token',
-              inputMint: TOKENS.SOL,
-              outputMint: tokenMint,
-            },
-            {
-              key: 'usdc-to-token',
-              label: 'USDC -> Token',
-              inputMint: TOKENS.USDC,
-              outputMint: tokenMint,
-            },
-            {
-              key: 'token-to-sol',
-              label: 'Token -> SOL',
-              inputMint: tokenMint,
-              outputMint: TOKENS.SOL,
-            },
-            {
-              key: 'token-to-usdc',
-              label: 'Token -> USDC',
-              inputMint: tokenMint,
-              outputMint: TOKENS.USDC,
-            },
-          ]
-        : [
-            {
-              key: 'sol-to-usdc',
-              label: 'SOL -> USDC',
-              inputMint: TOKENS.SOL,
-              outputMint: TOKENS.USDC,
-            },
-            {
-              key: 'usdc-to-sol',
-              label: 'USDC -> SOL',
-              inputMint: TOKENS.USDC,
-              outputMint: TOKENS.SOL,
-            },
-          ],
-    [tokenMint],
-  )
+  const swapPresets = useMemo<SwapPreset[]>(() => {
+    // True any-to-any: both sides are non-quote SPL mints.
+    if (fromMint && toMint) {
+      return [
+        {
+          key: 'token-to-token',
+          label: 'Token -> Token',
+          inputMint: fromMint,
+          outputMint: toMint,
+        },
+      ]
+    }
+    if (tokenMint) {
+      return [
+        {
+          key: 'sol-to-token',
+          label: 'SOL -> Token',
+          inputMint: TOKENS.SOL,
+          outputMint: tokenMint,
+        },
+        {
+          key: 'usdc-to-token',
+          label: 'USDC -> Token',
+          inputMint: TOKENS.USDC,
+          outputMint: tokenMint,
+        },
+        {
+          key: 'token-to-sol',
+          label: 'Token -> SOL',
+          inputMint: tokenMint,
+          outputMint: TOKENS.SOL,
+        },
+        {
+          key: 'token-to-usdc',
+          label: 'Token -> USDC',
+          inputMint: tokenMint,
+          outputMint: TOKENS.USDC,
+        },
+      ]
+    }
+    return [
+      {
+        key: 'sol-to-usdc',
+        label: 'SOL -> USDC',
+        inputMint: TOKENS.SOL,
+        outputMint: TOKENS.USDC,
+      },
+      {
+        key: 'usdc-to-sol',
+        label: 'USDC -> SOL',
+        inputMint: TOKENS.USDC,
+        outputMint: TOKENS.SOL,
+      },
+    ]
+  }, [tokenMint, fromMint, toMint])
   const [selectedPresetKey, setSelectedPresetKey] = useState<string | null>(null)
   const activePreset =
     swapPresets.find((preset) => preset.key === selectedPresetKey) ??

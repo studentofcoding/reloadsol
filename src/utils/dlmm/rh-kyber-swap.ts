@@ -740,7 +740,8 @@ export async function executeRhParentKyberBuy(params: {
   }
 }
 
-/** Parent bulk sell — % of each token → ETH, USDG, or WETH via Kyber. */
+/** Parent bulk sell — % of each token → ETH, USDG, or WETH via Kyber.
+ *  Pass `outputToken` to swap into an arbitrary token (token-to-token mode). */
 export async function executeRhParentKyberSell(params: {
   publicClient: PublicClient
   walletClient: WalletClient
@@ -748,9 +749,10 @@ export async function executeRhParentKyberSell(params: {
   legs: Array<{ tokenAddress: string; percent: number; symbol?: string }>
   slippageBps: number
   quote?: RhSwapQuote
+  outputToken?: string
 }): Promise<{ success: boolean; results: GmgnBulkLegResult[] }> {
   const quote = params.quote ?? 'ETH'
-  const tokenOut = kyberQuoteTokenAddress(quote)
+  const tokenOut = params.outputToken ?? kyberQuoteTokenAddress(quote)
 
   if (params.legs.length === 0) {
     return { success: false, results: [] }

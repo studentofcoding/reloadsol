@@ -97,3 +97,58 @@ export function buildRhSellToken(params: {
     usdValue,
   }
 }
+
+/**
+ * Record for a token-to-token swap (no quote currency involved).
+ * Returns two token entries (the sold `from` and the received `to`) so the
+ * history UI can show the full leg. USD value is computed from the received
+ * token side when available; falls back to the sold side.
+ */
+export function buildRhTokenToTokenSwap(params: {
+  from: { mintAddress: string; symbol?: string; amount?: number; priceUsd?: number }
+  to: { mintAddress: string; symbol?: string; amount?: number; priceUsd?: number }
+  /** USD notional of the sell side, used as a fallback `usdValue`. */
+  fromUsd?: number | null
+  /** USD notional of the buy side, preferred for `usdValue`. */
+  toUsd?: number | null
+}): { tokens: TrackedToken[]; usdValue: number } {
+  const soldAmount = params.from.amount && params.from.amount > 0 ? params.from.amount : undefined
+  const receivedAmount = params.to.amount && params.to.amount > 0 ? params.to.amount : undefined
+  const soldUsdValue =
+    soldAmount && params.from.priceUsd && params.from.priceUsd > 0
+      ? soldAmount * params.from.priceUsd
+      : params.fromUsd && params.fromUsd > 0
+        ? params.fromUsd
+        : 0
+  const receivedUsdValue =
+    receivedAmount && params.to.priceUsd && params.to.priceUsd > 0
+      ? receivedAmount * params.to.priceUsd
+      : params.toUsd && params.toUsd > 0
+        ? params.toUsd
+        : 0
+  // Prefer the received-side USD notional; it's what the user actually got.
+  const usdValue = receivedUsdValue > 0 ? receivedUsdValue : soldUsdValue
+
+  const soldToken: TrackedToken = {
+    mintAddress: params.from.mintAddress,
+    symbol: params.from.symbol,
+    tokenAmount: soldAmount,
+    priceUsd: params.from.priceUsd,
+    // For token-to-token we don't have a "sol amount"; stash the received
+    // amount here so downstream UIs that render `solAmount` show the
+    // counter-currency value.
+    solAmount: undefined,
+  }
+  const receivedToken: TrackedToken = {
+    mintAddress: params.to.mintAddress,
+    symbol: params.to.symbol,
+    tokenAmount: receivedAmount,
+    priceUsd: params.to.priceUsd,
+    solAmount: undefined,
+  }
+
+  return {
+    tokens: [soldToken, receivedToken],
+    usdValue: usdValue > 0 ? usdValue : 0,
+  }
+}
