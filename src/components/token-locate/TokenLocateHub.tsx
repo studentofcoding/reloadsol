@@ -7,6 +7,7 @@ import TokenMapPins, {
 } from '@/components/token-locate/TokenMapPins'
 import type { TokenLocateResult } from '@/strategies/token-locate'
 import type { TokenMapActivityItem } from '@/strategies/token-map-types'
+import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
 import { isValidMintAddress } from '@/utils/jupiter'
 import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -17,6 +18,16 @@ type TokenView = 'freeview' | 'list'
 const PINS_KEY = 'token-map-pins'
 const VIEW_PREF_KEY = 'token-map-view'
 const EMPTY_ACTIVITIES: TokenMapActivityItem[] = []
+
+const EVM_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/
+
+function chainForAddress(address: string): GmgnTradeChain {
+  return EVM_ADDRESS_RE.test(address) ? 'robinhood' : 'sol'
+}
+
+function isValidAnyChainAddress(address: string): boolean {
+  return isValidMintAddress(address) || EVM_ADDRESS_RE.test(address)
+}
 
 function readViewFromUrl(): TokenView | null {
   if (typeof window === 'undefined') return null
@@ -45,7 +56,9 @@ function loadPins(): TokenMapPin[] {
     if (!raw) return []
     const parsed = JSON.parse(raw) as TokenMapPin[]
     return Array.isArray(parsed)
-      ? parsed.filter((p) => p && typeof p.address === 'string' && isValidMintAddress(p.address))
+      ? parsed.filter(
+          (p) => p && typeof p.address === 'string' && isValidAnyChainAddress(p.address),
+        )
       : []
   } catch {
     return []
@@ -107,15 +120,16 @@ export default function TokenLocateHub({
 
   const runSearch = useCallback(async (mint: string, refresh = false) => {
     const trimmed = mint.trim()
-    if (!isValidMintAddress(trimmed)) {
-      setManualError('Enter a valid Solana mint address')
+    if (!isValidAnyChainAddress(trimmed)) {
+      setManualError('Enter a valid Solana mint or Robinhood 0x address')
       setManualResult(null)
       return
     }
+    const chain = chainForAddress(trimmed)
     setManualLoading(true)
     setManualError(null)
     try {
-      const params = new URLSearchParams({ address: trimmed })
+      const params = new URLSearchParams({ address: trimmed, chain })
       if (refresh) params.set('refresh', 'true')
       const res = await fetch(`/api/strategies/token-locate?${params.toString()}`)
       const json = (await res.json()) as LocateResponse
@@ -150,19 +164,20 @@ export default function TokenLocateHub({
 
   useEffect(() => {
     const trimmed = initialAddress.trim()
-    if (!isValidMintAddress(trimmed)) return
+    if (!isValidAnyChainAddress(trimmed)) return
     const timer = window.setTimeout(() => {
       void runSearch(trimmed)
     }, 0)
     return () => window.clearTimeout(timer)
   }, [initialAddress, runSearch])
 
-  const freeviewEnabled = view === 'freeview' && isValidMintAddress(activeMint)
+  const freeviewEnabled = view === 'freeview' && isValidAnyChainAddress(activeMint)
+  const activeChain: GmgnTradeChain = activeMint ? chainForAddress(activeMint) : 'sol'
 
   const locateQuery = useQuery({
-    queryKey: ['token-locate', activeMint],
+    queryKey: ['token-locate', activeChain, activeMint],
     queryFn: async (): Promise<LocateResponse> => {
-      const params = new URLSearchParams({ address: activeMint })
+      const params = new URLSearchParams({ address: activeMint, chain: activeChain })
       const res = await fetch(`/api/strategies/token-locate?${params.toString()}`)
       const json = (await res.json()) as LocateResponse
       if (!res.ok || !json.success) throw new Error(json.error || 'Lookup failed')
@@ -174,9 +189,13 @@ export default function TokenLocateHub({
   })
 
   const activityQuery = useQuery({
-    queryKey: ['token-activity', activeMint],
+    queryKey: ['token-activity', activeChain, activeMint],
     queryFn: async (): Promise<TokenMapActivityItem[]> => {
-      const params = new URLSearchParams({ address: activeMint, hours: '24' })
+      const params = new URLSearchParams({
+        address: activeMint,
+        chain: activeChain,
+        hours: '24',
+      })
       const res = await fetch(`/api/strategies/token-activity?${params.toString()}`)
       const json = (await res.json()) as {
         success: boolean
@@ -237,7 +256,7 @@ export default function TokenLocateHub({
   }
 
   const pinActive = () => {
-    if (!result || !isValidMintAddress(result.tokenAddress)) return
+    if (!result || !isValidAnyChainAddress(result.tokenAddress)) return
     setPins((prev) => {
       if (prev.some((p) => p.address === result.tokenAddress)) return prev
       const next = [...prev, { address: result.tokenAddress, symbol: result.symbol }]

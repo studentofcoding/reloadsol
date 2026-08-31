@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { GmgnMarketRankRow } from '@/utils/gmgn-api'
 import {
+  criteriaForChain,
   filterAndSortGmgnTrending,
+  GMGN_FILTERED_CRITERIA,
   gmgnOrganicScoreProxy,
   mapGmgnRankToFilteredToken,
   normalizePriceChangeToFraction,
   passesGmgnFilteredCriteria,
+  ROBINHOOD_FILTERED_CRITERIA,
 } from '@/utils/gmgn-trending-filtered'
 
 describe('normalizePriceChangeToFraction', () => {
@@ -130,5 +133,99 @@ describe('filterAndSortGmgnTrending', () => {
     ]
     const { tokens } = filterAndSortGmgnTrending(rows)
     expect(tokens.map((t) => t.token_symbol)).toEqual(['B', 'A'])
+  })
+})
+
+describe('criteriaForChain', () => {
+  it('returns the sol band for sol', () => {
+    expect(criteriaForChain('sol')).toBe(GMGN_FILTERED_CRITERIA)
+  })
+
+  it('returns the robinhood band for robinhood', () => {
+    expect(criteriaForChain('robinhood')).toBe(ROBINHOOD_FILTERED_CRITERIA)
+  })
+
+  it('uses a wider mcap band on Robinhood', () => {
+    expect(ROBINHOOD_FILTERED_CRITERIA.min_mcap).toBeLessThan(GMGN_FILTERED_CRITERIA.min_mcap)
+    expect(ROBINHOOD_FILTERED_CRITERIA.max_mcap).toBeGreaterThan(
+      GMGN_FILTERED_CRITERIA.max_mcap,
+    )
+  })
+})
+
+describe('passesGmgnFilteredCriteria with chain arg', () => {
+  it('accepts a 50K-mcap token on Robinhood but rejects on the default (sol) band', () => {
+    const mapped = mapGmgnRankToFilteredToken({
+      address: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      symbol: 'SMOL',
+      market_cap: 50_000,
+      price_change_percent: 0,
+      price_change_percent5m: 0,
+      hot_level: 2,
+    })
+    expect(mapped).not.toBeNull()
+    expect(passesGmgnFilteredCriteria(mapped!)).toBe(false)
+    expect(passesGmgnFilteredCriteria(mapped!, 'robinhood')).toBe(true)
+  })
+
+  it('accepts a 1.5M-mcap token on both chains', () => {
+    const mapped = mapGmgnRankToFilteredToken({
+      address: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      symbol: 'MID',
+      market_cap: 1_500_000,
+      price_change_percent: 0,
+      price_change_percent5m: 0,
+      hot_level: 3,
+      smart_degen_count: 1,
+      renowned_count: 1,
+    })
+    expect(passesGmgnFilteredCriteria(mapped!)).toBe(true)
+    expect(passesGmgnFilteredCriteria(mapped!, 'robinhood')).toBe(true)
+  })
+
+  it('accepts a 5M-mcap token on robinhood but rejects it on the sol band', () => {
+    const mapped = mapGmgnRankToFilteredToken({
+      address: '0xdddddddddddddddddddddddddddddddddddddddd',
+      symbol: 'BIG',
+      market_cap: 5_000_000,
+      price_change_percent: 0,
+      price_change_percent5m: 0,
+      hot_level: 3,
+      smart_degen_count: 1,
+      renowned_count: 1,
+    })
+    expect(passesGmgnFilteredCriteria(mapped!)).toBe(false)
+    expect(passesGmgnFilteredCriteria(mapped!, 'robinhood')).toBe(true)
+  })
+
+  it('still rejects tokens below the change_5m floor on either chain', () => {
+    const mapped = mapGmgnRankToFilteredToken({
+      address: '0xcccccccccccccccccccccccccccccccccccccccc',
+      symbol: 'DUMP',
+      market_cap: 1_000_000,
+      price_change_percent: -50,
+      price_change_percent5m: -50,
+      hot_level: 3,
+      smart_degen_count: 1,
+      renowned_count: 1,
+    })
+    expect(passesGmgnFilteredCriteria(mapped!, 'robinhood')).toBe(false)
+  })
+})
+
+describe('filterAndSortGmgnTrending with chain arg', () => {
+  it('keeps small-mcap rows on robinhood that the sol band drops', () => {
+    const baseRow: GmgnMarketRankRow = {
+      address: '0x1111111111111111111111111111111111111111',
+      symbol: 'TKN',
+      market_cap: 50_000,
+      price_change_percent: 0,
+      price_change_percent5m: 0,
+      hot_level: 2,
+    }
+    const solResult = filterAndSortGmgnTrending([baseRow])
+    const rhResult = filterAndSortGmgnTrending([baseRow], 'robinhood')
+    expect(solResult.tokens).toHaveLength(0)
+    expect(rhResult.tokens).toHaveLength(1)
   })
 })

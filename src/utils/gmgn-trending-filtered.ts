@@ -3,6 +3,7 @@
  */
 
 import type { GmgnMarketRankRow } from '@/utils/gmgn-api'
+import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
 
 /** Same numeric bands as src/app/api/trending/filtered/route.ts */
 export const GMGN_FILTERED_CRITERIA = {
@@ -11,6 +12,30 @@ export const GMGN_FILTERED_CRITERIA = {
   min_mcap: 300_000,
   max_mcap: 2_000_000,
 } as const
+
+/**
+ * Wider band for Robinhood: its market is too young for many tokens to sit
+ * inside the Solana-tuned $300K–$2M window, so a single shared band drops
+ * most legitimate RH rows. The organic-score proxy is also a no-op there
+ * (saturates at 100), so this is the only effective gate.
+ */
+export const ROBINHOOD_FILTERED_CRITERIA = {
+  min_change_5m: -0.4,
+  min_organic_score: 0,
+  min_mcap: 25_000,
+  max_mcap: 25_000_000,
+} as const
+
+export type GmgnFilteredCriteria = {
+  readonly min_change_5m: number
+  readonly min_organic_score: number
+  readonly min_mcap: number
+  readonly max_mcap: number
+}
+
+export function criteriaForChain(chain: GmgnTradeChain): GmgnFilteredCriteria {
+  return chain === 'robinhood' ? ROBINHOOD_FILTERED_CRITERIA : GMGN_FILTERED_CRITERIA
+}
 
 export type GmgnFilteredTrendingToken = {
   token_symbol: string
@@ -85,8 +110,9 @@ export function mapGmgnRankToFilteredToken(
 
 export function passesGmgnFilteredCriteria(
   token: GmgnFilteredTrendingToken,
+  chain?: GmgnTradeChain,
 ): boolean {
-  const c = GMGN_FILTERED_CRITERIA
+  const c = chain ? criteriaForChain(chain) : GMGN_FILTERED_CRITERIA
   return (
     token.change_5m > c.min_change_5m &&
     token.organic_score >= c.min_organic_score &&
@@ -97,6 +123,7 @@ export function passesGmgnFilteredCriteria(
 
 export function filterAndSortGmgnTrending(
   rows: GmgnMarketRankRow[],
+  chain?: GmgnTradeChain,
 ): {
   tokens: GmgnFilteredTrendingToken[]
   total_before_filter: number
@@ -105,7 +132,7 @@ export function filterAndSortGmgnTrending(
   const mapped = rows
     .map(mapGmgnRankToFilteredToken)
     .filter((t): t is GmgnFilteredTrendingToken => t != null)
-  const filtered = mapped.filter(passesGmgnFilteredCriteria)
+  const filtered = mapped.filter((t) => passesGmgnFilteredCriteria(t, chain))
   filtered.sort((a, b) => {
     if (b.organic_score !== a.organic_score) {
       return b.organic_score - a.organic_score

@@ -1,6 +1,9 @@
 import { query, queryOne } from '@/utils/db'
 import type { QueryResultRow } from 'pg'
-import { isValidAnyChainTokenAddress } from '@/utils/gmgn-currencies'
+import {
+  isValidAnyChainTokenAddress,
+  type GmgnTradeChain,
+} from '@/utils/gmgn-currencies'
 import { fetchJupiterPriceRaw } from '@/utils/jupiter-api'
 import {
   fetchJupiterDatapiSearchRaw,
@@ -97,6 +100,17 @@ function trackerTable(): string {
   return process.env.NODE_ENV === 'development'
     ? 'trending_token_tracker_dev'
     : 'trending_token_tracker'
+}
+
+/**
+ * EVM addresses (Robinhood) are case-insensitive on-chain but case-sensitive
+ * in our Postgres `text` columns — a checksummed `0xAbC…` won't match a row
+ * stored as `0xabc…`. Normalize to lowercase for every `token_address = $1`
+ * lookup so all variants hit the same rows.
+ */
+export function normalizeLookupAddress(address: string): string {
+  if (/^0x[a-fA-F0-9]{40}$/.test(address)) return address.toLowerCase()
+  return address
 }
 
 function toNum(v: unknown): number | undefined {
@@ -349,11 +363,16 @@ function buildStrategyPresence(params: {
   return presence
 }
 
-export async function locateTokenByAddress(address: string): Promise<TokenLocateResult> {
+export async function locateTokenByAddress(
+  address: string,
+  options: { chain?: GmgnTradeChain } = {},
+): Promise<TokenLocateResult> {
   if (!isValidAnyChainTokenAddress(address)) {
     throw new Error('Invalid token address')
   }
 
+  const chain = options.chain
+  const lookup = normalizeLookupAddress(address)
   const tracker = trackerTable()
   const fetchedAt = new Date().toISOString()
   const links: TokenLocateResult['links'] = {
@@ -365,6 +384,18 @@ export async function locateTokenByAddress(address: string): Promise<TokenLocate
     strategies: `/dev/strategies?tab=outcomes&tokenAddress=${encodeURIComponent(address)}`,
     dlmm: '/dev/dlmm',
   }
+
+  // Chain-scoped SQL fragments for tables that have a `chain` column. We
+  // only apply the chain filter when the caller passed one — so existing
+  // Solana-only callers stay backward compatible.
+  const outcomesWhere = chain ? `token_address = $1 AND chain = $2` : `token_address = $1`
+  const outcomesParams: unknown[] = chain ? [lookup, chain] : [lookup]
+  const groupsWhere = chain ? `token_address = $1 AND chain = $2` : `token_address = $1`
+  const groupsParams: unknown[] = chain ? [lookup, chain] : [lookup]
+  const locksWhere = chain
+    ? `token_address = $1 AND expires_at > NOW() AND chain = $2`
+    : `token_address = $1 AND expires_at > NOW()`
+  const locksParams: unknown[] = chain ? [lookup, chain] : [lookup]
 
   const [
     strategyDefs,
@@ -393,47 +424,47 @@ export async function locateTokenByAddress(address: string): Promise<TokenLocate
     searchTokenStats(address).catch(() => null),
     safeQueryOne<Record<string, unknown>>(
       `SELECT * FROM ${tracker} WHERE token_address = $1 LIMIT 1`,
-      [address],
+      [lookup],
     ),
     safeQueryOne<Record<string, unknown>>(
       `SELECT * FROM token_mcap_tracking WHERE token_address = $1 LIMIT 1`,
-      [address],
+      [lookup],
     ),
     safeQuery<Record<string, unknown>>(
       `SELECT * FROM mcap_threshold_notifications WHERE token_address = $1 ORDER BY notified_at DESC`,
-      [address],
+      [lookup],
     ),
     safeQueryOne<Record<string, unknown>>(
       `SELECT * FROM trading_signals WHERE token_address = $1 LIMIT 1`,
-      [address],
+      [lookup],
     ),
     fetchSocialRollup(address),
     fetchRecentSocialEvents(address, 20),
     safeQuery<Record<string, unknown>>(
-      `SELECT * FROM strategy_outcomes WHERE token_address = $1 ORDER BY exit_at DESC NULLS LAST LIMIT 25`,
-      [address],
+      `SELECT * FROM strategy_outcomes WHERE ${outcomesWhere} ORDER BY exit_at DESC NULLS LAST LIMIT 25`,
+      outcomesParams,
     ),
     safeQuery<Record<string, unknown>>(
       `SELECT domain, strategy_id,
               COUNT(*)::int AS record_count,
               MAX(exit_at) AS last_seen_at
        FROM strategy_outcomes
-       WHERE token_address = $1
+       WHERE ${groupsWhere}
        GROUP BY domain, strategy_id
        ORDER BY last_seen_at DESC NULLS LAST`,
-      [address],
+      groupsParams,
     ),
     safeQueryOne<Record<string, unknown>>(
       `SELECT * FROM dlmm_potential_list WHERE token_address = $1 LIMIT 1`,
-      [address],
+      [lookup],
     ),
     safeQueryOne<Record<string, unknown>>(
       `SELECT * FROM token_rug_list WHERE token_address = $1 LIMIT 1`,
-      [address],
+      [lookup],
     ),
     safeQuery<Record<string, unknown>>(
-      `SELECT * FROM bot_trade_locks WHERE token_address = $1 AND expires_at > NOW()`,
-      [address],
+      `SELECT * FROM bot_trade_locks WHERE ${locksWhere}`,
+      locksParams,
     ),
   ])
 

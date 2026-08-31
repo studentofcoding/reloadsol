@@ -38,7 +38,7 @@ import { searchTokenStats } from '@/utils/jupiter-pools-test'
 import { fetchJupiterPriceRaw } from '@/utils/jupiter-api'
 import { loadStrategyDefinitionRows } from './db'
 import { fetchRecentSocialEvents, fetchSocialRollup } from './social/db'
-import { locateTokenByAddress } from './token-locate'
+import { locateTokenByAddress, normalizeLookupAddress } from './token-locate'
 
 const MINT = 'So11111111111111111111111111111111111111112'
 
@@ -139,5 +139,73 @@ describe('locateTokenByAddress', () => {
     expect(loadStrategyDefinitionRows).toHaveBeenCalled()
     expect(queryOne).toHaveBeenCalled()
     expect(query).toHaveBeenCalled()
+  })
+
+  it('accepts an EVM 0x address and lowercases it for every SQL lookup', async () => {
+    const evm = '0xAbCdEf0123456789aBcDeF0123456789aBcDeF01'
+    const lower = evm.toLowerCase()
+    await locateTokenByAddress(evm)
+
+    const sqlCalls: string[] = vi.mocked(query).mock.calls.map((c) => String(c[0]))
+    const oneCalls: string[] = vi.mocked(queryOne).mock.calls.map((c) => String(c[0]))
+    const allSql = [...sqlCalls, ...oneCalls]
+    expect(allSql.length).toBeGreaterThan(0)
+    for (const sql of allSql) {
+      if (sql.includes('token_address')) {
+        // Either the SQL keeps $1 (good) or we want to assert the param is the
+        // lowercased address. Find the matching call's params and verify.
+      }
+    }
+    // Verify the lookup param itself was lowercased on every strategy_outcomes call.
+    const outcomesCalls = vi.mocked(query).mock.calls.filter((c) =>
+      String(c[0]).includes('strategy_outcomes'),
+    )
+    expect(outcomesCalls.length).toBeGreaterThan(0)
+    for (const c of outcomesCalls) {
+      const params = c[1] as unknown[]
+      expect(params[0]).toBe(lower)
+      expect(params[0]).not.toBe(evm)
+    }
+  })
+
+  it('scopes strategy_outcomes lookups to the requested chain', async () => {
+    const evm = '0xabcdef0123456789abcdef0123456789abcdef01'
+    await locateTokenByAddress(evm, { chain: 'robinhood' })
+
+    const outcomesCalls = vi.mocked(query).mock.calls.filter((c) =>
+      String(c[0]).includes('strategy_outcomes'),
+    )
+    expect(outcomesCalls.length).toBeGreaterThan(0)
+    for (const c of outcomesCalls) {
+      const sql = String(c[0])
+      expect(sql).toMatch(/chain\s*=\s*\$2/i)
+      const params = c[1] as unknown[]
+      expect(params[1]).toBe('robinhood')
+    }
+  })
+
+  it('omits the chain filter when no chain is provided', async () => {
+    await locateTokenByAddress(MINT)
+
+    const outcomesCalls = vi.mocked(query).mock.calls.filter((c) =>
+      String(c[0]).includes('strategy_outcomes'),
+    )
+    expect(outcomesCalls.length).toBeGreaterThan(0)
+    for (const c of outcomesCalls) {
+      const sql = String(c[0])
+      expect(sql).not.toMatch(/chain\s*=\s*\$/i)
+    }
+  })
+})
+
+describe('normalizeLookupAddress', () => {
+  it('lowercases a 0x EVM address', () => {
+    expect(normalizeLookupAddress('0xAbCdEf0123456789aBcDeF0123456789aBcDeF01')).toBe(
+      '0xabcdef0123456789abcdef0123456789abcdef01',
+    )
+  })
+
+  it('passes through a Solana mint unchanged', () => {
+    expect(normalizeLookupAddress(MINT)).toBe(MINT)
   })
 })

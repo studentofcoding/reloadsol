@@ -1,8 +1,9 @@
 import { marketTrending } from '@/utils/gmgn-api'
 import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
 import {
+  criteriaForChain,
   filterAndSortGmgnTrending,
-  GMGN_FILTERED_CRITERIA,
+  type GmgnFilteredCriteria,
   type GmgnFilteredTrendingToken,
 } from '@/utils/gmgn-trending-filtered'
 import { bulkTrackTokenMcaps, isInTrackingRange } from '@/utils/mcap-tracker'
@@ -14,6 +15,7 @@ export type GmgnFilteredTrendingPayload = {
   tokens: GmgnFilteredTrendingToken[]
   total_before_filter: number
   total_after_filter: number
+  filter_criteria: GmgnFilteredCriteria
 }
 
 /** Feed the mcap tracker so the signals / mcap_tracker domains get candidates. */
@@ -38,16 +40,27 @@ export async function getFilteredGmgnTrending(
   const cached = await cacheGet<GmgnFilteredTrendingPayload>(cacheKey)
   if (cached) return { ...cached, cached: true }
 
+  const criteria = criteriaForChain(chain)
   const rank = await marketTrending({
     chain,
     interval: '1h',
     limit: 100,
-    minMarketcap: GMGN_FILTERED_CRITERIA.min_mcap,
+    // Robinhood is too young for the Solana-tuned floor — let the local filter
+    // decide what we expose instead of pre-filtering at the GMGN layer.
+    ...(chain === 'robinhood'
+      ? {}
+      : { minMarketcap: criteria.min_mcap }),
     orderBy: 'volume',
     direction: 'desc',
   })
 
-  const payload = filterAndSortGmgnTrending(rank)
+  const filtered = filterAndSortGmgnTrending(rank, chain)
+  const payload: GmgnFilteredTrendingPayload = {
+    tokens: filtered.tokens,
+    total_before_filter: filtered.total_before_filter,
+    total_after_filter: filtered.total_after_filter,
+    filter_criteria: criteria,
+  }
   await cacheSet(cacheKey, payload, CACHE_TTL_SECONDS)
   ingestMcap(payload.tokens, chain)
 

@@ -7,6 +7,7 @@ import {
   type TokenMapDomain,
 } from '@/strategies/token-map-types'
 import { query } from '@/utils/db'
+import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
 import type { TrackingRecord } from '@/utils/trading-tracker'
 
 const SIM_WALLETS: { address: string; domain: TokenMapDomain }[] = [
@@ -137,6 +138,7 @@ async function fetchSimActivityForMint(
 
 export async function fetchTokenMapActivity(params: {
   tokenAddress: string
+  chain?: GmgnTradeChain
   hours?: number
   limit?: number
 }): Promise<TokenMapActivityItem[]> {
@@ -149,6 +151,7 @@ export async function fetchTokenMapActivity(params: {
     fetchSocialEventsForTokenSince(params.tokenAddress, sinceIso, perSource),
     listStrategyOutcomes({
       tokenAddress: params.tokenAddress,
+      chain: params.chain,
       limit: perSource,
       offset: 0,
     }),

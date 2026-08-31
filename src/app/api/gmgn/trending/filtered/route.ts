@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse, connection } from 'next/server'
 import { GmgnApiError } from '@/utils/gmgn-api'
 import { isGmgnTradeChain } from '@/utils/gmgn-currencies'
-import { GMGN_FILTERED_CRITERIA } from '@/utils/gmgn-trending-filtered'
 import { getFilteredGmgnTrending } from '@/utils/gmgn-trending-feed'
 
 
@@ -27,7 +26,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       ...feed,
       filtered: true,
-      filter_criteria: GMGN_FILTERED_CRITERIA,
     })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
