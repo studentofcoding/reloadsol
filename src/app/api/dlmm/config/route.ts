@@ -18,6 +18,7 @@ function envConfigFallback(): DlmmAgentConfig {
   };
 }
 
+export const dynamic = "force-dynamic"
 export async function GET() {
   await connection()
   let config: DlmmAgentConfig = envConfigFallback();

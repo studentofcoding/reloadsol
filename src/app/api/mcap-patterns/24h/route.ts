@@ -8,6 +8,7 @@ import { parseDbChain } from '@/utils/app-network-db'
 
 export const maxDuration = 120
 
+export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   try {
     await connection()

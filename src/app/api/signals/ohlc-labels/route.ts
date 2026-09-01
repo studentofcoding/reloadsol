@@ -3,6 +3,7 @@ import { listSignalOhlcLabels } from '@/strategies/signal-ohlc-labels'
 import type { SignalOhlcLabelKind } from '@/strategies/signal-ohlc-window'
 
 
+export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   try {
     await connection()

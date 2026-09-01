@@ -16,6 +16,7 @@ function isOpenPriceEvent(v: unknown): v is OpenPriceEvent {
   )
 }
 
+export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   await connection()
   const mintFilter = new Set(

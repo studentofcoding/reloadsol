@@ -39,6 +39,7 @@ async function fetchSolBalance(wallet: string): Promise<SolBalance> {
 }
 
 /** Cached Solana native + USDC balance. `fresh=1` bypasses + purges the key. */
+export const dynamic = 'force-dynamic'
 export async function GET(request: NextRequest) {
   try {
     await connection();

@@ -7,6 +7,7 @@ import { getAppDayBounds } from '@/utils/datetime'
 
 const TRACKER_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_tracker_dev' : 'trending_token_tracker'
 
+export const dynamic = 'force-dynamic'
 export async function GET(request: NextRequest) {
   try {
     await connection()

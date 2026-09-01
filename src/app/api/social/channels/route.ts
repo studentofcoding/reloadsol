@@ -7,6 +7,7 @@ import {
 import { slugify } from '@/strategies/social/crosscheck-slug'
 
 
+export const dynamic = "force-dynamic"
 export async function GET() {
   await connection()
   const channels = await listTelegramSignalChannels(false)

@@ -11,6 +11,7 @@ import { evaluateOhlcRugRules } from '@/strategies/ohlc-rug-rules'
 import { isValidMintAddress } from '@/utils/jupiter'
 
 
+export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   try {
     await connection()

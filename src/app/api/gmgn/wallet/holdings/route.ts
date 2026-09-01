@@ -4,6 +4,7 @@ import { isGmgnTradeChain } from '@/utils/gmgn-currencies'
 import { resolveGmgnBoundWallets, boundAddressForChain } from '@/utils/gmgn-bound-wallets'
 
 
+export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   try {
     await connection()

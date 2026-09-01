@@ -32,6 +32,7 @@ function resolveWallet(
   return { wallet: auth.session.address };
 }
 
+export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   try {
     await connection()

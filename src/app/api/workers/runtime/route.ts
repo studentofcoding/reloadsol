@@ -23,6 +23,7 @@ function extractKey(request: NextRequest): string | null {
   )
 }
 
+export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   await connection()
   if (!isAuthorizedRequest(extractKey(request), getRuntimeSecret())) {

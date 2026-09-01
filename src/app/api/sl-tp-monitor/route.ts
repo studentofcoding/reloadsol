@@ -18,6 +18,7 @@ function isServiceAuthorized(request: NextRequest): boolean {
 }
 
 // GET - Monitor all active SL/TP positions
+export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   try {
     await connection()

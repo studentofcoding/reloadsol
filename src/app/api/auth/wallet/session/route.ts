@@ -10,6 +10,7 @@ import {
   setWalletSessionCookie,
 } from '@/utils/wallet-session';
 
+export const dynamic = "force-dynamic"
 export async function GET(req: NextRequest) {
   try {
     await connection()

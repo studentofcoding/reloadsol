@@ -101,6 +101,7 @@ function buildMcapListWhere(params: McapListFilterParams): { sql: string; values
   return { sql, values }
 }
 
+export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   try {
     await connection()

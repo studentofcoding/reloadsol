@@ -16,6 +16,7 @@ import { mapRegistryToCanonical } from '@/strategies/canonical-params'
 import { parseStrategyChain } from '@/strategies/types'
 
 
+export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   try {
     await connection()

@@ -29,6 +29,7 @@ const REQUEST_TIMEOUT = 10000 // 10 seconds timeout
 let lastRequestTime = 0
 const MIN_REQUEST_INTERVAL = 200 // 200ms between requests for batch calls
 
+export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   try {
     await connection()

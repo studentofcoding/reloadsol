@@ -120,6 +120,7 @@ async function getRandomTokensWithCache(count: number): Promise<any[]> {
   }
 }
 
+export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   try {
     await connection()

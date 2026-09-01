@@ -2,6 +2,7 @@ import { NextRequest, NextResponse, connection } from 'next/server';
 import { fetchMeteoraPools, estimateOrganicScore, getFeeTvlRatio24h } from '@/utils/meteora';
 import { getLatestCandidates } from '@/utils/dlmm/db';
 
+export const dynamic = "force-dynamic"
 export async function GET(req: NextRequest) {
   try {
     await connection()

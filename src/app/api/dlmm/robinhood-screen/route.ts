@@ -5,6 +5,7 @@ import {
   ROBINHOOD_LP_DEFAULTS,
 } from '@/utils/dlmm/robinhood-screen'
 
+export const dynamic = "force-dynamic"
 export async function GET(req: NextRequest) {
   try {
     await connection()

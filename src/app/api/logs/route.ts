@@ -2,6 +2,7 @@ import { NextRequest, NextResponse, connection } from 'next/server'
 import { getLogs, getLogStats, clearLogs, LogLevel } from '@/utils/api-logger'
 import { formatAppDateTime } from '@/utils/datetime'
 
+export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   try {
     await connection()

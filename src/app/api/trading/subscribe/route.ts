@@ -97,6 +97,7 @@ function safeEnqueue(connectionId: string, data: Uint8Array): boolean {
 
 // GET /api/trading/subscribe?wallet=<address>
 // In the GET function, around line 100
+export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   await connection()
   const { searchParams } = new URL(request.url)

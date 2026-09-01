@@ -151,6 +151,7 @@ async function fillMissingUsd(tokens: UserToken[]): Promise<UserToken[]> {
   return out
 }
 
+export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   try {
     await connection()
