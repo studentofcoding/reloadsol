@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   UnifiedWalletButton,
   useUnifiedWallet,
@@ -27,6 +28,7 @@ export default function UniversalWalletButton({
   const { setShowModal } = useUnifiedWalletContext();
   const rh = useRhEvmWallet();
   const { network, setNetwork, canUseRh } = useAppNetwork();
+  const router = useRouter();
   // EVM-only whitelist: show toggle when Rabby is present so they can connect.
   const showRhToggle = canUseRh || rh.hasProvider;
   const [rhHint, setRhHint] = useState<string | null>(null);
@@ -57,7 +59,10 @@ export default function UniversalWalletButton({
         <div className="flex rounded-lg border border-gray-600 overflow-hidden text-xs">
           <button
             type="button"
-            onClick={() => setNetwork("sol")}
+            onClick={() => {
+              setNetwork("sol");
+              router.push("/sell/solana");
+            }}
             className={`px-2.5 py-1 font-medium ${
               network === "sol"
                 ? "bg-white text-black"
@@ -73,6 +78,7 @@ export default function UniversalWalletButton({
               void rh.connect().catch(() => {
                 /* rh.error surfaces below */
               });
+              router.push("/sell/robinhood");
             }}
             className={`px-2.5 py-1 font-medium border-l border-gray-600 ${
               network === "robinhood"
