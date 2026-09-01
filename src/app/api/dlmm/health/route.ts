@@ -2,7 +2,6 @@ import { NextResponse, connection } from 'next/server';
 import { getDlmmDbStatus } from '@/utils/dlmm/db-status';
 import { fetchMeteoraPools } from '@/utils/meteora';
 
-export const dynamic = "force-dynamic"
 export async function GET() {
   await connection()
   const dbStatus = await getDlmmDbStatus(true);

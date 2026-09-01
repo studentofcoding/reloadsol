@@ -23,7 +23,6 @@ const VALID_SOURCES: TokenRugSource[] = [
   'freeview',
 ];
 
-export const dynamic = "force-dynamic"
 export async function GET(req: NextRequest) {
   try {
     await connection()

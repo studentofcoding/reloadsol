@@ -3,7 +3,6 @@ import { PublicKey } from "@solana/web3.js";
 import { getShyftApiKey, ShyftAPIError } from "@/utils/shyft-api";
 import { fetchShyftAllTokensDirect } from "@/utils/shyft-wallet";
 
-export const dynamic = 'force-dynamic'
 export async function GET(request: NextRequest) {
   try {
     await connection()

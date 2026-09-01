@@ -6,7 +6,6 @@ import { cacheGet, cacheSet } from '@/utils/redis-cache'
 
 const SEARCH_TTL_S = 30
 
-export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   try {
     await connection()

@@ -75,7 +75,6 @@ async function getTrendingBuyers1hCached(): Promise<TokenPrice[]> {
   return Array.from(priceMap.values())
 }
 
-export const dynamic = 'force-dynamic'
 export async function GET() {
   try {
     await connection()

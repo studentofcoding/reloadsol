@@ -15,7 +15,6 @@ function parseTime(raw: string | null): number | null {
   return Math.floor(ms / 1000)
 }
 
-export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   try {
     await connection()

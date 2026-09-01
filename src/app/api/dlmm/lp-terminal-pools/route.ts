@@ -165,7 +165,6 @@ async function fetchRhUniv2FromSubgraph(opts: {
   return { pools, tokens, count: pairs.length }
 }
 
-export const dynamic = "force-dynamic"
 export async function GET(req: NextRequest) {
   await connection()
   const sp = req.nextUrl.searchParams

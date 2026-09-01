@@ -1,7 +1,6 @@
 import { NextRequest, connection } from 'next/server'
 import { getLogs } from '@/utils/api-logger'
 
-export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   await connection()
   const { searchParams } = new URL(request.url)

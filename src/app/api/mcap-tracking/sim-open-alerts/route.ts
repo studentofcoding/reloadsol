@@ -5,7 +5,6 @@ import { drainSignalsEarlyAlerts } from '@/strategies/signals-early-alerts'
 import { parseDbChain } from '@/utils/app-network-db'
 
 
-export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   try {
     await connection()

@@ -14,7 +14,6 @@ function cacheKey(address: string, chain: string): string {
   return `${CACHE_KEY_PREFIX}${chain}:${normalizeLookupAddress(address)}`
 }
 
-export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   try {
     await connection()

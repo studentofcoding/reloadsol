@@ -18,7 +18,6 @@ const VALID_SOURCES: DlmmPotentialSource[] = [
   'dlmm-general',
 ]
 
-export const dynamic = "force-dynamic"
 export async function GET(req: NextRequest) {
   try {
     await connection()

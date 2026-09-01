@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse, connection } from 'next/server'
 import { testJupiterPoolsTrading, stressTestJupiterPools, quickPoolsBenchmark } from '@/utils/jupiter-pools-test'
 
-export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   try {
     await connection()

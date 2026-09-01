@@ -4,7 +4,6 @@ import { getSolPriceUSDCore, getCachedPriceInfo, warmSolPriceCacheFromRedis } fr
 // Request deduplication for concurrent requests
 let ongoingRequest: Promise<{ price: number; source: string }> | null = null
 
-export const dynamic = 'force-dynamic'
 export async function GET() {
   try {
     await connection()

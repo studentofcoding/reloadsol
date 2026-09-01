@@ -7,7 +7,6 @@ import {
   refreshRhClmmLive,
 } from '@/utils/dlmm/rh-clmm-live'
 
-export const dynamic = "force-dynamic"
 export async function GET(req: NextRequest) {
   await connection()
   const wrong = rejectWrongNetwork(req, 'robinhood')

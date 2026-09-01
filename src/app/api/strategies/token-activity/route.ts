@@ -3,7 +3,6 @@ import { fetchTokenMapActivity } from '@/strategies/token-map-activity'
 import { isGmgnTradeChain, isValidAnyChainTokenAddress } from '@/utils/gmgn-currencies'
 
 
-export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   try {
     await connection()

@@ -9,7 +9,6 @@ import {
 import { normalizeSolanaAddress } from '@/utils/solana-address'
 
 
-export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   await connection()
   const rollupsLimit = Number(request.nextUrl.searchParams.get('rollups_limit') ?? 50)

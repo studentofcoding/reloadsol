@@ -10,7 +10,6 @@ function getPatternArtifactMeta(): Promise<PatternArtifactMetaModule> {
   return import('@/strategies/pattern-artifact-meta.server')
 }
 
-export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   try {
     await connection()

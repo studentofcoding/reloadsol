@@ -5,7 +5,6 @@ import { buildStrategyReview } from '@/strategies/strategy-review'
 import type { StrategyDomain } from '@/strategies/types'
 
 
-export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   try {
     await connection()

@@ -3,7 +3,6 @@ import { tradeOrderGet, GmgnApiError } from '@/utils/gmgn-api'
 import { isGmgnTradeChain } from '@/utils/gmgn-currencies'
 
 
-export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   try {
     await connection()

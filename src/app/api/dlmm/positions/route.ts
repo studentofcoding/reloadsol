@@ -10,7 +10,6 @@ function getPassword(req: NextRequest): string | null {
   return req.headers.get('x-dlmm-password') || new URL(req.url).searchParams.get('password');
 }
 
-export const dynamic = "force-dynamic"
 export async function GET(req: NextRequest) {
   await connection()
   const wrong = rejectWrongNetwork(req, 'sol');

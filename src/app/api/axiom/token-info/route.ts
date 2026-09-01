@@ -30,7 +30,6 @@ function calculateBackoff(consecutiveErrors: number, maxBackoff: number): number
   return baseBackoff * (0.9 + Math.random() * 0.2);
 }
 
-export const dynamic = 'force-dynamic'
 export async function GET(request: NextRequest) {
   try {
     await connection()

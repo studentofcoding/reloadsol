@@ -4,7 +4,6 @@ import { query } from '@/utils/db'
 // Force dynamic rendering for this route
 
 // GET /api/trading/records/all?limit=<number>
-export const dynamic = 'force-dynamic'
 export async function GET(request: NextRequest) {
   try {
     await connection()
