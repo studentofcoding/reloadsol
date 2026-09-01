@@ -8,30 +8,52 @@ import LastReloadTracker from '@/components/LastReloadTracker'
 import UniversalWalletButton from '@/components/UniversalWalletButton'
 import Footer from '@/components/Footer'
 import { useWallet } from '@/components/WalletProvider'
+import { useAppNetwork } from '@/contexts/AppNetworkContext'
+import { useRhEvmWallet } from '@/hooks/useRhEvmWallet'
 import WelcomeModal from '@/components/WelcomeModal'
 
 function HomeContent() {
   const [showWelcome, setShowWelcome] = useState(false)
   const { connected } = useWallet()
+  const rh = useRhEvmWallet()
+  const { setNetwork } = useAppNetwork()
   const router = useRouter()
   const hasRedirectedRef = useRef(false)
+  const solConnectedRef = useRef(false)
+  const rhConnectedRef = useRef(false)
 
-  // Auto-redirect connected users to sell page, but only once per session
+  // Auto-redirect to the sell page of the chain that just connected, but only
+  // once per session. Solana and Robinhood are independent: whichever wallet
+  // connects first routes to its own chain-specific sell page, without
+  // requiring a wallet on the other chain.
   useEffect(() => {
+    const rhConnected = Boolean(rh.address)
+    const solJustConnected = connected && !solConnectedRef.current
+    const rhJustConnected = rhConnected && !rhConnectedRef.current
+    solConnectedRef.current = connected
+    rhConnectedRef.current = rhConnected
+
     if (hasRedirectedRef.current) return
 
-    const hasDisconnected = sessionStorage.getItem('hasDisconnected')
     const justDisconnected = sessionStorage.getItem('justDisconnected')
     if (justDisconnected) {
       sessionStorage.removeItem('justDisconnected')
       return
     }
 
-    if (connected && !hasDisconnected) {
+    const hasDisconnected = sessionStorage.getItem('hasDisconnected')
+    if (hasDisconnected) return
+
+    if (solJustConnected) {
       hasRedirectedRef.current = true
-      router.replace('/sell')
+      setNetwork('sol')
+      router.replace('/sell/solana')
+    } else if (rhJustConnected) {
+      hasRedirectedRef.current = true
+      setNetwork('robinhood', { skipCoerce: true })
+      router.replace('/sell/robinhood')
     }
-  }, [connected, router])
+  }, [connected, rh.address, setNetwork, router])
 
   // Check if user should see welcome modal (only for non-connected users on landing)
   useEffect(() => {
