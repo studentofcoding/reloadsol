@@ -5,7 +5,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import LastReloadTracker from '@/components/LastReloadTracker'
-import UniversalWalletButton from '@/components/UniversalWalletButton'
+import WalletChooser from '@/components/WalletChooser'
 import Footer from '@/components/Footer'
 import { useWallet } from '@/components/WalletProvider'
 import { useAppNetwork } from '@/contexts/AppNetworkContext'
@@ -106,11 +106,7 @@ function HomeContent() {
           </div>
 
           {/* Get Started Section */}
-          {!connected && (
-          <div className="max-w-4xl mx-auto mb-10 text-center">
-            <UniversalWalletButton />
-          </div>
-          )}
+          <WalletChooser />
 
           {/* Feature Cards */}
           <div className="max-w-4xl mx-auto mb-10">
