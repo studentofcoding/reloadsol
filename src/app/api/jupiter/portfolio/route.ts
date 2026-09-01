@@ -1,13 +1,19 @@
 import { NextRequest, NextResponse, connection } from "next/server";
 import { PublicKey } from "@solana/web3.js";
 import { fetchJupiterPortfolioDirect } from "@/utils/jupiter-portfolio";
-import { cacheGet, cacheSet } from "@/utils/redis-cache";
+import { fetchWithCache, portfolioKey } from "@/utils/portfolio-cache";
 
 const PORTFOLIO_CACHE_TTL_SECONDS = 15;
+const PORTFOLIO_STALE_TTL_SECONDS = 120;
 
-function portfolioCacheKey(wallet: string): string {
-  return `portfolio:${wallet}`;
-}
+type PortfolioBody = {
+  status: string;
+  totalValue: number;
+  tokens: unknown[];
+  reclaimableCount: number;
+  reclaimableLamports: number;
+  latencyMs: number;
+};
 
 export async function GET(request: NextRequest) {
   try {
@@ -32,43 +38,31 @@ export async function GET(request: NextRequest) {
     // token shows up immediately instead of waiting out the TTL.
     const skipCache = searchParams.get("fresh") === "1";
 
-    const cached = await cacheGet<{
-      status: string;
-      totalValue: number;
-      tokens: unknown[];
-      reclaimableCount: number;
-      reclaimableLamports: number;
-      latencyMs: number;
-    }>(portfolioCacheKey(wallet));
+    const freshKey = portfolioKey("sol", wallet, "holdings");
+    const { origin, data } = await fetchWithCache<PortfolioBody>({
+      key: freshKey,
+      staleKey: `${freshKey}:stale`,
+      ttlSeconds: PORTFOLIO_CACHE_TTL_SECONDS,
+      staleTtlSeconds: PORTFOLIO_STALE_TTL_SECONDS,
+      skipCache,
+      fetch: async () => {
+        const portfolio = await fetchJupiterPortfolioDirect(wallet);
+        return {
+          status: "success",
+          totalValue: portfolio.totalValue,
+          tokens: portfolio.tokens,
+          reclaimableCount: portfolio.reclaimableCount ?? 0,
+          reclaimableLamports: portfolio.reclaimableLamports ?? 0,
+          latencyMs: portfolio.latencyMs ?? 0,
+        };
+      },
+    });
 
-    if (cached && !skipCache) {
-      return NextResponse.json(cached, {
-        headers: {
-          "Cache-Control": "private, max-age=15",
-          "X-Cache-Status": "HIT",
-        },
-      });
-    }
-
-    const portfolio = await fetchJupiterPortfolioDirect(wallet);
-
-    const body = {
-      status: "success",
-      totalValue: portfolio.totalValue,
-      tokens: portfolio.tokens,
-      reclaimableCount: portfolio.reclaimableCount ?? 0,
-      reclaimableLamports: portfolio.reclaimableLamports ?? 0,
-      latencyMs: portfolio.latencyMs ?? 0,
-    };
-
-    if (!skipCache) {
-      await cacheSet(portfolioCacheKey(wallet), body, PORTFOLIO_CACHE_TTL_SECONDS);
-    }
-
-    return NextResponse.json(body, {
+    return NextResponse.json(data, {
       headers: {
         "Cache-Control": "private, max-age=15",
-        "X-Cache-Status": "MISS",
+        "X-Cache-Status":
+          origin === "hit" ? "HIT" : origin === "stale" ? "STALE" : "MISS",
       },
     });
   } catch (error) {

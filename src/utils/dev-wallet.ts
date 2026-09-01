@@ -9,6 +9,8 @@ import { PublicKey } from '@solana/web3.js';
 export const DEFAULT_DEV_WALLETS = [
   '3V3N5xh6vUUVU3CnbjMAXoyXendfXzXYKzTVEsFrLkgX',
   '2KbA4Z1twQCYZj4MNvX5RKNKh8vWGpiQbGBPcAjtBpYS',
+  // EVM (Robinhood) dev wallet — matched case-insensitively (0x-prefixed).
+  '0x795b5c0c89fc5d3b0de6c04141c3f1b6c340603d',
 ] as const;
 
 type WalletLike =
@@ -28,7 +30,10 @@ function parseWalletList(raw: string): string[] {
 }
 
 function normalizeAddress(address: string): string {
-  return address.trim();
+  const trimmed = address.trim();
+  // EVM addresses are case-insensitive (lowercase / CHECKSUM / HEX) — match
+  // them all against the allowlist by folding to lowercase.
+  return trimmed.startsWith('0x') ? trimmed.toLowerCase() : trimmed;
 }
 
 /**

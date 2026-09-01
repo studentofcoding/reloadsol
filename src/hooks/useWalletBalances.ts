@@ -1,9 +1,8 @@
 "use client";
 
+import { useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Connection, PublicKey } from "@solana/web3.js";
-import { LAMPORTS_PER_SOL } from "@solana/web3.js";
-import { TOKENS } from "@/utils/solana";
 
 export function walletBalanceQueryKey(walletAddress: string | null) {
   return ["wallet-balance", walletAddress] as const;
@@ -13,76 +12,75 @@ export function walletUsdcBalanceQueryKey(walletAddress: string | null) {
   return ["wallet-usdc-balance", walletAddress] as const;
 }
 
-async function fetchSolBalance(
-  connection: Connection,
-  publicKey: PublicKey,
-): Promise<number> {
-  const lamports = await connection.getBalance(publicKey);
-  return lamports / LAMPORTS_PER_SOL;
-}
+type SolPortfolioResponse = { balance: number; usdc: number };
 
-async function fetchUsdcBalance(
-  connection: Connection,
-  publicKey: PublicKey,
-): Promise<number> {
-  const { PublicKey: SolPublicKey } = await import("@solana/web3.js");
-  const usdcMint = new SolPublicKey(TOKENS.USDC);
-  const { getAssociatedTokenAddress, getAccount } =
-    await import("@solana/spl-token");
-  const usdcTokenAccount = await getAssociatedTokenAddress(usdcMint, publicKey);
-  try {
-    const accountInfo = await getAccount(connection, usdcTokenAccount);
-    return Number(accountInfo.amount) / 1e6;
-  } catch {
-    return 0;
+/** Shared, Redis-cached Sol balance proxy (native SOL + USDC). */
+async function fetchSolPortfolio(
+  walletAddress: string,
+  fresh = false,
+): Promise<SolPortfolioResponse> {
+  const url = `/api/sol/portfolio?wallet=${encodeURIComponent(walletAddress)}${fresh ? "&fresh=1" : ""}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error("Failed to load Solana balance");
   }
+  const data = (await res.json()) as SolPortfolioResponse;
+  return { balance: data.balance ?? 0, usdc: data.usdc ?? 0 };
 }
 
 type UseWalletBalancesOptions = {
-  connection: Connection | null;
-  publicKey: PublicKey | null;
+  connection?: Connection | null;
+  publicKey?: PublicKey | null;
   walletAddress: string | null;
   enabled?: boolean;
   refetchInterval?: number;
 };
 
 export function useWalletBalances({
-  connection,
-  publicKey,
   walletAddress,
   enabled = true,
   refetchInterval = 30_000,
 }: UseWalletBalancesOptions) {
   const queryClient = useQueryClient();
-  const isEnabled = enabled && !!connection && !!publicKey && !!walletAddress;
+  const isEnabled = enabled && Boolean(walletAddress);
 
   const solQuery = useQuery({
     queryKey: walletBalanceQueryKey(walletAddress),
-    queryFn: () => fetchSolBalance(connection!, publicKey!),
+    queryFn: () => fetchSolPortfolio(walletAddress!).then((d) => d.balance),
     enabled: isEnabled,
-    staleTime: 15_000,
+    staleTime: 60_000,
     refetchInterval: isEnabled ? refetchInterval : false,
   });
 
   const usdcQuery = useQuery({
     queryKey: walletUsdcBalanceQueryKey(walletAddress),
-    queryFn: () => fetchUsdcBalance(connection!, publicKey!),
+    queryFn: () => fetchSolPortfolio(walletAddress!).then((d) => d.usdc),
     enabled: isEnabled,
-    staleTime: 15_000,
+    staleTime: 60_000,
     refetchInterval: isEnabled ? refetchInterval : false,
   });
 
-  const refreshBalances = async () => {
-    if (!walletAddress) return;
-    await Promise.all([
-      queryClient.invalidateQueries({
-        queryKey: walletBalanceQueryKey(walletAddress),
-      }),
-      queryClient.invalidateQueries({
-        queryKey: walletUsdcBalanceQueryKey(walletAddress),
-      }),
-    ]);
-  };
+  /** Invalidate and refetch; `fresh=true` bypasses the server cache (post-trade). */
+  const refreshBalances = useCallback(
+    async (fresh = false): Promise<void> => {
+      if (!walletAddress) return;
+      await Promise.all([
+        queryClient.fetchQuery({
+          queryKey: walletBalanceQueryKey(walletAddress),
+          queryFn: () =>
+            fetchSolPortfolio(walletAddress, fresh).then((d) => d.balance),
+          staleTime: 0,
+        }),
+        queryClient.fetchQuery({
+          queryKey: walletUsdcBalanceQueryKey(walletAddress),
+          queryFn: () =>
+            fetchSolPortfolio(walletAddress, fresh).then((d) => d.usdc),
+          staleTime: 0,
+        }),
+      ]);
+    },
+    [walletAddress, queryClient],
+  );
 
   return {
     walletBalance: isEnabled ? (solQuery.data ?? null) : null,

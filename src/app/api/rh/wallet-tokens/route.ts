@@ -12,11 +12,13 @@ import {
 } from '@/utils/rh-wallet-holdings'
 import { RH_USDG, RH_USDG_DECIMALS, RH_WETH } from '@/utils/dlmm/rh-univ2'
 import { cacheGet, cacheSet } from '@/utils/redis-cache'
+import { portfolioKey } from '@/utils/portfolio-cache'
 
 
 const PRICE_FILL_CAP = 15
 const PRICE_FILL_CONCURRENCY = 2
 const RESPONSE_TTL_S = 20
+const RESPONSE_STALE_TTL_S = 120
 const TOKEN_USD_TTL_S = 60
 const SEEN_TOKENS_TTL_S = 30 * 24 * 60 * 60 // 30 days
 
@@ -129,7 +131,8 @@ export async function GET(request: NextRequest) {
     // token shows up immediately instead of waiting out the TTL.
     const skipCache = request.nextUrl.searchParams.get('fresh') === '1'
 
-    const cacheKey = `rh:wallet-tokens:${walletNorm}`
+    const cacheKey = portfolioKey('robinhood', walletNorm, 'holdings')
+    const staleKey = `${cacheKey}:stale`
     if (!skipCache) {
       const cached = await cacheGet<CachedResponse>(cacheKey)
       if (cached) {
@@ -199,9 +202,32 @@ export async function GET(request: NextRequest) {
     }
 
     tokens = sortRhTokensByUsd(tokens)
-    if (!skipCache) {
-      void cacheSet(cacheKey, { tokens, source } satisfies CachedResponse, RESPONSE_TTL_S)
+
+    // Cache a valid snapshot + a longer-lived last-known-good copy (SWR). Only
+    // persist when there are holdings — an empty shell must not overwrite the
+    // last good snapshot.
+    if (!skipCache && tokens.length > 0) {
+      const resp = { tokens, source } satisfies CachedResponse
+      void cacheSet(cacheKey, resp, RESPONSE_TTL_S)
+      void cacheSet(staleKey, resp, RESPONSE_STALE_TTL_S)
     }
+
+    // All sources empty/failed: serve the last-known-good snapshot so a
+    // transient indexer/RPC blip never surfaces an empty portfolio.
+    if (!skipCache && tokens.length === 0) {
+      const stale = await cacheGet<CachedResponse>(staleKey)
+      if (stale) {
+        return NextResponse.json({
+          success: true,
+          tokens: stale.tokens,
+          source: stale.source,
+          wallet: walletNorm,
+          cached: true,
+          stale: true,
+        })
+      }
+    }
+
     return NextResponse.json({
       success: true,
       tokens,
