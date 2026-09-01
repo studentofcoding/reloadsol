@@ -87,8 +87,8 @@ export function usePortfolioWallet(): {
   const ethQuery = useQuery({
     queryKey: rhEthBalanceQueryKey(rhAddress),
     enabled: isRh && Boolean(rhAddress),
-    staleTime: 15_000,
-    refetchInterval: isRh && rhAddress ? 30_000 : false,
+    staleTime: 60_000,
+    refetchInterval: isRh && rhAddress ? 60_000 : false,
     queryFn: async () => {
       if (!rhAddress) return null
       const wei = await rh.getPublicClient().getBalance({ address: rhAddress })
@@ -99,8 +99,8 @@ export function usePortfolioWallet(): {
   const usdgQuery = useQuery({
     queryKey: rhUsdgBalanceQueryKey(rhAddress),
     enabled: isRh && Boolean(rhAddress),
-    staleTime: 15_000,
-    refetchInterval: isRh && rhAddress ? 30_000 : false,
+    staleTime: 60_000,
+    refetchInterval: isRh && rhAddress ? 60_000 : false,
     queryFn: async () => {
       if (!rhAddress) return null
       const raw = await rh.getPublicClient().readContract({
@@ -116,8 +116,8 @@ export function usePortfolioWallet(): {
   const wethQuery = useQuery({
     queryKey: rhWethBalanceQueryKey(rhAddress),
     enabled: isRh && Boolean(rhAddress),
-    staleTime: 15_000,
-    refetchInterval: isRh && rhAddress ? 30_000 : false,
+    staleTime: 60_000,
+    refetchInterval: isRh && rhAddress ? 60_000 : false,
     queryFn: async () => {
       if (!rhAddress) return null
       const raw = await rh.getPublicClient().readContract({

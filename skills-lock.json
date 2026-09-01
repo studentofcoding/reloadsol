@@ -1,6 +1,66 @@
 {
   "version": 1,
   "skills": {
+    "auth-setup": {
+      "source": "goldsky-io/goldsky-agent",
+      "sourceType": "github",
+      "skillPath": "skills/auth-setup/SKILL.md",
+      "computedHash": "4cc9584c55d2c082c95f77f483fa2cd7a9366845c114e9ff713c1c25a8efbc80"
+    },
+    "compose": {
+      "source": "goldsky-io/goldsky-agent",
+      "sourceType": "github",
+      "skillPath": "skills/compose/SKILL.md",
+      "computedHash": "bbe8c4b5b4a3b736cb2a9c0f280a02165bf73c20f5ac69ed1e768a1ccd91b2ae"
+    },
+    "compose-bitcoin-oracle": {
+      "source": "goldsky-io/goldsky-agent",
+      "sourceType": "github",
+      "skillPath": "skills/compose-bitcoin-oracle/SKILL.md",
+      "computedHash": "09d784c012a37af735a0461a4ad35c145bd730ccd0d74a8dd4ef64a8a8dd4225"
+    },
+    "compose-compliance-oracle": {
+      "source": "goldsky-io/goldsky-agent",
+      "sourceType": "github",
+      "skillPath": "skills/compose-compliance-oracle/SKILL.md",
+      "computedHash": "e7325a1bc9cad0c4aaf6642109f0db68220d5afd49a1c7f152c213d723a8a30a"
+    },
+    "compose-dividend-distribution": {
+      "source": "goldsky-io/goldsky-agent",
+      "sourceType": "github",
+      "skillPath": "skills/compose-dividend-distribution/SKILL.md",
+      "computedHash": "4802ac076518317422815e302db3110e1c3c4cd57d0166aac622220e5dd39fc1"
+    },
+    "compose-doctor": {
+      "source": "goldsky-io/goldsky-agent",
+      "sourceType": "github",
+      "skillPath": "skills/compose-doctor/SKILL.md",
+      "computedHash": "e9493a41db16af6816b2f668da9200fc93b9085918d05aee746fad225d384252"
+    },
+    "compose-reference": {
+      "source": "goldsky-io/goldsky-agent",
+      "sourceType": "github",
+      "skillPath": "skills/compose-reference/SKILL.md",
+      "computedHash": "bc3461b64389835c28e8266e7e4e55c208ef93ad8290fcd940b5dbab2abf58b0"
+    },
+    "compose-vrf": {
+      "source": "goldsky-io/goldsky-agent",
+      "sourceType": "github",
+      "skillPath": "skills/compose-vrf/SKILL.md",
+      "computedHash": "12767c8b71d80f071811ce16ddb1a04d6e5fc02eb8d8e26b7db1d6ae8a0b3d0b"
+    },
+    "datasets": {
+      "source": "goldsky-io/goldsky-agent",
+      "sourceType": "github",
+      "skillPath": "skills/datasets/SKILL.md",
+      "computedHash": "9d6f44be0942586fea98d1960e9978e308072e92c1d2362ff4e4b9571b37fb36"
+    },
+    "edge": {
+      "source": "goldsky-io/goldsky-agent",
+      "sourceType": "github",
+      "skillPath": "skills/edge/SKILL.md",
+      "computedHash": "13aa123ea212833e9e10376661ffe2b76f21b0b45eec812d4f3b9699f6f79f5d"
+    },
     "gmgn-cooking": {
       "source": "GMGNAI/gmgn-skills",
       "sourceType": "github",
@@ -36,6 +96,78 @@
       "sourceType": "github",
       "skillPath": "skills/gmgn-track/SKILL.md",
       "computedHash": "052de9ca72ebcbcd3f17eba14d5429f7e6fde7f01a9e0086ad6bce259669c906"
+    },
+    "mirror": {
+      "source": "goldsky-io/goldsky-agent",
+      "sourceType": "github",
+      "skillPath": "skills/mirror/SKILL.md",
+      "computedHash": "984b136ad72942c6122834802e49ed663cbef1a926f0d224e708961df2f7a39b"
+    },
+    "mirror-doctor": {
+      "source": "goldsky-io/goldsky-agent",
+      "sourceType": "github",
+      "skillPath": "skills/mirror-doctor/SKILL.md",
+      "computedHash": "ff6dc2473af4d0070c20792a4e09f91db99fbb7cd9bd83a3dcb9c7d9671cc489"
+    },
+    "onchain-automation": {
+      "source": "goldsky-io/goldsky-agent",
+      "sourceType": "github",
+      "skillPath": "skills/onchain-automation/SKILL.md",
+      "computedHash": "67d8449b01effe32efea54f3cb4f88f55112d1179240f18ccd5d588ea15c7961"
+    },
+    "secrets": {
+      "source": "goldsky-io/goldsky-agent",
+      "sourceType": "github",
+      "skillPath": "skills/secrets/SKILL.md",
+      "computedHash": "a372f8546f3405be23f56839f1f09a0527e832677d570c8f017c7e33fefe6ddf"
+    },
+    "subgraph-builder": {
+      "source": "goldsky-io/goldsky-agent",
+      "sourceType": "github",
+      "skillPath": "skills/subgraph-builder/SKILL.md",
+      "computedHash": "6c2119cf8a0f32414e58451ea34b5b4b6080ea77e0f1d0049dc6e369fd44e21c"
+    },
+    "subgraph-doctor": {
+      "source": "goldsky-io/goldsky-agent",
+      "sourceType": "github",
+      "skillPath": "skills/subgraph-doctor/SKILL.md",
+      "computedHash": "324b49c9a7460d4191d6d443cdc6e6f6a433770760edf0c3dd34dd5470bf3e3b"
+    },
+    "subgraph-migrate": {
+      "source": "goldsky-io/goldsky-agent",
+      "sourceType": "github",
+      "skillPath": "skills/subgraph-migrate/SKILL.md",
+      "computedHash": "cef4b3451356c8a811786cc53a8b7b78fc865fb7bee5380ea09ea2fd883d78e8"
+    },
+    "turbo-builder": {
+      "source": "goldsky-io/goldsky-agent",
+      "sourceType": "github",
+      "skillPath": "skills/turbo-builder/SKILL.md",
+      "computedHash": "2dfcddbfa09f50304f124a5c9236f7be1a87542af0a4348f8c38dc6023edf35a"
+    },
+    "turbo-doctor": {
+      "source": "goldsky-io/goldsky-agent",
+      "sourceType": "github",
+      "skillPath": "skills/turbo-doctor/SKILL.md",
+      "computedHash": "c6f3c86fcebf1391cad1301746e3a06822b9131be641039769f9a36106a3b1d4"
+    },
+    "turbo-operations": {
+      "source": "goldsky-io/goldsky-agent",
+      "sourceType": "github",
+      "skillPath": "skills/turbo-operations/SKILL.md",
+      "computedHash": "3ca00a1212d938a457e525e24eeeda96f250eb11b7e33d2f64e1928d7150b74b"
+    },
+    "turbo-pipelines": {
+      "source": "goldsky-io/goldsky-agent",
+      "sourceType": "github",
+      "skillPath": "skills/turbo-pipelines/SKILL.md",
+      "computedHash": "1d17fda9f73e37d654961e3c7aac403cfe9040b5f04189e2d38d7527b7885361"
+    },
+    "turbo-transforms": {
+      "source": "goldsky-io/goldsky-agent",
+      "sourceType": "github",
+      "skillPath": "skills/turbo-transforms/SKILL.md",
+      "computedHash": "75a121acf597dde971a63c3b10478c79774986eaaa55a0d395bbde8ac7f43e70"
     }
   }
 }

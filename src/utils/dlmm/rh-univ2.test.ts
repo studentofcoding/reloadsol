@@ -25,13 +25,15 @@ function pool(
 }
 
 describe('getRhRpcUrl', () => {
-  it('defaults to ArrowRPC when RPC_4663 unset', () => {
+  it('defaults to the official Robinhood RPC when RPC_4663 unset', () => {
     const prev = process.env.RPC_4663
     const prevPublic = process.env.NEXT_PUBLIC_RPC_4663
     delete process.env.RPC_4663
     delete process.env.NEXT_PUBLIC_RPC_4663
     try {
-      expect(getRhRpcUrl()).toBe('https://rpc.arrowrpc.com')
+      expect(getRhRpcUrl()).toBe(
+        'https://edge.goldsky.com/standard/evm/4663?key=gs_edge_cmti61jetiu4h01u9hwq1huk7',
+      )
     } finally {
       if (prev !== undefined) process.env.RPC_4663 = prev
       if (prevPublic !== undefined) process.env.NEXT_PUBLIC_RPC_4663 = prevPublic

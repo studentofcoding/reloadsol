@@ -8,25 +8,31 @@ import { tokenSymbol } from '@/utils/dlmm/lp-terminal-pools'
 /** Robinhood Chain mainnet */
 export const RH_CHAIN_ID = 4663 as const
 
-/** Default ArrowRPC (no key, no CORS — proxy handles browser reads). */
-export const RH_DEFAULT_RPC = 'https://rpc.arrowrpc.com'
+/**
+ * Goldsky EVM gateway for Robinhood Chain (4663) — primary RPC. Replaces
+ * the legacy ArrowRPC tunnel, which is down (Cloudflare HTTP 530 / cf 1033).
+ */
+export const RH_PRIMARY_RPC =
+  'https://edge.goldsky.com/standard/evm/4663?key=gs_edge_cmti61jetiu4h01u9hwq1huk7'
 
-/** Official Robinhood Chain public RPC (sends CORS) — used as fallback. */
-export const RH_FALLBACK_RPC = 'https://rpc.mainnet.chain.robinhood.com'
+/** Official Robinhood Chain (4663) public RPC (sends CORS, no key). */
+export const RH_CHAIN_RPC = 'https://rpc.mainnet.chain.robinhood.com'
+
+/** Legacy ArrowRPC JSON-RPC (no key, no CORS) — last-resort fallback only. */
+export const RH_FALLBACK_RPC = 'https://rpc.arrowrpc.com'
 
 /**
- * Ordered RH RPC endpoints. Prefer NEXT_PUBLIC_RPC_4663 / RPC_4663 in the
- * browser for wallet_addEthereumChain; otherwise ArrowRPC first, official
- * endpoint second.
+ * Ordered RH RPC endpoints. Prefer NEXT_PUBLIC_RPC_4663 / RPC_4663 when set;
+ * otherwise Goldsky first, official Robinhood Chain second, ArrowRPC last.
  */
 export function getRhRpcUrls(): string[] {
   const fromEnv =
     process.env.NEXT_PUBLIC_RPC_4663 ||
     process.env.RPC_4663 ||
     ''
-  const primary = fromEnv.trim()
-  if (primary) return [primary, RH_DEFAULT_RPC, RH_FALLBACK_RPC]
-  return [RH_DEFAULT_RPC, RH_FALLBACK_RPC]
+  const explicit = fromEnv.trim()
+  if (explicit) return [explicit, RH_PRIMARY_RPC, RH_CHAIN_RPC, RH_FALLBACK_RPC]
+  return [RH_PRIMARY_RPC, RH_CHAIN_RPC, RH_FALLBACK_RPC]
 }
 
 /** Primary RH RPC endpoint (first in the fallback list). */
