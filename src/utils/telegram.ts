@@ -410,6 +410,7 @@ export type StrategyAlertKind = 'open' | 'open_copy' | 'early_copy' | 'close'
 function strategyAlertTitle(
   kind: StrategyAlertKind,
   mode: 'SIM' | 'LIVE',
+  result?: string | null,
 ): string {
   switch (kind) {
     case 'open':
@@ -418,8 +419,11 @@ function strategyAlertTitle(
       return `🟢 <b>OPEN · copy trade (${mode})</b>`
     case 'early_copy':
       return `🟡 <b>EARLY · copy trade (${mode})</b>`
-    case 'close':
-      return `🔴 <b>CLOSE (${mode})</b>`
+    case 'close': {
+      const won =
+        typeof result === 'string' && result.trim().toLowerCase() === 'won'
+      return `${won ? '🟢' : '🔴'} <b>CLOSE (${mode})</b>`
+    }
   }
 }
 
@@ -544,7 +548,7 @@ export function buildStrategyAlertText(params: {
   }
 
   return [
-    strategyAlertTitle(params.kind, titleMode),
+    strategyAlertTitle(params.kind, titleMode, params.status),
     '',
     `Strategy: <b>${name}</b> (${escapeTelegramHtml(params.strategyId)})`,
     `Domain: ${domain}`,

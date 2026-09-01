@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildMcapSimManualTradeAlertText,
   buildSignalsEarlyEnterAlertText,
+  buildStrategyAlertText,
   formatJupiterTokenLink,
   formatReloadsolChartLink,
 } from './telegram'
@@ -184,5 +185,41 @@ describe('buildSignalsEarlyEnterAlertText', () => {
       kol: 1,
     })
     expect(text).toContain('SM 4 · KOL 1')
+  })
+})
+
+describe('buildStrategyAlertText close emoji', () => {
+  const base = {
+    kind: 'close' as const,
+    strategyId: 'dlmm_default',
+    strategyName: 'DLMM Hunter/Healer',
+    domain: 'dlmm',
+    tokenSymbol: 'TripleT',
+    tokenAddress: MINT,
+    isSimulated: true,
+    marketCap: null as number | null,
+    pnlPct: 10,
+  }
+
+  it('uses green circle for a WON result', () => {
+    const text = buildStrategyAlertText({
+      ...base,
+      pnlPct: 13.17,
+      status: 'WON',
+    })
+    expect(text).toContain('🟢 <b>CLOSE (SIM)</b>')
+    expect(text).not.toContain('🔴 <b>CLOSE')
+    expect(text).toContain('Result: <b>WON</b>')
+  })
+
+  it('uses red circle for a LOST result', () => {
+    const text = buildStrategyAlertText({
+      ...base,
+      pnlPct: -10.58,
+      status: 'LOST',
+    })
+    expect(text).toContain('🔴 <b>CLOSE (SIM)</b>')
+    expect(text).not.toContain('🟢 <b>CLOSE (SIM)</b>')
+    expect(text).toContain('Result: <b>LOST</b>')
   })
 })

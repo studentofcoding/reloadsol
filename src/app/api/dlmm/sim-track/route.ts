@@ -4,6 +4,7 @@ import { getAgentConfig, getLatestCandidates, getPositions } from '@/utils/dlmm/
 import { runDlmmScreen } from '@/utils/dlmm/screener'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
 import { getActiveDlmmForSim } from '@/strategies/load-dlmm'
+import { poolsBlockedByRecentClose } from '@/utils/dlmm/reopen-guard'
 
 export const maxDuration = 120
 
@@ -17,6 +18,11 @@ function getSimTrackSecret(): string {
 }
 
 const OPEN_STATUSES = new Set(['open', 'out_of_range', 'pending'])
+
+/** Don't re-deploy a pool whose last position closed within this cooldown (min). */
+const REOPEN_COOLDOWN_MIN = Number(
+  process.env.DLMM_REOPEN_COOLDOWN_MIN ?? 60,
+)
 
 export async function POST(request: NextRequest) {
   const key = request.nextUrl.searchParams.get('key')
@@ -66,6 +72,10 @@ export async function POST(request: NextRequest) {
     const positions = await getPositions()
     const openPositions = positions.filter((p) => OPEN_STATUSES.has(p.status))
     const openPoolSet = new Set(openPositions.map((p) => p.pool_address))
+    const recentCloseBlocked = poolsBlockedByRecentClose(
+      positions,
+      REOPEN_COOLDOWN_MIN * 60_000,
+    )
     const openCount = openPositions.length
 
     const { execution } = strategy.config
@@ -87,6 +97,13 @@ export async function POST(request: NextRequest) {
 
       if (openPoolSet.has(candidate.pool_address)) {
         skippedPools.push(`${candidate.pool_address}: already open`)
+        continue
+      }
+
+      if (recentCloseBlocked.has(candidate.pool_address)) {
+        skippedPools.push(
+          `${candidate.pool_address}: cooldown after recent close (${REOPEN_COOLDOWN_MIN}m)`,
+        )
         continue
       }
 
