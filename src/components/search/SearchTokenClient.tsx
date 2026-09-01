@@ -11,7 +11,7 @@ import { useConnection } from '@/components/WalletProvider'
 import { useRpc } from '@/contexts/RpcContext'
 import { useAppNetwork } from '@/contexts/AppNetworkContext'
 import { OptimizedImage } from '@/components/OptimizedImage'
-import { getGmgnKlineUrl, type GmgnChain } from '@/utils/gmgn'
+import GmgnKlineChart from '@/components/GmgnKlineChart'
 import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
 
 type SearchTokenClientProps = {
@@ -215,6 +215,7 @@ function ResultRow({
   onPickAction: (action: Action, token: GmgnSearchToken) => void
 }) {
   const [showActions, setShowActions] = useState(false)
+  const [showChart, setShowChart] = useState(false)
   return (
     <li className="border-b border-gray-800 last:border-b-0">
       <div className="flex items-center px-4 py-3 gap-3">
@@ -250,10 +251,19 @@ function ResultRow({
         <div className="flex flex-wrap gap-2 px-4 pb-3">
           <ActionPill onClick={() => onPickAction('add-to-buy', token)}>Add to buy</ActionPill>
           <ActionPill onClick={() => onPickAction('add-to-swap', token)}>Add to swap</ActionPill>
-          <ActionPill href={getGmgnKlineUrl(token.address, { interval: '1D', theme: 'dark', chain: chain as GmgnChain })} external>
-            View chart
+          <ActionPill onClick={() => setShowChart((v) => !v)}>
+            {showChart ? 'Hide chart' : 'View chart'}
           </ActionPill>
           <ActionPill onClick={() => copy(token.address)}>Copy CA</ActionPill>
+        </div>
+      ) : null}
+      {showChart ? (
+        <div className="px-4 pb-3">
+          <GmgnKlineChart
+            tokenMint={token.address}
+            symbol={token.symbol}
+            chain={chain}
+          />
         </div>
       ) : null}
     </li>
