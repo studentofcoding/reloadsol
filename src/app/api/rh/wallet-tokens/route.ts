@@ -13,6 +13,7 @@ import {
 import { RH_USDG, RH_USDG_DECIMALS, RH_WETH } from '@/utils/dlmm/rh-univ2'
 import { cacheGet, cacheSet } from '@/utils/redis-cache'
 import { portfolioKey } from '@/utils/portfolio-cache'
+import { query } from '@/utils/db'
 
 
 const PRICE_FILL_CAP = 15
@@ -44,6 +45,41 @@ function toMeta(t: UserToken): RhTokenMeta {
     name: t.name,
     decimals: t.decimals,
     logoURI: t.logoURI,
+  }
+}
+
+/**
+ * Tokens the wallet has traded recently (from the app's trading history). Used
+ * as RPC-fallback candidates so a wallet whose holdings aren't in GMGN/
+ * Blockscout can still have its real tokens surfaced via balanceOf.
+ */
+async function getRhTradeCandidates(wallet: string): Promise<RhTokenMeta[]> {
+  try {
+    const { rows } = await query<{ data: unknown }>(
+      `SELECT data FROM trading_records
+       WHERE wallet_address = $1
+       ORDER BY timestamp DESC
+       LIMIT 300`,
+      [wallet],
+    )
+    const seen = new Set<string>()
+    const out: RhTokenMeta[] = []
+    for (const row of rows) {
+      const data = row.data as {
+        tokens?: Array<{ mintAddress?: string }>
+      } | null
+      for (const t of data?.tokens ?? []) {
+        const mint = String(t?.mintAddress ?? '').trim().toLowerCase()
+        if (!isEvmAddress(mint) || seen.has(mint)) continue
+        seen.add(mint)
+        out.push({ address: mint })
+        if (out.length >= 40) return out
+      }
+    }
+    return out
+  } catch (err) {
+    console.warn('[rh/wallet-tokens] trade candidates failed:', err)
+    return []
   }
 }
 
@@ -189,10 +225,14 @@ export async function GET(request: NextRequest) {
     if (tokens.length === 0) {
       source = 'rpc'
       try {
-        const seen = (await cacheGet<RhTokenMeta[]>(seenKey(walletNorm))) ?? []
+        const [seen, trade] = await Promise.all([
+          cacheGet<RhTokenMeta[]>(seenKey(walletNorm)).catch(() => null),
+          getRhTradeCandidates(walletNorm),
+        ])
         tokens = await fetchRpcErc20Tokens(walletNorm, [
           ...QUOTE_CANDIDATES,
-          ...seen,
+          ...(seen ?? []),
+          ...trade,
         ])
         tokens = await fillMissingUsd(tokens)
       } catch (err) {
@@ -204,9 +244,15 @@ export async function GET(request: NextRequest) {
     tokens = sortRhTokensByUsd(tokens)
 
     // Cache a valid snapshot + a longer-lived last-known-good copy (SWR). Only
-    // persist when there are holdings — an empty shell must not overwrite the
-    // last good snapshot.
-    if (!skipCache && tokens.length > 0) {
+    // persist when a source of truth (indexer) found holdings — an empty shell
+    // OR a degraded RPC-only fallback list (which only knows a few quote
+    // candidates and can appear as "just USDG") must never be cached, or that
+    // partial result would be frozen for the whole TTL/stale window.
+    if (
+      !skipCache &&
+      source !== 'rpc' &&
+      tokens.length > 0
+    ) {
       const resp = { tokens, source } satisfies CachedResponse
       void cacheSet(cacheKey, resp, RESPONSE_TTL_S)
       void cacheSet(staleKey, resp, RESPONSE_STALE_TTL_S)

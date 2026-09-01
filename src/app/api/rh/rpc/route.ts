@@ -135,19 +135,26 @@ export async function POST(request: NextRequest) {
       // Only fail over on transport/5xx errors — 4xx responses from a live
       // endpoint (e.g. bad request) should surface as-is.
       if (res.ok || res.status < 500) {
-        if (cacheKey && ttl > 0 && text) {
+        // Cache ONLY successful JSON-RPC results. A 4xx/HTTP body or a JSON-RPC
+        // "error" envelope (HTTP 200 with an error field) must never be cached,
+        // or a transient failure would poison reads for the whole TTL.
+        if (cacheKey && ttl > 0 && res.ok && text) {
           try {
             const parsedResp = JSON.parse(text) as CachedRpc
-            await cacheSet(
-              cacheKey,
-              {
-                jsonrpc: parsedResp.jsonrpc ?? '2.0',
-                ...(parsedResp.error !== undefined
-                  ? { error: parsedResp.error }
-                  : { result: parsedResp.result }),
-              } satisfies CachedRpc,
-              ttl,
-            )
+            if (
+              parsedResp &&
+              parsedResp.error === undefined &&
+              parsedResp.result !== undefined
+            ) {
+              await cacheSet(
+                cacheKey,
+                {
+                  jsonrpc: parsedResp.jsonrpc ?? '2.0',
+                  result: parsedResp.result,
+                } satisfies CachedRpc,
+                ttl,
+              )
+            }
           } catch {
             // not JSON — leave uncached
           }
