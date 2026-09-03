@@ -292,7 +292,48 @@ async function dlmmOutcomeExistsForPosition(positionId: string): Promise<boolean
   }
 }
 
-/** Backfill strategy_outcomes rows for closed DLMM positions missing an outcome record. */
+/**
+ * Load recently-closed DLMM outcomes (within `cooldownMs`) so the sim-track can
+ * refuse to re-open a pool/token it has already closed on. Durable across
+ * position instances and restarts, unlike the transient position-table guard.
+ */
+export async function loadRecentlyClosedDlmmOutcomes(
+  cooldownMs: number,
+): Promise<import('@/utils/dlmm/reopen-guard').OutcomeReopenRow[]> {
+  const cutoff = new Date(Date.now() - cooldownMs).toISOString()
+  try {
+    const { rows } = await query<{
+      token_address: string | null
+      pool_address: string | null
+      exit_at: string | null
+      created_at: string | null
+    }>(
+      `SELECT token_address,
+              features->>'pool_address' AS pool_address,
+              exit_at,
+              created_at
+       FROM strategy_outcomes
+       WHERE domain = 'dlmm'
+         AND COALESCE(exit_at, created_at) >= $1
+       ORDER BY created_at DESC
+       LIMIT 500`,
+      [cutoff],
+    )
+    return rows.map((r) => ({
+      token_address: r.token_address,
+      pool_address: r.pool_address || null,
+      exit_at: r.exit_at,
+      created_at: r.created_at,
+    }))
+  } catch (error) {
+    if (isMissingSchemaError(error)) return []
+    console.warn(
+      '[strategies/outcomes] recent dlmm outcome lookup failed:',
+      error instanceof Error ? error.message : error,
+    )
+    return []
+  }
+}
 export async function syncMissingDlmmOutcomesFromPositions(
   limit = 20,
 ): Promise<number> {

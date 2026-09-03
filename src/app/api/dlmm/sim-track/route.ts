@@ -4,7 +4,10 @@ import { getAgentConfig, getLatestCandidates, getPositions } from '@/utils/dlmm/
 import { runDlmmScreen } from '@/utils/dlmm/screener'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
 import { getActiveDlmmForSim } from '@/strategies/load-dlmm'
-import { poolsBlockedByRecentClose } from '@/utils/dlmm/reopen-guard'
+import {
+  outcomeBlockedKeys,
+  poolsBlockedByRecentClose,
+} from '@/utils/dlmm/reopen-guard'
 
 export const maxDuration = 120
 
@@ -22,6 +25,16 @@ const OPEN_STATUSES = new Set(['open', 'out_of_range', 'pending'])
 /** Don't re-deploy a pool whose last position closed within this cooldown (min). */
 const REOPEN_COOLDOWN_MIN = Number(
   process.env.DLMM_REOPEN_COOLDOWN_MIN ?? 60,
+)
+
+/**
+ * Durable cooldown (min) for re-opening a token/pool we've already closed on,
+ * keyed off `strategy_outcomes`. This is the guard that actually stops the
+ * sim's open → close → reopen churn: even if the screener keeps re-offering the
+ * same pool, we refuse to re-enter within the window. Default 24h.
+ */
+const REOPEN_TOKEN_COOLDOWN_MIN = Number(
+  process.env.DLMM_REOPEN_TOKEN_COOLDOWN_MIN ?? 1440,
 )
 
 export async function POST(request: NextRequest) {
@@ -76,6 +89,29 @@ export async function POST(request: NextRequest) {
       positions,
       REOPEN_COOLDOWN_MIN * 60_000,
     )
+
+    // Durable token/pool re-entry guard — stops the sim from re-opening the
+    // same token after it was already closed, within a longer window than the
+    // transient position cooldown above. Sources BOTH the persistent
+    // strategy_outcomes ledger and the closed dlmm_positions rows, so it still
+    // bites even when a close never wrote an outcome row.
+    const tokenCooldownMs = REOPEN_TOKEN_COOLDOWN_MIN * 60_000
+    const { loadRecentlyClosedDlmmOutcomes } = await import(
+      '@/strategies/outcomes'
+    )
+    const recentOutcomePool = outcomeBlockedKeys(
+      await loadRecentlyClosedDlmmOutcomes(tokenCooldownMs),
+      tokenCooldownMs,
+    ).poolKeys
+    const recentLongWindowBlocked = poolsBlockedByRecentClose(
+      positions,
+      tokenCooldownMs,
+    )
+    const recentlyCleared = new Set<string>([
+      ...recentOutcomePool,
+      ...recentLongWindowBlocked,
+    ])
+
     const openCount = openPositions.length
 
     const { execution } = strategy.config
@@ -103,6 +139,13 @@ export async function POST(request: NextRequest) {
       if (recentCloseBlocked.has(candidate.pool_address)) {
         skippedPools.push(
           `${candidate.pool_address}: cooldown after recent close (${REOPEN_COOLDOWN_MIN}m)`,
+        )
+        continue
+      }
+
+      if (recentlyCleared.has(candidate.pool_address)) {
+        skippedPools.push(
+          `${candidate.pool_address}: already traded (cooldown ${REOPEN_TOKEN_COOLDOWN_MIN}m)`,
         )
         continue
       }
