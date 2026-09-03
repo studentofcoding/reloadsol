@@ -113,19 +113,26 @@ function readFeatureNumber(
   ...keys: string[]
 ): number | null {
   if (!features) return null
+  const nested =
+    features.domain_features && typeof features.domain_features === 'object'
+      ? (features.domain_features as Record<string, unknown>)
+      : null
   for (const key of keys) {
-    const value = features[key]
-    if (typeof value === 'number' && Number.isFinite(value)) return value
-    if (typeof value === 'string' && value.trim()) {
-      const n = Number(value)
-      if (Number.isFinite(n)) return n
+    for (const source of [features, nested]) {
+      const value = source?.[key]
+      if (typeof value === 'number' && Number.isFinite(value)) return value
+      if (typeof value === 'string' && value.trim()) {
+        const n = Number(value)
+        if (Number.isFinite(n)) return n
+      }
     }
   }
   return null
 }
 
-function telegramExtrasFromFeatures(
+export function telegramExtrasFromFeatures(
   features: Record<string, unknown> | null | undefined,
+  opts?: { preferExit?: boolean },
 ): {
   organicScore: number | null
   topHoldersPct: number | null
@@ -133,6 +140,12 @@ function telegramExtrasFromFeatures(
   kol: number | null
   marketCap: number | null
 } {
+  // On a CLOSE the "market cap" we report should be the exit/current mcap, not
+  // the entry. Prefer exit/current, falling back to entry only when no exit is
+  // present (e.g. mcap fields under domain_features after canonicalization).
+  const mcapKeys = opts?.preferExit
+    ? (['market_cap', 'exit_mcap', 'current_mcap', 'entry_mcap'] as const)
+    : (['market_cap', 'entry_mcap', 'exit_mcap', 'current_mcap'] as const)
   return {
     organicScore: readFeatureNumber(features, 'organic_score', 'organicScore'),
     topHoldersPct: readFeatureNumber(
@@ -143,13 +156,7 @@ function telegramExtrasFromFeatures(
     ),
     sm: readFeatureNumber(features, 'sm', 'sm_count', 'smart_money_count'),
     kol: readFeatureNumber(features, 'kol', 'kol_count'),
-    marketCap: readFeatureNumber(
-      features,
-      'market_cap',
-      'entry_mcap',
-      'exit_mcap',
-      'current_mcap',
-    ),
+    marketCap: readFeatureNumber(features, ...mcapKeys),
   }
 }
 
@@ -203,7 +210,9 @@ export function notifyStrategyClose(params: {
     params.tokenSymbol?.trim() ||
     readFeatureString(params.features, 'token_symbol', 'pool_name') ||
     params.tokenAddress.slice(0, 8)
-  const fromFeatures = telegramExtrasFromFeatures(params.features)
+  const fromFeatures = telegramExtrasFromFeatures(params.features, {
+    preferExit: true,
+  })
 
   void (async () => {
     const flags = await getStrategyNotifyFlags(params.domain, params.strategyId)
