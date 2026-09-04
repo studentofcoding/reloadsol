@@ -36,6 +36,7 @@ import {
   gmgnNativeToken,
   matchesTradeChainAddress,
 } from "@/utils/gmgn-currencies";
+import { walletsMatch } from "@/utils/rh-wallet-holdings";
 import { executeGmgnBulkSell } from "@/utils/gmgn-bulk-trade";
 import type { RhSwapQuote } from "@/utils/dlmm/rh-univ2-swap";
 import { executeRhParentKyberSell } from "@/utils/dlmm/rh-kyber-swap";
@@ -586,7 +587,11 @@ export default function BulkTokenSeller() {
   // Handle token selection
   const toggleTokenSelection = (token: UserToken) => {
     setSelectedTokens((prev) => {
-      const isSelected = prev.some((t) => t.mintAddress === token.mintAddress);
+      const isSelected = prev.some((t) =>
+        isRhChain
+          ? walletsMatch(t.mintAddress, token.mintAddress)
+          : t.mintAddress === token.mintAddress,
+      );
       if (isSelected) {
         return prev.filter((t) => t.mintAddress !== token.mintAddress);
       } else {
@@ -1826,13 +1831,16 @@ export default function BulkTokenSeller() {
     void autoSelectBestEndpoint(walletAddress, true);
   }, [fetchError, walletAddress, autoSelectBest, autoSelectBestEndpoint]);
 
-  if (
-    !isWalletReady &&
-    (selectedTokens.length > 0 || selectedZeroBalanceTokens.length > 0)
-  ) {
-    setSelectedTokens([]);
-    setSelectedZeroBalanceTokens([]);
-  }
+  useEffect(() => {
+    if (isRhChain) {
+      if (!tradeFromAddress) setSelectedTokens([]);
+      return;
+    }
+    if (!isWalletReady) {
+      setSelectedTokens([]);
+      setSelectedZeroBalanceTokens([]);
+    }
+  }, [isRhChain, tradeFromAddress, isWalletReady]);
 
   // Set up metadata update callback
   useEffect(() => {
@@ -1905,7 +1913,9 @@ export default function BulkTokenSeller() {
 
   const displayUserTokens = useMemo(() => {
     if (isRhChain) {
-      return (rhHoldingsQuery.data ?? []).filter((t) => (t.usdValue ?? 0) > 0);
+      return (rhHoldingsQuery.data ?? []).filter(
+        (t) => (t.uiAmount ?? 0) > 0,
+      );
     }
     if (showDustOnly) {
       return dustTokenList;
@@ -2491,11 +2501,15 @@ export default function BulkTokenSeller() {
                 );
               }
 
-              const isSelected = selectedTokens.some(
-                (t) => t.mintAddress === token.mintAddress,
+              const isSelected = selectedTokens.some((t) =>
+                isRhChain
+                  ? walletsMatch(t.mintAddress, token.mintAddress)
+                  : t.mintAddress === token.mintAddress,
               );
-              const selectedToken = selectedTokens.find(
-                (t) => t.mintAddress === token.mintAddress,
+              const selectedToken = selectedTokens.find((t) =>
+                isRhChain
+                  ? walletsMatch(t.mintAddress, token.mintAddress)
+                  : t.mintAddress === token.mintAddress,
               );
               return (
                 <ProgressiveTokenItem

@@ -121,7 +121,9 @@ const ProgressiveTokenItem: React.FC<ProgressiveTokenItemProps> = ({
               <div className="h-4 bg-gray-600 rounded w-20 animate-pulse"></div>
             ) : (
               <>
-                <span className="hidden sm:inline">{token.uiAmount.toFixed(6)}</span>
+                <span className="hidden sm:inline">
+                  {(Number(token.uiAmount) || 0).toFixed(6)}
+                </span>
                 {/* <span className="sm:hidden">{token.uiAmount.toFixed(0)}</span> */}
                 {/* Price with progressive loading */}
                 {token.isLoadingPrice ? (
