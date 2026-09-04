@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ReloadSOL — Documentation</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;1,400&amp;family=DM+Sans:wght@400;500;600&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --paper:#fafaf7; --paper2:#f0efe9; --ink:#163b2a; --muted:#5b6b60;
+    --soft:#8a968d; --accent:#84cc16; --link:#2e5aa8; --rule:rgba(22,59,42,0.14);
+    --sans:'DM Sans', system-ui, sans-serif;
+    --serif:'Fraunces', serif;
+    --mono:'Geist Mono', ui-monospace, monospace;
+  }
+  body { font-family:var(--sans); background:var(--paper); color:var(--ink); line-height:1.5; }
+  .wrap { max-width:1080px; margin:0 auto; padding:3.5rem 2rem 5rem; }
+  .eyebrow { font-family:var(--mono); font-size:.68rem; letter-spacing:.2em; text-transform:uppercase; color:var(--muted); }
+  h1 { font-family:var(--serif); font-weight:400; font-size:clamp(2rem,4vw,3rem); letter-spacing:-.02em; margin:.35rem 0 .5rem; }
+  .lede { color:var(--muted); max-width:60ch; margin-bottom:2.5rem; font-size:1.05rem; }
+
+  h2 { font-family:var(--mono); font-weight:500; font-size:.72rem; letter-spacing:.2em; text-transform:uppercase; color:var(--soft); margin:3rem 0 1rem; }
+  h2 .rule { display:inline-block; width:2.5rem; height:1px; background:var(--rule); vertical-align:middle; margin-right:.75rem; }
+
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:1rem; }
+  .card { display:flex; flex-direction:column; gap:.4rem; background:#fff; border:1px solid var(--rule); border-radius:8px; padding:1.15rem 1.25rem; text-decoration:none; color:inherit; transition:border-color .15s ease, transform .15s ease; }
+  .card:hover { border-color:var(--accent); transform:translateY(-1px); }
+  .card .num { font-family:var(--mono); font-size:.68rem; letter-spacing:.16em; color:var(--accent); }
+  .card h3 { font-size:1.05rem; font-weight:600; }
+  .card p { font-size:.9rem; color:var(--muted); }
+  .card .more { margin-top:auto; font-family:var(--mono); font-size:.7rem; color:var(--soft); letter-spacing:.08em; }
+
+  .diagram { background:#fff; border:1px solid var(--rule); border-radius:8px; margin-bottom:1rem; overflow:hidden; }
+  .diagram summary { display:flex; align-items:baseline; gap:.9rem; cursor:pointer; list-style:none; padding:1rem 1.25rem; }
+  .diagram summary::-webkit-details-marker { display:none; }
+  .diagram summary .num { font-family:var(--mono); font-size:.7rem; letter-spacing:.14em; color:var(--accent); }
+  .diagram summary .name { font-weight:600; font-size:1rem; }
+  .diagram summary .type { font-family:var(--mono); font-size:.66rem; letter-spacing:.12em; color:var(--soft); text-transform:uppercase; border:1px solid var(--rule); border-radius:4px; padding:.1rem .45rem; }
+  .diagram summary .open { margin-left:auto; font-family:var(--mono); font-size:.7rem; color:var(--link); text-decoration:none; white-space:nowrap; }
+  .diagram .preview { border-top:1px dashed var(--rule); }
+  .diagram iframe { width:100%; height:440px; border:0; display:block; background:var(--paper); }
+
+  .refs { columns:2; column-gap:2.5rem; }
+  .refs li { break-inside:avoid; margin-bottom:.45rem; font-size:.92rem; }
+  .refs a { color:var(--ink); text-decoration:none; border-bottom:1px solid var(--rule); }
+  .refs a:hover { border-bottom-color:var(--accent); }
+  .refs .tag { font-family:var(--mono); font-size:.66rem; color:var(--soft); margin-right:.5rem; }
+
+  .footer { margin-top:4rem; padding-top:1rem; border-top:1px solid var(--rule); font-family:var(--mono); font-size:.72rem; color:var(--soft); display:flex; justify-content:space-between; flex-wrap:wrap; gap:.5rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">ReloadSOL · Documentation</p>
+  <h1>Docs &amp; diagrams</h1>
+  <p class="lede">Condensed, codebase-accurate entry points into the ReloadSOL trading
+  platform — five category guides, six architecture diagrams, and the deeper references
+  they condense. Markdown source lives in this folder; the diagrams are standalone pages.</p>
+
+  <h2><span class="rule"></span>Category guides</h2>
+  <div class="grid">
+    <a class="card" href="./01-product-and-trading.md">
+      <span class="num">01 · PRODUCT</span>
+      <h3>Product &amp; trading</h3>
+      <p>Networks (sol · robinhood), bulk buy/sell, swap, chart-buy, PnL/history, swap
+      execution per wallet, and the receipt-gated confirmation lifecycle.</p>
+      <span class="more">OPEN →</span>
+    </a>
+    <a class="card" href="./02-architecture-and-data.md">
+      <span class="num">02 · ARCHITECTURE</span>
+      <h3>Architecture &amp; data</h3>
+      <p>Docker topology, Postgres schema + Redis, the TrackingRecord model, data flows,
+      and the deploy model.</p>
+      <span class="more">OPEN →</span>
+    </a>
+    <a class="card" href="./03-strategies-and-automation.md">
+      <span class="num">03 · AUTOMATION</span>
+      <h3>Strategies &amp; automation</h3>
+      <p>What a strategy is, the 25-worker inventory, sim vs real, kill switches,
+      circuit breaker, and re-entry guards.</p>
+      <span class="more">OPEN →</span>
+    </a>
+    <a class="card" href="./04-machine-learning.md">
+      <span class="num">04 · ML</span>
+      <h3>Machine learning</h3>
+      <p>ML purpose and consumers, the ml/ layout, export → train → evaluate → ship →
+      runtime ONNX, baselines, shadow-vs-enforce.</p>
+      <span class="more">OPEN →</span>
+    </a>
+    <a class="card" href="./05-operations-and-deployment.md">
+      <span class="num">05 · OPS</span>
+      <h3>Operations &amp; deployment</h3>
+      <p>Env keys, the 7-service Docker stack, the docker-deploy.sh runbook, migrations,
+      backup, and common failures.</p>
+      <span class="more">OPEN →</span>
+    </a>
+    <a class="card" href="./README.md">
+      <span class="num">HUB</span>
+      <h3>Markdown index</h3>
+      <p>The plain-markdown version of this page — the root README docs table points here.</p>
+      <span class="more">OPEN →</span>
+    </a>
+  </div>
+
+  <h2><span class="rule"></span>Diagrams — click to expand each preview</h2>
+
+  <details class="diagram" open>
+    <summary>
+      <span class="num">01</span>
+      <span class="name">Trading surfaces → execution → records</span>
+      <span class="type">Architecture</span>
+      <a class="open" href="./diagrams/01-trading-surfaces.html" target="_blank">OPEN FULL ↗</a>
+    </summary>
+    <div class="preview"><iframe src="./diagrams/01-trading-surfaces.html" loading="lazy" title="Trading surfaces diagram"></iframe></div>
+  </details>
+
+  <details class="diagram">
+    <summary>
+      <span class="num">02</span>
+      <span class="name">Trade confirmation lifecycle</span>
+      <span class="type">Sequence</span>
+      <a class="open" href="./diagrams/02-confirmation-lifecycle.html" target="_blank">OPEN FULL ↗</a>
+    </summary>
+    <div class="preview"><iframe src="./diagrams/02-confirmation-lifecycle.html" loading="lazy" title="Confirmation lifecycle diagram"></iframe></div>
+  </details>
+
+  <details class="diagram">
+    <summary>
+      <span class="num">03</span>
+      <span class="name">System architecture on one VPS</span>
+      <span class="type">Architecture</span>
+      <a class="open" href="./diagrams/03-system-architecture.html" target="_blank">OPEN FULL ↗</a>
+    </summary>
+    <div class="preview"><iframe src="./diagrams/03-system-architecture.html" loading="lazy" title="System architecture diagram"></iframe></div>
+  </details>
+
+  <details class="diagram">
+    <summary>
+      <span class="num">04</span>
+      <span class="name">Strategy engine spine</span>
+      <span class="type">Data flow</span>
+      <a class="open" href="./diagrams/04-strategy-engine.html" target="_blank">OPEN FULL ↗</a>
+    </summary>
+    <div class="preview"><iframe src="./diagrams/04-strategy-engine.html" loading="lazy" title="Strategy engine diagram"></iframe></div>
+  </details>
+
+  <details class="diagram">
+    <summary>
+      <span class="num">05</span>
+      <span class="name">ML pipeline</span>
+      <span class="type">Process</span>
+      <a class="open" href="./diagrams/05-ml-pipeline.html" target="_blank">OPEN FULL ↗</a>
+    </summary>
+    <div class="preview"><iframe src="./diagrams/05-ml-pipeline.html" loading="lazy" title="ML pipeline diagram"></iframe></div>
+  </details>
+
+  <details class="diagram">
+    <summary>
+      <span class="num">06</span>
+      <span class="name">Web deploy runbook</span>
+      <span class="type">Flow</span>
+      <a class="open" href="./diagrams/06-deploy-and-ops.html" target="_blank">OPEN FULL ↗</a>
+    </summary>
+    <div class="preview"><iframe src="./diagrams/06-deploy-and-ops.html" loading="lazy" title="Deploy runbook diagram"></iframe></div>
+  </details>
+
+  <h2><span class="rule"></span>Deep references (kept as-is)</h2>
+  <ul class="refs">
+    <li><span class="tag">PRODUCT</span><a href="./whole_process.md">whole_process.md</a></li>
+    <li><span class="tag">PRODUCT</span><a href="./SWAP_AND_CLOSE_FLOW.md">SWAP_AND_CLOSE_FLOW.md</a></li>
+    <li><span class="tag">PRODUCT</span><a href="./Overview.md">Overview.md</a></li>
+    <li><span class="tag">PRODUCT</span><a href="./trending_tracker.md">trending_tracker.md</a></li>
+    <li><span class="tag">PRODUCT</span><a href="./mcap-tracker.md">mcap-tracker.md</a></li>
+    <li><span class="tag">ARCH</span><a href="./ARCHITECTURE_SUMMARY.md">ARCHITECTURE_SUMMARY.md</a></li>
+    <li><span class="tag">ARCH</span><a href="./architecture.md">architecture.md</a></li>
+    <li><span class="tag">ARCH</span><a href="./API_ARCHITECTURE_SUMMARY.md">API_ARCHITECTURE_SUMMARY.md</a></li>
+    <li><span class="tag">STRAT</span><a href="./algo_overview.md">algo_overview.md</a></li>
+    <li><span class="tag">STRAT</span><a href="./STRATEGY_ARCHITECTURE.md">STRATEGY_ARCHITECTURE.md</a></li>
+    <li><span class="tag">STRAT</span><a href="./reloadsol_engine_strategies_and_ml.md">reloadsol_engine_strategies_and_ml.md</a></li>
+    <li><span class="tag">STRAT</span><a href="./GMGN_STRATEGY.md">GMGN_STRATEGY.md</a></li>
+    <li><span class="tag">STRAT</span><a href="./sol_arbitrations.md">sol_arbitrations.md</a></li>
+    <li><span class="tag">STRAT</span><a href="./MCAP_RANGE_RISK_REWARD.md">MCAP_RANGE_RISK_REWARD.md</a></li>
+    <li><span class="tag">STRAT</span><a href="./HOW_WE_GET_THE_SIGNALS.md">HOW_WE_GET_THE_SIGNALS.md</a></li>
+    <li><span class="tag">STRAT</span><a href="./FIX_STATUS_CONSTRAINT_README.md">FIX_STATUS_CONSTRAINT_README.md</a></li>
+    <li><span class="tag">ML</span><a href="./deep_dive_ml.md">deep_dive_ml.md</a></li>
+    <li><span class="tag">ML</span><a href="./ML_GATE_PLAN.md">ML_GATE_PLAN.md</a></li>
+    <li><span class="tag">ML</span><a href="./OPERATOR_STATE.md">OPERATOR_STATE.md</a></li>
+    <li><span class="tag">OLD</span><a href="./_archive/">_archive/</a></li>
+  </ul>
+
+  <div class="footer">
+    <span>ReloadSOL · docs hub</span>
+    <span>reloadsol-web · reloadsol-cron · Postgres · Redis</span>
+  </div>
+</div>
+</body>
+</html>
