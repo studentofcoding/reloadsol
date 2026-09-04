@@ -32,3 +32,6 @@ graphify-out/cache/
 graphify-out/
 .agents
 contracts/out/
+
+# macOS
+.DS_Store
