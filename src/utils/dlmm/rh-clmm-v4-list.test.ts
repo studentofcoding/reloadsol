@@ -72,10 +72,9 @@ describe('rh-clmm pool-state Redis cache (rec 3.2)', () => {
     expect(src).toContain('writeV4PoolStateCache')
     expect(src).toContain('{ ledgerHints, knownPoolStates, poolStatesOut }')
     expect(src).toContain('computePoolId(key)')
-    // Redis → DB → background-revalidate tiers preserved in the route
-    const route = await readSrc('src/app/api/dlmm/rh-clmm-live/route.ts')
-    expect(route).toContain('readRhClmmLiveRedis')
-    expect(route).toContain('readRhClmmLiveFromDb')
-    expect(route).toContain('refreshRhClmmLive(owner).catch')
+    // Redis → DB → background-revalidate tiers preserved via the loader helper
+    expect(src).toContain('readRhClmmLiveRedis')
+    expect(src).toContain('readRhClmmLiveFromDb')
+    expect(src).toContain('void refreshRhClmmLive(owner).catch')
   })
 })

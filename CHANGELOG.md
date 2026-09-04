@@ -8,6 +8,21 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — RH CLMM live snapshot no longer 504s on slow RPC crawl
+
+- `/api/dlmm/rh-clmm-live?fresh=1` used to force a full on-chain crawl with no
+  request budget — a cold Goldsky RH RPC crawl (N sequential reads) could exceed
+  the ~60s proxy limit and return **504 Gateway Timeout**.
+- Consolidates the route into `loadRhClmmLiveForOwner` (Redis ≤30s → DB marks
+  stale → bounded fresh crawl) so `fresh` is a preference, not a hard cache
+  bypass. The live crawl now has a **25s request budget**
+  (`RH_CLMM_FRESH_TIMEOUT_MS`) and each RPC call a 10s cap
+  (`RH_CLMM_RPC_TIMEOUT_MS`, `RH_CHAIN` transport timeout); when the crawl can't
+  finish in time it returns the cached/DB marks flagged `stale: true` instead of
+  erroring, so the frontend always gets positions (never a 504 HTML page).
+- Background revalidate (`void refreshRhClmmLive(owner).catch`) is preserved.
+- `rh-clmm-v4-list.test.ts` updated to pin the loader tiers in `rh-clmm-live.ts`.
+
 ### Fixed — RH DAMM v2 LP / DLMM pools: route returns JSON, never HTML
 
 - `lp-terminal-pools` GET no longer mixes Next 16.3 `'use cache'`/`cacheTag`/`cacheLife`

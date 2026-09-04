@@ -34,6 +34,16 @@ export {
 export const RH_CLMM_LIVE_TTL_SEC = 30
 export const RH_CLMM_LIVE_KEY_PREFIX = 'rh-clmm-live:v1:'
 
+/** Per-RPC-call timeout (Goldsky RH gateway can hang). Default 10s. */
+export const RH_CLMM_RPC_TIMEOUT_MS = 10_000
+
+/**
+ * Budget for a `fresh=1` live refresh inside one request. When the crawl can't
+ * finish in time (Cold RPC + N sequential reads > proxy ~60s), return the
+ * cached/DB marks marked stale instead of letting the request 504.
+ */
+export const RH_CLMM_FRESH_TIMEOUT_MS = 25_000
+
 export type RhClmmLiveCachePayload = {
   syncedAt: string
   positions: RhClmmLiveRow[]
@@ -127,7 +137,7 @@ export async function crawlRhClmmLive(
 
   const publicClient = createPublicClient({
     chain: RH_CHAIN,
-    transport: http(getRhRpcUrl()),
+    transport: http(getRhRpcUrl(), { timeout: RH_CLMM_RPC_TIMEOUT_MS }),
   })
 
   const onChain = await listOwnerPositions(
@@ -150,6 +160,74 @@ export async function crawlRhClmmLive(
     const key = `${p.protocol}:${p.tokenId.toString()}`
     return onChainToLiveRow(p, markByKey.get(key))
   })
+}
+
+/**
+ * Cached fallback for the bounded live crawl. Any of Redis/DB rows will do —
+ * the UI marks it `stale`, but a live position list (stale) beats a 504 with
+ * no positions at all.
+ */
+async function readRhClmmLiveAnyCached(
+  owner: string,
+): Promise<RhClmmLiveCachePayload | null> {
+  const cached = await readRhClmmLiveRedis(owner)
+  if (cached?.positions?.length) return cached
+  const dbRows = await readRhClmmLiveFromDb(owner)
+  if (dbRows.length > 0) {
+    return { syncedAt: '', positions: dbRows }
+  }
+  return null
+}
+
+/** Bounded live refresh for a single request — Redis/DB rows when it bails. */
+export async function refreshRhClmmLiveBounded(
+  owner: string,
+): Promise<{ payload: RhClmmLiveCachePayload | null; stale: boolean }> {
+  const started = Date.now()
+  try {
+    const payload = await Promise.race([
+      refreshRhClmmLive(owner),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () =>
+            reject(
+              new Error(
+                `Live refresh timed out after ${
+                  (Date.now() - started) / 1000
+                }s — returning cached`,
+              ),
+            ),
+          RH_CLMM_FRESH_TIMEOUT_MS,
+        ),
+      ),
+    ])
+    return { payload, stale: false }
+  } catch (err) {
+    if (
+      err instanceof Error &&
+      err.message.includes('returning cached') &&
+      !err.message.includes('not returning cached')
+    ) {
+      console.warn(
+        `[rh-clmm-live] ${err.message} for ${owner.trim().toLowerCase()}`,
+      )
+    } else {
+      console.warn(
+        '[rh-clmm-live] live refresh failed',
+        err instanceof Error ? err.message : err,
+      )
+    }
+    const fallback = await readRhClmmLiveAnyCached(owner).catch(
+      (cacheErr) => {
+        console.warn(
+          '[rh-clmm-live] cached fallback read failed',
+          cacheErr instanceof Error ? cacheErr.message : cacheErr,
+        )
+        return null
+      },
+    )
+    return { payload: fallback, stale: true }
+  }
 }
 
 export async function writeRhClmmLiveCache(
@@ -191,4 +269,71 @@ export async function refreshRhClmmLive(
 ): Promise<RhClmmLiveCachePayload> {
   const positions = await crawlRhClmmLive(owner)
   return writeRhClmmLiveCache(owner, positions)
+}
+
+export type RhClmmLiveResponse = {
+  success: boolean
+  source: 'live' | 'redis' | 'db'
+  stale: boolean
+  syncedAt: string | null
+  positions: RhClmmLiveRow[]
+  error?: string
+}
+
+/**
+ * Single-request live snapshot:
+ * 1. Redis (≤30s) → 2. DB marks (stale) → 3. bounded fresh crawl (stale fallback).
+ */
+export async function loadRhClmmLiveForOwner(
+  owner: string,
+): Promise<RhClmmLiveResponse> {
+  const cached = await readRhClmmLiveRedis(owner)
+  if (cached?.positions?.length) {
+    return {
+      success: true,
+      source: 'redis',
+      stale: false,
+      syncedAt: cached.syncedAt,
+      positions: cached.positions,
+    }
+  }
+
+  const dbRows = await readRhClmmLiveFromDb(owner)
+  if (dbRows.length > 0) {
+    // Background revalidate — do not block the response.
+    void refreshRhClmmLive(owner).catch((e) => {
+      console.warn(
+        '[rh-clmm-live] background refresh failed',
+        e instanceof Error ? e.message : e,
+      )
+    })
+    return {
+      success: true,
+      source: 'db',
+      stale: true,
+      syncedAt: null,
+      positions: dbRows,
+    }
+  }
+
+  // Cold start — bounded crawl; falls back to cached/DB marks on timeout.
+  const { payload, stale } = await refreshRhClmmLiveBounded(owner)
+  if (!payload) {
+    return {
+      success: false,
+      source: 'db',
+      stale: true,
+      syncedAt: null,
+      positions: [],
+      error:
+        'Live CLMM snapshot unavailable right now — no cached positions found. Try again shortly.',
+    }
+  }
+  return {
+    success: true,
+    source: stale ? 'db' : 'live',
+    stale,
+    syncedAt: payload.syncedAt,
+    positions: payload.positions,
+  }
 }
