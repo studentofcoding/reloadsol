@@ -52,6 +52,30 @@ type Step =
   | 'done'
   | 'error'
 
+async function fetchLpPools(
+  sp: URLSearchParams,
+): Promise<LpTerminalPoolsResponse & { success?: boolean; error?: string }> {
+  const res = await fetch(`/api/dlmm/lp-terminal-pools?${sp}`)
+  const contentType = res.headers.get('content-type') ?? ''
+  // Guard against an HTML error page coming back instead of JSON (which would
+  // otherwise surface as a cryptic "Unexpected token '<', ... is not valid JSON").
+  if (!contentType.includes('application/json')) {
+    throw new Error(
+      res.ok
+        ? 'Pools indexer returned a non-JSON response'
+        : `Pools indexer unreachable (HTTP ${res.status})`,
+    )
+  }
+  const data = (await res.json()) as LpTerminalPoolsResponse & {
+    success?: boolean
+    error?: string
+  }
+  if (!res.ok || data.success === false) {
+    throw new Error(data.error || 'Failed to load pools')
+  }
+  return data
+}
+
 async function fetchPoolsForToken(token: string): Promise<{
   pools: LpTerminalPoolRaw[]
   tokens: Record<string, LpTerminalTokenMeta>
@@ -62,14 +86,7 @@ async function fetchPoolsForToken(token: string): Promise<{
     sort: 'tvl',
     limit: '100',
   })
-  const res = await fetch(`/api/dlmm/lp-terminal-pools?${sp}`)
-  const data = (await res.json()) as LpTerminalPoolsResponse & {
-    success?: boolean
-    error?: string
-  }
-  if (!res.ok || data.success === false) {
-    throw new Error(data.error || 'Failed to load pools')
-  }
+  const data = await fetchLpPools(sp)
   return { pools: data.pools ?? [], tokens: data.tokens ?? {} }
 }
 
@@ -83,10 +100,7 @@ async function fetchPoolByAddress(address: string): Promise<{
     sort: 'tvl',
     limit: '20',
   })
-  const res = await fetch(`/api/dlmm/lp-terminal-pools?${sp}`)
-  const data = (await res.json()) as LpTerminalPoolsResponse & {
-    success?: boolean
-  }
+  const data = await fetchLpPools(sp)
   const pools = data.pools ?? []
   const pool =
     pools.find(

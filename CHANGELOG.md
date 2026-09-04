@@ -8,6 +8,25 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — RH DAMM v2 LP / DLMM pools: route returns JSON, never HTML
+
+- `lp-terminal-pools` GET no longer mixes Next 16.3 `'use cache'`/`cacheTag`/`cacheLife`
+  with a live `fetch` — under `cacheComponents` that prerendered the route to an HTML
+  shell and HTML-leaked a `<!DOCTYPE …` page, breaking both the RL pools table and the
+  DAMM v2 LP sheet ("Resolving univ2 pool…" then `Unexpected token '<'… is not valid JSON`).
+  Kept a bare `await connection()` (dynamic bailout; `force-dynamic` is incompatible with
+  `cacheComponents`), so every path returns JSON.
+- A primary LP Terminal indexer that returns non-JSON/HTML (e.g. retired → HTTP 410/page)
+  now throws and falls back to the Goldsky Robinhood UniV2 subgraph instead of hard-failing
+  with a 502 `"Invalid JSON from indexer"`.
+- Subgraph search now resolves a DAMM (UniV2) pool by **pool address** via `id_contains`
+  (`buildSubgraphPairsWhere`), plus token0/token1 OR probes — the sheet's by-address lookup
+  works again.
+- `RhUniv2LpSheet` and `useLpTerminalPools` now guard `.json()` against non-JSON responses,
+  replacing the cryptic parse error with a clear "indexer unreachable / non-JSON" message.
+- Adds `src/app/api/dlmm/lp-terminal-pools/route.test.ts` pinning the body parser and the
+  subgraph `where` builder.
+
 ### Fixed — RH trade confirmation waits for on-chain confirmation
 
 - Sequential (non-atomic Rabby) writes now check `receipt.status`; a **reverted** tx is

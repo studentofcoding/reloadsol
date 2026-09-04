@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse, connection } from 'next/server'
-import { cacheTag, cacheLife } from 'next/cache'
 import { getLpTerminalIndexerBase } from '@/utils/dlmm/lp-terminal'
 import type { LpTerminalPoolRaw, LpTerminalTokenMeta } from '@/utils/dlmm/lp-terminal-pools'
 
@@ -15,14 +14,14 @@ const RH_UNIV2_SUBGRAPH =
 const QUOTE_ORDER = ['USDG', 'USDC', 'USDT', 'WETH', 'UP'] as const
 
 /**
- * Cached upstream fetch for LP Terminal pools. `'use cache'` (Next 16.3 Cache
- * Components) makes the response reusable across requests for the same params
- * and invalidatable via `updateTag('lp-terminal-pools')`.
+ * Upstream fetch for LP Terminal pools. Plain `fetch` (no `'use cache'` /
+ * `cacheTag` / `cacheLife`): under Next 16.3 `cacheComponents` an API route
+ * that mixes the experimental cache with live `fetch` gets prerendered to an
+ * HTML shell, which HTML-leaks to clients as `<!DOCTYPE …`. The JSON response
+ * already sets `Cache-Control: s-maxage=30` for proxy/CDN caching, so no
+ * experimental cache machinery is needed here.
  */
-async function fetchLpPoolsCached(url: string): Promise<string> {
-  'use cache'
-  cacheTag('lp-terminal-pools')
-  cacheLife('minutes')
+async function fetchLpPoolsRaw(url: string): Promise<string> {
   const res = await fetch(url, {
     headers: { Accept: 'application/json' },
     signal: AbortSignal.timeout(20_000),
@@ -32,6 +31,28 @@ async function fetchLpPoolsCached(url: string): Promise<string> {
     throw new Error(`Indexer HTTP ${res.status}`)
   }
   return text
+}
+
+/**
+ * Parse the LP Terminal indexer body. Throws when the body isn't JSON — e.g. an
+ * HTML error/redirect page from a retired endpoint — so callers can fall back
+ * to the subgraph instead of returning a bogus 502.
+ */
+export function parseLpIndexerBody(text: string): unknown {
+  const trimmed = text.trim()
+  if (!trimmed) return null
+  if (trimmed.startsWith('<')) {
+    throw new Error('Indexer returned non-JSON (likely HTML)')
+  }
+  try {
+    return JSON.parse(trimmed)
+  } catch {
+    throw new Error('Indexer returned invalid JSON')
+  }
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback
 }
 
 type SubgraphPair = {
@@ -57,9 +78,36 @@ function gqlStr(s: string): string {
 }
 
 /**
+ * Build the `where` clause for the Robinhood UniV2 subgraph. The `q` filter
+ * OR-matches the pool `id` (so a pool-address lookup resolves) OR either token's
+ * identity (address contains / symbol). Uses a single top-level `or` so that a
+ * token search doesn't require *both* sides of a pair to match.
+ */
+export function buildSubgraphPairsWhere(opts: {
+  q?: string
+  minTvl?: string
+}): string {
+  const whereParts: string[] = []
+  if (opts.minTvl) {
+    const min = Number(opts.minTvl)
+    if (Number.isFinite(min) && min > 0) {
+      whereParts.push(`reserveUSD_gte: "${gqlStr(String(min))}"`)
+    }
+  }
+  if (opts.q) {
+    const q = opts.q.trim().toLowerCase()
+    const tokenFilter = `{ or: [{ id_contains: "${gqlStr(q)}" }, { symbol_contains_nocase: "${gqlStr(q)}" }] }`
+    whereParts.push(
+      `or: [{ id_contains: "${gqlStr(q)}" }, { token0_: ${tokenFilter} }, { token1_: ${tokenFilter} }]`,
+    )
+  }
+  return whereParts.length > 0 ? `where: { ${whereParts.join(' ')} }` : ''
+}
+
+/**
  * Fetch UniV2 pools from the Goldsky RH subgraph and shape them into the same
  * LpTerminalPoolRaw contract the frontend expects. Only used when the primary
- * indexer is unreachable (public indexer retired → HTTP 410).
+ * indexer is unreachable (primary indexer retired → HTTP 410).
  */
 async function fetchRhUniv2FromSubgraph(opts: {
   q?: string
@@ -71,22 +119,7 @@ async function fetchRhUniv2FromSubgraph(opts: {
   const orderBy =
     opts.sort === 'vol' ? 'volumeUSD' : opts.sort === 'created' ? 'createdAtTimestamp' : 'reserveUSD'
 
-  const whereParts: string[] = []
-  if (opts.minTvl) {
-    const min = Number(opts.minTvl)
-    if (Number.isFinite(min) && min > 0) whereParts.push(`reserveUSD_gte: "${gqlStr(String(min))}"`)
-  }
-  if (opts.q) {
-    const q = opts.q.trim().toLowerCase()
-    whereParts.push(
-      `token0_: { or: [{ id_contains: "${gqlStr(q)}" }, { symbol_contains_nocase: "${gqlStr(q)}" }] }`,
-    )
-    whereParts.push(
-      `token1_: { or: [{ id_contains: "${gqlStr(q)}" }, { symbol_contains_nocase: "${gqlStr(q)}" }] }`,
-    )
-  }
-
-  const whereClause = whereParts.length > 0 ? `where: { ${whereParts.join(' ')} }` : ''
+  const whereClause = buildSubgraphPairsWhere({ q: opts.q, minTvl: opts.minTvl })
   const first = Math.min(500, Math.max(1, opts.limit))
   const skip = Math.min(20_000, Math.max(0, opts.offset))
 
@@ -166,22 +199,28 @@ async function fetchRhUniv2FromSubgraph(opts: {
 }
 
 export async function GET(req: NextRequest) {
+  // Dynamic GET route (reads search params, does live fetch): calling
+  // `await connection()` bails the route out of the cacheComponents static
+  // shell. Explicitly NOT setting `force-dynamic`, which is incompatible with
+  // cacheComponents. The route's old `'use cache'`/`cacheTag`/`cacheLife`
+  // wrapper was removed because it caused this route to be prerendered into an
+  // HTML shell that HTML-leaked to clients as a `<!DOCTYPE …` page.
   await connection()
   const sp = req.nextUrl.searchParams
   const upstreamBase = getLpTerminalIndexerBase()
   const params = new URLSearchParams()
 
-  const q = sp.get('q')?.trim()
+  const q = sp.get('q')?.trim() || undefined
   if (q) params.set('q', q)
 
-  const proto = sp.get('proto')?.trim()
+  const proto = sp.get('proto')?.trim() || undefined
   if (proto) params.set('proto', proto)
 
-  const minTvl = sp.get('min_tvl') ?? sp.get('minTvl')
+  const minTvl = sp.get('min_tvl') ?? sp.get('minTvl') ?? undefined
   if (minTvl != null && minTvl !== '') params.set('min_tvl', minTvl)
 
   const sortRaw = sp.get('sort')?.trim() || 'vol'
-  const sort = ALLOWED_SORT.has(sortRaw) ? sortRaw : 'vol'
+  const sort = ALLOWED_SORT.has(sortRaw) ? (sortRaw as 'tvl' | 'vol' | 'created') : 'vol'
   params.set('sort', sort)
 
   const limitRaw = Number(sp.get('limit') ?? 100)
@@ -199,21 +238,8 @@ export async function GET(req: NextRequest) {
   const url = `${upstreamBase}/api/pools?${params.toString()}`
 
   try {
-    const text = await fetchLpPoolsCached(url)
-    let body: unknown = null
-    try {
-      body = text.trim() ? JSON.parse(text) : null
-    } catch {
-      return NextResponse.json(
-        {
-          success: false,
-          error: `Invalid JSON from indexer (${'unknown status'})`,
-          upstream: upstreamBase,
-        },
-        { status: 502 },
-      )
-    }
-
+    const text = await fetchLpPoolsRaw(url)
+    const body = parseLpIndexerBody(text)
     return NextResponse.json(
       { success: true, upstream: upstreamBase, ...(body as object) },
       {
@@ -223,17 +249,14 @@ export async function GET(req: NextRequest) {
       },
     )
   } catch (error) {
-    // Primary indexer unreachable (e.g. public LP Terminal indexer retired
-    // with HTTP 410). Fall back to the Goldsky RH UniV2 subgraph so the RH
-    // DLMM pools table keeps working.
+    // Primary indexer unreachable OR returned non-JSON/HTML (e.g. the public LP
+    // Terminal indexer retired → HTTP 410 or an HTML page). Fall back to the
+    // Goldsky RH UniV2 subgraph so the RH DLMM pools table keeps working.
     if (proto && proto !== 'univ2') {
       return NextResponse.json(
         {
           success: false,
-          error:
-            error instanceof Error
-              ? error.message
-              : 'Failed to reach LP Terminal indexer',
+          error: errorMessage(error, 'Failed to reach LP Terminal indexer'),
           upstream: upstreamBase,
         },
         { status: 502 },
@@ -246,7 +269,7 @@ export async function GET(req: NextRequest) {
         sort,
         limit,
         offset,
-        minTvl: minTvl ?? undefined,
+        minTvl,
       })
       return NextResponse.json(
         {
@@ -268,10 +291,10 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          error:
-            error instanceof Error
-              ? error.message
-              : 'Failed to reach LP Terminal indexer',
+          error: errorMessage(
+            fallbackErr,
+            errorMessage(error, 'Failed to reach LP Terminal indexer'),
+          ),
           upstream: upstreamBase,
         },
         { status: 502 },

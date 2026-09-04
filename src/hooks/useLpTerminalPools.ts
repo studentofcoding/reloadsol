@@ -41,6 +41,16 @@ async function fetchLpTerminalPools(
   sp.set('limit', String(params.limit ?? 100))
 
   const res = await fetch(`/api/dlmm/lp-terminal-pools?${sp.toString()}`)
+  const contentType = res.headers.get('content-type') ?? ''
+  if (!contentType.includes('application/json')) {
+    // Guard against an HTML error page (e.g. a Next/bind-500 doc) masquerading
+    // as JSON — parsing it would surface a cryptic "Unexpected token '<'".
+    throw new Error(
+      res.ok
+        ? 'LP Terminal returned a non-JSON response'
+        : `LP Terminal unreachable (HTTP ${res.status})`,
+    )
+  }
   const data = (await res.json()) as ProxyResponse
   if (!res.ok || data.success === false) {
     throw new Error(data.error || 'Failed to fetch LP Terminal pools')
