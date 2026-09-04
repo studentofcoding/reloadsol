@@ -8,6 +8,33 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Trending prices routes no longer HTML-leak (use-cache pattern removed)
+
+- `/api/trending/prices` and `/api/trending/volume-1h-buyers-1000` still mixed
+  Next 16.3 `'use cache'`/`cacheTag`/`cacheLife` with a live `fetch` inside a
+  `connection()` API route — the same prerender-to-HTML bug that hit
+  `lp-terminal-pools`. Under `cacheComponents` these could serve an HTML shell
+  to the 10s price poll and surface as "Unexpected token '<'". Removed the
+  experimental cache (kept `await connection()` + response `Cache-Control`),
+  and bounded the upstream Jupiter fetches with a 15s timeout.
+
+### Changed — Trade-page charts use the DLMM-style GmgnKlineChart wrapper
+
+- `BulkTokenBuyer`, `BulkTokenSeller` and `PnLTracker` chart iframes now use the
+  same `GmgnKlineChart` the DLMM/Hunter panels render many of — stable lazy
+  iframe + built-in loading overlay + "Open on GMGN" link. Removes the manual
+  `isChartLoading` overlay/state in each and the direct `src={getGmgnKlineUrl}`
+  mutation, so changing the selected token remounts cleanly instead of mutating
+  a live GMGN/TradingView chart (the "crash on sell" trigger).
+
+### Added — Social links on Trending Tokens buy-page cards
+
+- Each Trending Tokens card now shows clickable **Twitter / Telegram / Website**
+  links (open in a new tab, `stopPropagation` so they don't trigger the
+  add-to-list click), sourced from the GMGN rank social fields already carried
+  by the RH feed. Sol cards degrade to nothing when the Jupiter feed has no
+  socials.
+
 ### Added — Condensed docs (5 categories) + architecture diagrams
 
 - **`docs/01-product-and-trading.md`** · **`docs/02-architecture-and-data.md`** ·

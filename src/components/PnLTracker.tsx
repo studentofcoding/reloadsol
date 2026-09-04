@@ -6,7 +6,7 @@ import {
   TrackingRecord,
   fetchTokenPricesForTracking,
 } from "@/utils/trading-tracker";
-import { getGmgnKlineUrl } from "@/utils/gmgn";
+import GmgnKlineChart from "@/components/GmgnKlineChart";
 import { useWallet, useConnection } from "./WalletProvider";
 import { usePortfolioWallet } from "@/hooks/usePortfolioWallet";
 import { useTradingData } from "./TradingDataProvider";
@@ -258,7 +258,6 @@ export default function PnLTracker() {
 
   // Token chart state
   const [selectedToken, setSelectedToken] = useState<string>("");
-  const [isChartLoading, setIsChartLoading] = useState<boolean>(false);
 
   // ✅ NEW: Notification state
   const [notificationsEnabled, setNotificationsEnabled] = useState<boolean>(
@@ -436,7 +435,6 @@ export default function PnLTracker() {
   const handleOpenChart = useCallback(
     (mintAddress: string, symbol?: string) => {
       setSelectedToken(mintAddress);
-      setIsChartLoading(true);
     },
     [],
   );
@@ -1982,7 +1980,6 @@ export default function PnLTracker() {
   // Handle token selection for chart display
   const handleSelectToken = useCallback((mintAddress: string) => {
     setSelectedToken(mintAddress);
-    setIsChartLoading(true);
   }, []);
 
   // ✅ NEW: Manual share trigger function (for existing share buttons)
@@ -2586,7 +2583,6 @@ export default function PnLTracker() {
             <button
               onClick={() => {
                 setSelectedToken("");
-                setIsChartLoading(false);
               }}
               className="text-gray-400 hover:text-white transition-colors"
               title="Close Chart"
@@ -2595,31 +2591,13 @@ export default function PnLTracker() {
             </button>
           </div>
           <div className="p-3">
-            {isChartLoading && (
-              <div className="flex items-center justify-center py-8">
-                <div className="flex items-center space-x-2">
-                  <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
-                  <span className="text-gray-400">Loading chart...</span>
-                </div>
-              </div>
-            )}
-            <iframe
-              src={getGmgnKlineUrl(selectedToken, { interval: "1D", theme: "dark" })}
-              height="400"
-              className="w-full rounded-lg"
-              style={{
-                border: "none",
-                display: isChartLoading ? "none" : "block",
-              }}
-              title={`GMGN Chart - ${selectedToken}`}
-              onLoad={() => setIsChartLoading(false)}
-              onError={() => {
-                console.error("Chart failed to load for token:", selectedToken);
-                setIsChartLoading(false);
-              }}
-              allowFullScreen
-              frameBorder="0"
-              sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+            {/* DLMM-style chart: stable lazy iframe + loading state + open-on-GMGN */}
+            <GmgnKlineChart
+              key={`pnl-chart-${selectedToken}`}
+              tokenMint={selectedToken}
+              height={400}
+              interval="1D"
+              className="rounded-lg"
             />
           </div>
         </div>

@@ -58,7 +58,7 @@ import {
   calculateFeeToMarketCapRatio,
 } from "@/utils/axiom";
 import { fetchTokenPricesForTracking } from "@/utils/trading-tracker";
-import { getGmgnKlineUrl } from "@/utils/gmgn";
+import GmgnKlineChart from "@/components/GmgnKlineChart";
 import {
   ADD_TOKEN_TO_LIST_EVENT,
   drainBuyPendingMints,
@@ -198,7 +198,6 @@ export default function BulkTokenBuyer() {
   const [selectedTokenInfo, setSelectedTokenInfo] = useState<TokenInfo | null>(
     null,
   );
-  const [isChartLoading, setIsChartLoading] = useState<boolean>(false);
 
   // Duplicate auto-select effect removed (see later effect after validMints declaration)
 
@@ -524,8 +523,6 @@ export default function BulkTokenBuyer() {
     async (mintAddress: string) => {
       // Show chart for the selected token
       setSelectedToken(mintAddress);
-      setIsChartLoading(true);
-
       // Try to find token info from existing sources first
       const searchToken = searchResults.find(
         (token) =>
@@ -1736,25 +1733,13 @@ export default function BulkTokenBuyer() {
                     })()}
                   </div>
                   <div className="bg-gray-800 border border-gray-600 rounded-xl p-0 overflow-hidden relative">
-                    {isChartLoading && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-gray-900/50 bg-opacity-75 z-10">
-                        <div className="w-8 h-8 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
-                      </div>
-                    )}
-                    <iframe
+                    {/* DLMM-style chart: stable lazy iframe + loading state + open-on-GMGN */}
+                    <GmgnKlineChart
                       key={`gmgn-chart-${effectiveChain}-${selectedToken}`}
-                      src={getGmgnKlineUrl(selectedToken, {
-                        interval: "1D",
-                        theme: "dark",
-                        chain: effectiveChain,
-                      })}
-                      height="400"
-                      className="w-full"
-                      style={{ border: "none" }}
-                      title={`GMGN Chart - ${selectedToken}`}
-                      onLoad={() => setIsChartLoading(false)}
-                      allowFullScreen
-                      frameBorder="0"
+                      tokenMint={selectedToken}
+                      chain={effectiveChain}
+                      height={400}
+                      interval="1D"
                     />
                   </div>
                 </div>

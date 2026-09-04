@@ -63,6 +63,15 @@ interface TokenPrice {
   change_5m: number
 }
 
+function socialUrl(raw: string | undefined, kind: 'twitter' | 'telegram' | 'website'): string | null {
+  const v = raw?.trim()
+  if (!v) return null
+  if (v.startsWith('http://') || v.startsWith('https://')) return v
+  if (kind === 'twitter') return `https://x.com/${v.replace(/^@/, '')}`
+  if (kind === 'telegram') return `https://t.me/${v.replace(/^@/, '').replace(/^https?:\/\/t\.me\//, '')}`
+  return `https://${v}`
+}
+
 export default function TrendingTokens({
   onSelectToken,
   preview = false,
@@ -537,6 +546,43 @@ export default function TrendingTokens({
                 {/* DLMM-card parity stats (Mcap / Vol / Liq / Holders / SM / Hot …) */}
                 <div className="mt-2 pt-2 border-t border-gray-700">
                   <TokenStatsGrid stats={tokenStats(token)} />
+                </div>
+
+                {/* Social links — open in a new tab */}
+                <div className="flex flex-wrap gap-3 text-xs mt-2">
+                  {socialUrl(token.twitter, 'twitter') && (
+                    <a
+                      href={socialUrl(token.twitter, 'twitter')!}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-sky-400 hover:underline"
+                    >
+                      𝕏 Twitter
+                    </a>
+                  )}
+                  {socialUrl(token.telegram, 'telegram') && (
+                    <a
+                      href={socialUrl(token.telegram, 'telegram')!}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-blue-400 hover:underline"
+                    >
+                      ✈ Telegram
+                    </a>
+                  )}
+                  {socialUrl(token.website, 'website') && (
+                    <a
+                      href={socialUrl(token.website, 'website')!}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-gray-300 hover:underline"
+                    >
+                      🌐 Website
+                    </a>
+                  )}
                 </div>
 
                 {/* Axiom Risk Indicators */}

@@ -1,5 +1,4 @@
 import { NextResponse, connection } from 'next/server'
-import { cacheTag, cacheLife } from 'next/cache'
 import { JupiterBaseAsset, JupiterPool, JupiterResponse } from '@/types'
 
 interface TokenPrice {
@@ -9,15 +8,13 @@ interface TokenPrice {
 }
 
 /**
- * Cached upstream fetch + transform for trending pools with 1h buyer count
- * >= 1000. `'use cache'` makes the result reusable and invalidatable via
- * `updateTag('trending-prices')`.
+ * Fetch + transform for trending pools with 1h buyer count >= 1000.
+ * Deliberately NOT `'use cache'`/`cacheTag`/`cacheLife`: under Next 16.3
+ * `cacheComponents` an API route that mixes the experimental cache with a live
+ * `fetch` gets prerendered into an HTML shell that HTML-leaks to clients.
+ * The response already sets `Cache-Control: s-maxage=10`.
  */
 async function getTrendingBuyers1hCached(): Promise<TokenPrice[]> {
-  'use cache'
-  cacheTag('trending-prices')
-  cacheLife('seconds')
-
   const TRENDING_URLS = [
     'https://datapi.jup.ag/v1/pools/toptrending/1h?minNumNetBuyers1h=1000',
     'https://api.jup.ag/v1/pools/toptrending/1h?minNumNetBuyers1h=1000'
@@ -32,7 +29,8 @@ async function getTrendingBuyers1hCached(): Promise<TokenPrice[]> {
           accept: 'application/json',
           'cache-control': 'no-cache',
           'user-agent': 'reloadsol-bot/1.0 (+https://reloadsol.xyz)'
-        }
+        },
+        signal: AbortSignal.timeout(15_000),
       })
 
       if (response.ok) break

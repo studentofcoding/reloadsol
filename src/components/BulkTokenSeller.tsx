@@ -77,7 +77,7 @@ import {
 } from "@/utils/solana";
 import { trackSell, trackClose } from "@/utils/operations-api";
 import { fetchTokenPricesForTracking } from "@/utils/trading-tracker";
-import { getGmgnKlineUrl } from "@/utils/gmgn";
+import GmgnKlineChart from "@/components/GmgnKlineChart";
 import { useTradingData } from "./TradingDataProvider";
 // ✅ NEW: Import PnL sharing system
 import { usePnLShare } from "@/hooks/usePnLShare";
@@ -290,7 +290,6 @@ export default function BulkTokenSeller() {
   );
   const [error, setError] = useState<string>("");
   const [selectedToken, setSelectedToken] = useState<string>("");
-  const [isChartLoading, setIsChartLoading] = useState<boolean>(false);
   const [showDustOnly, setShowDustOnly] = useState<boolean>(false);
   const [showZeroBalance, setShowZeroBalance] = useState<boolean>(false);
   const [showRpcPanel, setShowRpcPanel] = useState<boolean>(false);
@@ -1845,7 +1844,6 @@ export default function BulkTokenSeller() {
   const handleSelectToken = useCallback((mintAddress: string) => {
     // Show chart for the selected token
     setSelectedToken(mintAddress);
-    setIsChartLoading(true);
   }, []);
 
   const zeroBalanceMintSet = useMemo(
@@ -2052,37 +2050,24 @@ export default function BulkTokenSeller() {
       <div className="space-y-8">
         {/* Token Chart Section */}
         {selectedToken && (
-          <div className="space-y-3">
-            <div className="flex justify-between items-center">
-              <label className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
-                Token Chart
-              </label>
-              <span className="text-xs font-mono text-gray-400">
-                {selectedToken}
-              </span>
-            </div>
-            <div className="bg-gray-800 border border-gray-600 rounded-xl p-0 overflow-hidden relative">
-              {isChartLoading && (
-                <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-75 z-10">
-                  <div className="w-8 h-8 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
-                </div>
-              )}
-              <iframe
-                src={getGmgnKlineUrl(selectedToken, {
-                  interval: "1D",
-                  theme: "dark",
-                  chain: effectiveChain,
-                })}
-                height="400"
-                className="w-full"
-                style={{ border: "none" }}
-                title={`GMGN Chart - ${selectedToken}`}
-                onLoad={() => setIsChartLoading(false)}
-                allowFullScreen
-                frameBorder="0"
+            <div className="space-y-3">
+              <div className="flex justify-between items-center">
+                <label className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
+                  Token Chart
+                </label>
+                <span className="text-xs font-mono text-gray-400">
+                  {selectedToken}
+                </span>
+              </div>
+              {/* DLMM-style chart: stable, lazy iframe + loading state + open-on-GMGN */}
+              <GmgnKlineChart
+                tokenMint={selectedToken}
+                chain={effectiveChain}
+                height={400}
+                interval="1D"
+                className="rounded-xl border-gray-600"
               />
             </div>
-          </div>
         )}
 
         {isSolTrade && connected ? (
