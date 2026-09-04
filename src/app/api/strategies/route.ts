@@ -36,10 +36,7 @@ export async function GET(request: NextRequest) {
       getMergedSignalsRegistry(chain),
       getMergedMcapTrackerRegistry(chain),
       getMergedGmgnRegistry(chain),
-      // social and dlmm stay sol-only; RH gets an explicit not-available panel.
-      chain === 'sol'
-        ? getMergedSocialRegistry()
-        : Promise.resolve({} as Awaited<ReturnType<typeof getMergedSocialRegistry>>),
+      getMergedSocialRegistry(chain),
       getMergedDlmmStrategy(),
     ])
 

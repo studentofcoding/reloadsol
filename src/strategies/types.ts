@@ -411,6 +411,7 @@ export interface SocialStrategy {
   name: string
   description: string
   is_active: boolean
+  chain?: StrategyChain
   execution_mode: ExecutionMode
   config: SocialStrategyConfig
 }

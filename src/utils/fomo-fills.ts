@@ -1,3 +1,7 @@
+import type { SocialIngestEvent } from '@/strategies/social/types'
+
+export const FOMO_SOCIAL_SOURCE = 'fomo_family'
+
 export type NormalizedFomoFill = {
   source_fill_id: number
   tx: string
@@ -118,4 +122,34 @@ export function normalizeFomoFill(raw: unknown): NormalizedFomoFill | null {
 export function maxFillsPerBatch(): number {
   const n = Number(process.env.FOMO_MAX_FILLS_PER_BATCH ?? '100')
   return Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), 500) : 100
+}
+
+/** Cash-leg buys only. Skip wallets already on GMGN/digger/tracked rosters. */
+export function fomoFillToSocialEvent(
+  fill: NormalizedFomoFill,
+  skipWallets: Set<string>,
+): SocialIngestEvent | null {
+  if (fill.side !== 'buy' || fill.priced !== 'cash_leg') return null
+  const wallet = fill.wallet_address.toLowerCase()
+  if (skipWallets.has(wallet)) return null
+  return {
+    token_address: fill.token_address.toLowerCase(),
+    event_type: 'wallet_buy',
+    source: FOMO_SOCIAL_SOURCE,
+    channel_id: 'robinhoodtrenches',
+    channel_label: fill.handle,
+    wallet_address: wallet,
+    wallet_label: fill.handle,
+    external_message_id: String(fill.source_fill_id),
+    occurred_at: fill.occurred_at,
+    chain: 'robinhood',
+    raw_metadata: {
+      usd: fill.usd,
+      priced: fill.priced,
+      tx: fill.tx,
+      symbol: fill.symbol,
+      is_stock: fill.is_stock,
+      source_fill_id: fill.source_fill_id,
+    },
+  }
 }

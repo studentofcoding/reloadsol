@@ -47,6 +47,10 @@ import {
   TOKENS,
 } from "@/utils/solana";
 import { BulkBuyRequest, BulkBuyResult } from "@/types";
+import {
+  applyBuySpendParam,
+  readBuySpendAmount,
+} from "@/utils/buy-spend-query";
 import { trackBuy } from "@/utils/operations-api";
 import ConfirmTransportSelect from "./ConfirmTransportSelect";
 import { useTradingData } from "./TradingDataProvider";
@@ -78,6 +82,12 @@ import {
 } from "@/utils/gmgn-bulk-trade";
 import type { RhSwapQuote } from "@/utils/dlmm/rh-univ2-swap";
 import { executeRhParentKyberBuy } from "@/utils/dlmm/rh-kyber-swap";
+import { getRhBatchExecutorAddress } from "@/utils/dlmm/rh-batch-executor";
+import { prefetchSwapTransaction } from "@/utils/swap-executor";
+import {
+  RAPTOR_DEV_FEE_ACCOUNT,
+  RAPTOR_DEV_FEE_BPS,
+} from "@/utils/solanatracker-raptor";
 import {
   RH_WETH_GAS_RESERVE_ETH,
 } from "@/hooks/usePortfolioWallet";
@@ -110,8 +120,8 @@ export default function BulkTokenBuyer() {
   const rhWallet = useRhEvmWallet();
 
   const getInitialSolAmount = () => {
-    const sol = searchParams.get("sol");
-    if (sol && !Number.isNaN(+sol) && +sol > 0) return sol;
+    const fromUrl = readBuySpendAmount(searchParams, network);
+    if (fromUrl) return fromUrl;
     return network === "robinhood" ? "0.001" : "0.1";
   };
 
@@ -146,6 +156,9 @@ export default function BulkTokenBuyer() {
   const [gmgnConfirmOpen, setGmgnConfirmOpen] = useState(false);
   const [gmgnConfirmLegs, setGmgnConfirmLegs] = useState<GmgnConfirmLeg[]>([]);
   const [gmgnConfirmBusy, setGmgnConfirmBusy] = useState(false);
+  const [solPrefetchOut, setSolPrefetchOut] = useState<Record<string, string>>(
+    {},
+  );
   const boundWallets = useGmgnBoundWallets();
   // App network (header) is source of truth; the per-chain pages ensure
   // `effectiveChain` matches the URL. No local canUseRh coercion here.
@@ -395,6 +408,62 @@ export default function BulkTokenBuyer() {
         .filter(Boolean),
     [tokenMints],
   );
+
+  // Solana: prefetch Raptor/Jupiter quote+tx while the user is still filling
+  // the form so Buy does not wait on that waterfall.
+  useEffect(() => {
+    if (!isSolTrade || !publicKey || !connection) return;
+    const amount = parseFloat(solAmount);
+    if (!Number.isFinite(amount) || amount <= 0 || validMints.length === 0) {
+      return;
+    }
+    const inputDecimals = selectedCurrency === "USDC" ? 6 : 9;
+    const amountPerToken = Math.floor(
+      (amount * 10 ** inputDecimals) / validMints.length,
+    );
+    if (amountPerToken <= 0) return;
+    const inputMint =
+      selectedCurrency === "USDC" ? TOKENS.USDC : TOKENS.SOL;
+    const pk = publicKey.toBase58();
+    const timer = window.setTimeout(() => {
+      void Promise.all(
+        validMints.map(async (mint) => {
+          const params = {
+            userPublicKey: pk,
+            inputMint,
+            outputMint: mint,
+            amount: amountPerToken,
+            slippageBps: slippage,
+            priorityFeeLamports: priorityFee,
+            feeAccount: RAPTOR_DEV_FEE_ACCOUNT,
+            feeBps: RAPTOR_DEV_FEE_BPS,
+            connection,
+          };
+          try {
+            const prepared = await prefetchSwapTransaction(params);
+            if (prepared.outAmount) {
+              setSolPrefetchOut((prev) => ({
+                ...prev,
+                [mint]: prepared.outAmount!,
+              }));
+            }
+          } catch {
+            /* prefetch is best-effort */
+          }
+        }),
+      );
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [
+    isSolTrade,
+    publicKey,
+    connection,
+    solAmount,
+    validMints,
+    selectedCurrency,
+    slippage,
+    priorityFee,
+  ]);
 
   // Auto-select first mint from URL params (display chart automatically)
   useEffect(() => {
@@ -870,6 +939,10 @@ export default function BulkTokenBuyer() {
         );
         return;
       }
+      if (useRhParentPath && getRhBatchExecutorAddress()) {
+        await runConfirmedRhBuy();
+        return;
+      }
       setIsLoading(true);
       setError("");
       try {
@@ -1272,6 +1345,7 @@ export default function BulkTokenBuyer() {
     spendUnit,
     rhQuote,
     refetchTokensFresh,
+    runConfirmedRhBuy,
   ]);
 
   // Handle metadata updates from background enrichment
@@ -1435,12 +1509,11 @@ export default function BulkTokenBuyer() {
     // Preserve any existing, unrelated query params
     const params = new URLSearchParams(window.location.search);
 
-    // Update SOL amount param
-    if (solAmount && !Number.isNaN(+solAmount) && +solAmount > 0) {
-      params.set("sol", solAmount);
-    } else {
-      params.delete("sol");
-    }
+    applyBuySpendParam(
+      params,
+      isRhChain ? "robinhood" : "sol",
+      solAmount,
+    );
 
     // Update mints param (comma-separated list)
     const mintsParam = validMints.join(",");
@@ -1452,7 +1525,7 @@ export default function BulkTokenBuyer() {
 
     const newUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}`;
     window.history.replaceState({}, "", newUrl);
-  }, [solAmount, tokenMints, validMints]);
+  }, [solAmount, tokenMints, validMints, isRhChain]);
 
   const showTradeUi =
     effectiveChain === "robinhood" ? tradeReady : isWalletReady;
@@ -1467,7 +1540,9 @@ export default function BulkTokenBuyer() {
         from={tradeFromAddress || ""}
         legs={gmgnConfirmLegs}
         busy={gmgnConfirmBusy}
-        sequentialSignHint={useRhParentPath}
+        sequentialSignHint={
+          useRhParentPath && !getRhBatchExecutorAddress()
+        }
         onCancel={() => setGmgnConfirmOpen(false)}
         onConfirm={() => void runConfirmedRhBuy()}
       />
@@ -1609,6 +1684,11 @@ export default function BulkTokenBuyer() {
                               />
                             )}
                             <span className="mr-1 text-sm">{symbol}</span>
+                            {!isRhChain && solPrefetchOut[mint] ? (
+                              <span className="mr-1 text-[10px] text-gray-400">
+                                ~{solPrefetchOut[mint]}
+                              </span>
+                            ) : null}
                             <button
                               type="button"
                               onClick={() => handleRemoveToken(mint)}

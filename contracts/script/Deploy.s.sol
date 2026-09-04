@@ -31,8 +31,7 @@ contract Deploy {
         address weth = vm.envOr("WETH_ADDRESS", RH_WETH);
 
         vm.startBroadcast(deployerKey);
-        // Owner = the trading hot wallet (deployer). Rotate later via
-        // transferOwnership if a 4337 session key takes over.
+        // Owner = deployer (pause / rescue). Traders buy with their own wallet.
         exec = new BatchExecutor(permit2, weth, msg.sender);
         vm.stopBroadcast();
     }

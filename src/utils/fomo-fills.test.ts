@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeFomoFill, sourceFillId } from './fomo-fills'
+import { fomoFillToSocialEvent, normalizeFomoFill, sourceFillId } from './fomo-fills'
 
 const sample = {
   id: 42,
@@ -27,5 +27,28 @@ describe('normalizeFomoFill', () => {
     expect(normalizeFomoFill({ ...sample, id: 0 })).toBeNull()
     expect(normalizeFomoFill({ ...sample, id: 'nope' })).toBeNull()
     expect(normalizeFomoFill({ ...sample, tx: '' })).toBeNull()
+  })
+})
+
+describe('fomoFillToSocialEvent', () => {
+  const fill = normalizeFomoFill(sample)!
+
+  it('fans cash_leg buys into fomo_family wallet_buy', () => {
+    const e = fomoFillToSocialEvent(fill, new Set())
+    expect(e?.source).toBe('fomo_family')
+    expect(e?.event_type).toBe('wallet_buy')
+    expect(e?.chain).toBe('robinhood')
+    expect(e?.external_message_id).toBe('42')
+    expect(e?.wallet_address).toBe(sample.wallet.toLowerCase())
+  })
+
+  it('drops estimate, sells, and roster wallets', () => {
+    expect(
+      fomoFillToSocialEvent({ ...fill, priced: 'estimate' }, new Set()),
+    ).toBeNull()
+    expect(fomoFillToSocialEvent({ ...fill, side: 'sell' }, new Set())).toBeNull()
+    expect(
+      fomoFillToSocialEvent(fill, new Set([sample.wallet.toLowerCase()])),
+    ).toBeNull()
   })
 })

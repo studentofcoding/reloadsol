@@ -34,6 +34,7 @@ describe('social-only-discovery', () => {
   it('registry seeds social_only_fomo_gt7', () => {
     const s = SOCIAL_STRATEGIES.social_only_fomo_gt7
     expect(s.id).toBe('social_only_fomo_gt7')
+    expect(s.chain).toBe('sol')
     expect(s.is_active).toBe(true)
     expect(s.config.entry.minMentions30m).toBe(7)
     expect(s.config.entry.topSource).toBe(PATTERN_TOP_SOURCE_GMGN_FOMO)

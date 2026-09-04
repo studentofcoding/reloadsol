@@ -991,145 +991,21 @@ export default function StrategyAdminHub() {
       </ScrollableMenuRow>
 
       {tab === "config" && (
-        <>
-          <Ml2ExitOverlayPanel
-            onNotify={(kind, title, detail) =>
-              showToast(kind, title, detail ?? "")
-            }
-          />
-
-          <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
-            <h2 className="text-xl font-bold text-white mb-2">Trending bot</h2>
-            <p className="text-gray-400 text-sm mb-4">
-              Active: {active.join(", ") || "none"} · Pre-filter uses union of active bands.
-            </p>
-            <div className="grid gap-4 md:grid-cols-2">
-              {Object.values(effective).map((s) => (
-                <TrendingBotCard
-                  key={`${s.id}-${s.is_active}-${s.buy_amount_sol}-${s.stop_loss_percentage}-${s.take_profit_levels.tp1_percentage}`}
-                  strategy={s}
-                  isRunning={active.includes(s.id)}
-                  allocation={data?.trending_bot?.allocation[s.id]}
-                  saving={saving === s.id}
-                  onSave={saveStrategy}
-                  onPromote={promoteStrategy}
-                  promoteTargets={Object.keys(effective).filter((id) => id !== s.id)}
-                />
-              ))}
-            </div>
-          </section>
-
-          <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
-            <h2 className="text-xl font-bold text-white mb-4">Signals strategies</h2>
-            <div className="grid gap-4 md:grid-cols-2">
-              {signals.map((s) => (
-                <SignalsCard
-                  key={s.id}
-                  strategy={s}
-                  saving={saving === s.id}
-                  onSave={saveStrategy}
-                />
-              ))}
-            </div>
-            <Link href="/dev/signals" className="text-blue-400 text-sm underline mt-3 inline-block">
-              Open Signals hub (manual live buys)
-            </Link>
-          </section>
-
-          <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
-            <h2 className="text-xl font-bold text-white mb-4">MCap tracker strategies</h2>
-            <div className="grid gap-4 md:grid-cols-2">
-              {mcapTracker.map((s) => (
-                <McapTrackerCard
-                  key={s.id}
-                  strategy={s}
-                  saving={saving === s.id}
-                  onSave={saveStrategy}
-                />
-              ))}
-            </div>
-            <Link
-              href="/dev/signals?tab=tracker"
-              prefetch
-              className="text-blue-400 text-sm underline mt-3 inline-block"
-            >
-              Open MCap tracker tab
-            </Link>
-          </section>
-
-          <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
-            <h2 className="text-xl font-bold text-white mb-4">GMGN strategies</h2>
-            <p className="text-gray-400 text-sm mb-4">
-              Smart money / KOL discovery via gmgn-cli. Paper sim wallet:{" "}
-              <code className="text-xs">gmgn-sim</code>. Requires GMGN_API_KEY + gmgn-cli on server.
-            </p>
-            <div className="grid gap-4 md:grid-cols-2">
-              {gmgn.map((s) => (
-                <GmgnCard
-                  key={`${s.id}-${s.is_active}-${s.execution_mode}-${s.config.radar?.stickyPumpPct}-${s.config.radar?.dumpBanPct}-${s.config.radar?.comeback?.allowSimReopen}-${s.config.radar?.telegram?.singleThread}-${s.config.radar?.telegram?.minMcapUsd}`}
-                  strategy={s}
-                  saving={saving === s.id}
-                  onSave={saveStrategy}
-                />
-              ))}
-            </div>
-          </section>
-
-          <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
-            <h2 className="text-xl font-bold text-white mb-4">Social strategies</h2>
-            {isRobinhood ? (
-              <p className="text-gray-400 text-sm">
-                Not available on Robinhood — social ingest only resolves Solana
-                mints, so there is no Robinhood candidate feed yet.
-              </p>
-            ) : (
-              <>
-                <p className="text-gray-400 text-sm mb-4">
-                  Social-only FOMO entry when a token is present only on{" "}
-                  <code className="text-xs">social_token_rollups</code> with FOMO mentions &gt;7 in 30m.
-                  Paper wallet: <code className="text-xs">social-sim</code>.
-                </p>
-                <div className="grid gap-4 md:grid-cols-2">
-                  {social.map((s) => (
-                    <SocialCard
-                      key={`${s.id}-${s.is_active}-${s.execution_mode}-${s.config.entry.minMentions30m}`}
-                      strategy={s}
-                      saving={saving === s.id}
-                      onSave={saveStrategy}
-                    />
-                  ))}
-                </div>
-              </>
-            )}
-          </section>
-
-          <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
-            <h2 className="text-xl font-bold text-white mb-4">DLMM thresholds</h2>
-            {isRobinhood ? (
-              <p className="text-gray-400 text-sm">
-                Not available on Robinhood — the LP agent is Meteora-specific.
-                Robinhood LP lives on the{" "}
-                <Link href="/dev/dlmm" className="text-blue-400 underline">
-                  DLMM dashboard
-                </Link>{" "}
-                instead.
-              </p>
-            ) : (
-              <>
-                {dlmm && (
-                  <DlmmCard
-                    strategy={dlmm}
-                    saving={saving === dlmm.id}
-                    onSave={saveStrategy}
-                  />
-                )}
-                <Link href="/dev/dlmm" className="text-blue-400 text-sm underline mt-3 inline-block">
-                  Open DLMM dashboard (enable / dry-run)
-                </Link>
-              </>
-            )}
-          </section>
-        </>
+        <StrategyConfigTab
+          isRobinhood={isRobinhood}
+          effective={effective}
+          active={active}
+          allocation={data?.trending_bot?.allocation}
+          signals={signals}
+          mcapTracker={mcapTracker}
+          gmgn={gmgn}
+          social={social}
+          dlmm={dlmm}
+          saving={saving}
+          onSave={saveStrategy}
+          onPromote={promoteStrategy}
+          onToast={showToast}
+        />
       )}
 
       {tab === "reports" && (
@@ -2198,6 +2074,144 @@ function ExecutionModeSelect({
   );
 }
 
+type SaveStrategyFn = (id: string, patch: Record<string, unknown>) => void;
+
+function TrendingBotFilterFields({
+  initial,
+  buildRef,
+}: {
+  initial: NonNullable<TrendingBotStrategy["filtering"]>;
+  buildRef: React.MutableRefObject<() => TokenFilterConfig>;
+}) {
+  const [filterEnabled, setFilterEnabled] = useState(initial.enabled ?? true);
+  const [mcapMin, setMcapMin] = useState(
+    initial.mcap?.min != null ? String(initial.mcap.min) : "",
+  );
+  const [mcapMax, setMcapMax] = useState(
+    initial.mcap?.max != null ? String(initial.mcap.max) : "",
+  );
+  const [pc5mMin, setPc5mMin] = useState(
+    initial.priceChange5m?.min != null ? String(initial.priceChange5m.min) : "",
+  );
+  const [pc5mMax, setPc5mMax] = useState(
+    initial.priceChange5m?.max != null ? String(initial.priceChange5m.max) : "",
+  );
+  const [pc1hMin, setPc1hMin] = useState(
+    initial.priceChange1h?.min != null ? String(initial.priceChange1h.min) : "",
+  );
+  const [pc1hMax, setPc1hMax] = useState(
+    initial.priceChange1h?.max != null ? String(initial.priceChange1h.max) : "",
+  );
+  const [pc6hMin, setPc6hMin] = useState(
+    initial.priceChange6h?.min != null ? String(initial.priceChange6h.min) : "",
+  );
+  const [pc6hMax, setPc6hMax] = useState(
+    initial.priceChange6h?.max != null ? String(initial.priceChange6h.max) : "",
+  );
+  const [organicMin, setOrganicMin] = useState(
+    initial.organicScore?.min != null ? String(initial.organicScore.min) : "",
+  );
+  const [holdersMax, setHoldersMax] = useState(
+    initial.topHoldersPercentage?.max != null
+      ? String(initial.topHoldersPercentage.max)
+      : "",
+  );
+  const [requireCompleteData, setRequireCompleteData] = useState(
+    initial.requireCompleteData ?? true,
+  );
+  const [checkManualHistory, setCheckManualHistory] = useState(
+    initial.checkManualTradingHistory ?? true,
+  );
+
+  buildRef.current = () => ({
+    enabled: filterEnabled,
+    mcap: { min: parseOptionalFloat(mcapMin), max: parseOptionalFloat(mcapMax) },
+    priceChange5m: {
+      min: parseOptionalFloat(pc5mMin),
+      max: parseOptionalFloat(pc5mMax),
+    },
+    priceChange1h: {
+      min: parseOptionalFloat(pc1hMin),
+      max: parseOptionalFloat(pc1hMax),
+    },
+    priceChange6h: {
+      min: parseOptionalFloat(pc6hMin),
+      max: parseOptionalFloat(pc6hMax),
+    },
+    organicScore: { min: parseOptionalFloat(organicMin) },
+    topHoldersPercentage: { max: parseOptionalFloat(holdersMax) },
+    requireCompleteData,
+    checkManualTradingHistory: checkManualHistory,
+  });
+
+  return (
+    <Section title="Filtering">
+      <FieldGrid>
+        <CheckboxField
+          label="Filtering enabled"
+          checked={filterEnabled}
+          onChange={setFilterEnabled}
+          colSpan={2}
+        />
+        <NumberField label="MCap min" value={mcapMin} onChange={setMcapMin} />
+        <NumberField label="MCap max" value={mcapMax} onChange={setMcapMax} />
+        <NumberField
+          label="5m change min %"
+          value={pc5mMin}
+          onChange={setPc5mMin}
+        />
+        <NumberField
+          label="5m change max %"
+          value={pc5mMax}
+          onChange={setPc5mMax}
+        />
+        <NumberField
+          label="1h change min %"
+          value={pc1hMin}
+          onChange={setPc1hMin}
+        />
+        <NumberField
+          label="1h change max %"
+          value={pc1hMax}
+          onChange={setPc1hMax}
+        />
+        <NumberField
+          label="6h change min %"
+          value={pc6hMin}
+          onChange={setPc6hMin}
+        />
+        <NumberField
+          label="6h change max %"
+          value={pc6hMax}
+          onChange={setPc6hMax}
+        />
+        <NumberField
+          label="Organic score min"
+          value={organicMin}
+          onChange={setOrganicMin}
+        />
+        <NumberField
+          label="Top holders max %"
+          value={holdersMax}
+          onChange={setHoldersMax}
+        />
+        <CheckboxField
+          label="Require complete data"
+          checked={requireCompleteData}
+          onChange={setRequireCompleteData}
+          colSpan={2}
+        />
+        <CheckboxField
+          label="Check manual trading history"
+          checked={checkManualHistory}
+          onChange={setCheckManualHistory}
+          colSpan={2}
+        />
+      </FieldGrid>
+    </Section>
+  );
+}
+
 function TrendingBotCard({
   strategy,
   isRunning,
@@ -2211,7 +2225,7 @@ function TrendingBotCard({
   isRunning: boolean;
   allocation?: number;
   saving: boolean;
-  onSave: (id: string, patch: Record<string, unknown>) => void;
+  onSave: SaveStrategyFn;
   onPromote: (source: string, target: string, confirm: boolean) => void;
   promoteTargets: string[];
 }) {
@@ -2223,49 +2237,9 @@ function TrendingBotCard({
     strategy.execution_mode ?? "sim_only",
   );
   const [promoteTarget, setPromoteTarget] = useState(promoteTargets[0] ?? "");
-  const [filterEnabled, setFilterEnabled] = useState(f.enabled ?? true);
-  const [mcapMin, setMcapMin] = useState(f.mcap?.min != null ? String(f.mcap.min) : "");
-  const [mcapMax, setMcapMax] = useState(f.mcap?.max != null ? String(f.mcap.max) : "");
-  const [pc5mMin, setPc5mMin] = useState(
-    f.priceChange5m?.min != null ? String(f.priceChange5m.min) : "",
-  );
-  const [pc5mMax, setPc5mMax] = useState(
-    f.priceChange5m?.max != null ? String(f.priceChange5m.max) : "",
-  );
-  const [pc1hMin, setPc1hMin] = useState(
-    f.priceChange1h?.min != null ? String(f.priceChange1h.min) : "",
-  );
-  const [pc1hMax, setPc1hMax] = useState(
-    f.priceChange1h?.max != null ? String(f.priceChange1h.max) : "",
-  );
-  const [pc6hMin, setPc6hMin] = useState(
-    f.priceChange6h?.min != null ? String(f.priceChange6h.min) : "",
-  );
-  const [pc6hMax, setPc6hMax] = useState(
-    f.priceChange6h?.max != null ? String(f.priceChange6h.max) : "",
-  );
-  const [organicMin, setOrganicMin] = useState(
-    f.organicScore?.min != null ? String(f.organicScore.min) : "",
-  );
-  const [holdersMax, setHoldersMax] = useState(
-    f.topHoldersPercentage?.max != null ? String(f.topHoldersPercentage.max) : "",
-  );
-  const [requireCompleteData, setRequireCompleteData] = useState(f.requireCompleteData ?? true);
-  const [checkManualHistory, setCheckManualHistory] = useState(
-    f.checkManualTradingHistory ?? true,
-  );
-
-  const buildFiltering = (): TokenFilterConfig => ({
-    enabled: filterEnabled,
-    mcap: { min: parseOptionalFloat(mcapMin), max: parseOptionalFloat(mcapMax) },
-    priceChange5m: { min: parseOptionalFloat(pc5mMin), max: parseOptionalFloat(pc5mMax) },
-    priceChange1h: { min: parseOptionalFloat(pc1hMin), max: parseOptionalFloat(pc1hMax) },
-    priceChange6h: { min: parseOptionalFloat(pc6hMin), max: parseOptionalFloat(pc6hMax) },
-    organicScore: { min: parseOptionalFloat(organicMin) },
-    topHoldersPercentage: { max: parseOptionalFloat(holdersMax) },
-    requireCompleteData,
-    checkManualTradingHistory: checkManualHistory,
-  });
+  const buildFilteringRef = useRef<() => TokenFilterConfig>(() => ({
+    enabled: f.enabled ?? true,
+  }));
 
   return (
     <div className="border border-gray-700 rounded-lg p-4 bg-gray-800">
@@ -2295,38 +2269,7 @@ function TrendingBotCard({
           <NumberField label="Buy SOL" value={buySol} onChange={setBuySol} colSpan={2} step="0.001" />
         </FieldGrid>
       </Section>
-      <Section title="Filtering">
-        <FieldGrid>
-          <CheckboxField
-            label="Filtering enabled"
-            checked={filterEnabled}
-            onChange={setFilterEnabled}
-            colSpan={2}
-          />
-          <NumberField label="MCap min" value={mcapMin} onChange={setMcapMin} />
-          <NumberField label="MCap max" value={mcapMax} onChange={setMcapMax} />
-          <NumberField label="5m change min %" value={pc5mMin} onChange={setPc5mMin} />
-          <NumberField label="5m change max %" value={pc5mMax} onChange={setPc5mMax} />
-          <NumberField label="1h change min %" value={pc1hMin} onChange={setPc1hMin} />
-          <NumberField label="1h change max %" value={pc1hMax} onChange={setPc1hMax} />
-          <NumberField label="6h change min %" value={pc6hMin} onChange={setPc6hMin} />
-          <NumberField label="6h change max %" value={pc6hMax} onChange={setPc6hMax} />
-          <NumberField label="Organic score min" value={organicMin} onChange={setOrganicMin} />
-          <NumberField label="Top holders max %" value={holdersMax} onChange={setHoldersMax} />
-          <CheckboxField
-            label="Require complete data"
-            checked={requireCompleteData}
-            onChange={setRequireCompleteData}
-            colSpan={2}
-          />
-          <CheckboxField
-            label="Check manual trading history"
-            checked={checkManualHistory}
-            onChange={setCheckManualHistory}
-            colSpan={2}
-          />
-        </FieldGrid>
-      </Section>
+      <TrendingBotFilterFields initial={f} buildRef={buildFilteringRef} />
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
@@ -2338,7 +2281,7 @@ function TrendingBotCard({
                 take_profit_levels: { tp1_percentage: parseFloat(tp1) },
                 stop_loss_percentage: parseFloat(sl),
                 buy_amount_sol: parseFloat(buySol),
-                filtering: buildFiltering(),
+                filtering: buildFilteringRef.current(),
               },
             })
           }
@@ -3249,5 +3192,180 @@ function DlmmCard({
         />
       </div>
     </div>
+  );
+}
+
+function StrategyConfigTab({
+  isRobinhood,
+  effective,
+  active,
+  allocation,
+  signals,
+  mcapTracker,
+  gmgn,
+  social,
+  dlmm,
+  saving,
+  onSave,
+  onPromote,
+  onToast,
+}: {
+  isRobinhood: boolean;
+  effective: Record<string, TrendingBotStrategy>;
+  active: string[];
+  allocation?: Record<string, number>;
+  signals: SignalsStrategy[];
+  mcapTracker: McapTrackerStrategy[];
+  gmgn: GmgnStrategy[];
+  social: SocialStrategy[];
+  dlmm?: DlmmStrategy;
+  saving: string | null;
+  onSave: SaveStrategyFn;
+  onPromote: (source: string, target: string, confirm: boolean) => void;
+  onToast: (kind: "success" | "error", title: string, detail?: string) => void;
+}) {
+  return (
+    <>
+      <Ml2ExitOverlayPanel
+        onNotify={(kind, title, detail) => onToast(kind, title, detail ?? "")}
+      />
+
+      <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
+        <h2 className="text-xl font-bold text-white mb-2">Trending bot</h2>
+        <p className="text-gray-400 text-sm mb-4">
+          Active: {active.join(", ") || "none"} · Pre-filter uses union of active bands.
+        </p>
+        <div className="grid gap-4 md:grid-cols-2">
+          {Object.values(effective).map((s) => (
+            <TrendingBotCard
+              key={`${s.id}-${s.is_active}-${s.buy_amount_sol}-${s.stop_loss_percentage}-${s.take_profit_levels.tp1_percentage}`}
+              strategy={s}
+              isRunning={active.includes(s.id)}
+              allocation={allocation?.[s.id]}
+              saving={saving === s.id}
+              onSave={onSave}
+              onPromote={onPromote}
+              promoteTargets={Object.keys(effective).filter((id) => id !== s.id)}
+            />
+          ))}
+        </div>
+      </section>
+
+      <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
+        <h2 className="text-xl font-bold text-white mb-4">Signals strategies</h2>
+        <div className="grid gap-4 md:grid-cols-2">
+          {signals.map((s) => (
+            <SignalsCard
+              key={s.id}
+              strategy={s}
+              saving={saving === s.id}
+              onSave={onSave}
+            />
+          ))}
+        </div>
+        <Link href="/dev/signals" className="text-blue-400 text-sm underline mt-3 inline-block">
+          Open Signals hub (manual live buys)
+        </Link>
+      </section>
+
+      <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
+        <h2 className="text-xl font-bold text-white mb-4">MCap tracker strategies</h2>
+        <div className="grid gap-4 md:grid-cols-2">
+          {mcapTracker.map((s) => (
+            <McapTrackerCard
+              key={s.id}
+              strategy={s}
+              saving={saving === s.id}
+              onSave={onSave}
+            />
+          ))}
+        </div>
+        <Link
+          href="/dev/signals?tab=tracker"
+          prefetch
+          className="text-blue-400 text-sm underline mt-3 inline-block"
+        >
+          Open MCap tracker tab
+        </Link>
+      </section>
+
+      <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
+        <h2 className="text-xl font-bold text-white mb-4">GMGN strategies</h2>
+        <p className="text-gray-400 text-sm mb-4">
+          Smart money / KOL discovery via gmgn-cli. Paper sim wallet:{" "}
+          <code className="text-xs">gmgn-sim</code>. Requires GMGN_API_KEY + gmgn-cli on server.
+        </p>
+        <div className="grid gap-4 md:grid-cols-2">
+          {gmgn.map((s) => (
+            <GmgnCard
+              key={`${s.id}-${s.is_active}-${s.execution_mode}-${s.config.radar?.stickyPumpPct}-${s.config.radar?.dumpBanPct}-${s.config.radar?.comeback?.allowSimReopen}-${s.config.radar?.telegram?.singleThread}-${s.config.radar?.telegram?.minMcapUsd}`}
+              strategy={s}
+              saving={saving === s.id}
+              onSave={onSave}
+            />
+          ))}
+        </div>
+      </section>
+
+      <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
+        <h2 className="text-xl font-bold text-white mb-4">Social strategies</h2>
+        <p className="text-gray-400 text-sm mb-4">
+          {isRobinhood ? (
+            <>
+              Telegram social-only FOMO stays on Solana. Robinhood live tape is{" "}
+              <Link href="/dev/social" className="text-blue-400 underline">
+                /dev/social
+              </Link>{" "}
+              (fomo.family cash-leg buys). No RH social sim strategy yet.
+            </>
+          ) : (
+            <>
+              Social-only FOMO entry when a token is present only on{" "}
+              <code className="text-xs">social_token_rollups</code> with FOMO mentions &gt;7 in 30m.
+              Paper wallet: <code className="text-xs">social-sim</code>.
+            </>
+          )}
+        </p>
+        {social.length > 0 ? (
+          <div className="grid gap-4 md:grid-cols-2">
+            {social.map((s) => (
+              <SocialCard
+                key={`${s.id}-${s.is_active}-${s.execution_mode}-${s.config.entry.minMentions30m}`}
+                strategy={s}
+                saving={saving === s.id}
+                onSave={onSave}
+              />
+            ))}
+          </div>
+        ) : null}
+      </section>
+
+      <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
+        <h2 className="text-xl font-bold text-white mb-4">DLMM thresholds</h2>
+        {isRobinhood ? (
+          <p className="text-gray-400 text-sm">
+            Not available on Robinhood — the LP agent is Meteora-specific.
+            Robinhood LP lives on the{" "}
+            <Link href="/dev/dlmm" className="text-blue-400 underline">
+              DLMM dashboard
+            </Link>{" "}
+            instead.
+          </p>
+        ) : (
+          <>
+            {dlmm && (
+              <DlmmCard
+                strategy={dlmm}
+                saving={saving === dlmm.id}
+                onSave={onSave}
+              />
+            )}
+            <Link href="/dev/dlmm" className="text-blue-400 text-sm underline mt-3 inline-block">
+              Open DLMM dashboard (enable / dry-run)
+            </Link>
+          </>
+        )}
+      </section>
+    </>
   );
 }

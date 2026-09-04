@@ -34,7 +34,7 @@ describe('routeSupportsNetwork', () => {
     expect(routeSupportsNetwork('/dev/signals', 'robinhood')).toBe(true)
     expect(routeSupportsNetwork('/dev/strategies', 'robinhood')).toBe(true)
     expect(routeSupportsNetwork('/dev/algo-tester', 'robinhood')).toBe(true)
-    expect(routeSupportsNetwork('/dev/social', 'robinhood')).toBe(false)
+    expect(routeSupportsNetwork('/dev/social', 'robinhood')).toBe(true)
     expect(routeSupportsNetwork('/dev/fomo', 'robinhood')).toBe(true)
     expect(routeSupportsNetwork('/dev/arbitrage', 'robinhood')).toBe(false)
   })

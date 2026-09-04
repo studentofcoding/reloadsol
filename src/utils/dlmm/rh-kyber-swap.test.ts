@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   buildKyberLegResults,
   executeRhParentKyberBuy,
+  executorWalletCalls,
   planKyberLegCalls,
   prepareKyberSwapLegsParallel,
   wethWrapShortfall,
@@ -172,6 +173,31 @@ describe('wethWrapShortfall', () => {
 
 const call = (n: number): RhTxCall =>
   ({ to: `0x${String(n).padStart(40, '0')}`, data: '0x' }) as RhTxCall
+
+describe('executorWalletCalls', () => {
+  const batch = call(9)
+
+  it('sends only executeBatch when approvals are already live', () => {
+    expect(
+      executorWalletCalls(
+        [{ calls: [call(1)] }, { calls: [call(2)] }],
+        batch,
+      ),
+    ).toEqual([batch])
+  })
+
+  it('dedupes identical Permit2 approvals across legs', () => {
+    const approve = call(3)
+    const out = executorWalletCalls(
+      [
+        { calls: [approve, call(1)] },
+        { calls: [approve, call(2)] },
+      ],
+      batch,
+    )
+    expect(out).toEqual([approve, batch])
+  })
+})
 
 describe('planKyberLegCalls', () => {
   it('maps flat call indices to legs and tracks per-leg hashes', () => {

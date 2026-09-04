@@ -20,6 +20,7 @@ import {
   executeRhParentKyberBuy,
   executeRhParentKyberSell,
 } from '@/utils/dlmm/rh-kyber-swap'
+import { getRhBatchExecutorAddress } from '@/utils/dlmm/rh-batch-executor'
 import {
   GMGN_RH_USDG,
   GMGN_RH_WETH,
@@ -113,7 +114,7 @@ export default function RhGmgnSwapPanel({
 
   if (network !== 'robinhood') return null
 
-  const openConfirm = async () => {
+  async function openConfirm() {
     setError('')
     if (!from) {
       setError(
@@ -121,6 +122,10 @@ export default function RhGmgnSwapPanel({
           ? 'Connect Rabby (parent wallet)'
           : 'Bind a GMGN EVM wallet or switch to Parent',
       )
+      return
+    }
+    if (isParent && getRhBatchExecutorAddress()) {
+      await runConfirmed()
       return
     }
     // ── Token-to-token mode ────────────────────────────────────────────
@@ -342,7 +347,7 @@ export default function RhGmgnSwapPanel({
     }
   }
 
-  const runConfirmed = async () => {
+  async function runConfirmed() {
     if (!from) return
     const addr = token.trim()
     setBusy(true)
@@ -676,7 +681,7 @@ export default function RhGmgnSwapPanel({
         from={from || ''}
         legs={confirmLegs}
         busy={busy}
-        sequentialSignHint={isParent}
+        sequentialSignHint={isParent && !getRhBatchExecutorAddress()}
         submitPhase={submitPhase}
         resultMessage={submitResult && !submitResult.ok ? submitResult.message : undefined}
         txHash={submitResult?.hash}

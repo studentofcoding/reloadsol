@@ -23,6 +23,7 @@ import {
   executeGmgnBulkBuy,
 } from '@/utils/gmgn-bulk-trade'
 import { executeRhParentKyberBuy } from '@/utils/dlmm/rh-kyber-swap'
+import { getRhBatchExecutorAddress } from '@/utils/dlmm/rh-batch-executor'
 import type { RhSwapQuote } from '@/utils/dlmm/rh-univ2-swap'
 import { RH_USDG, RH_WETH } from '@/utils/dlmm/rh-univ2'
 import {
@@ -277,6 +278,10 @@ function DlmmFastSwapModalBody({
       setError('Enter a valid amount')
       return
     }
+    if (isRh && isParent && getRhBatchExecutorAddress()) {
+      await runConfirmed()
+      return
+    }
     setBusy(true)
     try {
       const data = simQuery.data ?? (await simQuery.refetch()).data
@@ -424,7 +429,9 @@ function DlmmFastSwapModalBody({
         from={(isRh ? fromRh : solAddress) || ''}
         legs={confirmLegs}
         busy={busy}
-        sequentialSignHint={isRh && isParent}
+        sequentialSignHint={
+          isRh && isParent && !getRhBatchExecutorAddress()
+        }
         onCancel={() => setConfirmOpen(false)}
         onConfirm={() => void runConfirmed()}
       />

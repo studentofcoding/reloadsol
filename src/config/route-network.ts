@@ -35,7 +35,7 @@ export const ROUTE_NETWORK_REGISTRY: readonly NetworkRouteEntry[] = [
   { path: '/dev/token-search', networks: ['sol'] },
   { path: '/dev/ohlc-labels', networks: ['sol'] },
   { path: '/dev/arbitrage', networks: ['sol'] },
-  { path: '/dev/social', networks: ['sol'] },
+  { path: '/dev/social', networks: ['sol', 'robinhood'] },
   { path: '/dev/fomo', networks: ['sol', 'robinhood'] },
 ]
 

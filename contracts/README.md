@@ -19,11 +19,11 @@ minimal `Vm` cheatcode interface instead of importing `forge-std`, so
 
 ## Design
 
-- `executeBatch(Call[])` — `onlyOwner` (trading hot wallet; later a 4337
-  session key via `transferOwnership`), plain `call` only (never
-  `delegatecall`), **atomic by default** (any failing call reverts the whole
-  tx), optional per-call `allowFailure`. Leftover native ETH is swept back to
-  the caller at the end.
+- `executeBatch(Call[])` — any trader (`msg.sender`); owner only
+  `setPaused` / `transferOwnership` / rescue sweeps. Permit2 pulls inside a
+  batch come from the **payer** (the batch caller), not the owner. Plain `call`
+  only (never `delegatecall`), **atomic by default**. Leftover native ETH is
+  swept back to the caller at the end.
 - Pull-based token sourcing (REL-7): the wallet approves each token **once** to
   canonical Permit2 `0x000000000022D473030F116dDEE9F6B43aC78BA3` (ERC20) and
   grants the executor a Permit2 allowance. Inside the batch,
@@ -55,13 +55,14 @@ forge test -vv
 ```bash
 cd contracts
 export RPC_URL_4663="https://<rh-rpc>"
-export DEPLOYER_KEY="0x<trading-hot-wallet-key>"   # env only, never in files
+export DEPLOYER_KEY="0x<64-hex-private-key>"   # env only, never in files
 # optional overrides: PERMIT2_ADDRESS, WETH_ADDRESS
 forge script script/Deploy.s.sol:Deploy \
   --rpc-url "$RPC_URL_4663" --broadcast
 ```
 
-Owner is set to the deployer (the trading hot wallet).
+Owner is the deployer (pause / rescue). Traders buy with their own Rabby;
+`DEPLOYER_KEY` is not the public address (`0x` + 40 hex).
 
 ## Verify (Blockscout)
 

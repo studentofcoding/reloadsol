@@ -191,7 +191,7 @@ export type ExecutorSwapLeg = {
 /**
  * Build the full executeBatch call list + tx value for one atomic buy/sell:
  * [wrap?] → per leg [pullAndApproveRouter? → swap] → [sweep WETH dust?].
- * Leftover native ETH is auto-swept back to the owner by the contract.
+ * Leftover native ETH is auto-swept back to the batch caller.
  */
 export function planExecutorBatch(params: {
   executor: Address

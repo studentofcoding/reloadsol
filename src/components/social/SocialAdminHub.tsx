@@ -8,8 +8,10 @@ import {
 } from "@/components/token-locate/internal-export";
 import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import type { AppNetwork } from "@/utils/app-network";
+import { isValidTradeTokenAddress } from "@/utils/gmgn-currencies";
 import { isValidMintAddress } from "@/utils/jupiter";
 import { useQuery } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 
 type TrackedWallet = {
@@ -177,10 +179,23 @@ async function fetchPatternMlStats(chain: AppNetwork): Promise<PatternMlStats> {
   };
 }
 
-async function fetchSocialAdminData(): Promise<SocialAdminData> {
+function isSocialTokenAddress(network: AppNetwork, address: string): boolean {
+  return network === "robinhood"
+    ? isValidTradeTokenAddress("robinhood", address)
+    : isValidMintAddress(address);
+}
+
+async function fetchSocialAdminData(
+  network: AppNetwork,
+): Promise<SocialAdminData> {
+  const telegramOnly = network !== "robinhood";
   const [walletsRes, eventsRes] = await Promise.all([
-    fetch("/api/social/wallets?rollups_limit=40"),
-    fetch("/api/social/events?limit=50&hours=24&telegram_only=true"),
+    fetch(
+      `/api/social/wallets?rollups_limit=40&chain=${encodeURIComponent(network)}`,
+    ),
+    fetch(
+      `/api/social/events?limit=50&hours=24&telegram_only=${telegramOnly}&chain=${encodeURIComponent(network)}`,
+    ),
   ]);
   const json = await walletsRes.json();
   if (!json.success) throw new Error(json.error || "Failed to load");
@@ -227,13 +242,14 @@ function formatRelativeTime(date: Date | null, nowMs: number): string {
 
 function TokenCell({
   tokenAddress,
+  tradable,
   onOpen,
 }: {
   tokenAddress: string;
+  tradable: boolean;
   onOpen: () => void;
 }) {
-  const valid = isValidMintAddress(tokenAddress);
-  if (!valid) {
+  if (!tradable) {
     return (
       <span className="font-mono text-xs text-gray-500" title={tokenAddress}>
         {truncateMint(tokenAddress)}
@@ -254,6 +270,8 @@ function TokenCell({
 
 export default function SocialAdminHub() {
   const { network } = useAppNetwork();
+  const router = useRouter();
+  const isRobinhood = network === "robinhood";
   const [activeTab, setActiveTab] = useState<
     "overview" | "crosscheck" | "patterns"
   >("overview");
@@ -273,8 +291,8 @@ export default function SocialAdminHub() {
   const [now, setNow] = useState(() => Date.now());
 
   const socialQuery = useQuery({
-    queryKey: ["social-admin"],
-    queryFn: fetchSocialAdminData,
+    queryKey: ["social-admin", network],
+    queryFn: () => fetchSocialAdminData(network),
   });
 
   const channelsQuery = useQuery({
@@ -330,20 +348,35 @@ export default function SocialAdminHub() {
       : null;
 
   const eventTokenList = useMemo(
-    () => events.map((e) => e.token_address).filter(isValidMintAddress),
-    [events],
+    () =>
+      events
+        .map((e) => e.token_address)
+        .filter((a) => isSocialTokenAddress(network, a)),
+    [events, network],
   );
 
   const rollupTokenList = useMemo(
-    () => rollups.map((r) => r.token_address).filter(isValidMintAddress),
-    [rollups],
+    () =>
+      rollups
+        .map((r) => r.token_address)
+        .filter((a) => isSocialTokenAddress(network, a)),
+    [rollups, network],
   );
 
-  const openBuyModal = useCallback((tokenAddress: string, list: string[]) => {
-    if (!isValidMintAddress(tokenAddress)) return;
-    setModalTokenList(list);
-    setModalTokenAddress(tokenAddress);
-  }, []);
+  const openBuyModal = useCallback(
+    (tokenAddress: string, list: string[]) => {
+      if (!isSocialTokenAddress(network, tokenAddress)) return;
+      if (network === "robinhood") {
+        router.push(
+          `/chart/${encodeURIComponent(tokenAddress)}?chain=robinhood`,
+        );
+        return;
+      }
+      setModalTokenList(list);
+      setModalTokenAddress(tokenAddress);
+    },
+    [network, router],
+  );
 
   const refresh = useCallback(async () => {
     setActionError(null);
@@ -361,6 +394,10 @@ export default function SocialAdminHub() {
     const tick = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(tick);
   }, []);
+
+  useEffect(() => {
+    if (isRobinhood && activeTab === "crosscheck") setActiveTab("overview");
+  }, [isRobinhood, activeTab]);
 
   const modalIndex = modalTokenAddress
     ? modalTokenList.indexOf(modalTokenAddress)
@@ -491,6 +528,7 @@ export default function SocialAdminHub() {
         >
           Overview
         </button>
+        {!isRobinhood ? (
         <button
           type="button"
           className={`rounded px-3 py-1.5 text-sm ${
@@ -502,6 +540,7 @@ export default function SocialAdminHub() {
         >
           Cross-check
         </button>
+        ) : null}
         <button
           type="button"
           className={`rounded px-3 py-1.5 text-sm ${
@@ -628,12 +667,18 @@ export default function SocialAdminHub() {
                       <td className="px-3 py-2">
                         <TokenCell
                           tokenAddress={row.token_address}
+                          tradable={isSocialTokenAddress(
+                            network,
+                            row.token_address,
+                          )}
                           onOpen={() =>
                             openBuyModal(
                               row.token_address,
                               crosschecks
                                 .map((c) => c.token_address)
-                                .filter(isValidMintAddress),
+                                .filter((a) =>
+                                  isSocialTokenAddress(network, a),
+                                ),
                             )
                           }
                         />
@@ -892,7 +937,7 @@ export default function SocialAdminHub() {
       <section>
         <div className="mb-3 flex flex-wrap items-center gap-3">
           <h2 className="text-lg font-medium text-white">
-            Recent channel activity
+            {isRobinhood ? "FOMO / social fills" : "Recent channel activity"}
           </h2>
           {lastUpdatedAt ? (
             <span className="text-xs text-gray-500">
@@ -901,10 +946,13 @@ export default function SocialAdminHub() {
           ) : null}
         </div>
         <p className="mb-3 text-xs text-gray-500">
-          Telegram mentions from social-ingest (excludes tracked-wallet poll).
+          {isRobinhood
+            ? "cash_leg buys from robinhoodtrenches (source fomo_family)."
+            : "Telegram mentions from social-ingest (excludes tracked-wallet poll)."}
+          {" "}
           Live logs:{" "}
           <code className="text-gray-400">
-            docker compose logs -f social-ingest
+            docker compose logs -f {isRobinhood ? "cron" : "social-ingest"}
           </code>
         </p>
         <div className="overflow-x-auto rounded border border-gray-800">
@@ -939,13 +987,14 @@ export default function SocialAdminHub() {
                   <td className="px-3 py-2">
                     <TokenCell
                       tokenAddress={e.token_address}
+                      tradable={isSocialTokenAddress(network, e.token_address)}
                       onOpen={() =>
                         openBuyModal(e.token_address, eventTokenList)
                       }
                     />
                   </td>
                   <td className="px-3 py-2">
-                    {isValidMintAddress(e.token_address) ? (
+                    {isSocialTokenAddress(network, e.token_address) ? (
                       <button
                         type="button"
                         className="rounded bg-blue-600 px-2 py-1 text-xs text-white hover:bg-blue-700"
@@ -963,8 +1012,10 @@ export default function SocialAdminHub() {
               {events.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="px-3 py-4 text-gray-500">
-                    No Telegram events in the last 24h — check social-ingest is
-                    running and channels are active
+                    No {isRobinhood ? "FOMO" : "Telegram"} events in the last 24h
+                    {isRobinhood
+                      ? " — cron fomo_ws must be ingesting cash_leg buys"
+                      : " — check social-ingest is running and channels are active"}
                   </td>
                 </tr>
               ) : null}
@@ -973,6 +1024,8 @@ export default function SocialAdminHub() {
         </div>
       </section>
 
+      {!isRobinhood ? (
+        <>
       <section>
         <h2 className="mb-3 text-lg font-medium text-white">Tracked wallets</h2>
         <div className="mb-4 flex flex-wrap gap-2">
@@ -1064,6 +1117,7 @@ export default function SocialAdminHub() {
                   <td className="px-3 py-2">
                     <TokenCell
                       tokenAddress={r.token_address}
+                      tradable={isSocialTokenAddress(network, r.token_address)}
                       onOpen={() =>
                         openBuyModal(r.token_address, rollupTokenList)
                       }
@@ -1077,7 +1131,7 @@ export default function SocialAdminHub() {
                     {r.updated_at}
                   </td>
                   <td className="px-3 py-2">
-                    {isValidMintAddress(r.token_address) ? (
+                    {isSocialTokenAddress(network, r.token_address) ? (
                       <button
                         type="button"
                         className="rounded bg-blue-600 px-2 py-1 text-xs text-white hover:bg-blue-700"
@@ -1103,6 +1157,8 @@ export default function SocialAdminHub() {
           </table>
         </div>
       </section>
+        </>
+      ) : null}
         </>
       )}
 

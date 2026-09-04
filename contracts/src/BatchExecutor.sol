@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.24;
 
-/// @title BatchExecutor — owner-scoped, pull-based atomic batch executor for
+/// @title BatchExecutor — pull-based atomic batch executor for
 ///        Robinhood Chain (chainId 4663).
-/// @notice REL-6: lets the ReloadSOL hot wallet (later a 4337 session key) run
-///         wrap + Permit2 pulls + N Kyber swaps as ONE signed transaction,
-///         removing any dependence on EIP-5792 wallet_sendCalls support.
+/// @notice Any trader (`msg.sender`) can run wrap + Permit2 pulls + N Kyber
+///         swaps as ONE signed transaction. Owner only pauses, transfers
+///         ownership, and rescues dust.
 ///
 /// Design notes:
 ///  - Immutable: no proxy, no upgrade path. Deploy a new contract to change it.
@@ -73,6 +73,9 @@ contract BatchExecutor {
 
     address public owner;
     bool public paused;
+    /// @dev Set for the duration of executeBatch so self-called
+    ///      pullAndApproveRouter pulls from the trader, not owner.
+    address private _payer;
 
     uint256 private _reentrancyLock; // 1 = unlocked, 2 = locked
     uint256 private constant _UNLOCKED = 1;
@@ -83,9 +86,7 @@ contract BatchExecutor {
         _;
     }
 
-    /// @dev Helpers that may be invoked directly by the owner OR by this
-    ///      contract itself as a step inside executeBatch (whose entrypoint is
-    ///      already onlyOwner + nonReentrant, so self-calls are trusted).
+    /// @dev Owner-direct or self-call from executeBatch (nonReentrant).
     modifier onlyOwnerOrSelf() {
         if (msg.sender != owner && msg.sender != address(this)) revert NotOwner();
         _;
@@ -122,14 +123,15 @@ contract BatchExecutor {
     /// @notice Execute a sequence of plain calls atomically (default) or with
     ///         per-call failure tolerance when `allowFailure` is set.
     ///         All leftover native ETH is swept back to the caller at the end.
+    ///         Permit2 pulls inside the batch come from `msg.sender` (`_payer`).
     function executeBatch(Call[] calldata calls)
         external
         payable
-        onlyOwner
         whenNotPaused
         nonReentrant
     {
         if (calls.length == 0) revert NoCalls();
+        _payer = msg.sender;
 
         for (uint256 i = 0; i < calls.length; i++) {
             Call calldata c = calls[i];
@@ -146,6 +148,7 @@ contract BatchExecutor {
         }
 
         emit BatchExecuted(msg.sender, calls.length, msg.value);
+        _payer = address(0);
 
         // Sweep any leftover native ETH (unwrap dust, over-funded value) back.
         uint256 bal = address(this).balance;
@@ -175,12 +178,13 @@ contract BatchExecutor {
         if (token == address(0) || router == address(0)) revert ZeroAddress();
 
         if (pullAmount > 0) {
-            // Requires: wallet has approved `token` to canonical Permit2 (ERC20)
+            address payer = _payer;
+            if (payer == address(0)) revert ZeroAddress();
+            // Requires: payer approved `token` to canonical Permit2 (ERC20)
             // and granted this contract a Permit2 allowance for `token`.
-            // Pull from the OWNER wallet, not msg.sender: inside executeBatch
-            // this function is self-called (msg.sender == address(this)), and
-            // the Permit2 allowance is granted by the owner wallet.
-            permit2.transferFrom(owner, address(this), pullAmount, token);
+            // Pull from `_payer` (executeBatch msg.sender), not owner: this
+            // function is self-called so msg.sender here is the contract.
+            permit2.transferFrom(payer, address(this), pullAmount, token);
         }
 
         if (approveAmount > 0) {

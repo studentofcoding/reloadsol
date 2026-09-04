@@ -379,6 +379,27 @@ export function buildKyberLegResults(params: {
  * Flatten wrap + per-leg calls and precompute the leg mapping so a mid-batch
  * sequential failure can be attributed to an exact leg index.
  */
+/**
+ * Wallet txs before executeBatch: unique Permit2/ERC20 approvals (already
+ * omitted per-leg when allowance is live), then the single batch call.
+ */
+export function executorWalletCalls(
+  prepared: Array<{ calls: RhTxCall[] }>,
+  batchCall: RhTxCall,
+): RhTxCall[] {
+  const prefix: RhTxCall[] = []
+  const seen = new Set<string>()
+  for (const p of prepared) {
+    for (const c of p.calls.slice(0, -1)) {
+      const key = `${c.to.toLowerCase()}:${c.data}:${c.value ?? 0}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      prefix.push(c)
+    }
+  }
+  return [...prefix, batchCall]
+}
+
 export function planKyberLegCalls(
   wrapCalls: RhTxCall[],
   prepared: Array<{ calls: RhTxCall[] }>,
@@ -626,10 +647,7 @@ export async function executeRhParentKyberBuy(params: {
     }
     // Wallet calls: per-leg Permit2 approvals (everything but the direct swap
     // call, which moves inside the batch), then the single atomic batch tx.
-    const walletCalls: RhTxCall[] = [
-      ...prepared.flatMap((p) => p.calls.slice(0, -1)),
-      batchCall,
-    ]
+    const walletCalls = executorWalletCalls(prepared, batchCall)
     try {
       const { hash } = await executeRhWalletCalls({
         publicClient: params.publicClient,
@@ -864,10 +882,7 @@ export async function executeRhParentKyberSell(params: {
       data: encodeExecuteBatch(batch),
       value: txValue,
     }
-    const walletCalls: RhTxCall[] = [
-      ...prepared.flatMap((p) => p.calls.slice(0, -1)),
-      batchCall,
-    ]
+    const walletCalls = executorWalletCalls(prepared, batchCall)
     try {
       const { hash } = await executeRhWalletCalls({
         publicClient: params.publicClient,

@@ -153,11 +153,16 @@ export async function fetchSocialRollupsMap(
   }
 }
 
-export async function fetchSocialRollups(limit = 100): Promise<SocialTokenRollupRow[]> {
+export async function fetchSocialRollups(
+  limit = 100,
+  chain?: 'sol' | 'robinhood',
+): Promise<SocialTokenRollupRow[]> {
   try {
     const { rows } = await query<SocialTokenRollupRow>(
-      `SELECT * FROM social_token_rollups ORDER BY updated_at DESC LIMIT $1`,
-      [limit],
+      chain
+        ? `SELECT * FROM social_token_rollups WHERE chain = $2 ORDER BY updated_at DESC LIMIT $1`
+        : `SELECT * FROM social_token_rollups ORDER BY updated_at DESC LIMIT $1`,
+      chain ? [limit, chain] : [limit],
     )
     return rows
   } catch (error) {
@@ -271,23 +276,38 @@ export async function fetchRecentSocialEventsFeed(options?: {
   limit?: number
   hours?: number
   telegramOnly?: boolean
+  chain?: 'sol' | 'robinhood'
 }): Promise<SocialTokenEventRow[]> {
   const limit = options?.limit ?? 50
   const hours = options?.hours ?? 24
   const since = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString()
+  const chain = options?.chain
 
   const sql = options?.telegramOnly
-    ? `SELECT * FROM social_token_events
-       WHERE occurred_at >= $1 AND source != 'tracked_wallet_poll'
-       ORDER BY occurred_at DESC
-       LIMIT $2`
-    : `SELECT * FROM social_token_events
-       WHERE occurred_at >= $1
-       ORDER BY occurred_at DESC
-       LIMIT $2`
+    ? chain
+      ? `SELECT * FROM social_token_events
+         WHERE occurred_at >= $1 AND source != 'tracked_wallet_poll' AND chain = $3
+         ORDER BY occurred_at DESC
+         LIMIT $2`
+      : `SELECT * FROM social_token_events
+         WHERE occurred_at >= $1 AND source != 'tracked_wallet_poll'
+         ORDER BY occurred_at DESC
+         LIMIT $2`
+    : chain
+      ? `SELECT * FROM social_token_events
+         WHERE occurred_at >= $1 AND chain = $3
+         ORDER BY occurred_at DESC
+         LIMIT $2`
+      : `SELECT * FROM social_token_events
+         WHERE occurred_at >= $1
+         ORDER BY occurred_at DESC
+         LIMIT $2`
 
   try {
-    const { rows } = await query<SocialTokenEventRow>(sql, [since, limit])
+    const { rows } = await query<SocialTokenEventRow>(
+      sql,
+      chain ? [since, limit, chain] : [since, limit],
+    )
     return rows
   } catch (error) {
     if (isMissingTableError(error)) return []

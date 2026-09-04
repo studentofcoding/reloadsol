@@ -4,7 +4,9 @@ import {
   isServiceAuthorizedRequest,
   requireDevSession,
 } from '@/utils/api-auth'
+import { insertSocialEvents } from '@/strategies/social/db'
 import {
+  fomoFillToSocialEvent,
   maxFillsPerBatch,
   normalizeFomoFill,
   type NormalizedFomoFill,
@@ -96,6 +98,25 @@ async function upsertHello(hello: HelloPayload | null | undefined): Promise<void
        updated_at = NOW()`,
     [lag, lastBlock, viewers == null ? null : Math.trunc(viewers), JSON.stringify(hello)],
   )
+}
+
+async function loadFomoSkipWallets(): Promise<Set<string>> {
+  const set = new Set<string>()
+  for (const sql of [
+    `SELECT lower(address) AS a FROM alpha_wallet_roster`,
+    `SELECT lower(address) AS a FROM tracked_wallets`,
+  ]) {
+    try {
+      const { rows } = await query<{ a: string }>(sql)
+      for (const row of rows) {
+        const a = row.a?.trim()
+        if (a) set.add(a)
+      }
+    } catch {
+      // ponytail: missing roster table → fan all cash_leg; overlap risk until tables exist
+    }
+  }
+  return set
 }
 
 async function bumpIngestStatus(maxId: number | null): Promise<void> {
@@ -224,12 +245,25 @@ export async function POST(request: NextRequest) {
       await bumpIngestStatus(maxId)
     }
 
+    let social = { inserted: 0, skipped: 0 }
+    try {
+      const skipWallets = await loadFomoSkipWallets()
+      const events = normalized
+        .map((f) => fomoFillToSocialEvent(f, skipWallets))
+        .filter((e): e is NonNullable<typeof e> => e != null)
+      social = await insertSocialEvents(events)
+    } catch {
+      // Mirror must not die if social_token_events is down.
+    }
+
     return NextResponse.json({
       success: true,
       received: rawFills.length,
       inserted_attempted: normalized.length,
       last_fill_id: maxId,
       ms: stats.ms,
+      social_inserted: social.inserted,
+      social_skipped: social.skipped,
     })
   } catch (error) {
     return NextResponse.json(

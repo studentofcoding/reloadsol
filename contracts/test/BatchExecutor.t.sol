@@ -165,6 +165,12 @@ contract BatchExecutorTest is TestBase {
         usdg.approve(address(permit2), type(uint256).max); // one-time ERC20 approve to Permit2
         permit2.approve(address(usdg), address(exec), type(uint160).max, type(uint48).max); // Permit2 allowance to executor
         vm.stopPrank();
+
+        usdg.mint(USER2, 1_000 ether);
+        vm.startPrank(USER2);
+        usdg.approve(address(permit2), type(uint256).max);
+        permit2.approve(address(usdg), address(exec), type(uint160).max, type(uint48).max);
+        vm.stopPrank();
     }
 
     function _call(address target, uint256 value, bytes memory data)
@@ -283,13 +289,48 @@ contract BatchExecutorTest is TestBase {
         assertEq(OWNER.balance, 4 ether, "1 ether wrapped, none left over to sweep");
     }
 
-    // onlyOwner: random caller cannot run a batch.
-    function test_onlyOwner() public {
-        BatchExecutor.Call[] memory calls = new BatchExecutor.Call[](1);
-        calls[0] = _call(address(weth), 0, abi.encodeWithSelector(MockWETH.deposit.selector));
+    // Trader (non-owner) can executeBatch; pull is from that trader.
+    function test_traderExecuteBatchPullsFromPayer() public {
+        BatchExecutor.Call[] memory calls = new BatchExecutor.Call[](2);
+        calls[0] = _call(
+            address(exec),
+            0,
+            abi.encodeWithSelector(
+                BatchExecutor.pullAndApproveRouter.selector,
+                address(usdg),
+                address(router),
+                uint160(100 ether),
+                uint256(100 ether),
+                uint48(block.timestamp + 1 days)
+            )
+        );
+        calls[1] = _call(
+            address(router),
+            0,
+            abi.encodeWithSelector(
+                MockRouter.swapExact.selector, address(usdg), address(tokenOut), 100 ether, 99 ether
+            )
+        );
+
         vm.prank(USER2);
-        vm.expectRevert(BatchExecutor.NotOwner.selector);
         exec.executeBatch(calls);
+
+        assertEq(usdg.balanceOf(USER2), 900 ether, "trader usdg spent");
+        assertEq(usdg.balanceOf(OWNER), 1_000 ether, "owner usdg untouched");
+        assertEq(tokenOut.balanceOf(address(exec)), 99 ether, "exec received output");
+    }
+
+    // Random caller cannot sweep or pause.
+    function test_randomCannotSweepOrPause() public {
+        usdg.mint(address(exec), 1 ether);
+        vm.startPrank(USER2);
+        vm.expectRevert(BatchExecutor.NotOwner.selector);
+        exec.sweepToken(address(usdg), USER2);
+        vm.expectRevert(BatchExecutor.NotOwner.selector);
+        exec.setPaused(true);
+        vm.stopPrank();
+        assertEq(usdg.balanceOf(address(exec)), 1 ether, "dust stays");
+        assertTrue(!exec.paused(), "not paused");
     }
 
     // Pause blocks executeBatch but not sweeps.

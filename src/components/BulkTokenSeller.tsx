@@ -39,6 +39,8 @@ import {
 import { executeGmgnBulkSell } from "@/utils/gmgn-bulk-trade";
 import type { RhSwapQuote } from "@/utils/dlmm/rh-univ2-swap";
 import { executeRhParentKyberSell } from "@/utils/dlmm/rh-kyber-swap";
+import { getRhBatchExecutorAddress } from "@/utils/dlmm/rh-batch-executor";
+import { prefetchSwapTransaction } from "@/utils/swap-executor";
 import { RH_WETH, erc20Abi } from "@/utils/dlmm/rh-univ2";
 import {
   fetchEthUsdSpot,
@@ -86,7 +88,7 @@ import { useRpc } from "@/contexts/RpcContext";
 import RpcPanel from "./RpcPanel";
 import PnLShareModal from "./PnLShareModal";
 import { pnlShareService } from "@/utils/pnl-share-service";
-import { mapRaptorQuoteToDisplay } from "@/utils/solanatracker-raptor";
+import { mapRaptorQuoteToDisplay, RAPTOR_DEV_FEE_ACCOUNT, RAPTOR_DEV_FEE_BPS } from "@/utils/solanatracker-raptor";
 
 function patchWalletTokenLists(
   data: WalletTokensData,
@@ -475,6 +477,45 @@ export default function BulkTokenSeller() {
 
     return () => clearInterval(interval);
   }, [isSolTrade, autoQuote, tokensHash, selectedTokens.length]);
+
+  const sellPrefetchKey = useMemo(
+    () =>
+      selectedTokens.map((t) => `${t.mintAddress}:${t.sellAmount}`).join(","),
+    [selectedTokens],
+  );
+
+  useEffect(() => {
+    if (!isSolTrade || !publicKey || !connection) return;
+    if (selectedTokens.length === 0) return;
+    const pk = publicKey.toBase58();
+    const legs = selectedTokens.filter((t) => t.sellAmount > 0);
+    const timer = window.setTimeout(() => {
+      void Promise.all(
+        legs.map((token) =>
+          prefetchSwapTransaction({
+            userPublicKey: pk,
+            inputMint: token.mintAddress,
+            outputMint: TOKENS.SOL,
+            amount: token.sellAmount,
+            slippageBps: slippage,
+            priorityFeeLamports: priorityFee,
+            feeAccount: RAPTOR_DEV_FEE_ACCOUNT,
+            feeBps: RAPTOR_DEV_FEE_BPS,
+            connection,
+          }).catch(() => undefined),
+        ),
+      );
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [
+    isSolTrade,
+    publicKey,
+    connection,
+    sellPrefetchKey,
+    slippage,
+    priorityFee,
+    selectedTokens,
+  ]);
 
   // Fetch SOL price using robust multi-API system — handled by useSolPrice
 
@@ -970,6 +1011,10 @@ export default function BulkTokenSeller() {
         );
         return;
       }
+      if (useRhParentPath && getRhBatchExecutorAddress()) {
+        await runConfirmedRhSell();
+        return;
+      }
       setIsLoading(true);
       setError("");
       try {
@@ -1463,6 +1508,7 @@ export default function BulkTokenSeller() {
     solGmgnSynced,
     rhQuoteCurrency,
     rhWallet.getPublicClient(),
+    runConfirmedRhSell,
   ]);
 
   /** Close emptied ATAs offered on the post-sell success modal. */
@@ -1942,7 +1988,9 @@ export default function BulkTokenSeller() {
         from={tradeFromAddress || ""}
         legs={gmgnConfirmLegs}
         busy={gmgnConfirmBusy}
-        sequentialSignHint={useRhParentPath}
+        sequentialSignHint={
+          useRhParentPath && !getRhBatchExecutorAddress()
+        }
         onCancel={() => setGmgnConfirmOpen(false)}
         onConfirm={() => void runConfirmedRhSell()}
       />

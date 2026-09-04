@@ -59,6 +59,59 @@ export type PrepareSwapParams = {
   maxHops?: number;
 };
 
+/** Quote-and-swap txs go stale quickly; prefetch is only reused within this window. */
+export const SWAP_PREPARE_TTL_MS = 8_000;
+
+function swapPrepareCacheKey(params: PrepareSwapParams): string {
+  return [
+    params.userPublicKey,
+    params.inputMint,
+    params.outputMint,
+    String(params.amount),
+    params.slippageBps,
+    params.priorityFeeLamports ?? 0,
+    params.feeAccount ?? "",
+    params.feeBps ?? 0,
+  ].join("|");
+}
+
+const preparedSwapCache = new Map<
+  string,
+  { at: number; prepared: PreparedSwap }
+>();
+
+export function putPreparedSwapCache(
+  params: PrepareSwapParams,
+  prepared: PreparedSwap,
+  now = Date.now(),
+): void {
+  preparedSwapCache.set(swapPrepareCacheKey(params), { at: now, prepared });
+}
+
+export function peekFreshPreparedSwap(
+  params: PrepareSwapParams,
+  now = Date.now(),
+): PreparedSwap | null {
+  const e = preparedSwapCache.get(swapPrepareCacheKey(params));
+  if (!e || now - e.at > SWAP_PREPARE_TTL_MS) return null;
+  return e.prepared;
+}
+
+/** Consume a still-fresh prefetch so the click path does not rebuild. */
+export function takeFreshPreparedSwap(
+  params: PrepareSwapParams,
+  now = Date.now(),
+): PreparedSwap | null {
+  const key = swapPrepareCacheKey(params);
+  const e = preparedSwapCache.get(key);
+  if (!e || now - e.at > SWAP_PREPARE_TTL_MS) {
+    preparedSwapCache.delete(key);
+    return null;
+  }
+  preparedSwapCache.delete(key);
+  return e.prepared;
+}
+
 function mapRaptorQuoteToSwapQuote(
   quote: RaptorQuoteResponse,
   amount: number,
@@ -152,6 +205,14 @@ export async function prepareSwapTransaction(
     return prepareShyftStackSwap(params);
   }
   return prepareRaptorSwap(params);
+}
+
+export async function prefetchSwapTransaction(
+  params: PrepareSwapParams,
+): Promise<PreparedSwap> {
+  const prepared = await prepareSwapTransaction(params);
+  putPreparedSwapCache(params, prepared);
+  return prepared;
 }
 
 /** Quote for UI. */
@@ -726,7 +787,8 @@ export type PreparedSwapMeta = PreparedSwap;
 export async function prepareBulkSwapTransaction(
   params: PrepareSwapParams,
 ): Promise<{ tx: VersionedTransaction; meta: PreparedSwapMeta; outAmount?: string }> {
-  const prepared = await prepareSwapTransaction(params);
+  const prepared =
+    takeFreshPreparedSwap(params) ?? (await prepareSwapTransaction(params));
   const tx = VersionedTransaction.deserialize(
     Buffer.from(prepared.swapTransaction, "base64"),
   );

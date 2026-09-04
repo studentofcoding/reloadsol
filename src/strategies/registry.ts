@@ -402,6 +402,7 @@ export const SOCIAL_STRATEGIES: Record<string, import('./types').SocialStrategy>
     description:
       'Paper trade when FOMO mentions >7 in 30m, also on TRENDINGSSOL, and only on social rollups',
     is_active: true,
+    chain: 'sol',
     execution_mode: 'sim_only',
     config: {
       entry: {

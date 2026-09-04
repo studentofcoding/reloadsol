@@ -12,9 +12,12 @@ import { normalizeSolanaAddress } from '@/utils/solana-address'
 export async function GET(request: NextRequest) {
   await connection()
   const rollupsLimit = Number(request.nextUrl.searchParams.get('rollups_limit') ?? 50)
+  const chainRaw = request.nextUrl.searchParams.get('chain')
+  const chain =
+    chainRaw === 'robinhood' || chainRaw === 'sol' ? chainRaw : undefined
   const [wallets, rollups, stats] = await Promise.all([
     listTrackedWallets(false),
-    fetchSocialRollups(rollupsLimit),
+    fetchSocialRollups(rollupsLimit, chain),
     fetchSocialIngestStats(),
   ])
 
