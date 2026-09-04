@@ -8,6 +8,19 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Condensed docs (5 categories) + architecture diagrams
+
+- **`docs/01-product-and-trading.md`** · **`docs/02-architecture-and-data.md`** ·
+  **`docs/03-strategies-and-automation.md`** · **`docs/04-machine-learning.md`** ·
+  **`docs/05-operations-and-deployment.md`** — single entry point per category,
+  condensed from the existing deep docs and verified against the codebase.
+- **`docs/README.md`** — category + diagram index (root `README.md` docs table now points here).
+- **`docs/diagrams/`** — six self-contained HTML architecture diagrams (Flowey brand palette):
+  trading surfaces, confirmation lifecycle (sequence), system topology, strategy engine,
+  ML pipeline, deploy runbook.
+- Stale/superseded docs moved to **`docs/_archive/`** (catch-the-coin, ReloadSOL_Algo_Strategy,
+  AUTONOMOUS_TRADING_PLAN/IMPLEMENTATION) — history only.
+
 ### Added — Trending Tokens buy-page cards match the DLMM (RobinhoodCard) stat grid
 
 - The buy-page Trending Tokens column now renders the same compact stat grid as

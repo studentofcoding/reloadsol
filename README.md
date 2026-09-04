@@ -53,15 +53,20 @@ Open [http://localhost:3000](http://localhost:3000). Cron health: [http://localh
 
 ### Documentation
 
+Condensed entry points (5 categories + diagrams hub):
+
 | Doc | Use when |
 |-----|----------|
+| [docs/README.md](docs/README.md) | **Start here** — category + diagram index |
+| [docs/01-product-and-trading.md](docs/01-product-and-trading.md) | Product, networks, trading surfaces, swap execution, confirmation lifecycle |
+| [docs/02-architecture-and-data.md](docs/02-architecture-and-data.md) | Topology, Postgres/Redis, records model, data flows, deploy model |
+| [docs/03-strategies-and-automation.md](docs/03-strategies-and-automation.md) | Strategies/workers, sim vs live, kill switches |
+| [docs/04-machine-learning.md](docs/04-machine-learning.md) | ML pipeline, artifacts, shadow-vs-enforce |
+| [docs/05-operations-and-deployment.md](docs/05-operations-and-deployment.md) | Env keys, Docker stack, deploy runbook, ops |
 | [handoff.md](handoff.md) | Session handoff — Pattern ML focus, ops checklist |
-| [docs/ARCHITECTURE_SUMMARY.md](docs/ARCHITECTURE_SUMMARY.md) | Whole picture — algo, Pattern ML, next steps |
-| [docs/algo_overview.md](docs/algo_overview.md) | Per-strategy capture/calculate/result, workers |
-| [docs/OPERATOR_STATE.md](docs/OPERATOR_STATE.md) | Live ops, retrain loops, model constraints |
-| [docs/GMGN_STRATEGY.md](docs/GMGN_STRATEGY.md) | GMGN activity poll, Radar (Early bridge), sim |
-| [docs/architecture.md](docs/architecture.md) | System topology, tables, deploy model |
-| [ml/README.md](ml/README.md) | Pattern ML export/train on host |
+
+Diagrams: [`docs/diagrams/`](docs/diagrams/) (trading surfaces, confirmation lifecycle,
+system topology, strategy engine, ML pipeline, deploy runbook).
 
 Production DB: Docker Postgres **`reloadsol_db`** only (Supabase cut off). Schema: [`db/init/`](db/init/).
 
