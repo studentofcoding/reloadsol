@@ -6,6 +6,10 @@ import ChartOverview from './ChartOverview'
 import TokenSkeleton from './TokenSkeleton'
 import { fetchAxiomTokenInfo, getRiskIndicators, formatRiskDisplay, calculateFeeToMarketCapRatio } from '@/utils/axiom'
 import RiskAnalysis from './RiskAnalysis'
+import {
+  TokenStatsGrid,
+  type TokenStats,
+} from '@/components/signals/shared/TokenStatsGrid'
 
 interface TrendingToken {
   token_symbol: string
@@ -17,6 +21,19 @@ interface TrendingToken {
   mcap?: number
   logo_url?: string
   created_at?: number
+  // DLMM-card parity fields (present on the GMGN/RH feed)
+  liquidity?: number
+  holders?: number
+  launchpad?: string
+  twitter?: string
+  telegram?: string
+  website?: string
+  smartDegenCount?: number
+  renownedCount?: number
+  hotLevel?: number
+  visitingCount?: number
+  communityCue?: 'komun_ok' | 'komun_thin'
+  fomoCue?: 'fomo_hot' | 'fomo_quiet'
 }
 
 interface AxiomTokenInfo {
@@ -275,6 +292,21 @@ export default function TrendingTokens({
     return price.toLocaleString('en-US', { maximumFractionDigits: 2 })
   }
 
+  const tokenStats = (token: TrendingToken): TokenStats => ({
+    mcap: token.mcap,
+    volume24h: token.volume_1h,
+    liquidity: token.liquidity,
+    holders: token.holders,
+    priceChangePct: token.change_1h != null ? token.change_1h * 100 : undefined,
+    launchpad: token.launchpad,
+    smartDegenCount: token.smartDegenCount,
+    renownedCount: token.renownedCount,
+    hotLevel: token.hotLevel,
+    visitingCount: token.visitingCount,
+    communityCue: token.communityCue,
+    fomoCue: token.fomoCue,
+  })
+
   // Format timestamp as time ago (e.g. "2 hours ago", "3 days ago")
   const formatTimeAgo = (timestamp: number | undefined): string => {
     // console.log('Token timestamp received:', timestamp, typeof timestamp);
@@ -500,6 +532,11 @@ export default function TrendingTokens({
                       </svg>
                     </button>
                   </div>
+                </div>
+
+                {/* DLMM-card parity stats (Mcap / Vol / Liq / Holders / SM / Hot …) */}
+                <div className="mt-2 pt-2 border-t border-gray-700">
+                  <TokenStatsGrid stats={tokenStats(token)} />
                 </div>
 
                 {/* Axiom Risk Indicators */}

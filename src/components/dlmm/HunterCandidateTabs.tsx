@@ -33,6 +33,28 @@ function formatPct(n: number) {
   return `${sign}${n.toFixed(1)}%`;
 }
 
+export function formatTokenStatUsd(n: number | undefined | null): string {
+  if (n == null || !Number.isFinite(n) || n <= 0) return '—'
+  return formatUsd(n)
+}
+
+export function formatTokenStatPct(n: number | undefined | null): string {
+  if (n == null || !Number.isFinite(n)) return '—'
+  return formatPct(n)
+}
+
+export function tokenCommunityCueLabel(cue?: string): string | null {
+  if (cue === 'komun_ok') return 'komun jelas'
+  if (cue === 'komun_thin') return 'komun tipis'
+  return null
+}
+
+export function tokenFomoCueLabel(cue?: string): string | null {
+  if (cue === 'fomo_hot') return 'fomo hot'
+  if (cue === 'fomo_quiet') return 'fomo quiet'
+  return null
+}
+
 function socialHref(raw: string, kind: 'twitter' | 'telegram' | 'website'): string | null {
   const v = raw.trim();
   if (!v) return null;

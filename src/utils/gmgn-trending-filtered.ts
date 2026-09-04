@@ -47,6 +47,61 @@ export type GmgnFilteredTrendingToken = {
   mcap: number
   logo_url?: string
   organic_score: number
+  /** DLMM-card parity fields (nullable — not all feeds provide them). */
+  liquidity?: number
+  holders?: number
+  launchpad?: string
+  twitter?: string
+  telegram?: string
+  website?: string
+  smartDegenCount?: number
+  renownedCount?: number
+  hotLevel?: number
+  visitingCount?: number
+  communityCue?: 'komun_ok' | 'komun_thin'
+  fomoCue?: 'fomo_hot' | 'fomo_quiet'
+}
+
+export function numOrUndef(v: unknown): number | undefined {
+  if (typeof v === 'number' && Number.isFinite(v)) return v
+  if (typeof v === 'string' && v.trim()) {
+    const n = Number(v)
+    return Number.isFinite(n) ? n : undefined
+  }
+  return undefined
+}
+
+export function strOrUndef(v: unknown): string | undefined {
+  return typeof v === 'string' && v.trim() ? v.trim() : undefined
+}
+
+/** DLMM-card community cue: present when the token has a Twitter + a social. */
+export function gmgnCommunityCue(row: {
+  twitter_username?: unknown
+  telegram?: unknown
+  website?: unknown
+}): 'komun_ok' | 'komun_thin' {
+  const twitter = strOrUndef(row.twitter_username)
+  const telegram = strOrUndef(row.telegram)
+  const website = strOrUndef(row.website)
+  return twitter && (telegram || website) ? 'komun_ok' : 'komun_thin'
+}
+
+/** DLMM-card FOMO cue — hot / strong change / many smart wallets / visits. */
+export function gmgnFomoCue(row: {
+  hot_level?: unknown
+  price_change_percent?: unknown
+  smart_degen_count?: unknown
+  renowned_count?: unknown
+  visiting_count?: unknown
+}): 'fomo_hot' | 'fomo_quiet' {
+  const hot = numOrUndef(row.hot_level) ?? 0
+  const pct = numOrUndef(row.price_change_percent) ?? 0
+  const sm = numOrUndef(row.smart_degen_count) ?? 0
+  const kol = numOrUndef(row.renowned_count) ?? 0
+  const visits = numOrUndef(row.visiting_count) ?? 0
+  if (hot >= 2 || pct >= 30 || sm + kol >= 20 || visits >= 200) return 'fomo_hot'
+  return 'fomo_quiet'
 }
 
 function num(v: unknown): number {
@@ -95,6 +150,8 @@ export function mapGmgnRankToFilteredToken(
       : typeof (row as { logo_url?: unknown }).logo_url === 'string'
         ? String((row as { logo_url: string }).logo_url)
         : undefined
+  const launchpad =
+    strOrUndef(row.launchpad_platform) ?? strOrUndef(row.launchpad)
   return {
     token_symbol: String(row.symbol ?? '???'),
     token_address: address,
@@ -105,6 +162,18 @@ export function mapGmgnRankToFilteredToken(
     mcap,
     logo_url: logo,
     organic_score: gmgnOrganicScoreProxy(row),
+    liquidity: numOrUndef(row.liquidity),
+    holders: numOrUndef(row.holder_count),
+    launchpad,
+    twitter: strOrUndef(row.twitter_username),
+    telegram: strOrUndef(row.telegram),
+    website: strOrUndef(row.website),
+    smartDegenCount: numOrUndef(row.smart_degen_count),
+    renownedCount: numOrUndef(row.renowned_count),
+    hotLevel: numOrUndef(row.hot_level),
+    visitingCount: numOrUndef(row.visiting_count),
+    communityCue: gmgnCommunityCue(row),
+    fomoCue: gmgnFomoCue(row),
   }
 }
 

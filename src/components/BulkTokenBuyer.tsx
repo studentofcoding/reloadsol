@@ -1742,6 +1742,7 @@ export default function BulkTokenBuyer() {
                       </div>
                     )}
                     <iframe
+                      key={`gmgn-chart-${effectiveChain}-${selectedToken}`}
                       src={getGmgnKlineUrl(selectedToken, {
                         interval: "1D",
                         theme: "dark",

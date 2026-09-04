@@ -8,6 +8,30 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Trending Tokens buy-page cards match the DLMM (RobinhoodCard) stat grid
+
+- The buy-page Trending Tokens column now renders the same compact stat grid as
+  the DLMM/RH LP cards: **Mcap · Vol 24h · Liquidity · Holders · 24h · Launchpad ·
+  SM/KOL · Hot/visits**, plus the **komun jelas/tipis** and **fomo hot/quiet**
+  chips, via a new shared `TokenStatsGrid` (`signals/shared/TokenStatsGrid.tsx`).
+- `GmgnFilteredTrendingToken` mapping now preserves the GMGN rank's rich fields
+  (`liquidity`, `holder_count`, `launchpad`, `twitter/telegram/website`,
+  `smart_degen_count`, `renowned_count`, `hot_level`, `visiting_count`) and derives
+  `communityCue`/`fomoCue` (`gmgnCommunityCue`/`gmgnFomoCue`) — so the Robinhood
+  buy page shows real per-token data, and Sol (Jupiter feed) falls back to "—"
+  for the fields Jupiter doesn't provide.
+- Tests: `gmgn-trending-filtered.test.ts` pins the rich-field mapping + cues.
+
+### Fixed — GMGN chart iframe no longer remounts mid-session
+
+- `GmgnChartEmbed` no longer `key`s the iframe by src on every render (which
+  tore down a live GMGN/TradingView chart and could trigger the GMGN-side
+  `setSymbolParams`/`_onBeforeModifySeries` crash); the src is memoized per
+  token/interval/chain instead.
+- The buy-page main chart iframe (`BulkTokenBuyer`) is now keyed by
+  chain+token so changing the selected token cleanly remounts the chart instead
+  of mutating a live one.
+
 ### Fixed — RH UniV2 subgraph fallback query (DAMM v2 pool resolve 502)
 
 - The Goldsky Robinhood UniV2 subgraph `where` schema was misread: it rejects

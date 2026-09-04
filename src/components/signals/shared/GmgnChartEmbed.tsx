@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useMemo } from "react";
 import { getGmgnKlineUrl, type GmgnChain } from "@/utils/gmgn";
 
 type GmgnChartEmbedProps = {
@@ -13,7 +13,29 @@ type GmgnChartEmbedProps = {
   title?: string;
 };
 
-/** Shared GMGN kline iframe embed used across Signals tabs. */
+/** Build the GMGN kline embed URL once per (token/chain/interval) change. */
+function useGmgnKlineSrc(
+  tokenAddress: string,
+  interval: string,
+  theme: "dark" | "light" | undefined,
+  chain: GmgnChain | undefined,
+): string {
+  return useMemo(
+    () => getGmgnKlineUrl(tokenAddress, { interval, theme, chain }),
+    [tokenAddress, interval, theme, chain],
+  );
+}
+
+/**
+ * Shared GMGN kline iframe embed used across Signals tabs.
+ *
+ * The iframe src is stable per (token/interval/chain): it is NOT re-keyed or
+ * remounted on unrelated re-renders (e.g. buyState changes), which avoids
+ * tearing down a live GMGN TradingView chart mid-session and triggering the
+ * GMGN-side `setSymbolParams`/`_onBeforeModifySeries` crash. To force a hard
+ * reload for a different token, callers should pass a different `tokenAddress`
+ * (or remount with a key at the call site).
+ */
 export default function GmgnChartEmbed({
   tokenAddress,
   interval = "5",
@@ -23,11 +45,10 @@ export default function GmgnChartEmbed({
   height = "100%",
   title,
 }: GmgnChartEmbedProps) {
-  const src = getGmgnKlineUrl(tokenAddress, { interval, theme, chain });
+  const src = useGmgnKlineSrc(tokenAddress, interval, theme, chain);
 
   return (
     <iframe
-      key={`${src}`}
       src={src}
       className={className}
       style={{ border: "none", height }}

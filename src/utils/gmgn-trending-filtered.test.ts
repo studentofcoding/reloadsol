@@ -4,6 +4,8 @@ import {
   criteriaForChain,
   filterAndSortGmgnTrending,
   GMGN_FILTERED_CRITERIA,
+  gmgnCommunityCue,
+  gmgnFomoCue,
   gmgnOrganicScoreProxy,
   mapGmgnRankToFilteredToken,
   normalizePriceChangeToFraction,
@@ -133,6 +135,79 @@ describe('filterAndSortGmgnTrending', () => {
     ]
     const { tokens } = filterAndSortGmgnTrending(rows)
     expect(tokens.map((t) => t.token_symbol)).toEqual(['B', 'A'])
+  })
+})
+
+describe('gmgnCommunityCue / gmgnFomoCue', () => {
+  it('marks komun_ok when twitter + (telegram or website) exist', () => {
+    expect(
+      gmgnCommunityCue({
+        twitter_username: '@x',
+        telegram: 't.me/x',
+        website: '',
+      }),
+    ).toBe('komun_ok')
+    expect(gmgnCommunityCue({ twitter_username: '@x' })).toBe('komun_thin')
+    expect(gmgnCommunityCue({})).toBe('komun_thin')
+  })
+
+  it('marks fomo_hot on strong signals and fomo_quiet otherwise', () => {
+    expect(gmgnFomoCue({ hot_level: 3 })).toBe('fomo_hot')
+    expect(gmgnFomoCue({ price_change_percent: 45 })).toBe('fomo_hot')
+    expect(
+      gmgnFomoCue({ smart_degen_count: 12, renowned_count: 9 }),
+    ).toBe('fomo_hot')
+    expect(gmgnFomoCue({ hot_level: 1 })).toBe('fomo_quiet')
+  })
+})
+
+describe('mapGmgnRankToFilteredToken rich fields', () => {
+  const richRow: GmgnMarketRankRow = {
+    address: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+    symbol: 'RICH',
+    market_cap: 600_000,
+    volume: 100_000,
+    price_change_percent: 10,
+    liquidity: 40_000,
+    holder_count: 1600,
+    launchpad_platform: 'longxyz',
+    twitter_username: '@rich',
+    telegram: 'https://t.me/rich',
+    website: '',
+    smart_degen_count: 226,
+    renowned_count: 46,
+    hot_level: 3,
+    visiting_count: 2292,
+  }
+
+  it('carries DLMM-card parity stats through the mapping', () => {
+    const mapped = mapGmgnRankToFilteredToken(richRow)
+    expect(mapped).not.toBeNull()
+    expect(mapped!.liquidity).toBe(40_000)
+    expect(mapped!.holders).toBe(1600)
+    expect(mapped!.launchpad).toBe('longxyz')
+    expect(mapped!.twitter).toBe('@rich')
+    expect(mapped!.telegram).toBe('https://t.me/rich')
+    expect(mapped!.smartDegenCount).toBe(226)
+    expect(mapped!.renownedCount).toBe(46)
+    expect(mapped!.hotLevel).toBe(3)
+    expect(mapped!.visitingCount).toBe(2292)
+    expect(mapped!.communityCue).toBe('komun_ok')
+    expect(mapped!.fomoCue).toBe('fomo_hot')
+  })
+
+  it('keeps the optional fields undefined when absent', () => {
+    const mapped = mapGmgnRankToFilteredToken({
+      address: '0xffffffffffffffffffffffffffffffffffffffff',
+      symbol: 'PLAIN',
+      market_cap: 600_000,
+      volume: 100_000,
+      price_change_percent: 10,
+    })
+    expect(mapped!.liquidity).toBeUndefined()
+    expect(mapped!.holders).toBeUndefined()
+    expect(mapped!.communityCue).toBe('komun_thin')
+    expect(mapped!.fomoCue).toBe('fomo_quiet')
   })
 })
 
