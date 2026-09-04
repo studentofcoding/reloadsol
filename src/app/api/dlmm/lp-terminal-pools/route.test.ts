@@ -38,10 +38,19 @@ describe('buildSubgraphPairsWhere', () => {
   it('matches pool id (address lookup) and both tokens under OR', () => {
     const clause = buildSubgraphPairsWhere({ q: '0xAbC123' })
     // Pool-address search must resolve via the pair id, not only tokens.
-    expect(clause).toContain('id_contains: "0xabc123"')
-    expect(clause).toContain('token0_')
-    expect(clause).toContain('token1_')
-    expect(clause).toContain('symbol_contains_nocase')
+    expect(clause).toContain('id: "0xabc123"')
+    expect(clause).toContain('token0: "0xabc123"')
+    expect(clause).toContain('token1: "0xabc123"')
+    // Lowercased for the lowercase subgraph ids.
+    expect(clause).not.toContain('0xAbC123')
+  })
+
+  it('combines minTvl and q with an and-wrapped where', () => {
+    const clause = buildSubgraphPairsWhere({ q: '0xabc', minTvl: '1000' })
+    expect(clause).toContain('and:')
+    expect(clause).toContain('reserveUSD_gte: "1000"')
+    expect(clause).toContain('or:')
+    expect(clause.indexOf('and')).toBeLessThan(clause.indexOf('reserveUSD_gte'))
   })
 
   it('escapes quotes in the q filter (and lowercases the query)', () => {

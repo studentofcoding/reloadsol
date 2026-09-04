@@ -8,6 +8,18 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — RH UniV2 subgraph fallback query (DAMM v2 pool resolve 502)
+
+- The Goldsky Robinhood UniV2 subgraph `where` schema was misread: it rejects
+  nested `or:` objects inside `token0_`/`token1_` relations, and its ids are
+  lowercase `0x` strings. The subgraph fallback therefore failed with a GraphQL
+  error for any `q=` search → the DAMM v2 LP sheet resolve (and pools table
+  token search) returned **502**.
+- `buildSubgraphPairsWhere` now emits a single top-level `or` matching the pool
+  `id`, `token0`, or `token1` (all lowercase, exact string), and combines with
+  `min_tvl` via `and`. Verified live against Goldsky: returns real pairs for
+  USDG/token searches and empty (not error) for addresses with no pair.
+
 ### Fixed — RH CLMM live snapshot no longer 504s on slow RPC crawl
 
 - `/api/dlmm/rh-clmm-live?fresh=1` used to force a full on-chain crawl with no

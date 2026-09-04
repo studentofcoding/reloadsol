@@ -78,30 +78,34 @@ function gqlStr(s: string): string {
 }
 
 /**
- * Build the `where` clause for the Robinhood UniV2 subgraph. The `q` filter
- * OR-matches the pool `id` (so a pool-address lookup resolves) OR either token's
- * identity (address contains / symbol). Uses a single top-level `or` so that a
- * token search doesn't require *both* sides of a pair to match.
+ * Build the `where` clause for the Robinhood UniV2 subgraph. Subgraph ids are
+ * lowercase 0x strings, so `q` is lowercased first. A single top-level `or`
+ * matches the pool `id` exactly (pool-address lookup), or the `token0`/`token1`
+ * string ids exactly (token search). No nested relation/`or` objects — the
+ * Goldsky subgraph rejects those. When both `minTvl` and `q` are present they
+ * are combined with an `and`.
  */
 export function buildSubgraphPairsWhere(opts: {
   q?: string
   minTvl?: string
 }): string {
-  const whereParts: string[] = []
+  const filters: string[] = []
   if (opts.minTvl) {
     const min = Number(opts.minTvl)
     if (Number.isFinite(min) && min > 0) {
-      whereParts.push(`reserveUSD_gte: "${gqlStr(String(min))}"`)
+      filters.push(`reserveUSD_gte: "${gqlStr(String(min))}"`)
     }
   }
   if (opts.q) {
     const q = opts.q.trim().toLowerCase()
-    const tokenFilter = `{ or: [{ id_contains: "${gqlStr(q)}" }, { symbol_contains_nocase: "${gqlStr(q)}" }] }`
-    whereParts.push(
-      `or: [{ id_contains: "${gqlStr(q)}" }, { token0_: ${tokenFilter} }, { token1_: ${tokenFilter} }]`,
+    filters.push(
+      `or: [{ id: "${gqlStr(q)}" }, { token0: "${gqlStr(q)}" }, { token1: "${gqlStr(q)}" }]`,
     )
   }
-  return whereParts.length > 0 ? `where: { ${whereParts.join(' ')} }` : ''
+  if (filters.length === 0) return ''
+  return filters.length === 1
+    ? `where: { ${filters[0]} }`
+    : `where: { and: [${filters.map((f) => `{ ${f} }`).join(', ')}] }`
 }
 
 /**
