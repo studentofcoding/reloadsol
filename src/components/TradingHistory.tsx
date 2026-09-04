@@ -584,11 +584,18 @@ export default function TradingHistory() {
               <div className="flex items-center justify-between text-xs text-gray-400">
                 <span>{formatRelativeTime(record.timestamp)}</span>
                 <div className="flex items-center space-x-1">
-                  {record.failureCount > 0 && (
+                  {record.txStatus === "pending" ? (
+                    <span className="flex items-center gap-1 text-amber-400">
+                      <span className="h-3 w-3 animate-spin rounded-full border-2 border-amber-400/30 border-t-amber-400" />
+                      Confirming…
+                    </span>
+                  ) : record.txStatus === "failed" ? (
+                    <span className="text-red-400">Failed</span>
+                  ) : record.failureCount > 0 ? (
                     <span className="text-red-400">
                       {record.failureCount} failed
                     </span>
-                  )}
+                  ) : null}
                   <svg
                     className="w-3 h-3 opacity-0 group-hover:opacity-60 transition-opacity duration-200"
                     fill="none"

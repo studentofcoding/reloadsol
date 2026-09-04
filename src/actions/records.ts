@@ -9,6 +9,7 @@ import type { AppNetwork } from '@/utils/app-network';
 import {
   insertTradingRecord,
   shouldSkipTradingRecord,
+  updateTradingRecordData,
 } from '@/utils/trading-records-db';
 import { invalidateTradingRecordsCache } from '@/utils/trading-records-cache';
 import { maybeRecordSignalsOutcome } from '@/utils/signals-outcome-capture';
@@ -40,6 +41,29 @@ export async function addTradingRecord(record: TrackingRecord) {
     await maybeRecordSignalsOutcome(record);
   } catch (outcomeErr) {
     console.warn('[records action] signals outcome capture failed:', outcomeErr);
+  }
+
+  invalidateTradingRecordsCache(record.walletAddress);
+  updateTag(CACHE_TAGS.records(record.walletAddress));
+
+  return { success: true as const };
+}
+
+export async function updateTradingRecord(id: string, record: TrackingRecord) {
+  const session = await requireActionSession();
+  const chain = parseDbChain(record.chain);
+
+  if (chain === 'sol') {
+    assertWalletMatchesSession(session.address, record.walletAddress);
+  } else if (!/^0x[a-fA-F0-9]{40}$/.test(String(record.walletAddress))) {
+    throw new Error('Robinhood wallet must be a 0x address');
+  }
+
+  const updated = await updateTradingRecordData(id, record);
+  if (!updated) {
+    // The pending record never persisted (e.g. insert was skipped) — fall back
+    // to inserting the terminal record so a confirmed/failed swap is kept.
+    await insertTradingRecord(record);
   }
 
   invalidateTradingRecordsCache(record.walletAddress);

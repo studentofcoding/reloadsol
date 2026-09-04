@@ -8,6 +8,22 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — RH trade confirmation waits for on-chain confirmation
+
+- Sequential (non-atomic Rabby) writes now check `receipt.status`; a **reverted** tx is
+  marked failed instead of "confirmed" (`rh-send-calls.ts`). Atomic `waitForCallsStatus`
+  batches reject any explicit non-success receipt.
+- `GmgnTradeConfirmModal` gains an additive `submitPhase`: spinner while submitting/
+  confirming on-chain, then an explicit green **Swap confirmed** (with explorer link) or
+  red **Swap failed** (with reason) screen. Existing callers keep their behavior.
+- `RhGmgnSwapPanel` writes a `txStatus:'pending'` record on submit, promoted once (via
+  `updateRecord`/`updateTradingRecord` server action) to `confirmed`/`failed` from the
+  receipt outcome — no early-close or pre-judged result.
+- `TradingHistory` shows an amber spinner + "Confirming…" while a swap is pending and
+  "Failed" on failure, refreshed via SSE.
+- Failed RH manual swaps now persist (pending→failed update bypasses the insert-side skip);
+  strategy/bot records are unaffected.
+
 ### Added — 2026-07 infra audit deliverables (see recommendations.md)
 
 - **REL-20 batched DB writes**: `bulkInsert`/`bulkUpdateByKey` UNNEST helpers + `WriteBatch` collector (`src/utils/db.ts`); `insertTradingRecords` bulk twin (`trading-records-db.ts`). Hot cron paths converted (trending track 10 write shapes, RH sim, mcap sim, signals sim): a typical tick drops from ~50–80 sequential round-trips to ≤ ~15 statements. Per-cycle write timing logs added (rec 6.3).

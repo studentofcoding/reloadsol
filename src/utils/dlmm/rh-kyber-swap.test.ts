@@ -1,11 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   buildKyberLegResults,
+  executeRhParentKyberBuy,
   planKyberLegCalls,
   prepareKyberSwapLegsParallel,
   wethWrapShortfall,
 } from '@/utils/dlmm/rh-kyber-swap'
-import type { RhTxCall } from '@/utils/dlmm/rh-send-calls'
+import {
+  RhSequentialWriteError,
+  executeRhWalletCalls,
+  type RhTxCall,
+} from '@/utils/dlmm/rh-send-calls'
 
 vi.mock('@/utils/kyber-aggregator', async (importOriginal) => {
   const orig =
@@ -24,6 +29,27 @@ vi.mock('@/utils/kyber-aggregator', async (importOriginal) => {
       valueWei: BigInt(0),
       sender: params.sender,
     })),
+  }
+})
+
+// Force the legacy (non-executor, non-permit2) sequential wallet path so a
+// reverted receipt deterministically maps to a failed leg.
+vi.mock('@/utils/dlmm/rh-batch-executor', async (importOriginal) => {
+  const orig =
+    await importOriginal<typeof import('@/utils/dlmm/rh-batch-executor')>()
+  return {
+    ...orig,
+    getRhBatchExecutorAddress: () => '',
+    isRhPermit2SwapsEnabled: () => false,
+  }
+})
+
+vi.mock('@/utils/dlmm/rh-send-calls', async (importOriginal) => {
+  const orig =
+    await importOriginal<typeof import('@/utils/dlmm/rh-send-calls')>()
+  return {
+    ...orig,
+    executeRhWalletCalls: vi.fn(),
   }
 })
 
@@ -205,5 +231,39 @@ describe('buildKyberLegResults', () => {
       error: 'tx reverted',
     })
     expect(results.every((r) => !r.success)).toBe(true)
+  })
+})
+
+describe('executeRhParentKyberBuy — reverted receipt gating', () => {
+  it('marks the leg failed when the sequential write reverts on-chain', async () => {
+    // Deterministic kyber mock: native ETH → no approvals, single swap call.
+    vi.mocked(executeRhWalletCalls).mockRejectedValue(
+      new RhSequentialWriteError('Transaction reverted: 0xdead', 0, '0xdead'),
+    )
+
+    const publicClient = {
+      readContract: vi.fn(),
+      getBalance: vi.fn(async () => BigInt(1) << BigInt(200)),
+    } as unknown as import('viem').PublicClient
+    const walletClient = {} as unknown as import('viem').WalletClient
+
+    const result = await executeRhParentKyberBuy({
+      publicClient,
+      walletClient,
+      account: ACCOUNT as `0x${string}`,
+      amountHuman: 0.5,
+      tokenMints: [{ tokenAddress: TOKEN_OUT }],
+      slippageBps: 200,
+      quote: 'ETH',
+    })
+
+    expect(result.success).toBe(false)
+    expect(result.results).toHaveLength(1)
+    expect(result.results[0]).toMatchObject({
+      tokenAddress: TOKEN_OUT,
+      success: false,
+    })
+    expect(result.results[0].error).toContain('reverted')
+    expect(executeRhWalletCalls).toHaveBeenCalledTimes(1)
   })
 })

@@ -44,6 +44,10 @@ export interface TrackingRecord {
   // Optional error information
   errors?: string[]
 
+  // On-chain settlement state for a submitted swap: pending until the tx
+  // receipt resolves, then confirmed (receipt success) or failed (revert).
+  txStatus?: 'pending' | 'confirmed' | 'failed'
+
   // New fields from API improvements
   status?: 'waiting' | 'tracking' | 'won' | 'lost' | 'skipped'
   is_bot_operation?: boolean // Whether this was a bot operation
@@ -241,6 +245,50 @@ class TradingTracker {
     }
   }
 
+  /**
+   * Update an existing record (e.g. promote a pending swap to confirmed/failed
+   * once its on-chain receipt resolves). Merges the patch over the cached
+   * record, persists via the server action (online) or offline cache, and
+   * notifies subscribers so the history feed refreshes to the terminal state.
+   */
+  async updateRecord(
+    recordId: string,
+    patch: Partial<Omit<TrackingRecord, 'id' | 'timestamp'>>,
+    walletAddress: string,
+    chain: 'sol' | 'robinhood' = 'sol',
+  ): Promise<TrackingRecord> {
+    const cached = this.cache.get(this.cacheKey(walletAddress, chain)) || []
+    const existing = cached.find((r) => r.id === recordId)
+    const merged: TrackingRecord = {
+      ...(existing ?? ({} as TrackingRecord)),
+      ...patch,
+      id: recordId,
+      walletAddress,
+      timestamp: existing?.timestamp ?? Date.now(),
+    }
+
+    try {
+      if (this.isOnline) {
+        const { updateTradingRecord } = await import('@/actions/records')
+        await updateTradingRecord(recordId, merged)
+      } else {
+        this.patchOfflineCache(recordId, merged, walletAddress, chain)
+      }
+      this.replaceInLocalCache(recordId, merged, walletAddress, chain)
+      this.notifySubscribers(walletAddress, chain)
+      return merged
+    } catch (error) {
+      console.error('Failed to update tracking record:', error)
+      if (!this.isOnline) {
+        this.patchOfflineCache(recordId, merged, walletAddress, chain)
+        this.replaceInLocalCache(recordId, merged, walletAddress, chain)
+        this.notifySubscribers(walletAddress, chain)
+        return merged
+      }
+      throw error
+    }
+  }
+
   // Delete a trading record
   async deleteRecord(id: string, walletAddress: string, chain: 'sol' | 'robinhood' = 'sol'): Promise<void> {
     const key = this.cacheKey(walletAddress, chain)
@@ -429,6 +477,46 @@ class TradingTracker {
     }
 
     this.cache.set(key, cached)
+  }
+
+  // Replace a single cached record (used by updateRecord so the history feed
+  // reflects a pending swap promoted to confirmed/failed without a refetch).
+  private replaceInLocalCache(
+    recordId: string,
+    record: TrackingRecord,
+    walletAddress: string,
+    chain: 'sol' | 'robinhood' = 'sol',
+  ): void {
+    const key = this.cacheKey(walletAddress, chain)
+    const cached = this.cache.get(key) || []
+    const idx = cached.findIndex((r) => r.id === recordId)
+    if (idx >= 0) cached[idx] = record
+    else cached.unshift(record)
+    this.cache.set(key, cached)
+  }
+
+  // Patch the offline localStorage array for a record (mirrors saveToOfflineCache).
+  private patchOfflineCache(
+    recordId: string,
+    record: TrackingRecord,
+    walletAddress: string,
+    chain: 'sol' | 'robinhood' = 'sol',
+  ): void {
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
+      return
+    }
+    try {
+      const key = this.offlineKey(walletAddress, chain)
+      const cached = localStorage.getItem(key)
+      const records: TrackingRecord[] = cached ? JSON.parse(cached) : []
+      const idx = records.findIndex((r) => r.id === recordId)
+      if (idx >= 0) records[idx] = record
+      else records.unshift(record)
+      if (records.length > 100) records.splice(100)
+      localStorage.setItem(key, JSON.stringify(records))
+    } catch (error) {
+      console.error('Failed to patch offline record:', error)
+    }
   }
 
   // Get records for specific wallet (with caching)

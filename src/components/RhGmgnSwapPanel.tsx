@@ -1,10 +1,14 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { Address } from 'viem'
 import { useAppNetwork } from '@/contexts/AppNetworkContext'
 import { useRhWalletMode } from '@/contexts/RhWalletModeContext'
 import { useTradingData } from '@/components/TradingDataProvider'
+import {
+  tradingTracker,
+  type TrackingRecord,
+} from '@/utils/trading-tracker'
 import { useGmgnBoundWallets } from '@/hooks/useGmgnBoundWallets'
 import { useRhEvmWallet } from '@/hooks/useRhEvmWallet'
 import { useRhWalletTokens } from '@/hooks/useRhWalletTokens'
@@ -82,7 +86,7 @@ export default function RhGmgnSwapPanel({
   const [slippageBps, setSlippageBps] = useState(200)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [okMsg, setOkMsg] = useState('')
+  const [okMsg] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [confirmLegs, setConfirmLegs] = useState<GmgnConfirmLeg[]>([])
   // Sim snapshot captured at review time; reused to record the trade so we
@@ -95,12 +99,22 @@ export default function RhGmgnSwapPanel({
     amountInHuman: number | null
     toUsd: number | null
   } | null>(null)
+  // On-chain submit state: real loading until the receipt resolves, then an
+  // explicit success/failed screen (see GmgnTradeConfirmModal).
+  const [submitPhase, setSubmitPhase] = useState<
+    'idle' | 'submitting' | 'success' | 'failed'
+  >('idle')
+  const [submitResult, setSubmitResult] = useState<{
+    ok: boolean
+    message: string
+    hash?: string
+  } | null>(null)
+  const pendingRef = useRef<string | null>(null)
 
   if (network !== 'robinhood') return null
 
   const openConfirm = async () => {
     setError('')
-    setOkMsg('')
     if (!from) {
       setError(
         isParent
@@ -333,6 +347,97 @@ export default function RhGmgnSwapPanel({
     const addr = token.trim()
     setBusy(true)
     setError('')
+    setSubmitPhase('submitting')
+    setSubmitResult(null)
+
+    const opType: 'buy' | 'sell' =
+      mode === 'tokenToToken' ? 'sell' : side === 'buy' ? 'buy' : 'sell'
+
+    // Persist a pending "in-flight" record so the history feed shows the swap
+    // is awaiting confirmation; it's promoted to confirmed/failed once the
+    // on-chain receipt resolves.
+    pendingRef.current = null
+    try {
+      const pending = await tradingTracker.trackOperation({
+        walletAddress: from,
+        operationType: opType,
+        chain: 'robinhood',
+        tokens: [],
+        successCount: 0,
+        failureCount: 0,
+        totalTokens: 1,
+        feesPaid: 0,
+        signatures: [],
+        slippage: slippageBps / 100,
+        txStatus: 'pending',
+      })
+      pendingRef.current = pending.id
+    } catch (e) {
+      console.warn('[RhGmgnSwapPanel] could not persist pending record:', e)
+    }
+
+    // Promote the pending record (or fall back to a fresh insert if the
+    // pending insert failed). A tracking hiccup must never abort the swap's
+    // on-chain result, so this is best-effort.
+    const finalizePending = async (
+      op: Omit<TrackingRecord, 'id' | 'timestamp'>,
+    ): Promise<void> => {
+      try {
+        if (pendingRef.current) {
+          await tradingTracker.updateRecord(
+            pendingRef.current,
+            op,
+            from,
+            'robinhood',
+          )
+        } else {
+          await trackOperation(op)
+        }
+      } catch (e) {
+        console.warn('[RhGmgnSwapPanel] failed to finalize trade record:', e)
+      }
+    }
+
+    // Apply the terminal result exactly once per swap: record the real
+    // success/failure counts and flip the modal to a success or failure
+    // screen. This is the single source of truth for "only success or failed
+    // after on-chain confirmation" — no early throw double-marks.
+    const settle = async (params: {
+      results: ReadonlyArray<{
+        success: boolean
+        hash?: string
+        orderId?: string
+        error?: string
+      }>
+      success: boolean
+      message: string
+      record: Omit<TrackingRecord, 'id' | 'timestamp' | 'successCount' | 'failureCount' | 'totalTokens'>
+    }): Promise<void> => {
+      const okCount = params.results.filter((r) => r.success).length
+      const failCount = params.results.length - okCount
+      const confirmed = params.results.find((r) => r.hash || r.orderId)
+      const hash =
+        confirmed?.hash ??
+        (confirmed?.orderId ? String(confirmed.orderId) : undefined)
+      await finalizePending({
+        ...params.record,
+        successCount: okCount,
+        failureCount: failCount,
+        totalTokens: params.results.length,
+        txStatus: params.success ? 'confirmed' : 'failed',
+      })
+      if (params.success) {
+        setSubmitResult({ ok: true, message: params.message, hash })
+        setSubmitPhase('success')
+      } else {
+        const msg =
+          params.results.find((r) => r.error)?.error || params.message
+        setSubmitResult({ ok: false, message: msg })
+        setError(msg)
+        setSubmitPhase('failed')
+      }
+    }
+
     try {
       // ── Token-to-token mode ──────────────────────────────────────────
       if (mode === 'tokenToToken') {
@@ -362,40 +467,40 @@ export default function RhGmgnSwapPanel({
           }))
         }
         const ok = results.filter((r) => r.success)
-        if (ok.length > 0) {
-          const fromHeld = holdings.tokens.find(
-            (t) => t.mintAddress.toLowerCase() === fromAddr.toLowerCase(),
-          )
-          const toHeld = holdings.tokens.find(
-            (t) => t.mintAddress.toLowerCase() === toAddr.toLowerCase(),
-          )
-          const sold = pendingSim?.amountInHuman ?? undefined
-          const received = pendingSim?.amountOutHuman ?? undefined
-          const built = ok.map((r) =>
-            buildRhTokenToTokenSwap({
-              from: {
-                mintAddress: r.tokenAddress,
-                symbol: fromHeld?.symbol,
-                amount: sold,
-              },
-              to: {
-                mintAddress: toAddr,
-                symbol: toHeld?.symbol,
-                amount: received,
-              },
-              fromUsd: pendingSim ? sold : undefined,
-              toUsd: pendingSim?.toUsd ?? null,
-            }),
-          )
-          const totalUsd = built.reduce((s, b) => s + b.usdValue, 0)
-          await trackOperation({
+        const fromHeld = holdings.tokens.find(
+          (t) => t.mintAddress.toLowerCase() === fromAddr.toLowerCase(),
+        )
+        const toHeld = holdings.tokens.find(
+          (t) => t.mintAddress.toLowerCase() === toAddr.toLowerCase(),
+        )
+        const sold = pendingSim?.amountInHuman ?? undefined
+        const received = pendingSim?.amountOutHuman ?? undefined
+        const built = ok.map((r) =>
+          buildRhTokenToTokenSwap({
+            from: {
+              mintAddress: r.tokenAddress,
+              symbol: fromHeld?.symbol,
+              amount: sold,
+            },
+            to: {
+              mintAddress: toAddr,
+              symbol: toHeld?.symbol,
+              amount: received,
+            },
+            fromUsd: pendingSim ? sold : undefined,
+            toUsd: pendingSim?.toUsd ?? null,
+          }),
+        )
+        const totalUsd = built.reduce((s, b) => s + b.usdValue, 0)
+        await settle({
+          results,
+          success,
+          message: 'Swap confirmed',
+          record: {
             walletAddress: from,
             operationType: 'sell',
             chain: 'robinhood',
             tokens: built.flatMap((b) => b.tokens),
-            successCount: ok.length,
-            failureCount: results.length - ok.length,
-            totalTokens: results.length,
             solAmount: received,
             totalUsdValue: totalUsd > 0 ? totalUsd : undefined,
             solPriceUsd: undefined,
@@ -404,14 +509,11 @@ export default function RhGmgnSwapPanel({
               .map((r) => r.orderId || r.hash)
               .filter((id): id is string => Boolean(id)),
             slippage: slippageBps / 100,
-          })
-        }
-        if (!success) throw new Error(results[0]?.error || 'Swap failed')
-        setOkMsg('Swap confirmed')
-        setConfirmOpen(false)
+          },
+        })
         return
       }
-      // ── Quote-pair mode (existing behavior) ──────────────────────────
+      // ── Quote-pair mode ──────────────────────────────────────────────
       if (side === 'buy') {
         const human = parseFloat(amount)
         let results: Awaited<ReturnType<typeof executeGmgnBulkBuy>>['results']
@@ -438,31 +540,31 @@ export default function RhGmgnSwapPanel({
           }))
         }
         const ok = results.filter((r) => r.success)
-        if (ok.length > 0) {
-          const held = holdings.tokens.find(
-            (t) => t.mintAddress.toLowerCase() === addr.toLowerCase(),
-          )
-          const ethUsd = pendingSim?.ethUsd ?? 0
-          const usdPerUnit = rhQuoteUsdPerUnit(quote, ethUsd)
-          const built = ok.map((r) =>
-            buildRhBuyToken({
-              mintAddress: r.tokenAddress,
-              symbol: held?.symbol,
-              spentQuote: human,
-              usdPerUnit,
-              estOutRaw: r.estOut ?? pendingSim?.estOutRaw,
-              tokenDecimals: held?.decimals ?? 18,
-            }),
-          )
-          const totalUsd = built.reduce((s, b) => s + b.usdValue, 0)
-          await trackOperation({
+        const held = holdings.tokens.find(
+          (t) => t.mintAddress.toLowerCase() === addr.toLowerCase(),
+        )
+        const ethUsd = pendingSim?.ethUsd ?? 0
+        const usdPerUnit = rhQuoteUsdPerUnit(quote, ethUsd)
+        const built = ok.map((r) =>
+          buildRhBuyToken({
+            mintAddress: r.tokenAddress,
+            symbol: held?.symbol,
+            spentQuote: human,
+            usdPerUnit,
+            estOutRaw: r.estOut ?? pendingSim?.estOutRaw,
+            tokenDecimals: held?.decimals ?? 18,
+          }),
+        )
+        const totalUsd = built.reduce((s, b) => s + b.usdValue, 0)
+        await settle({
+          results,
+          success,
+          message: 'Buy confirmed',
+          record: {
             walletAddress: from,
             operationType: 'buy',
             chain: 'robinhood',
             tokens: built.map((b) => b.token),
-            successCount: ok.length,
-            failureCount: results.length - ok.length,
-            totalTokens: results.length,
             solAmount: human,
             totalUsdValue: totalUsd > 0 ? totalUsd : undefined,
             solPriceUsd: usdPerUnit > 0 ? usdPerUnit : undefined,
@@ -471,10 +573,8 @@ export default function RhGmgnSwapPanel({
               .map((r) => r.orderId || r.hash)
               .filter((id): id is string => Boolean(id)),
             slippage: slippageBps / 100,
-          })
-        }
-        if (!success) throw new Error(results[0]?.error || 'Swap failed')
-        setOkMsg('Buy confirmed')
+          },
+        })
       } else {
         const pct = parseFloat(sellPct)
         let results: Awaited<ReturnType<typeof executeGmgnBulkSell>>['results']
@@ -499,34 +599,34 @@ export default function RhGmgnSwapPanel({
           }))
         }
         const ok = results.filter((r) => r.success)
-        if (ok.length > 0) {
-          const held = holdings.tokens.find(
-            (t) => t.mintAddress.toLowerCase() === addr.toLowerCase(),
-          )
-          const ethUsd = pendingSim?.ethUsd ?? 0
-          const usdPerUnit = rhQuoteUsdPerUnit(quote, ethUsd)
-          const receivedQuote =
-            pendingSim?.amountOutHuman && pendingSim.amountOutHuman > 0
-              ? pendingSim.amountOutHuman
-              : undefined
-          const built = ok.map((r) =>
-            buildRhSellToken({
-              mintAddress: r.tokenAddress,
-              symbol: held?.symbol,
-              soldTokenAmount: pendingSim?.amountInHuman ?? undefined,
-              receivedQuote,
-              usdPerUnit,
-            }),
-          )
-          const totalUsd = built.reduce((s, b) => s + b.usdValue, 0)
-          await trackOperation({
+        const held = holdings.tokens.find(
+          (t) => t.mintAddress.toLowerCase() === addr.toLowerCase(),
+        )
+        const ethUsd = pendingSim?.ethUsd ?? 0
+        const usdPerUnit = rhQuoteUsdPerUnit(quote, ethUsd)
+        const receivedQuote =
+          pendingSim?.amountOutHuman && pendingSim.amountOutHuman > 0
+            ? pendingSim.amountOutHuman
+            : undefined
+        const built = ok.map((r) =>
+          buildRhSellToken({
+            mintAddress: r.tokenAddress,
+            symbol: held?.symbol,
+            soldTokenAmount: pendingSim?.amountInHuman ?? undefined,
+            receivedQuote,
+            usdPerUnit,
+          }),
+        )
+        const totalUsd = built.reduce((s, b) => s + b.usdValue, 0)
+        await settle({
+          results,
+          success,
+          message: 'Sell confirmed',
+          record: {
             walletAddress: from,
             operationType: 'sell',
             chain: 'robinhood',
             tokens: built.map((b) => b.token),
-            successCount: ok.length,
-            failureCount: results.length - ok.length,
-            totalTokens: results.length,
             solAmount: receivedQuote,
             totalUsdValue: totalUsd > 0 ? totalUsd : undefined,
             solPriceUsd: usdPerUnit > 0 ? usdPerUnit : undefined,
@@ -535,14 +635,34 @@ export default function RhGmgnSwapPanel({
               .map((r) => r.orderId || r.hash)
               .filter((id): id is string => Boolean(id)),
             slippage: slippageBps / 100,
-          })
-        }
-        if (!success) throw new Error(results[0]?.error || 'Swap failed')
-        setOkMsg('Sell confirmed')
+          },
+        })
       }
-      setConfirmOpen(false)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      const message = err instanceof Error ? err.message : String(err)
+      // Mark the pending record failed on any execution/confirmation error
+      // (e.g. a rejected wallet prompt or a reverted receipt).
+      try {
+        await finalizePending({
+          walletAddress: from,
+          operationType: opType,
+          chain: 'robinhood',
+          tokens: [],
+          successCount: 0,
+          failureCount: 1,
+          totalTokens: 1,
+          feesPaid: 0,
+          signatures: [],
+          slippage: slippageBps / 100,
+          txStatus: 'failed',
+          errors: [message],
+        })
+      } catch {
+        // finalizePending is already best-effort
+      }
+      setError(message)
+      setSubmitResult({ ok: false, message })
+      setSubmitPhase('failed')
     } finally {
       setBusy(false)
     }
@@ -557,8 +677,20 @@ export default function RhGmgnSwapPanel({
         legs={confirmLegs}
         busy={busy}
         sequentialSignHint={isParent}
-        onCancel={() => setConfirmOpen(false)}
+        submitPhase={submitPhase}
+        resultMessage={submitResult && !submitResult.ok ? submitResult.message : undefined}
+        txHash={submitResult?.hash}
+        onCancel={() => {
+          setSubmitPhase('idle')
+          setConfirmOpen(false)
+        }}
         onConfirm={() => void runConfirmed()}
+        onDone={() => {
+          setSubmitPhase('idle')
+          setSubmitResult(null)
+          pendingRef.current = null
+          setConfirmOpen(false)
+        }}
       />
 
       <div className="flex items-center justify-between gap-2">

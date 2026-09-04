@@ -97,7 +97,17 @@ async function writeCallsSequential(params: {
         value: call.value ?? BigInt(0),
         ...(call.gas != null ? { gas: call.gas } : {}),
       })
-      await publicClient.waitForTransactionReceipt({ hash: lastHash })
+      const receipt = await publicClient.waitForTransactionReceipt({
+        hash: lastHash,
+      })
+      // A mined-but-reverted tx still resolves here; never report it confirmed.
+      if (receipt.status !== 'success') {
+        throw new RhSequentialWriteError(
+          `Transaction reverted: ${lastHash}`,
+          i,
+          lastHash,
+        )
+      }
       onProgress?.(i, lastHash)
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error)
@@ -151,11 +161,19 @@ export async function executeRhWalletCalls(params: {
     if (status.status !== 'success') {
       throw new Error(`Batch status: ${status.status ?? 'unknown'}`)
     }
-    const txHashes =
-      status.receipts
-        ?.map((r) => r.transactionHash)
-        .filter((h): h is Hex => typeof h === 'string' && h.startsWith('0x')) ??
-      []
+    const receipts = status.receipts ?? []
+    // A reverted receipt inside the batch must not be counted as confirmed.
+    // Only an explicit non-success status is treated as a failure — an absent
+    // status (older wallets) is left to the overall waitForCallsStatus verdict.
+    if (receipts.some((r) => r.status != null && r.status !== 'success')) {
+      throw new Error('sendCalls batch contained a reverted transaction')
+    }
+    const txHashes = receipts
+      .map((r) => r.transactionHash)
+      .filter((h): h is Hex => typeof h === 'string' && h.startsWith('0x'))
+    if (txHashes.length === 0) {
+      throw new Error('sendCalls succeeded but returned no tx receipts')
+    }
     const hash = txHashes[txHashes.length - 1]
     if (!hash) {
       throw new Error('sendCalls succeeded but returned no tx receipts')
