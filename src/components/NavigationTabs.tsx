@@ -47,6 +47,7 @@ export default function NavigationTabs({
     "/dev/algo-tester",
     "/dev/dlmm",
     "/dev/social",
+    "/dev/fomo",
     "/dev/strategies",
     "/dev/token-search",
     "/dev/ohlc-labels",
@@ -287,6 +288,20 @@ export default function NavigationTabs({
                           d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
                         />
                       </svg>
+                    </Link>
+                    ) : null}
+                    {can("/dev/fomo") ? (
+                    <Link
+                      href="/dev/fomo"
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
+                        isActive("/dev/fomo")
+                          ? "bg-gray-700 text-white"
+                          : "text-gray-400 hover:text-white hover:bg-gray-800"
+                      }`}
+                      title="FOMO tape"
+                      aria-label="FOMO tape"
+                    >
+                      <span className="text-xs font-semibold">FOMO</span>
                     </Link>
                     ) : null}
                     {can("/dev/strategies") ? (
@@ -710,6 +725,19 @@ export default function NavigationTabs({
                     />
                   </svg>
                   <span className="text-xs font-medium">Social</span>
+                </Link>
+                ) : null}
+                {can("/dev/fomo") ? (
+                <Link
+                  href="/dev/fomo"
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
+                    isActive("/dev/fomo")
+                      ? "bg-white text-black"
+                      : "text-gray-400"
+                  }`}
+                >
+                  <span className="mb-1 text-[10px] font-semibold">FOMO</span>
+                  <span className="text-xs font-medium">Tape</span>
                 </Link>
                 ) : null}
                 {can("/dev/strategies") ? (

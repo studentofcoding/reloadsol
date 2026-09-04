@@ -11,4 +11,8 @@ describe('getApiAccessTier', () => {
     expect(getApiAccessTier('/api/sol-arb/execute', 'POST')).toBe('dev')
     expect(getApiAccessTier('/api/sol-arb/execute-atomic', 'POST')).toBe('dev')
   })
+
+  it('keeps /api/fomo ingest health behind a dev session', () => {
+    expect(getApiAccessTier('/api/fomo/ingest', 'GET')).toBe('dev')
+  })
 })

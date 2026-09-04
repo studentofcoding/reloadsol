@@ -20,6 +20,7 @@ export type WorkerId =
   | 'daily_summary'
   | 'pnl_update'
   | 'sol_arb_scan'
+  | 'fomo_ws'
 
 export const WORKER_TRIGGER_PATHS: Record<WorkerId, string> = {
   signals_sim_track: '/trigger/signals-sim-track',
@@ -43,6 +44,7 @@ export const WORKER_TRIGGER_PATHS: Record<WorkerId, string> = {
   daily_summary: '/trigger/summary',
   pnl_update: '/trigger/pnl',
   sol_arb_scan: '/trigger/sol-arb-scan',
+  fomo_ws: '/trigger/fomo-ws',
 }
 
 export function getCronServiceUrl(): string {

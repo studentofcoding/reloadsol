@@ -242,6 +242,7 @@ type Config struct {
     RhClmmManageInterval int  // seconds
     DLMMSecret         string
     SolArbScanInterval int // seconds (0 = disabled)
+    FomoWsEnabled      bool
 }
 
 type CronService struct {
@@ -400,6 +401,7 @@ func NewCronService() *CronService {
             }
             return 60 // default 60s; set 0 to disable
         }(),
+        FomoWsEnabled: envBool("FOMO_WS_ENABLED", true),
     }
 
 	c := cron.New(cron.WithSeconds())
@@ -673,6 +675,7 @@ func (cs *CronService) Start() {
     http.HandleFunc("/trigger/dlmm-manage", cs.requireTriggerSecret(cs.manualDLMMManageTrigger))
     http.HandleFunc("/trigger/rh-clmm-manage", cs.requireTriggerSecret(cs.manualRhClmmManageTrigger))
     http.HandleFunc("/trigger/sol-arb-scan", cs.requireTriggerSecret(cs.manualSolArbScanTrigger))
+    http.HandleFunc("/trigger/fomo-ws", cs.requireTriggerSecret(cs.manualFomoWsTrigger))
     http.HandleFunc("/logs/test", cs.testDiscordLogs)
 
     cs.cron.Start()
@@ -715,6 +718,12 @@ func (cs *CronService) Start() {
         cs.logger.Info(fmt.Sprintf("⚡ SOL arb scan: every %d seconds", cs.config.SolArbScanInterval))
     } else {
         cs.logger.Info("⚡ SOL arb scan: disabled (SOL_ARB_SCAN_INTERVAL=0)")
+    }
+    if cs.config.FomoWsEnabled {
+        cs.logger.Info("📡 FOMO trenches WS: always-on")
+        go cs.runFomoWsLoop()
+    } else {
+        cs.logger.Info("📡 FOMO trenches WS: disabled (FOMO_WS_ENABLED=false)")
     }
 	cs.logger.Info("📋 Daily summary: daily at 00:00 UTC")
 	cs.logger.Info("💰 PnL update: daily at 02:00 UTC" )

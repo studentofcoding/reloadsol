@@ -1,6 +1,7 @@
 "use client";
 
 import ChartBuyModal from "@/components/ChartBuyModal";
+import FomoMirrorPanel from "@/components/social/FomoMirrorPanel";
 import {
   copyJson,
   downloadJson,
@@ -44,7 +45,9 @@ type SocialEvent = {
   source: string;
   channel_label: string | null;
   wallet_label: string | null;
+  wallet_address: string | null;
   occurred_at: string;
+  raw_metadata?: Record<string, unknown>;
 };
 
 type SocialAdminData = {
@@ -197,6 +200,19 @@ async function fetchSocialAdminData(): Promise<SocialAdminData> {
 function truncateMint(address: string): string {
   if (address.length <= 12) return address;
   return `${address.slice(0, 4)}…${address.slice(-4)}`;
+}
+
+function eventUsd(meta?: Record<string, unknown>): string {
+  if (!meta) return "—";
+  const v = meta.usd ?? meta.solAmount ?? meta.amount_usd ?? meta.amount;
+  if (typeof v === "number" && Number.isFinite(v)) {
+    return v >= 100 ? `$${v.toFixed(0)}` : `$${v.toFixed(2)}`;
+  }
+  if (typeof v === "string" && v.trim() && Number.isFinite(Number(v))) {
+    const n = Number(v);
+    return n >= 100 ? `$${n.toFixed(0)}` : `$${n.toFixed(2)}`;
+  }
+  return "—";
 }
 
 function formatRelativeTime(date: Date | null, nowMs: number): string {
@@ -871,6 +887,8 @@ export default function SocialAdminHub() {
         </div>
       ) : null}
 
+      <FomoMirrorPanel />
+
       <section>
         <div className="mb-3 flex flex-wrap items-center gap-3">
           <h2 className="text-lg font-medium text-white">
@@ -896,7 +914,9 @@ export default function SocialAdminHub() {
                 <th className="px-3 py-2">Time</th>
                 <th className="px-3 py-2">Source</th>
                 <th className="px-3 py-2">Channel</th>
+                <th className="px-3 py-2">Handle</th>
                 <th className="px-3 py-2">Type</th>
+                <th className="px-3 py-2">USD</th>
                 <th className="px-3 py-2">Token</th>
                 <th className="px-3 py-2" />
               </tr>
@@ -909,7 +929,13 @@ export default function SocialAdminHub() {
                   </td>
                   <td className="px-3 py-2">{e.source}</td>
                   <td className="px-3 py-2">{e.channel_label ?? "—"}</td>
+                  <td className="px-3 py-2">
+                    {e.wallet_label ?? e.wallet_address ?? "—"}
+                  </td>
                   <td className="px-3 py-2">{e.event_type}</td>
+                  <td className="px-3 py-2 font-mono text-xs">
+                    {eventUsd(e.raw_metadata)}
+                  </td>
                   <td className="px-3 py-2">
                     <TokenCell
                       tokenAddress={e.token_address}
@@ -936,7 +962,7 @@ export default function SocialAdminHub() {
               ))}
               {events.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-3 py-4 text-gray-500">
+                  <td colSpan={8} className="px-3 py-4 text-gray-500">
                     No Telegram events in the last 24h — check social-ingest is
                     running and channels are active
                   </td>

@@ -36,6 +36,7 @@ export const ROUTE_NETWORK_REGISTRY: readonly NetworkRouteEntry[] = [
   { path: '/dev/ohlc-labels', networks: ['sol'] },
   { path: '/dev/arbitrage', networks: ['sol'] },
   { path: '/dev/social', networks: ['sol'] },
+  { path: '/dev/fomo', networks: ['sol', 'robinhood'] },
 ]
 
 const REGISTRY_PATHS = ROUTE_NETWORK_REGISTRY.map((e) => e.path)

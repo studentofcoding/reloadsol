@@ -17,6 +17,7 @@ export const DEV_ROUTES = [
   '/dev/token-search',
   '/dev/ohlc-labels',
   '/dev/arbitrage',
+  '/dev/fomo',
   '/search-token',
 ] as const;
 
