@@ -1,19 +1,15 @@
 import { NextRequest, NextResponse, connection } from 'next/server'
 import { query } from '@/utils/db'
+import { calculateWalletPnL } from '@/utils/pnl-wallet'
 
-function getPnLUpdateSecret(): string {
-  return (
-    process.env.PNL_UPDATE_SECRET ||
-    process.env.PNL_UPDATE_TOKEN ||
-    'r3l0ads0l-pnl'
-  )
+function getPnLUpdateSecret(): string | null {
+  return process.env.PNL_UPDATE_SECRET || process.env.PNL_UPDATE_TOKEN || null
 }
 
 function isPnLUpdateAuthorized(request: NextRequest): boolean {
-  const userAgent = request.headers.get('user-agent') ?? ''
-  if (userAgent.includes('reloadsol-cron-service')) return true
-
   const expected = getPnLUpdateSecret()
+  if (!expected) return false
+
   const key = request.nextUrl.searchParams.get('key')
   if (key && key === expected) return true
 
@@ -50,53 +46,6 @@ interface PnLResult {
   total_trades: number
   successful_trades: number
   success_rate: number
-}
-
-// Simple PnL calculation function
-function calculateWalletPnL(records: TradingRecord[]): number {
-  let totalPnL = 0
-  const soldTokens = new Map<string, { buyPrice: number; sellPrice: number; amount: number }>()
-  
-  // Process buy and sell operations
-  records.forEach(record => {
-    const data = record.data
-    
-    if (data.operationType === 'buy' && (data.solAmount || data.tokens.some(t => t.solAmount))) {
-      // Record buy operations using individual token SOL amounts if available
-      data.tokens.forEach(token => {
-        if (token.priceUsd && token.tokenAmount) {
-          const key = token.mintAddress
-          if (!soldTokens.has(key)) {
-            soldTokens.set(key, {
-              buyPrice: token.priceUsd,
-              sellPrice: 0,
-              amount: token.tokenAmount
-            })
-          }
-        }
-      })
-    } else if (data.operationType === 'sell' && (data.solAmount || data.tokens.some(t => t.solAmount))) {
-      // Calculate PnL for sell operations using individual SOL amounts if available
-      data.tokens.forEach(token => {
-        if (token.priceUsd && token.tokenAmount) {
-          const key = token.mintAddress
-          const buyData = soldTokens.get(key)
-          
-          if (buyData && buyData.buyPrice > 0) {
-            // Calculate PnL based on price difference
-            const pnlPerToken = token.priceUsd - buyData.buyPrice
-            const totalPnL_token = pnlPerToken * token.tokenAmount
-            totalPnL += totalPnL_token
-            
-            // Mark as sold
-            soldTokens.set(key, { ...buyData, sellPrice: token.priceUsd })
-          }
-        }
-      })
-    }
-  })
-  
-  return totalPnL
 }
 
 // Main PnL update function

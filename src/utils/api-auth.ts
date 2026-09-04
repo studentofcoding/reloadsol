@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import {
   getApiAccessTier,
@@ -5,6 +6,12 @@ import {
   SERVICE_AUTH_API_PREFIXES,
 } from '@/config/api-access';
 import { getWalletSessionFromRequest } from '@/utils/wallet-session';
+
+function secretsEqual(provided: string, expected: string): boolean {
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 
 function unauthorized(
   code: 'WALLET_SESSION_REQUIRED' | 'DEV_SESSION_REQUIRED',
@@ -19,25 +26,19 @@ function unauthorized(
 function hasMatchingSecret(req: NextRequest, expected?: string | null): boolean {
   if (!expected) return false;
   const key = req.nextUrl.searchParams.get('key');
-  if (key && key === expected) return true;
+  if (key && secretsEqual(key, expected)) return true;
 
   const auth = req.headers.get('authorization');
-  if (auth === `Bearer ${expected}`) return true;
+  const prefix = 'Bearer ';
+  if (auth?.startsWith(prefix) && secretsEqual(auth.slice(prefix.length), expected)) {
+    return true;
+  }
 
   return false;
 }
 
 /** Cron jobs, webhooks, and bearer-protected maintenance endpoints. */
 export function isServiceAuthorizedRequest(req: NextRequest): boolean {
-  if (req.headers.get('vercel-cron') === '1') {
-    return true;
-  }
-
-  const userAgent = req.headers.get('user-agent') ?? '';
-  if (userAgent.includes('vercel-cron') || userAgent.includes('reloadsol-cron-service')) {
-    return true;
-  }
-
   const pathname = req.nextUrl.pathname;
   const secrets = [
     process.env.TRENDING_TRACKER_SECRET,

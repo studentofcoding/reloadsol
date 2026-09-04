@@ -4,13 +4,16 @@
 // Usage: node scripts/update-pnl.js
 
 const SITE_URL = process.env.SITE_URL || 'http://localhost:3000'
-const PNL_TOKEN =
-  process.env.PNL_UPDATE_SECRET ||
-  process.env.PNL_UPDATE_TOKEN ||
-  'r3l0ads0l-pnl'
+const PNL_TOKEN = process.env.PNL_UPDATE_SECRET || process.env.PNL_UPDATE_TOKEN
 
 async function updatePnL() {
   try {
+    if (!PNL_TOKEN) {
+      console.error('Set PNL_UPDATE_SECRET (or PNL_UPDATE_TOKEN) before calling /api/pnl/update')
+      process.exitCode = 1
+      return
+    }
+
     console.log('🔄 Triggering PnL update...')
     
     const response = await fetch(`${SITE_URL}/api/pnl/update`, {

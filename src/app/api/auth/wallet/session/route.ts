@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse, connection } from 'next/server';
 import {
+  consumeSignInNonce,
   createWalletSignInChallenge,
   verifyWalletSignature,
 } from '@/utils/wallet-auth';
@@ -60,6 +61,13 @@ export async function POST(req: NextRequest) {
     if (!verification.ok) {
       return NextResponse.json(
         { success: false, error: verification.error },
+        { status: 401 },
+      );
+    }
+
+    if (!(await consumeSignInNonce(verification.nonce))) {
+      return NextResponse.json(
+        { success: false, error: 'Sign-in nonce already used' },
         { status: 401 },
       );
     }

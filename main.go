@@ -257,7 +257,7 @@ func NewCronService() *CronService {
     config := &Config{
         APIBaseURL:     getEnv("API_BASE_URL", "https://reloadsol.app"),
         TrendingSecret: getEnv("TRENDING_TRACKER_SECRET", "r3l0ads0l-trending"),
-        PnLSecret:      getEnv("PNL_UPDATE_SECRET", "r3l0ads0l-pnl"),
+        PnLSecret:      getEnv("PNL_UPDATE_SECRET", getEnv("PNL_UPDATE_TOKEN", "")),
         // Shared secret for the /trigger/* HTTP endpoints (X-Trigger-Secret
         // header). Falls back to the trending secret so existing deploys keep
         // working once the web proxy sends the same value.
@@ -1729,6 +1729,8 @@ func (cs *CronService) makeRequest(method, url string, params map[string]string,
         if token != "" {
             req.Header.Set("Authorization", "Bearer "+token)
         }
+    } else if cs.config.TrendingSecret != "" {
+        req.Header.Set("Authorization", "Bearer "+cs.config.TrendingSecret)
     }
 
 	cs.logger.Info(fmt.Sprintf("Making %s request to %s", method, url))

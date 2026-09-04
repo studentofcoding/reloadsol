@@ -218,7 +218,7 @@ describe("swap-executor raptor provider", () => {
 
     const connection = {
       getSignatureStatuses: vi.fn(),
-    } as never;
+    } as unknown as Connection;
 
     const results = await confirmSwapSignaturesBatch(
       [{ signature: "sig-rpc", via: "rpc", checkViaRaptor: true, direct: true }],

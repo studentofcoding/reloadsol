@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { PublicKey } from "@solana/web3.js";
+import { requireDevSession } from "@/utils/api-auth";
 import { createRpcConnection } from "@/utils/rpc-urls";
 import {
   executeTriArbSequential,
@@ -10,6 +11,9 @@ import {
 
 
 export async function POST(req: NextRequest) {
+  const auth = requireDevSession(req);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const body = (await req.json()) as {
       mode?: "prepare" | "live";

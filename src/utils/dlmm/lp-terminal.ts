@@ -1,13 +1,13 @@
 /** Default public LP Terminal (Robinhood Chain chainId 4663). */
 export const DEFAULT_LP_TERMINAL_BASE_URL = 'https://lp-terminal.xyz'
 
+type Env = Record<string, string | undefined>
+
 /**
  * Base URL for LP Terminal deep links.
  * Prefer NEXT_PUBLIC_* (client cards); LP_TERMINAL_BASE_URL works server-side.
  */
-export function getLpTerminalBaseUrl(
-  env: NodeJS.ProcessEnv = process.env,
-): string {
+export function getLpTerminalBaseUrl(env: Env = process.env): string {
   const raw =
     env.NEXT_PUBLIC_LP_TERMINAL_BASE_URL?.trim() ||
     env.LP_TERMINAL_BASE_URL?.trim() ||
@@ -19,9 +19,7 @@ export function getLpTerminalBaseUrl(
  * Indexer HTTP origin for /api/pools (no trailing slash).
  * Defaults to the public LP Terminal site when unset.
  */
-export function getLpTerminalIndexerBase(
-  env: NodeJS.ProcessEnv = process.env,
-): string {
+export function getLpTerminalIndexerBase(env: Env = process.env): string {
   const raw =
     env.LP_TERMINAL_INDEXER_URL?.trim() ||
     env.NEXT_PUBLIC_LP_TERMINAL_INDEXER_URL?.trim() ||
@@ -30,9 +28,7 @@ export function getLpTerminalIndexerBase(
 }
 
 /** @deprecated Prefer getLpTerminalIndexerBase — always returns a usable origin. */
-export function getLpTerminalIndexerUrl(
-  env: NodeJS.ProcessEnv = process.env,
-): string | null {
+export function getLpTerminalIndexerUrl(env: Env = process.env): string | null {
   const raw =
     env.LP_TERMINAL_INDEXER_URL?.trim() ||
     env.NEXT_PUBLIC_LP_TERMINAL_INDEXER_URL?.trim() ||
@@ -44,7 +40,7 @@ export function getLpTerminalIndexerUrl(
 /** Deep-link a specific pool address into LP Terminal POOLS search. */
 export function getLpTerminalPoolDeepLink(
   poolOrTokenAddress?: string | null,
-  env: NodeJS.ProcessEnv = process.env,
+  env: Env = process.env,
 ): string {
   return getLpTerminalPoolsUrl(poolOrTokenAddress, env)
 }
@@ -55,7 +51,7 @@ export function getLpTerminalPoolDeepLink(
  */
 export function getLpTerminalPoolsUrl(
   tokenAddress?: string | null,
-  env: NodeJS.ProcessEnv = process.env,
+  env: Env = process.env,
 ): string {
   const base = getLpTerminalBaseUrl(env)
   const ca = tokenAddress?.trim()

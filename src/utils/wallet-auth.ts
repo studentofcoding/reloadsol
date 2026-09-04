@@ -1,6 +1,7 @@
 import { PublicKey } from '@solana/web3.js';
 import bs58 from 'bs58';
 import nacl from 'tweetnacl';
+import { cacheSetNx } from '@/utils/redis-cache';
 import {
   buildSignInMessage,
   createSignInNonce,
@@ -32,11 +33,20 @@ export function createWalletSignInChallenge(address: string): {
   };
 }
 
+export async function consumeSignInNonce(nonce: string): Promise<boolean> {
+  if (!/^[0-9a-f]{32}$/i.test(nonce)) return false;
+  return cacheSetNx(
+    `wallet-signin-nonce:${nonce.toLowerCase()}`,
+    1,
+    Math.ceil(NONCE_TTL_MS / 1000) + 60,
+  );
+}
+
 export function verifyWalletSignature(input: {
   address: string;
   message: string;
   signature: string;
-}): { ok: true } | { ok: false; error: string } {
+}): { ok: true; nonce: string } | { ok: false; error: string } {
   const parsed = parseSignInMessage(input.message);
   if (!parsed) {
     return { ok: false, error: 'Invalid sign-in message format' };
@@ -65,7 +75,7 @@ export function verifyWalletSignature(input: {
       return { ok: false, error: 'Invalid wallet signature' };
     }
 
-    return { ok: true };
+    return { ok: true, nonce: parsed.nonce };
   } catch {
     return { ok: false, error: 'Signature verification failed' };
   }

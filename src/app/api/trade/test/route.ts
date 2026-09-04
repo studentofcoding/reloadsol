@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse, connection } from 'next/server'
+import { requireDevSession } from '@/utils/api-auth'
 import { runTradeComparisonTests, testSingleTrade, benchmarkProviders } from '@/utils/trade-comparison-test'
 
 export async function GET(request: NextRequest) {
+  const auth = requireDevSession(request)
+  if (auth instanceof NextResponse) return auth
+
   try {
     await connection()
     const { searchParams } = new URL(request.url)
@@ -70,6 +74,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const auth = requireDevSession(request)
+  if (auth instanceof NextResponse) return auth
+
   try {
     const body = await request.json()
     const { testType, config } = body

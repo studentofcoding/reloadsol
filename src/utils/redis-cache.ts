@@ -198,6 +198,36 @@ export async function cacheSet(
   }
 }
 
+/** Returns true only if the key was absent. Memory fallback is process-local. */
+export async function cacheSetNx(
+  key: string,
+  value: unknown,
+  ttlSeconds: number,
+): Promise<boolean> {
+  const serialized = JSON.stringify(value)
+  const client = getRedisClient()
+  if (client) {
+    try {
+      if (client.status === 'wait') {
+        await client.connect()
+      }
+      const ok = await client.set(key, serialized, 'EX', ttlSeconds, 'NX')
+      if (ok === 'OK') {
+        memorySet(key, serialized, ttlSeconds)
+        return true
+      }
+      return false
+    } catch {
+      redisDisabled = true
+    }
+  }
+
+  // ponytail: process-local NX if Redis is down; Redis SET NX is the multi-instance path
+  if (memoryGet(key) != null) return false
+  memorySet(key, serialized, ttlSeconds)
+  return true
+}
+
 export async function cacheDel(keys: string | string[]): Promise<void> {
   const keyList = Array.isArray(keys) ? keys : [keys]
   keyList.forEach((key) => memoryFallback.delete(key))
