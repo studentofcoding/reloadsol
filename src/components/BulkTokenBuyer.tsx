@@ -83,7 +83,15 @@ import {
 import type { RhSwapQuote } from "@/utils/dlmm/rh-univ2-swap";
 import { executeRhParentKyberBuy } from "@/utils/dlmm/rh-kyber-swap";
 import { getRhBatchExecutorAddress } from "@/utils/dlmm/rh-batch-executor";
-import { prefetchSwapTransaction } from "@/utils/swap-executor";
+import { prefetchSwapTransaction, fetchSwapQuote } from "@/utils/swap-executor";
+import {
+  AUTO_SLIPPAGE_BPS,
+  AUTO_SLIPPAGE_CAP_BPS,
+  prefetchSlippageBps,
+  rawImpactToPct,
+  resolveTradeSlippageBps,
+  worstImpactPct,
+} from "@/utils/auto-slippage";
 import {
   RAPTOR_DEV_FEE_ACCOUNT,
   RAPTOR_DEV_FEE_BPS,
@@ -103,6 +111,14 @@ import {
 } from "@/utils/rh-trade-record";
 
 type SpendCurrency = "SOL" | "USDC" | "ETH" | "USDG" | "WETH";
+
+const TRADE_SLIPPAGE_OPTIONS = [
+  {
+    label: `Auto · cap ${AUTO_SLIPPAGE_CAP_BPS / 100}% · quote+20bps`,
+    value: AUTO_SLIPPAGE_BPS,
+  },
+  ...SLIPPAGE_OPTIONS,
+];
 
 export default function BulkTokenBuyer() {
   const { signAllTransactions, connected } = useWallet();
@@ -148,7 +164,7 @@ export default function BulkTokenBuyer() {
   // Form state
   const [solAmount, setSolAmount] = useState<string>(getInitialSolAmount);
   const [tokenMints, setTokenMints] = useState<string>(getInitialTokenMints);
-  const [slippage, setSlippage] = useState<number>(200); // 1%
+  const [slippage, setSlippage] = useState<number>(AUTO_SLIPPAGE_BPS);
   const [priorityFee, setPriorityFee] = useState<number>(30000); // 0.0003 SOL
   const [solCurrency, setSolCurrency] = useState<"SOL" | "USDC">("SOL");
   const [rhCurrency, setRhCurrency] = useState<RhSwapQuote>("ETH");
@@ -433,7 +449,7 @@ export default function BulkTokenBuyer() {
             inputMint,
             outputMint: mint,
             amount: amountPerToken,
-            slippageBps: slippage,
+            slippageBps: prefetchSlippageBps(slippage),
             priorityFeeLamports: priorityFee,
             feeAccount: RAPTOR_DEV_FEE_ACCOUNT,
             feeBps: RAPTOR_DEV_FEE_BPS,
@@ -731,6 +747,72 @@ export default function BulkTokenBuyer() {
   const refreshBalancesRef = useRef(refreshBalances);
   refreshBalancesRef.current = refreshBalances;
 
+  const resolveBuySlippageBps = useCallback(async (): Promise<number> => {
+    const totalHuman = parseFloat(solAmount);
+    const perTokenHuman =
+      validMints.length > 0 ? totalHuman / validMints.length : totalHuman;
+    if (isRhChain) {
+      const ethUsd = await fetchEthUsdSpot();
+      const impacts = await Promise.all(
+        validMints.map(async (mint) => {
+          try {
+            if (useRhParentPath) {
+              const sim = await simulateRhParentBuyLeg({
+                amountHuman: perTokenHuman,
+                tokenAddress: mint,
+                quote: rhQuote,
+                ethUsd,
+              });
+              return sim.priceImpactPct;
+            }
+            if (!tradeFromAddress) return null;
+            const sim = await simulateRhBoundBuyLeg({
+              from: tradeFromAddress,
+              amountHuman: perTokenHuman,
+              tokenAddress: mint,
+              quote: rhQuote,
+              slippageBps: prefetchSlippageBps(slippage),
+              ethUsd,
+            });
+            return sim.priceImpactPct;
+          } catch {
+            return null;
+          }
+        }),
+      );
+      return resolveTradeSlippageBps(slippage, worstImpactPct(impacts));
+    }
+    const inputDecimals = selectedCurrency === "USDC" ? 6 : 9;
+    const amountPerToken = Math.floor(
+      (totalHuman * 10 ** inputDecimals) / Math.max(validMints.length, 1),
+    );
+    const inputMint =
+      selectedCurrency === "USDC" ? TOKENS.USDC : TOKENS.SOL;
+    const impacts = await Promise.all(
+      validMints.map(async (mint) => {
+        const q = await fetchSwapQuote(
+          inputMint,
+          mint,
+          amountPerToken,
+          prefetchSlippageBps(slippage),
+        );
+        const raw = Number(q?.priceImpactPct);
+        if (!Number.isFinite(raw)) return null;
+        return rawImpactToPct(raw);
+      }),
+    );
+    return resolveTradeSlippageBps(slippage, worstImpactPct(impacts));
+  }, [
+    solAmount,
+    validMints,
+    isRhChain,
+    useRhParentPath,
+    tradeFromAddress,
+    rhQuote,
+    selectedCurrency,
+    slippage,
+  ]);
+
   const runConfirmedRhBuy = useCallback(async () => {
     if (!tradeFromAddress) {
       setError(
@@ -760,6 +842,7 @@ export default function BulkTokenBuyer() {
       const totalHuman = parseFloat(solAmount);
       const perTokenHuman =
         tokenMints.length > 0 ? totalHuman / tokenMints.length : totalHuman;
+      const slippageBps = await resolveBuySlippageBps();
       let results: Awaited<ReturnType<typeof executeGmgnBulkBuy>>["results"];
       let success: boolean;
       if (useRhParentPath) {
@@ -770,7 +853,7 @@ export default function BulkTokenBuyer() {
           account: tradeFromAddress as Address,
           amountHuman: perTokenHuman,
           tokenMints,
-          slippageBps: slippage,
+          slippageBps,
           quote: rhQuote,
         }));
       } else {
@@ -789,7 +872,7 @@ export default function BulkTokenBuyer() {
             effectiveChain === "robinhood" ? perTokenHuman : totalHuman,
           inputToken,
           tokenMints,
-          slippageBps: slippage,
+          slippageBps,
         }));
       }
       const ok = results.filter((r) => r.success);
@@ -832,7 +915,7 @@ export default function BulkTokenBuyer() {
               signatures: ok
                 .map((r) => r.orderId || r.hash)
                 .filter((id): id is string => Boolean(id)),
-              slippage: slippage / 100,
+              slippage: slippageBps / 100,
             });
           } else {
             await trackOperation({
@@ -851,7 +934,7 @@ export default function BulkTokenBuyer() {
               signatures: ok
                 .map((r) => r.orderId || r.hash)
                 .filter((id): id is string => Boolean(id)),
-              slippage: slippage / 100,
+              slippage: slippageBps / 100,
             });
           }
         } catch (trackError) {
@@ -898,7 +981,7 @@ export default function BulkTokenBuyer() {
     solAmount,
     validMints,
     tokenList,
-    slippage,
+    resolveBuySlippageBps,
     showOutcome,
     trackOperation,
     triggerPostBuyRefresh,
@@ -978,7 +1061,7 @@ export default function BulkTokenBuyer() {
                 amountHuman: perTokenHuman,
                 tokenAddress: mint,
                 quote: rhQuote,
-                slippageBps: slippage,
+                slippageBps: prefetchSlippageBps(slippage),
                 ethUsd,
               });
               estOut = sim.amountOutRaw ?? undefined;
@@ -1033,7 +1116,7 @@ export default function BulkTokenBuyer() {
             from: tradeFromAddress,
             tokenAddress: mint,
             amountHuman: parseFloat(solAmount),
-            slippageBps: slippage,
+            slippageBps: prefetchSlippageBps(slippage),
             inputToken,
           });
           try {
@@ -1119,10 +1202,11 @@ export default function BulkTokenBuyer() {
         }
       }
 
+      const slippageBps = await resolveBuySlippageBps();
       const request: BulkBuyRequest = {
         solAmount: parseFloat(solAmount),
         tokenMints: validMints,
-        slippage,
+        slippage: slippageBps,
         priorityFee,
         inputCurrency: selectedCurrency === "USDC" ? "USDC" : "SOL",
       };
@@ -1287,7 +1371,7 @@ export default function BulkTokenBuyer() {
               ? solEquivalentAmount * currentSolPrice
               : undefined,
             signatures: buyResult.signatures,
-            slippage: slippage / 100,
+            slippage: slippageBps / 100,
             priorityFee,
             errors,
           });
@@ -1327,6 +1411,7 @@ export default function BulkTokenBuyer() {
     connection,
     solAmount,
     validMints,
+    resolveBuySlippageBps,
     slippage,
     priorityFee,
     showOutcome,
@@ -2489,7 +2574,7 @@ export default function BulkTokenBuyer() {
                     className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl text-white focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
                     disabled={isLoading}
                   >
-                    {SLIPPAGE_OPTIONS.map((option) => (
+                    {TRADE_SLIPPAGE_OPTIONS.map((option) => (
                       <option
                         key={option.value}
                         value={option.value}
@@ -2499,6 +2584,10 @@ export default function BulkTokenBuyer() {
                       </option>
                     ))}
                   </select>
+                  <p className="text-xs text-gray-400">
+                    Auto uses quote impact + 20 bps, capped at 1.5%. Impact above
+                    that must be cut or set manually.
+                  </p>
                 </div>
 
                 {/* Priority Fee — Sol Jupiter path only */}

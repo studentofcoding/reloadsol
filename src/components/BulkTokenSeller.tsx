@@ -42,6 +42,13 @@ import type { RhSwapQuote } from "@/utils/dlmm/rh-univ2-swap";
 import { executeRhParentKyberSell } from "@/utils/dlmm/rh-kyber-swap";
 import { getRhBatchExecutorAddress } from "@/utils/dlmm/rh-batch-executor";
 import { prefetchSwapTransaction } from "@/utils/swap-executor";
+import {
+  AUTO_SLIPPAGE_BPS,
+  AUTO_SLIPPAGE_CAP_BPS,
+  prefetchSlippageBps,
+  resolveTradeSlippageBps,
+  worstImpactPct,
+} from "@/utils/auto-slippage";
 import { RH_WETH, erc20Abi } from "@/utils/dlmm/rh-univ2";
 import {
   fetchEthUsdSpot,
@@ -106,6 +113,14 @@ function patchWalletTokenLists(
   };
 }
 
+const TRADE_SLIPPAGE_OPTIONS = [
+  {
+    label: `Auto · cap ${AUTO_SLIPPAGE_CAP_BPS / 100}% · quote+20bps`,
+    value: AUTO_SLIPPAGE_BPS,
+  },
+  ...SLIPPAGE_OPTIONS,
+];
+
 interface QuoteData {
   provider: "solanatracker";
   inputMint: string;
@@ -159,7 +174,7 @@ export default function BulkTokenSeller() {
   const [selectedZeroBalanceTokens, setSelectedZeroBalanceTokens] = useState<
     UserToken[]
   >([]);
-  const [slippage, setSlippage] = useState<number>(200); // 2%
+  const [slippage, setSlippage] = useState<number>(AUTO_SLIPPAGE_BPS);
   const [priorityFee, setPriorityFee] = useState<number>(30000); // 0.00003 SOL
   const isDevUser = useDevWalletAccess();
   const { effectiveChain, canUseRh } = useAppNetwork();
@@ -347,7 +362,7 @@ export default function BulkTokenSeller() {
           inputMint,
           outputMint: TOKENS.SOL,
           amount,
-          slippageBps: slippage.toString(),
+          slippageBps: prefetchSlippageBps(slippage).toString(),
         });
         const response = await fetch(
           `/api/solanatracker/quote?${query.toString()}`,
@@ -498,7 +513,7 @@ export default function BulkTokenSeller() {
             inputMint: token.mintAddress,
             outputMint: TOKENS.SOL,
             amount: token.sellAmount,
-            slippageBps: slippage,
+            slippageBps: prefetchSlippageBps(slippage),
             priorityFeeLamports: priorityFee,
             feeAccount: RAPTOR_DEV_FEE_ACCOUNT,
             feeBps: RAPTOR_DEV_FEE_BPS,
@@ -831,6 +846,81 @@ export default function BulkTokenSeller() {
     [publicKey, walletAddress, connection, patchTokens],
   );
 
+  const resolveSellSlippageBps = useCallback(async (): Promise<number> => {
+    if (isRhChain) {
+      const ethUsd = await fetchEthUsdSpot();
+      const impacts = await Promise.all(
+        selectedTokens.map(async (t) => {
+          const pct = t.sellPercentage || 100;
+          try {
+            if (useRhParentPath) {
+              const sim = await simulateRhParentSellLeg({
+                publicClient: rhWallet.getPublicClient(),
+                account: tradeFromAddress as Address,
+                tokenAddress: t.mintAddress,
+                percent: pct,
+                quote: rhQuoteCurrency,
+                ethUsd,
+                tokenDecimals: t.decimals,
+              });
+              return sim.priceImpactPct;
+            }
+            if (!tradeFromAddress) return null;
+            const bal = (await rhWallet.getPublicClient().readContract({
+              address: t.mintAddress as Address,
+              abi: erc20Abi,
+              functionName: "balanceOf",
+              args: [tradeFromAddress as Address],
+            })) as bigint;
+            const amountRaw = (
+              (bal * BigInt(Math.floor(pct * 100))) /
+              BigInt(10_000)
+            ).toString();
+            const sim = await simulateRhBoundSellLeg({
+              from: tradeFromAddress,
+              tokenAddress: t.mintAddress,
+              percent: pct,
+              quote: rhQuoteCurrency,
+              slippageBps: prefetchSlippageBps(slippage),
+              ethUsd,
+              amountRaw,
+            });
+            return sim.priceImpactPct;
+          } catch {
+            return null;
+          }
+        }),
+      );
+      return resolveTradeSlippageBps(slippage, worstImpactPct(impacts));
+    }
+    const fromQuotes = selectedTokens.map((t) => {
+      const q = quotes[t.mintAddress];
+      return q && isQuoteValid(q) ? q.priceImpact : null;
+    });
+    const worst = worstImpactPct(fromQuotes);
+    if (worst != null) return resolveTradeSlippageBps(slippage, worst);
+    const fetched = await Promise.all(
+      selectedTokens
+        .filter((t) => t.sellAmount > 0)
+        .map((t) => fetchQuoteForToken(t)),
+    );
+    return resolveTradeSlippageBps(
+      slippage,
+      worstImpactPct(fetched.map((q) => q?.priceImpact)),
+    );
+  }, [
+    isRhChain,
+    selectedTokens,
+    useRhParentPath,
+    rhWallet,
+    tradeFromAddress,
+    rhQuoteCurrency,
+    slippage,
+    quotes,
+    isQuoteValid,
+    fetchQuoteForToken,
+  ]);
+
   const runConfirmedRhSell = useCallback(async () => {
     if (!tradeFromAddress || selectedTokens.length === 0) return;
     setIsLoading(true);
@@ -850,6 +940,7 @@ export default function BulkTokenSeller() {
         percent: t.sellPercentage || 100,
         symbol: t.symbol,
       }));
+      const slippageBps = await resolveSellSlippageBps();
       let results: Awaited<ReturnType<typeof executeGmgnBulkSell>>["results"];
       let success: boolean;
       if (useRhParentPath) {
@@ -859,7 +950,7 @@ export default function BulkTokenSeller() {
           walletClient: wc,
           account: tradeFromAddress as Address,
           legs,
-          slippageBps: slippage,
+          slippageBps,
           quote: rhQuoteCurrency,
         }));
       } else {
@@ -873,7 +964,7 @@ export default function BulkTokenSeller() {
                 ? GMGN_RH_WETH
                 : gmgnNativeToken(effectiveChain),
           legs,
-          slippageBps: slippage,
+          slippageBps,
         }));
       }
       const ok = results.filter((r) => r.success);
@@ -923,7 +1014,7 @@ export default function BulkTokenSeller() {
               signatures: ok
                 .map((r) => r.orderId || r.hash)
                 .filter((id): id is string => Boolean(id)),
-              slippage: slippage / 100,
+              slippage: slippageBps / 100,
             });
           } else {
             await trackOperation({
@@ -941,7 +1032,7 @@ export default function BulkTokenSeller() {
               signatures: ok
                 .map((r) => r.orderId || r.hash)
                 .filter((id): id is string => Boolean(id)),
-              slippage: slippage / 100,
+              slippage: slippageBps / 100,
             });
           }
         } catch (trackError) {
@@ -979,7 +1070,7 @@ export default function BulkTokenSeller() {
     effectiveChain,
     isRhChain,
     rhQuoteCurrency,
-    slippage,
+    resolveSellSlippageBps,
     showOutcome,
     rhHoldingsQuery,
     trackOperation,
@@ -1062,7 +1153,7 @@ export default function BulkTokenSeller() {
                 tokenAddress: t.mintAddress,
                 percent: pct,
                 quote: rhQuoteCurrency,
-                slippageBps: slippage,
+                slippageBps: prefetchSlippageBps(slippage),
                 ethUsd,
                 amountRaw,
               });
@@ -1150,13 +1241,14 @@ export default function BulkTokenSeller() {
         console.warn("Could not fetch balance before sell:", balanceErr);
       }
 
+      const slippageBps = await resolveSellSlippageBps();
       const request: BulkSellRequest = {
         tokens: selectedTokens,
         unsellableTokens:
           selectedZeroBalanceTokens.length > 0
             ? selectedZeroBalanceTokens
             : undefined,
-        slippage,
+        slippage: slippageBps,
         priorityFee,
       };
 
@@ -1320,7 +1412,7 @@ export default function BulkTokenSeller() {
                 ? (sellResult.totalReceived || 0) * currentSolPrice
                 : undefined,
               signatures: sellResult.signatures,
-              slippage: slippage / 100,
+              slippage: slippageBps / 100,
               priorityFee,
               errors: sellErrors,
             });
@@ -1497,6 +1589,7 @@ export default function BulkTokenSeller() {
     connection,
     selectedTokens,
     selectedZeroBalanceTokens,
+    resolveSellSlippageBps,
     slippage,
     priorityFee,
     fetchTokensFresh,
@@ -1534,7 +1627,7 @@ export default function BulkTokenSeller() {
         {
           tokens: [],
           unsellableTokens: pendingCloseableTokens,
-          slippage,
+          slippage: prefetchSlippageBps(slippage),
           priorityFee,
         },
         publicKey.toString(),
@@ -1648,7 +1741,7 @@ export default function BulkTokenSeller() {
       const request: BulkSellRequest = {
         tokens: [], // no swaps, only closes
         unsellableTokens: [...selectedTokens, ...selectedZeroBalanceTokens],
-        slippage,
+        slippage: prefetchSlippageBps(slippage),
         priorityFee,
       };
 
@@ -2705,7 +2798,7 @@ export default function BulkTokenSeller() {
                         className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-xl text-white focus:bg-gray-600 focus:border-gray-400 transition-all duration-200"
                         disabled={isLoading}
                       >
-                        {SLIPPAGE_OPTIONS.map((option) => (
+                        {TRADE_SLIPPAGE_OPTIONS.map((option) => (
                           <option
                             key={option.value}
                             value={option.value}
@@ -2715,6 +2808,10 @@ export default function BulkTokenSeller() {
                           </option>
                         ))}
                       </select>
+                      <p className="text-xs text-gray-400">
+                        Auto uses quote impact + 20 bps, capped at 1.5%. Impact above
+                        that must be cut or set manually.
+                      </p>
                     </div>
 
                     {/* Priority Fee — Sol Jupiter path only */}
