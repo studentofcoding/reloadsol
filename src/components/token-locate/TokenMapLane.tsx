@@ -26,7 +26,7 @@ export default function TokenMapLane({
         <div className="flex items-center justify-between gap-2">
           <h3 className="text-sm font-semibold text-white">{label}</h3>
           <span
-            className={`rounded px-1.5 py-0.5 text-[10px] uppercase ${
+            className={`rounded px-1.5 py-0.5 text-xs uppercase ${
               present
                 ? 'bg-green-900/50 text-green-300'
                 : 'bg-gray-800 text-gray-500'
@@ -35,7 +35,7 @@ export default function TokenMapLane({
             {present ? primary?.label ?? primary?.status ?? 'present' : 'absent'}
           </span>
         </div>
-        <p className="mt-0.5 font-mono text-[10px] text-gray-600">{domain}</p>
+        <p className="mt-0.5 font-mono text-xs text-gray-600">{domain}</p>
         {present ? (
           <div className="mt-2 space-y-1">
             {presence.slice(0, 3).map((row, i) => (
@@ -57,7 +57,7 @@ export default function TokenMapLane({
               </div>
             ))}
             {primary?.lastSeenAt ? (
-              <p className="text-[10px] text-gray-600">
+              <p className="text-xs text-gray-600">
                 last {new Date(primary.lastSeenAt).toLocaleString()}
               </p>
             ) : null}

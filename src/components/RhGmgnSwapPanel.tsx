@@ -932,7 +932,7 @@ function HoldingsPicker({
 }) {
   return (
     <div className="space-y-1.5">
-      <div className="flex items-center justify-between text-[10px] uppercase text-gray-500">
+      <div className="flex items-center justify-between text-xs uppercase text-gray-500">
         <span>{title ?? 'Holdings'}</span>
         {title == null && source ? <span>via {source}</span> : null}
       </div>

@@ -3554,7 +3554,8 @@ export default function PnLTracker() {
         {!walletAddress && (
           <div className="text-center py-8">
             <p className="text-gray-400 text-sm">
-              Connect your wallet to track trading performance
+              Connect your wallet to see realized and unrealized P&amp;L across
+              your buys and sells.
             </p>
           </div>
         )}

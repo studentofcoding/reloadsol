@@ -146,7 +146,7 @@ const peakFmt = (growth?: number | null, seenAt?: string | null) => {
 
 const labelBadge = (label?: string | null) => {
   if (!label || label === "valid") return null;
-  const base = "px-1.5 py-0.5 rounded text-[10px] font-medium uppercase";
+  const base = "px-1.5 py-0.5 rounded text-xs font-medium uppercase";
   if (label === "rugged") {
     return <span className={`${base} bg-red-100 text-red-700`}>rug</span>;
   }
@@ -168,7 +168,7 @@ const mlShadowFmt = (
   return (
     <span className="text-xs text-gray-600" title="Pattern ML shadow (display only)">
       {pWinner.toFixed(2)} {predicted ?? ""}
-      <span className="ml-1 text-[10px] uppercase opacity-60">shadow</span>
+      <span className="ml-1 text-xs uppercase opacity-60">shadow</span>
     </span>
   );
 };

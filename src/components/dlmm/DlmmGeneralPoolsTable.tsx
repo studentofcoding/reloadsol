@@ -222,7 +222,7 @@ export default function DlmmGeneralPoolsTable({
         />
       </div>
 
-      <p className="text-[11px] text-gray-500">
+      <p className="text-xs text-gray-500">
         {filtered.length} shown · hunter screen · click Pair for GMGN chart
       </p>
 
@@ -230,7 +230,7 @@ export default function DlmmGeneralPoolsTable({
         <p className="text-gray-500 text-sm">No pools matched filters.</p>
       ) : (
         <div className="overflow-x-auto border border-gray-800 bg-black">
-          <table className="w-full text-left text-[11px] text-gray-300 min-w-[960px]">
+          <table className="w-full text-left text-xs text-gray-300 min-w-[960px]">
             <thead className="text-gray-500 border-b border-gray-800">
               <tr>
                 <SortTh

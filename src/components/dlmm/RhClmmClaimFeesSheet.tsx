@@ -243,7 +243,7 @@ export default function RhClmmClaimFeesSheet({
                 {position.symbol1}
               </button>
             </div>
-            <div className="text-[11px] text-gray-400 border border-gray-800 rounded p-2">
+            <div className="text-xs text-gray-400 border border-gray-800 rounded p-2">
               {amountInRaw > BigInt(0) ? (
                 zapQuote.isFetching ? (
                   <span>Quoting {symbolIn} → {symbolOut}…</span>
@@ -270,13 +270,13 @@ export default function RhClmmClaimFeesSheet({
                 </span>
               )}
             </div>
-            <p className="text-[11px] text-gray-600">
+            <p className="text-xs text-gray-600">
               Parent wallet: collect then Kyber-swap the other leg into{' '}
               {symbolOut}.
             </p>
           </div>
         ) : (
-          <p className="text-[11px] text-gray-500">
+          <p className="text-xs text-gray-500">
             Collect both fee tokens in-kind (position stays open).
           </p>
         )}

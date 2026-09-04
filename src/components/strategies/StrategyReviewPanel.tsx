@@ -281,7 +281,7 @@ export default function StrategyReviewPanel() {
       {review && review.punchCard.tags.length > 0 && (
         <section className="bg-gray-900 border border-gray-700 rounded-lg p-6 overflow-x-auto">
           <h3 className="text-lg font-semibold text-white mb-3">Punch card (tags × weeks)</h3>
-          <table className="text-[10px] border-collapse">
+          <table className="text-xs border-collapse">
             <thead>
               <tr>
                 <th className="text-left text-gray-500 p-1 sticky left-0 bg-gray-900">tag</th>

@@ -76,7 +76,7 @@ function PositionCard({
       <div className={`text-sm font-semibold mb-2 ${pnl.className}`}>
         {pnl.text}
         {position.status === "closed" && position.outcome && (
-          <span className="ml-2 text-[10px] uppercase text-gray-500">
+          <span className="ml-2 text-xs uppercase text-gray-500">
             {position.outcome}
           </span>
         )}
@@ -150,17 +150,17 @@ function PositionCard({
       {/* Badges: strategy + sim/real */}
       <div className="flex flex-wrap items-center gap-1">
         <span
-          className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-900/40 text-blue-300 border border-blue-700/40 truncate max-w-[10rem]"
+          className="px-1.5 py-0.5 rounded text-xs font-medium bg-blue-900/40 text-blue-300 border border-blue-700/40 truncate max-w-[10rem]"
           title={`${position.domain} / ${position.strategyId}`}
         >
           {position.strategyName}
         </span>
         {position.isSimulated ? (
-          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-yellow-900/40 text-yellow-300 border border-yellow-700/40">
+          <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-yellow-900/40 text-yellow-300 border border-yellow-700/40">
             SIM
           </span>
         ) : (
-          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-900/40 text-green-300 border border-green-700/40">
+          <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-green-900/40 text-green-300 border border-green-700/40">
             REAL
           </span>
         )}

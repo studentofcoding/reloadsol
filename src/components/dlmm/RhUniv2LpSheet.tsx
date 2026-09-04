@@ -352,7 +352,7 @@ export default function RhUniv2LpSheet({
                 : 'Resolving univ2 pool…'}
             </p>
             {!isClose ? (
-              <p className="text-[11px] text-amber-400/90 mt-1">
+              <p className="text-xs text-amber-400/90 mt-1">
                 Full range only (UniV2 / DAMM) — no custom min/max ticks. Entire
                 curve, both sides of the pool.
               </p>
@@ -368,7 +368,7 @@ export default function RhUniv2LpSheet({
         </div>
 
         {resolved && (
-          <div className="text-[11px] text-gray-500 font-mono break-all">
+          <div className="text-xs text-gray-500 font-mono break-all">
             Pool {resolved.pool.address}
             {resolved.tvlUsd > 0 ? ` · TVL $${resolved.tvlUsd.toLocaleString()}` : ''}
           </div>

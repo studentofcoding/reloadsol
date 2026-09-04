@@ -427,19 +427,19 @@ export default function TokenMapStrategyChart({
             Strategy correlation
           </p>
           {lastPrice != null ? (
-            <span className="text-[10px] text-gray-400 truncate">
+            <span className="text-xs text-gray-400 truncate">
               last {formatPriceLabel(lastPrice)}
             </span>
           ) : null}
           {corr != null ? (
-            <span className="text-[10px] text-emerald-300/90 shrink-0">
+            <span className="text-xs text-emerald-300/90 shrink-0">
               corr: {corr.toFixed(2)}
             </span>
           ) : null}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {loading ? (
-            <span className="text-[10px] text-gray-500">
+            <span className="text-xs text-gray-500">
               {refreshKey > 0 ? 'Refreshing…' : 'Loading…'}
             </span>
           ) : null}
@@ -447,7 +447,7 @@ export default function TokenMapStrategyChart({
             type="button"
             disabled={loading}
             onClick={() => setRefreshKey((k) => k + 1)}
-            className="rounded border border-gray-600 px-2 py-0.5 text-[10px] text-gray-300 hover:bg-gray-800 disabled:opacity-40"
+            className="rounded border border-gray-600 px-2 py-0.5 text-xs text-gray-300 hover:bg-gray-800 disabled:opacity-40"
           >
             Refresh
           </button>
@@ -459,11 +459,11 @@ export default function TokenMapStrategyChart({
         <div ref={containerRef} className="w-full" />
       )}
       {note ? (
-        <p className="px-3 py-1.5 text-[10px] text-amber-200/80 border-t border-gray-800">
+        <p className="px-3 py-1.5 text-xs text-amber-200/80 border-t border-gray-800">
           {note}
         </p>
       ) : null}
-      <div className="flex flex-wrap gap-x-3 gap-y-1 px-3 py-2 border-t border-gray-800 text-[10px] text-gray-400">
+      <div className="flex flex-wrap gap-x-3 gap-y-1 px-3 py-2 border-t border-gray-800 text-xs text-gray-400">
         {KIND_LEGEND.map((row) => (
           <span key={row.kind} className="inline-flex items-center gap-1">
             <span style={row.color ? { color: row.color } : undefined}>

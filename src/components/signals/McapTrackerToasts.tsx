@@ -186,25 +186,25 @@ export default function McapTrackerToasts({ toasts }: McapTrackerToastsProps) {
                 {item && (
                   <div className="mt-2 flex flex-wrap items-center gap-2">
                     {badge && (
-                      <span className="rounded bg-black/25 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide">
+                      <span className="rounded bg-black/25 px-1.5 py-0.5 text-xs font-medium uppercase tracking-wide">
                         {badge}
                       </span>
                     )}
                     {toast.category === "signals_enter" && (
-                      <span className="rounded bg-black/25 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide opacity-80">
+                      <span className="rounded bg-black/25 px-1.5 py-0.5 text-xs font-medium uppercase tracking-wide opacity-80">
                         shadow
                       </span>
                     )}
                     {toast.category === "signals_enter" &&
                       item.pWinner != null &&
                       Number.isFinite(item.pWinner) && (
-                        <span className="text-[10px] opacity-80">
+                        <span className="text-xs opacity-80">
                           pW {item.pWinner.toFixed(2)}
                           {item.predicted ? ` ${item.predicted}` : ""}
                         </span>
                       )}
                     {entryMcapLabel && (
-                      <span className="text-[10px] opacity-75">
+                      <span className="text-xs opacity-75">
                         Entry {entryMcapLabel}
                       </span>
                     )}
@@ -252,12 +252,12 @@ export default function McapTrackerToasts({ toasts }: McapTrackerToastsProps) {
                   </button>
                 )}
                 {buyStates[item.address]?.error && (
-                  <span className="text-[10px] text-red-200">
+                  <span className="text-xs text-red-200">
                     {buyStates[item.address]?.error}
                   </span>
                 )}
                 {buyStates[item.address]?.status === "Done" && (
-                  <span className="text-[10px] text-emerald-200">Purchased</span>
+                  <span className="text-xs text-emerald-200">Purchased</span>
                 )}
               </div>
             )}

@@ -275,7 +275,7 @@ const ChartItem = React.memo(
               {symbol || addr.slice(0, 8) + "..."}
               <TokenSearchLink address={addr} />
               {isMcapSource && (
-                <span className="text-[10px] bg-purple-900/50 text-purple-300 px-1 rounded border border-purple-700">
+                <span className="text-xs bg-purple-900/50 text-purple-300 px-1 rounded border border-purple-700">
                   MCAP
                 </span>
               )}

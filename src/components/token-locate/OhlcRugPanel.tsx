@@ -150,10 +150,10 @@ export default function OhlcRugPanel({
         ? query.error.message.slice(0, 120)
         : null
     return (
-      <div className="rounded-lg border border-gray-700 bg-gray-900/60 px-1.5 py-1 text-[9px] text-amber-200/80">
+      <div className="rounded-lg border border-gray-700 bg-gray-900/60 px-1.5 py-1 text-[11px] text-amber-200/80">
         <p>OHLC rules unavailable</p>
         {detail ? (
-          <p className="mt-0.5 truncate text-[8px] text-amber-200/50" title={detail}>
+          <p className="mt-0.5 truncate text-[11px] text-amber-200/50" title={detail}>
             {detail}
           </p>
         ) : null}
@@ -167,11 +167,11 @@ export default function OhlcRugPanel({
   return (
     <div className="flex h-full max-h-[300px] flex-col gap-1 overflow-y-auto rounded-lg border border-gray-700 bg-gray-950/90 p-1.5">
       <div className="flex items-center justify-between gap-1">
-        <p className="text-[9px] font-semibold text-gray-300">
+        <p className="text-[11px] font-semibold text-gray-300">
           OHLC {n}/10m
         </p>
         <span
-          className={`rounded px-1 text-[8px] font-semibold uppercase ${
+          className={`rounded px-1 text-[11px] font-semibold uppercase ${
             live.trip
               ? 'bg-red-900/80 text-red-200'
               : 'bg-emerald-900/60 text-emerald-200'
@@ -183,10 +183,10 @@ export default function OhlcRugPanel({
 
       <MiniOhlcCandles bars={query.data.bars} trip={live.trip} />
 
-      <label className="block text-[8px] text-gray-500">
+      <label className="block text-[11px] text-gray-500">
         Label
         <select
-          className="mt-0.5 w-full rounded border border-gray-700 bg-gray-900 px-1 py-0.5 text-[10px] text-gray-100"
+          className="mt-0.5 w-full rounded border border-gray-700 bg-gray-900 px-1 py-0.5 text-xs text-gray-100"
           value={label}
           disabled={labelMut.isPending}
           onChange={(e) => {
@@ -201,13 +201,13 @@ export default function OhlcRugPanel({
       </label>
 
       <div className="space-y-1 border-t border-gray-800 pt-1">
-        <p className="text-[8px] font-semibold uppercase tracking-wide text-gray-500">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
           Rules (live tweak · saved)
         </p>
         {live.hits.map((hit) => (
           <div
             key={hit.id}
-            className={`rounded px-1 py-0.5 text-[8px] leading-tight ${
+            className={`rounded px-1 py-0.5 text-[11px] leading-tight ${
               hit.skipped
                 ? 'bg-gray-900 text-gray-500'
                 : hit.passed
@@ -230,7 +230,7 @@ export default function OhlcRugPanel({
       </div>
 
       <div className="space-y-1 border-t border-gray-800 pt-1">
-        <label className="block text-[8px] text-gray-500">
+        <label className="block text-[11px] text-gray-500">
           Dump ≥ {(thresholds.dumpPct * 100).toFixed(0)}%
           <input
             type="range"
@@ -244,7 +244,7 @@ export default function OhlcRugPanel({
             className="mt-0.5 w-full"
           />
         </label>
-        <label className="block text-[8px] text-gray-500">
+        <label className="block text-[11px] text-gray-500">
           Wick ≥ {thresholds.wickRatio.toFixed(2)}
           <input
             type="range"
@@ -258,7 +258,7 @@ export default function OhlcRugPanel({
             className="mt-0.5 w-full"
           />
         </label>
-        <label className="block text-[8px] text-gray-500">
+        <label className="block text-[11px] text-gray-500">
           Vol death ≤ {thresholds.volDeathRatio.toFixed(2)}
           <input
             type="range"

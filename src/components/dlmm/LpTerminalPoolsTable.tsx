@@ -186,7 +186,7 @@ export default function LpTerminalPoolsTable() {
         }
         setProto(id)
       }}
-      className={`shrink-0 px-2 py-1 text-[11px] font-mono uppercase tracking-wide border ${
+      className={`shrink-0 px-2 py-1 text-xs font-mono uppercase tracking-wide border ${
         active
           ? 'border-emerald-500 text-emerald-300 bg-emerald-950/40'
           : 'border-gray-700 text-gray-400 hover:border-gray-500'
@@ -215,13 +215,13 @@ export default function LpTerminalPoolsTable() {
           type="button"
           onClick={() => void refetch()}
           disabled={isFetching}
-          className="text-[11px] text-gray-400 hover:text-gray-200 px-2 py-1 border border-gray-700 disabled:opacity-50"
+          className="text-xs text-gray-400 hover:text-gray-200 px-2 py-1 border border-gray-700 disabled:opacity-50"
         >
           {isFetching ? '…' : '↻'}
         </button>
       </div>
 
-      <p className="text-[11px] text-gray-500">
+      <p className="text-xs text-gray-500">
         {statusLine}
         {' · '}
         <span className="text-gray-400">
@@ -320,7 +320,7 @@ export default function LpTerminalPoolsTable() {
                             {row.pair}
                             {open ? ' ▾' : ' ▸'}
                           </div>
-                          <div className="text-[10px] text-gray-600">
+                          <div className="text-xs text-gray-600">
                             {row.protoLabel.toLowerCase()} · {row.feeTier}
                           </div>
                         </button>

@@ -205,7 +205,7 @@ export default function GmgnTradeConfirmModal({
                       Est. out (raw): {leg.estOut}
                     </div>
                   ) : null}
-                  <div className="mt-1 truncate font-mono text-[10px] text-gray-500">
+                  <div className="mt-1 truncate font-mono text-xs text-gray-500">
                     {leg.tokenAddress}
                   </div>
                 </li>
@@ -224,11 +224,11 @@ export default function GmgnTradeConfirmModal({
                 type="button"
                 onClick={onConfirm}
                 disabled={isSubmitting}
-                className="rounded-lg bg-white px-4 py-2 text-sm font-semibold text-gray-900 hover:bg-gray-200 disabled:opacity-50"
+                className="btn-primary rounded-lg px-4 py-2 text-sm disabled:opacity-50"
               >
                 {isSubmitting ? (
                   <span className="flex items-center gap-2">
-                    <span className="h-3 w-3 animate-spin rounded-full border-2 border-gray-900/30 border-t-gray-900" />
+                    <span className="h-3 w-3 animate-spin rounded-full border-2 border-black/30 border-t-black" />
                     Submitting…
                   </span>
                 ) : (

@@ -400,7 +400,7 @@ function RobinhoodCard({ t }: { t: RobinhoodScreenToken }) {
           {copied ? 'Copied CA' : 'Copy CA'}
         </button>
       </div>
-      <p className="text-[11px] text-gray-500">
+      <p className="text-xs text-gray-500">
         In-app Uniswap V2 zap (USDG/WETH) on Robinhood — not Meteora Deploy.
       </p>
       {lpOpen ? (

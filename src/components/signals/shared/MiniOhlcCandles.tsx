@@ -23,7 +23,7 @@ export default function MiniOhlcCandles({
 }) {
   if (!Array.isArray(bars) || bars.length === 0) {
     return (
-      <div className="flex h-16 items-center justify-center text-[9px] text-gray-500">
+      <div className="flex h-16 items-center justify-center text-[11px] text-gray-500">
         {emptyLabel}
       </div>
     )

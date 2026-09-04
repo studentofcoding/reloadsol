@@ -122,11 +122,11 @@ function Section({
                 {row.token_symbol || 'UNKNOWN'}
               </span>
               <TokenSearchLink address={row.token_address} />
-              <span className="font-mono text-[10px] text-gray-500">
+              <span className="font-mono text-xs text-gray-500">
                 {row.token_address.slice(0, 8)}…
               </span>
             </div>
-            <p className="mb-2 text-[11px] text-gray-400">
+            <p className="mb-2 text-xs text-gray-400">
               {formatAppDateTime(row.window_start)} →{' '}
               {formatAppDateTime(row.window_end)}
               {row.end_reason ? (

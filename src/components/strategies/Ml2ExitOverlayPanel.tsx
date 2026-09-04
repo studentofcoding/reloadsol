@@ -255,7 +255,7 @@ export default function Ml2ExitOverlayPanel({ onNotify }: Props) {
                       />
                     </td>
                   ))}
-                  <td className="p-2 font-mono text-[10px] text-gray-400">
+                  <td className="p-2 font-mono text-xs text-gray-400">
                     {prev
                       ? `TP ${prev.takeProfitPct} · SL ${prev.stopLossPct} · ${prev.maxHoldHours}h`
                       : "—"}
@@ -366,7 +366,7 @@ export default function Ml2ExitOverlayPanel({ onNotify }: Props) {
         </label>
       </div>
 
-      <p className="text-[11px] text-gray-500">
+      <p className="text-xs text-gray-500">
         Potential train floor:{" "}
         <span className="font-mono text-gray-300">
           ML_POTENTIAL_MIN_ROWS={data.potentialMinRows}

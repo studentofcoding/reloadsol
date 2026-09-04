@@ -56,8 +56,8 @@ export default function ConnectionStatus() {
   }
 
   return (
-    <div className="flex items-center space-x-1 text-xs">
-      <span className={`${getStatusColor()} animate-pulse`}>
+    <div className="flex items-center space-x-1 text-xs" aria-live="polite">
+      <span className={getStatusColor()}>
         {getStatusIcon()}
       </span>
       <WalletPoints />
@@ -67,7 +67,7 @@ export default function ConnectionStatus() {
         {status === 'error' && `(connection failed)`}
       </span>
       {error && (
-        <span className="text-red-400 text-xs ml-2" title={error}>
+        <span className="text-red-400 text-xs ml-2" title={error} role="img" aria-label={`Connection error: ${error}`}>
           ⚠️
         </span>
       )}

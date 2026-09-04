@@ -66,8 +66,8 @@ const Header: FC<HeaderProps> = ({ onOpenDailyStreak }) => {
                 onClick={onOpenDailyStreak}
                 className="flex items-center gap-1 md:gap-2 px-2 md:px-4 py-1 md:py-2 rounded-full
                            bg-gradient-to-r from-orange-500/20 to-red-500/10
-                           border border-orange-400/30 hover:border-orange-400/50
-                           transition-all duration-300 group text-xs md:text-base hover:scale-105"
+                           border border-orange-400/30 hover:border-orange-400/60 hover:bg-orange-500/10
+                           transition-colors duration-200 group text-xs md:text-base"
               >
                 <FaFire className="w-3 h-3 md:w-4 md:h-4 text-orange-400" />
                 <span className="font-bold text-white">

@@ -125,7 +125,7 @@ function PositionsTableShell({ children }: { children: ReactNode }) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm text-left">
-        <thead className="text-gray-400 border-b border-gray-700 text-[11px] uppercase tracking-wide">
+        <thead className="text-gray-400 border-b border-gray-700 text-xs uppercase tracking-wide">
           <tr>
             <th className="py-2 pr-3">Pool</th>
             <th className="py-2 pr-3 text-right">Value</th>
@@ -614,7 +614,7 @@ export default function RhPositionsPanel() {
 
       <div className="flex flex-wrap items-center gap-4 border border-gray-800 rounded-lg px-4 py-3 bg-black/30">
         <div>
-          <div className="text-[10px] uppercase tracking-wide text-gray-500">
+          <div className="text-xs uppercase tracking-wide text-gray-500">
             Total value
           </div>
           <div className="text-lg font-semibold text-white tabular-nums">
@@ -622,7 +622,7 @@ export default function RhPositionsPanel() {
           </div>
         </div>
         <div>
-          <div className="text-[10px] uppercase tracking-wide text-gray-500">
+          <div className="text-xs uppercase tracking-wide text-gray-500">
             Unclaimed fees
           </div>
           <div className="text-lg font-semibold text-amber-400/90 tabular-nums">
@@ -711,7 +711,7 @@ export default function RhPositionsPanel() {
               >
                 <td className="py-2.5 pr-3">
                   <div className="text-white">{r.pair}</div>
-                  <div className="text-[10px] text-gray-500">
+                  <div className="text-xs text-gray-500">
                     {r.protocolLabel}
                     {closeTokenId != null
                       ? ` · #${closeTokenId.toString()}`

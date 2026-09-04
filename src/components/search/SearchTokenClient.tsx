@@ -234,7 +234,7 @@ function ResultRow({
           </div>
           <div className="text-xs text-gray-400 font-mono truncate">{token.address}</div>
           {token.mcap ? (
-            <div className="text-[11px] text-gray-500">MCap ${token.mcap.toLocaleString()}</div>
+            <div className="text-xs text-gray-500">MCap ${token.mcap.toLocaleString()}</div>
           ) : null}
         </div>
         <div className="flex items-center gap-2 shrink-0">

@@ -878,7 +878,7 @@ export default function AlgoDashboardTab() {
           </Link>
           <span className="text-gray-500 text-xs max-w-xl">
             Open positions from{" "}
-            <code className="text-[10px]">trending_token_tracker</code> (holding
+            <code className="text-xs">trending_token_tracker</code> (holding
             only). Closed trades and ML labels live in Strategy Admin — counts
             differ until a position fully closes.
           </span>
@@ -1796,7 +1796,7 @@ export default function AlgoDashboardTab() {
                                 <p className="text-xs text-blue-400">
                                   Click to view trades
                                 </p>
-                                <div className="text-[10px] text-gray-500 mt-1">
+                                <div className="text-xs text-gray-500 mt-1">
                                   <div>
                                     Bought:{" "}
                                     {token.tracking_started_at

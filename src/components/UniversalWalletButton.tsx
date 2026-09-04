@@ -146,7 +146,7 @@ export default function UniversalWalletButton({
             </button>
           </div>
           {rh.error ? (
-            <span className="text-[10px] text-red-400 max-w-[180px]">{rh.error}</span>
+            <span className="text-xs text-red-400 max-w-[180px]">{rh.error}</span>
           ) : null}
         </div>
       ) : (
@@ -180,7 +180,7 @@ export default function UniversalWalletButton({
                 : "Connect Rabby"}
           </button>
           {rh.error || rhHint ? (
-            <span className="text-[10px] text-red-400 max-w-[180px]">
+            <span className="text-xs text-red-400 max-w-[180px]">
               {rh.error ?? rhHint}
             </span>
           ) : null}

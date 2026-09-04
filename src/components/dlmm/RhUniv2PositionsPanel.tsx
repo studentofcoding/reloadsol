@@ -75,7 +75,7 @@ export default function RhUniv2PositionsPanel() {
                 >
                   <td className="py-3 pr-4">
                     <div>{p.pair_label || p.pool_address.slice(0, 10)}</div>
-                    <div className="text-[10px] text-gray-500 font-mono">
+                    <div className="text-xs text-gray-500 font-mono">
                       {p.owner_address.slice(0, 6)}…{p.owner_address.slice(-4)}
                     </div>
                   </td>

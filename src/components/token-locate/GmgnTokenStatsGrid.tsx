@@ -198,7 +198,7 @@ export default function GmgnTokenStatsGrid({
     return (
       <p
         className={`rounded-lg border border-gray-700 bg-gray-900/60 text-amber-200/80 ${
-          isRail ? 'px-1.5 py-1 text-[9px]' : 'px-3 py-2 text-[11px]'
+          isRail ? 'px-1.5 py-1 text-[11px]' : 'px-3 py-2 text-xs'
         }`}
       >
         GMGN info unavailable
@@ -226,14 +226,14 @@ export default function GmgnTokenStatsGrid({
         >
           <p
             className={`font-semibold leading-tight ${tile.valueClass} ${
-              isRail ? 'text-[11px]' : 'text-sm'
+              isRail ? 'text-xs' : 'text-sm'
             }`}
           >
             <TileValue tile={tile} />
           </p>
           <p
             className={`text-gray-500 underline decoration-dashed decoration-gray-600 underline-offset-2 ${
-              isRail ? 'mt-0.5 text-[8px] leading-tight' : 'mt-1 text-[10px]'
+              isRail ? 'mt-0.5 text-[11px] leading-tight' : 'mt-1 text-xs'
             }`}
           >
             {tile.label}

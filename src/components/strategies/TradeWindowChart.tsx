@@ -203,7 +203,7 @@ export default function TradeWindowChart({
       <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
         <h4 className="text-xs font-semibold text-gray-300">Trade window (entry → exit)</h4>
         {source && (
-          <span className="text-[10px] text-gray-500 uppercase tracking-wide">
+          <span className="text-xs text-gray-500 uppercase tracking-wide">
             source: {source}
           </span>
         )}
@@ -211,7 +211,7 @@ export default function TradeWindowChart({
       <div className="h-48">
         <Chart type="line" data={chartData} options={options} />
       </div>
-      <div className="flex flex-wrap gap-3 mt-2 text-[10px] text-gray-400">
+      <div className="flex flex-wrap gap-3 mt-2 text-xs text-gray-400">
         <span>
           Entry: <span className="text-green-400">{formatAppDateTime(entryAt)}</span>
         </span>

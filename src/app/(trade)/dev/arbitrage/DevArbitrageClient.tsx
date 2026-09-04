@@ -451,7 +451,7 @@ function LogLabTab() {
             </div>
           )}
           {parsed.parseNotes.length > 0 && (
-            <ul className="text-[11px] text-gray-500 list-disc pl-4">
+            <ul className="text-xs text-gray-500 list-disc pl-4">
               {parsed.parseNotes.map((n) => (
                 <li key={n}>{n}</li>
               ))}
@@ -461,7 +461,7 @@ function LogLabTab() {
 
         <div className="border border-gray-800 rounded p-3 space-y-2 min-h-[200px]">
           <h3 className="font-semibold text-sm">Raw</h3>
-          <pre className="whitespace-pre-wrap break-all font-mono text-[11px] text-gray-400 max-h-[480px] overflow-auto">
+          <pre className="whitespace-pre-wrap break-all font-mono text-xs text-gray-400 max-h-[480px] overflow-auto">
             {parsed.raw || "(empty)"}
           </pre>
         </div>

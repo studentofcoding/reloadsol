@@ -463,13 +463,16 @@ export default function TradingHistory() {
       {walletAddress && processedRecords.length === 0 ? (
         <div className="text-center py-4">
           <p className="text-gray-400 text-sm">
-            Trade on reloadsol to track your history
+            Your completed buys and sells will appear here. Make a trade to start
+            tracking your history.
           </p>
         </div>
       ) : filteredRecords.length === 0 ? (
         <div className="text-center py-4">
           <p className="text-gray-400 text-sm">
-            No {modeFilter} history records
+            {modeFilter === "all"
+              ? "No history records yet."
+              : `No ${modeFilter} history records. Switch to All to see every trade.`}
           </p>
         </div>
       ) : (

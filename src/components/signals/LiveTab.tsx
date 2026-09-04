@@ -1595,8 +1595,8 @@ export default function LiveTab() {
                     : quotes.has(token.token_address) &&
                         hoveredToken === token.token_address
                       ? isNewToken
-                        ? "bg-gradient-to-r from-cyan-600 to-blue-600 text-white hover:from-cyan-700 hover:to-blue-700 hover:scale-105"
-                        : "bg-gradient-to-r from-purple-600 to-pink-600 text-white hover:from-purple-700 hover:to-pink-700 hover:scale-105"
+                        ? "bg-gradient-to-r from-lime-500 to-emerald-500 text-black hover:from-lime-400 hover:to-emerald-400"
+                        : "bg-accent text-black hover:bg-[#bef264]"
                       : loadingQuotes.has(token.token_address) &&
                           hoveredToken === token.token_address
                         ? "bg-gray-700 text-gray-300 cursor-wait"
@@ -1674,7 +1674,7 @@ export default function LiveTab() {
                 isSelling
                   ? "bg-gray-600 text-gray-400 cursor-not-allowed"
                   : sellQuote
-                    ? "bg-gradient-to-r from-red-600 to-orange-600 text-white hover:from-red-700 hover:to-orange-700 hover:scale-105"
+                    ? "bg-red-500 text-white hover:bg-red-400"
                     : "bg-gray-600 text-gray-400 cursor-not-allowed"
               }`}
             >

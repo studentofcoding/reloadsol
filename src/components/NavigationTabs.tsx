@@ -62,10 +62,11 @@ export default function NavigationTabs({
   return (
     <div className="w-full relative z-50">
       {/* Desktop Navigation */}
-      <div
-        className={`hidden md:block ${mounted && isDevUser ? "max-w-6xl" : "max-w-4xl"} mx-auto mb-2`}
-      >
-        <div className="flex items-center justify-between h-full mb-4 gap-4">
+      <div className="sticky top-0 z-40 hidden bg-black/85 backdrop-blur-sm border-b border-white/5 px-2 pt-2 md:block">
+        <div
+          className={`${mounted && isDevUser ? "max-w-6xl" : "max-w-4xl"} mx-auto mb-2`}
+        >
+          <div className="flex items-center justify-between h-full mb-4 gap-4">
           <ScrollableMenuRow className="min-w-0 flex-1" innerClassName="gap-2" bleed={false}>
             {/* Main Trading Tabs */}
             {showMainTabs && (
@@ -75,7 +76,7 @@ export default function NavigationTabs({
                   href="/sell"
                   className={`px-3 py-3 rounded-lg font-semibold transition-all duration-200 ${
                     isActive("/sell")
-                      ? "bg-white text-black"
+                      ? "tab-active"
                       : "text-gray-400 hover:text-white hover:bg-gray-700"
                   }`}
                 >
@@ -103,7 +104,7 @@ export default function NavigationTabs({
                   href="/buy"
                   className={`px-3 py-3 rounded-lg font-semibold transition-all duration-200 ${
                     isActive("/buy")
-                      ? "bg-white text-black"
+                      ? "tab-active"
                       : "text-gray-400 hover:text-white hover:bg-gray-700"
                   }`}
                 >
@@ -131,7 +132,7 @@ export default function NavigationTabs({
                   href="/swap"
                   className={`px-3 py-3 rounded-lg font-semibold transition-all duration-200 ${
                     isActive("/swap")
-                      ? "bg-white text-black"
+                      ? "tab-active"
                       : "text-gray-400 hover:text-white hover:bg-gray-700"
                   }`}
                 >
@@ -159,7 +160,7 @@ export default function NavigationTabs({
                   href="/search-token"
                   className={`px-3 py-3 rounded-lg font-semibold transition-all duration-200 ${
                     isActive("/search-token")
-                      ? "bg-white text-black"
+                      ? "tab-active"
                       : "text-gray-400 hover:text-white hover:bg-gray-700"
                   }`}
                 >
@@ -193,6 +194,7 @@ export default function NavigationTabs({
                           : "text-gray-400 hover:text-white hover:bg-gray-800"
                       }`}
                       title="Signals"
+                      aria-label="Signals"
                     >
                       <svg
                         className="w-5 h-5"
@@ -218,6 +220,7 @@ export default function NavigationTabs({
                           : "text-gray-400 hover:text-white hover:bg-gray-800"
                       }`}
                       title="Algo Tester"
+                      aria-label="Algo Tester"
                     >
                       <svg
                         className="w-5 h-5"
@@ -243,6 +246,7 @@ export default function NavigationTabs({
                           : "text-gray-400 hover:text-white hover:bg-gray-800"
                       }`}
                       title="DLMM Agent"
+                      aria-label="DLMM Agent"
                     >
                       <svg
                         className="w-5 h-5"
@@ -268,6 +272,7 @@ export default function NavigationTabs({
                           : "text-gray-400 hover:text-white hover:bg-gray-800"
                       }`}
                       title="Social"
+                      aria-label="Social"
                     >
                       <svg
                         className="w-5 h-5"
@@ -293,6 +298,7 @@ export default function NavigationTabs({
                           : "text-gray-400 hover:text-white hover:bg-gray-800"
                       }`}
                       title="Strategy Admin"
+                      aria-label="Strategy Admin"
                     >
                       <svg
                         className="w-5 h-5"
@@ -324,6 +330,7 @@ export default function NavigationTabs({
                           : "text-gray-400 hover:text-white hover:bg-gray-800"
                       }`}
                       title="Search token"
+                      aria-label="Search token"
                     >
                       <svg
                         className="w-5 h-5"
@@ -382,6 +389,7 @@ export default function NavigationTabs({
                     : "text-gray-400 hover:text-white hover:bg-gray-800"
                 }`}
                 title="Trading History"
+                aria-label="Trading History"
               >
                 <svg
                   className="w-5 h-5"
@@ -406,6 +414,7 @@ export default function NavigationTabs({
                     : "text-gray-400 hover:text-white hover:bg-gray-800"
                 }`}
                 title="P&L Tracker"
+                aria-label="P&L Tracker"
               >
                 <svg
                   className="w-5 h-5"
@@ -432,6 +441,7 @@ export default function NavigationTabs({
             ) : null}
           </div>
         </div>
+      </div>
       </div>
 
       {/* Mobile Top Bar - Balance & Info Tabs */}
@@ -506,7 +516,7 @@ export default function NavigationTabs({
             <Link
               href="/sell"
               className={`flex shrink-0 flex-col items-center px-4 py-2 rounded-lg transition-all duration-200 ${
-                isActive("/sell") ? "bg-white text-black" : "text-gray-400"
+                isActive("/sell") ? "tab-active" : "text-gray-400"
               }`}
             >
               <svg
@@ -532,7 +542,7 @@ export default function NavigationTabs({
             <Link
               href="/buy"
               className={`flex shrink-0 flex-col items-center px-4 py-2 rounded-lg transition-all duration-200 ${
-                isActive("/buy") ? "bg-white text-black" : "text-gray-400"
+                isActive("/buy") ? "tab-active" : "text-gray-400"
               }`}
             >
               <svg
@@ -556,7 +566,7 @@ export default function NavigationTabs({
             <Link
               href="/swap"
               className={`flex shrink-0 flex-col items-center px-4 py-2 rounded-lg transition-all duration-200 ${
-                isActive("/swap") ? "bg-white text-black" : "text-gray-400"
+                isActive("/swap") ? "tab-active" : "text-gray-400"
               }`}
             >
               <svg
@@ -580,7 +590,7 @@ export default function NavigationTabs({
             <Link
               href="/search-token"
               className={`flex shrink-0 flex-col items-center px-4 py-2 rounded-lg transition-all duration-200 ${
-                isActive("/search-token") ? "bg-white text-black" : "text-gray-400"
+                isActive("/search-token") ? "tab-active" : "text-gray-400"
               }`}
             >
               <svg

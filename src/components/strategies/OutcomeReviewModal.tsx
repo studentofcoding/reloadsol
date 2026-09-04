@@ -361,10 +361,10 @@ export default function OutcomeReviewModal({
                 </span>
               )}
             </p>
-            <p className="text-[10px] font-mono text-gray-500 mt-1 break-all">
+            <p className="text-xs font-mono text-gray-500 mt-1 break-all">
               {tokenAddress || "—"}
             </p>
-            <p className="text-[10px] text-gray-500">
+            <p className="text-xs text-gray-500">
               Entry {formatAppDateTime(outcome.entry_at)} → Exit{" "}
               {formatAppDateTime(outcome.exit_at)}
               {entryMcap != null && (
@@ -577,7 +577,7 @@ export function OutcomeMlBadge({
     anomaly: "bg-amber-900/50 text-amber-300",
   };
   return (
-    <span className={`text-[10px] px-2 py-0.5 rounded uppercase ${styles[label]}`}>
+    <span className={`text-xs px-2 py-0.5 rounded uppercase ${styles[label]}`}>
       {label}
     </span>
   );
@@ -596,7 +596,7 @@ export function OutcomeMlConditionBadge({
     new_chart: "bg-indigo-900/50 text-indigo-300",
   };
   return (
-    <span className={`text-[10px] px-2 py-0.5 rounded ${styles[condition]}`}>
+    <span className={`text-xs px-2 py-0.5 rounded ${styles[condition]}`}>
       {CONDITION_TITLES[condition]}
     </span>
   );
@@ -627,7 +627,7 @@ export function OutcomePatternMlBadge({
       : "bg-red-900/50 text-red-300";
   return (
     <span
-      className={`text-[10px] px-2 py-0.5 rounded uppercase ${styles}`}
+      className={`text-xs px-2 py-0.5 rounded uppercase ${styles}`}
       title={`p_winner=${pWinner.toFixed(3)}`}
     >
       {label} {(pWinner * 100).toFixed(0)}%
@@ -649,7 +649,7 @@ export function OutcomeGateMlBadge({
     : "bg-sky-900/50 text-sky-300";
   return (
     <span
-      className={`text-[10px] px-2 py-0.5 rounded ${styles}`}
+      className={`text-xs px-2 py-0.5 rounded ${styles}`}
       title={`p_bad=${pBad.toFixed(3)}${predicted != null ? ` predicted=${predicted}` : ""}`}
     >
       gate {(pBad * 100).toFixed(0)}%
@@ -667,7 +667,7 @@ export function OutcomePotentialMlBadge({
   const moon = readMlPotentialMoonScore(features);
   return (
     <span
-      className="text-[10px] px-2 py-0.5 rounded bg-violet-900/50 text-violet-300"
+      className="text-xs px-2 py-0.5 rounded bg-violet-900/50 text-violet-300"
       title={
         moon != null
           ? `tier=${tier} moon_score=${moon.toFixed(3)}`
@@ -693,7 +693,7 @@ export function OutcomeExitOverlayBadge({
     : "bg-gray-800 text-gray-300";
   return (
     <span
-      className={`text-[10px] px-2 py-0.5 rounded whitespace-nowrap ${styles}`}
+      className={`text-xs px-2 py-0.5 rounded whitespace-nowrap ${styles}`}
       title={summary}
     >
       {summary}

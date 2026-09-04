@@ -436,7 +436,7 @@ function DlmmFastSwapModalBody({
             <p className="text-xs text-gray-400 mt-0.5">
               {pairLabel || tokenSymbol || short(tokenAddress)} → buy
             </p>
-            <p className="text-[11px] text-gray-600 font-mono break-all">
+            <p className="text-xs text-gray-600 font-mono break-all">
               {tokenAddress}
             </p>
           </div>
@@ -517,7 +517,7 @@ function DlmmFastSwapModalBody({
           </label>
         </div>
 
-        <div className="text-[11px] text-gray-400 border border-gray-800 rounded p-2 bg-black/40 space-y-1">
+        <div className="text-xs text-gray-400 border border-gray-800 rounded p-2 bg-black/40 space-y-1">
           {simQuery.isFetching ? (
             <div>Simulating…</div>
           ) : simQuery.error ? (

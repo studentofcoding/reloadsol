@@ -57,7 +57,7 @@ export default function WalletChooser() {
         {solConnected ? (
           <div className="bg-black text-white px-4 py-2 rounded-lg font-mono text-sm border border-gray-600">
             {solAddress ? shortAddr(solAddress) : "Connected"}
-            <span className="text-gray-400 text-[10px] ml-1">connected</span>
+            <span className="text-gray-400 text-xs ml-1">connected</span>
           </div>
         ) : (
           <button
@@ -90,7 +90,7 @@ export default function WalletChooser() {
         {rh.address ? (
           <div className="bg-black text-white px-4 py-2 rounded-lg font-mono text-sm border border-gray-600">
             {shortAddr(rh.address)}
-            <span className="text-gray-400 text-[10px] ml-1">connected</span>
+            <span className="text-gray-400 text-xs ml-1">connected</span>
           </div>
         ) : (
           <div className="flex flex-col gap-2 items-center">
@@ -119,7 +119,7 @@ export default function WalletChooser() {
               )}
             </button>
             {rh.error || rhHint ? (
-              <span className="text-[10px] text-red-400">{rh.error ?? rhHint}</span>
+              <span className="text-xs text-red-400">{rh.error ?? rhHint}</span>
             ) : null}
           </div>
         )}

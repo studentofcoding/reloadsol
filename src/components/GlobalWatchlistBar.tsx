@@ -7,7 +7,7 @@ import { useGlobalWatchlist } from '@/hooks/useGlobalWatchlist';
 
 function formatPct(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) return '—';
-  const sign = value > 0 ? '+' : '';
+  const sign = value > 0 ? '+' : value < 0 ? '−' : '';
   return `${sign}${value.toFixed(1)}%`;
 }
 
@@ -53,7 +53,7 @@ export default function GlobalWatchlistBar() {
                     className="w-6 h-6 rounded-full"
                   />
                 ) : (
-                  <span className="w-6 h-6 rounded-full bg-gray-700 flex items-center justify-center text-[10px] text-gray-300">
+                  <span className="w-6 h-6 rounded-full bg-gray-700 flex items-center justify-center text-xs text-gray-300">
                     {symbol.slice(0, 2).toUpperCase()}
                   </span>
                 )}

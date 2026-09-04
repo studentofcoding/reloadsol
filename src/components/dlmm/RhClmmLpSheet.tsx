@@ -279,7 +279,7 @@ function RhClmmLpSheetBody({
                   key={id}
                   type="button"
                   onClick={() => applyPreset(id)}
-                  className="px-2 py-1 text-[11px] border border-gray-700 text-gray-300 hover:border-emerald-600"
+                  className="px-2 py-1 text-xs border border-gray-700 text-gray-300 hover:border-emerald-600"
                 >
                   {label}
                 </button>
@@ -322,7 +322,7 @@ function RhClmmLpSheetBody({
                   />
                 </label>
                 {fullRange ? (
-                  <p className="col-span-2 text-[11px] text-amber-400">
+                  <p className="col-span-2 text-xs text-amber-400">
                     Full range (min→max usable ticks)
                   </p>
                 ) : null}
@@ -374,7 +374,7 @@ function RhClmmLpSheetBody({
               </div>
             )}
 
-            <div className="text-[11px] text-gray-400 space-y-1 border border-gray-800 rounded p-2 bg-black/30">
+            <div className="text-xs text-gray-400 space-y-1 border border-gray-800 rounded p-2 bg-black/30">
               {mode === 'dual' && dual?.priceImpactPct != null ? (
                 <div>
                   Price impact:{' '}
@@ -400,7 +400,7 @@ function RhClmmLpSheetBody({
             </div>
 
             {preview ? (
-              <pre className="text-[11px] text-gray-300 bg-black/40 border border-gray-700 rounded p-2 whitespace-pre-wrap overflow-x-auto max-h-36">
+              <pre className="text-xs text-gray-300 bg-black/40 border border-gray-700 rounded p-2 whitespace-pre-wrap overflow-x-auto max-h-36">
                 {preview}
               </pre>
             ) : (
@@ -474,7 +474,7 @@ function RhClmmLpSheetBody({
           </div>
         </div>
 
-        <div className="text-[11px] text-gray-500 font-mono break-all">
+        <div className="text-xs text-gray-500 font-mono break-all">
           Pool {poolAddress}
           {meta ? ` · fee ${(meta.fee / 10000).toFixed(2)}%` : ''}
         </div>

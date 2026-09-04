@@ -146,7 +146,7 @@ function HoverTip({
       {pos && (
         <span
           role="tooltip"
-          className="pointer-events-none fixed z-[9999] w-max max-w-[min(20rem,70vw)] whitespace-pre-line rounded border border-gray-600 bg-gray-950 px-2.5 py-1.5 text-left text-[11px] leading-snug text-gray-100 shadow-xl"
+          className="pointer-events-none fixed z-[9999] w-max max-w-[min(20rem,70vw)] whitespace-pre-line rounded border border-gray-600 bg-gray-950 px-2.5 py-1.5 text-left text-xs leading-snug text-gray-100 shadow-xl"
           style={{ left: pos.x, top: pos.y }}
         >
           {text}
