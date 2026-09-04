@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ReloadSOL · Trading surfaces → execution → records</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --paper:#fafaf7; --paper2:#f0efe9; --ink:#163b2a; --muted:#5b6b60;
+    --soft:#8a968d; --accent:#84cc16; --link:#2e5aa8;
+    --sans:'DM Sans', system-ui, sans-serif;
+    --serif:'Fraunces', serif;
+    --mono:'Geist Mono', ui-monospace, monospace;
+  }
+  body { font-family:var(--sans); background:var(--paper); color:var(--ink); padding:3rem 2rem; }
+  .frame { max-width:1200px; margin:0 auto; }
+  .eyebrow { font-family:var(--mono); font-size:.66rem; font-weight:500; letter-spacing:.18em; text-transform:uppercase; color:var(--muted); margin-bottom:.5rem; }
+  h1 { font-family:var(--serif); font-size:clamp(1.4rem,2.2vw+.5rem,1.9rem); font-weight:400; letter-spacing:-.02em; color:var(--ink); margin-bottom:1.25rem; }
+  svg { width:100%; min-width:920px; display:block; }
+</style>
+</head>
+<body>
+<div class="frame">
+  <p class="eyebrow">ReloadSOL · Architecture</p>
+  <h1>Trading surfaces → execution → records</h1>
+
+  <svg viewBox="0 0 1160 640" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ts-title ts-desc">
+    <title id="ts-title">Trading surfaces to execution to records</title>
+    <desc id="ts-desc">Architecture showing ReloadSOL trading surfaces (bulk buy/sell, swap, chart buy, PnL) flowing into per-network executors (Solana Raptor, RH GMGN bound, RH Kyber parent) and then into trading records and an SSE feed.</desc>
+    <defs>
+      <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#5b6b60"/></marker>
+      <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#84cc16"/></marker>
+      <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#2e5aa8"/></marker>
+    </defs>
+    <rect width="100%" height="100%" fill="#fafaf7"/>
+
+    <!-- Zones -->
+    <rect x="32" y="96" width="284" height="356" rx="8" fill="rgba(22,59,42,0.02)" stroke="rgba(22,59,42,0.10)" stroke-width="0.8"/>
+    <rect x="64" y="100" width="48" height="12" rx="2" fill="#fafaf7"/>
+    <text x="88" y="109" fill="rgba(22,59,42,0.40)" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.14em">UI</text>
+
+    <rect x="368" y="96" width="436" height="356" rx="8" fill="rgba(22,59,42,0.02)" stroke="rgba(22,59,42,0.10)" stroke-width="0.8"/>
+    <rect x="548" y="100" width="92" height="12" rx="2" fill="#fafaf7"/>
+    <text x="594" y="109" fill="rgba(22,59,42,0.40)" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.14em">EXECUTION</text>
+
+    <rect x="856" y="96" width="272" height="356" rx="8" fill="rgba(22,59,42,0.02)" stroke="rgba(22,59,42,0.10)" stroke-width="0.8"/>
+    <rect x="948" y="100" width="84" height="12" rx="2" fill="#fafaf7"/>
+    <text x="990" y="109" fill="rgba(22,59,42,0.40)" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.14em">STREAM</text>
+
+    <!-- Arrows -->
+    <line x1="316" y1="172" x2="368" y2="172" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+    <rect x="316" y="152" width="52" height="12" rx="2" fill="#fafaf7"/>
+    <text x="342" y="161" fill="#2e5aa8" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">BUY</text>
+
+    <line x1="316" y1="260" x2="368" y2="260" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+    <line x1="316" y1="316" x2="368" y2="316" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+    <rect x="316" y="296" width="52" height="12" rx="2" fill="#fafaf7"/>
+    <text x="342" y="305" fill="#2e5aa8" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">SWAP</text>
+
+    <path d="M 316,392 H 360 Q 368,392 368,384 V 332" fill="none" stroke="#5b6b60" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+
+    <path d="M 804,172 H 856" fill="none" stroke="#5b6b60" stroke-width="1.2" marker-end="url(#arrow)"/>
+    <rect x="804" y="152" width="52" height="12" rx="2" fill="#fafaf7"/>
+    <text x="830" y="161" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">WRITE</text>
+
+    <path d="M 804,260 H 856" fill="none" stroke="#5b6b60" stroke-width="1.2" marker-end="url(#arrow)"/>
+    <rect x="804" y="240" width="52" height="12" rx="2" fill="#fafaf7"/>
+    <text x="830" y="249" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">WRITE</text>
+
+    <path d="M 804,316 H 856" fill="none" stroke="#5b6b60" stroke-width="1.2" marker-end="url(#arrow)"/>
+    <rect x="804" y="296" width="52" height="12" rx="2" fill="#fafaf7"/>
+    <text x="830" y="305" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">WRITE</text>
+
+    <line x1="992" y1="392" x2="992" y2="452" stroke="#5b6b60" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+
+    <path d="M 992,452 H 316 Q 316,452 316,444 V 392" fill="none" stroke="#5b6b60" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+
+    <!-- UI nodes -->
+    <rect x="52" y="140" width="240" height="60" rx="6" fill="#fafaf7"/>
+    <rect x="52" y="140" width="240" height="60" rx="6" fill="rgba(22,59,42,0.03)" stroke="rgba(22,59,42,0.30)" stroke-width="1"/>
+    <rect x="60" y="148" width="32" height="12" rx="2" fill="transparent" stroke="rgba(22,59,42,0.22)" stroke-width="0.8"/>
+    <text x="76" y="157" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">UI</text>
+    <text x="172" y="172" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Bulk buy / sell</text>
+    <text x="172" y="188" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">/buy · /sell</text>
+
+    <rect x="52" y="228" width="240" height="60" rx="6" fill="#fafaf7"/>
+    <rect x="52" y="228" width="240" height="60" rx="6" fill="rgba(22,59,42,0.03)" stroke="rgba(22,59,42,0.30)" stroke-width="1"/>
+    <rect x="60" y="236" width="32" height="12" rx="2" fill="transparent" stroke="rgba(22,59,42,0.22)" stroke-width="0.8"/>
+    <text x="76" y="245" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">UI</text>
+    <text x="172" y="260" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Swap</text>
+    <text x="172" y="276" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">/swap</text>
+
+    <rect x="52" y="316" width="240" height="60" rx="6" fill="#fafaf7"/>
+    <rect x="52" y="316" width="240" height="60" rx="6" fill="rgba(22,59,42,0.03)" stroke="rgba(22,59,42,0.30)" stroke-width="1"/>
+    <rect x="60" y="324" width="32" height="12" rx="2" fill="transparent" stroke="rgba(22,59,42,0.22)" stroke-width="0.8"/>
+    <text x="76" y="333" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">UI</text>
+    <text x="172" y="348" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Chart buy modal</text>
+    <text x="172" y="364" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">charts · signals</text>
+
+    <rect x="52" y="404" width="240" height="60" rx="6" fill="#fafaf7"/>
+    <rect x="52" y="404" width="240" height="60" rx="6" fill="rgba(22,59,42,0.03)" stroke="rgba(22,59,42,0.30)" stroke-width="1"/>
+    <rect x="60" y="412" width="32" height="12" rx="2" fill="transparent" stroke="rgba(22,59,42,0.22)" stroke-width="0.8"/>
+    <text x="76" y="421" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">UI</text>
+    <text x="172" y="436" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">PnL tracker / history</text>
+    <text x="172" y="452" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">/pnl · /history</text>
+
+    <!-- Execution nodes -->
+    <rect x="388" y="140" width="400" height="60" rx="6" fill="#fafaf7"/>
+    <rect x="388" y="140" width="400" height="60" rx="6" fill="#ffffff" stroke="#163b2a" stroke-width="1"/>
+    <rect x="396" y="148" width="40" height="12" rx="2" fill="transparent" stroke="rgba(22,59,42,0.40)" stroke-width="0.8"/>
+    <text x="416" y="157" fill="#163b2a" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">SOL</text>
+    <text x="588" y="172" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Solana — Raptor / Jupiter</text>
+    <text x="588" y="188" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">solanatracker /api · jupiter.ts</text>
+
+    <rect x="388" y="228" width="400" height="60" rx="6" fill="#fafaf7"/>
+    <rect x="388" y="228" width="400" height="60" rx="6" fill="#ffffff" stroke="#163b2a" stroke-width="1"/>
+    <rect x="396" y="236" width="40" height="12" rx="2" fill="transparent" stroke="rgba(22,59,42,0.40)" stroke-width="0.8"/>
+    <text x="416" y="245" fill="#163b2a" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">RH</text>
+    <text x="588" y="260" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">RH bound — GMGN server-sign</text>
+    <text x="588" y="276" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">/api/gmgn/trade/*</text>
+
+    <rect x="388" y="316" width="400" height="60" rx="6" fill="#fafaf7"/>
+    <rect x="388" y="316" width="400" height="60" rx="6" fill="rgba(132,204,22,0.12)" stroke="#84cc16" stroke-width="1"/>
+    <rect x="396" y="324" width="40" height="12" rx="2" fill="transparent" stroke="rgba(132,204,22,0.50)" stroke-width="0.8"/>
+    <text x="416" y="333" fill="#84cc16" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">RH</text>
+    <text x="588" y="348" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">RH parent — Kyber + Rabby</text>
+    <text x="588" y="364" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">executor → 5792 → sequential</text>
+
+    <!-- Record / SSE nodes -->
+    <rect x="872" y="160" width="240" height="60" rx="6" fill="#fafaf7"/>
+    <rect x="872" y="160" width="240" height="60" rx="6" fill="rgba(132,204,22,0.12)" stroke="#84cc16" stroke-width="1"/>
+    <rect x="880" y="168" width="40" height="12" rx="2" fill="transparent" stroke="rgba(132,204,22,0.50)" stroke-width="0.8"/>
+    <text x="900" y="177" fill="#84cc16" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">DB</text>
+    <text x="992" y="192" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">trading_records</text>
+    <text x="992" y="208" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">Postgres JSONB · chain</text>
+
+    <rect x="872" y="316" width="240" height="60" rx="6" fill="#fafaf7"/>
+    <rect x="872" y="316" width="240" height="60" rx="6" fill="rgba(22,59,42,0.05)" stroke="#5b6b60" stroke-width="1"/>
+    <rect x="880" y="324" width="40" height="12" rx="2" fill="transparent" stroke="rgba(79,93,117,0.50)" stroke-width="0.8"/>
+    <text x="900" y="333" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">SSE</text>
+    <text x="992" y="348" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">SSE feed</text>
+    <text x="992" y="364" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">/api/trading/subscribe</text>
+
+    <!-- Labels on vertical record arrows -->
+    <rect x="1008" y="224" width="64" height="12" rx="2" fill="#fafaf7"/>
+    <text x="1040" y="233" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">WRITE</text>
+
+    <rect x="936" y="388" width="72" height="12" rx="2" fill="#fafaf7"/>
+    <text x="972" y="397" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">SSE PUSH</text>
+
+    <rect x="300" y="420" width="40" height="12" rx="2" fill="#fafaf7"/>
+    <text x="320" y="429" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">SSE</text>
+
+    <!-- Legend -->
+    <line x1="32" y1="480" x2="1128" y2="480" stroke="rgba(22,59,42,0.10)" stroke-width="0.8"/>
+    <text x="32" y="496" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.18em">LEGEND</text>
+
+    <rect x="32" y="512" width="14" height="10" rx="2" fill="rgba(132,204,22,0.12)" stroke="#84cc16" stroke-width="1"/>
+    <text x="52" y="520" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">Focal</text>
+    <rect x="120" y="512" width="14" height="10" rx="2" fill="#ffffff" stroke="#163b2a" stroke-width="1"/>
+    <text x="140" y="520" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">Executor</text>
+    <rect x="240" y="512" width="14" height="10" rx="2" fill="rgba(22,59,42,0.05)" stroke="#5b6b60" stroke-width="1"/>
+    <text x="260" y="520" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">Store</text>
+    <line x1="356" y1="517" x2="384" y2="517" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+    <text x="392" y="520" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">Trade action</text>
+    <line x1="520" y1="517" x2="548" y2="517" stroke="#5b6b60" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+    <text x="556" y="520" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">Return / stream</text>
+  </svg>
+</div>
+</body>
+</html>

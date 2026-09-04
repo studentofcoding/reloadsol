@@ -46,6 +46,9 @@ selection back to `sol`.
 
 ## 4. Swap execution model (per network + wallet)
 
+> **Diagram:** [Trading surfaces → execution → records](./diagrams/01-trading-surfaces.html)
+> and the [trade-confirmation lifecycle](./diagrams/02-confirmation-lifecycle.html).
+
 ### Solana
 
 - **Solana Tracker Raptor** is the primary executor for bulk buy/sell, chart buys and

@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ReloadSOL · System architecture</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --paper:#fafaf7; --paper2:#f0efe9; --ink:#163b2a; --muted:#5b6b60;
+    --soft:#8a968d; --accent:#84cc16; --link:#2e5aa8;
+    --sans:'DM Sans', system-ui, sans-serif;
+    --serif:'Fraunces', serif;
+    --mono:'Geist Mono', ui-monospace, monospace;
+  }
+  body { font-family:var(--sans); background:var(--paper); color:var(--ink); padding:3rem 2rem; }
+  .frame { max-width:1200px; margin:0 auto; }
+  .eyebrow { font-family:var(--mono); font-size:.66rem; font-weight:500; letter-spacing:.18em; text-transform:uppercase; color:var(--muted); margin-bottom:.5rem; }
+  h1 { font-family:var(--serif); font-size:clamp(1.4rem,2.2vw+.5rem,1.9rem); font-weight:400; letter-spacing:-.02em; color:var(--ink); margin-bottom:1.25rem; }
+  svg { width:100%; min-width:920px; display:block; }
+</style>
+</head>
+<body>
+<div class="frame">
+  <p class="eyebrow">ReloadSOL · Topology</p>
+  <h1>System architecture on one VPS</h1>
+
+  <svg viewBox="0 0 1160 620" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="sys-title sys-desc">
+    <title id="sys-title">ReloadSOL system architecture</title>
+    <desc id="sys-desc">Topology of the ReloadSOL Docker Compose stack: browser client, Next.js web with Go cron and social ingest, fronted by nginx, backed by Postgres via PgBouncer plus Redis.</desc>
+    <defs>
+      <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#5b6b60"/></marker>
+      <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#84cc16"/></marker>
+      <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#2e5aa8"/></marker>
+    </defs>
+    <rect width="100%" height="100%" fill="#fafaf7"/>
+
+    <!-- Zones -->
+    <rect x="32" y="140" width="280" height="300" rx="8" fill="rgba(22,59,42,0.02)" stroke="rgba(22,59,42,0.10)" stroke-width="0.8"/>
+    <rect x="120" y="144" width="76" height="12" rx="2" fill="#fafaf7"/>
+    <text x="158" y="153" fill="rgba(22,59,42,0.40)" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.14em">EDGE</text>
+
+    <rect x="364" y="140" width="420" height="300" rx="8" fill="rgba(22,59,42,0.02)" stroke="rgba(22,59,42,0.10)" stroke-width="0.8"/>
+    <rect x="528" y="144" width="84" height="12" rx="2" fill="#fafaf7"/>
+    <text x="570" y="153" fill="rgba(22,59,42,0.40)" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.14em">SERVICES</text>
+
+    <rect x="836" y="140" width="292" height="300" rx="8" fill="rgba(22,59,42,0.02)" stroke="rgba(22,59,42,0.10)" stroke-width="0.8"/>
+    <rect x="932" y="144" width="76" height="12" rx="2" fill="#fafaf7"/>
+    <text x="970" y="153" fill="rgba(22,59,42,0.40)" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.14em">DATA</text>
+
+    <!-- Arrows -->
+    <!-- Browser -> nginx -->
+    <path d="M 172,208 H 312" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+    <rect x="172" y="188" width="52" height="12" rx="2" fill="#fafaf7"/>
+    <text x="198" y="197" fill="#2e5aa8" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">HTTPS</text>
+
+    <!-- nginx -> web -->
+    <line x1="376" y1="208" x2="480" y2="208" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+    <rect x="376" y="188" width="48" height="12" rx="2" fill="#fafaf7"/>
+    <text x="400" y="197" fill="#2e5aa8" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">PROXY</text>
+
+    <!-- web <-> SSE back to browser (dashed) -->
+    <path d="M 480,260 H 172" fill="none" stroke="#5b6b60" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+    <rect x="300" y="240" width="44" height="12" rx="2" fill="#fafaf7"/>
+    <text x="322" y="249" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">SSE</text>
+
+    <!-- cron -> web -->
+    <path d="M 588,368 H 548 Q 540,368 540,360 V 320 H 484 Q 480,320 480,324 V 236" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+
+    <!-- social -> web -->
+    <path d="M 588,432 H 620 Q 620,432 620,424 V 260 H 484 Q 480,260 480,264 V 236" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+    <rect x="548" y="372" width="40" height="12" rx="2" fill="#fafaf7"/>
+    <text x="568" y="381" fill="#2e5aa8" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">TRIG</text>
+
+    <!-- web -> bouncer -->
+    <line x1="588" y1="172" x2="880" y2="172" stroke="#5b6b60" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+    <!-- bouncer -> db -->
+    <path d="M 1036,196 H 1036" fill="none" stroke="#5b6b60" stroke-width="0"/>
+    <line x1="1036" y1="208" x2="1036" y2="248" stroke="#5b6b60" stroke-width="1.2" marker-end="url(#arrow)"/>
+    <rect x="968" y="216" width="48" height="12" rx="2" fill="#fafaf7"/>
+    <text x="992" y="225" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">SQL</text>
+
+    <!-- web -> redis -->
+    <path d="M 588,232 H 960 Q 960,232 960,240 V 344" fill="none" stroke="#5b6b60" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+    <!-- Edge nodes -->
+    <rect x="52" y="176" width="240" height="64" rx="6" fill="#fafaf7"/>
+    <rect x="52" y="176" width="240" height="64" rx="6" fill="rgba(22,59,42,0.03)" stroke="rgba(22,59,42,0.30)" stroke-width="1"/>
+    <rect x="60" y="184" width="44" height="12" rx="2" fill="transparent" stroke="rgba(22,59,42,0.22)" stroke-width="0.8"/>
+    <text x="82" y="193" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">WEB</text>
+    <text x="172" y="212" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Browser (Next UI)</text>
+    <text x="172" y="228" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">sol · robinhood</text>
+
+    <rect x="312" y="176" width="144" height="64" rx="6" fill="#fafaf7"/>
+    <rect x="312" y="176" width="144" height="64" rx="6" fill="rgba(22,59,42,0.03)" stroke="rgba(22,59,42,0.30)" stroke-width="1"/>
+    <rect x="320" y="184" width="44" height="12" rx="2" fill="transparent" stroke="rgba(22,59,42,0.22)" stroke-width="0.8"/>
+    <text x="342" y="193" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">EDGE</text>
+    <text x="384" y="212" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">nginx</text>
+    <text x="384" y="228" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">:80</text>
+
+    <!-- Service nodes -->
+    <rect x="484" y="176" width="208" height="72" rx="6" fill="#fafaf7"/>
+    <rect x="484" y="176" width="208" height="72" rx="6" fill="rgba(132,204,22,0.12)" stroke="#84cc16" stroke-width="1"/>
+    <rect x="492" y="184" width="40" height="12" rx="2" fill="transparent" stroke="rgba(132,204,22,0.50)" stroke-width="0.8"/>
+    <text x="512" y="193" fill="#84cc16" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">API</text>
+    <text x="588" y="212" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">reloadsol-web</text>
+    <text x="588" y="228" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">Next.js API · :3000</text>
+
+    <rect x="484" y="368" width="208" height="64" rx="6" fill="#fafaf7"/>
+    <rect x="484" y="368" width="208" height="64" rx="6" fill="#ffffff" stroke="#163b2a" stroke-width="1"/>
+    <rect x="492" y="376" width="40" height="12" rx="2" fill="transparent" stroke="rgba(22,59,42,0.40)" stroke-width="0.8"/>
+    <text x="512" y="385" fill="#163b2a" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">CRON</text>
+    <text x="588" y="400" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">reloadsol-cron</text>
+    <text x="588" y="416" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">Go scheduler · :8080</text>
+
+    <rect x="484" y="432" width="208" height="64" rx="6" fill="#fafaf7"/>
+    <rect x="484" y="432" width="208" height="64" rx="6" fill="#ffffff" stroke="#163b2a" stroke-width="1"/>
+    <rect x="492" y="440" width="52" height="12" rx="2" fill="transparent" stroke="rgba(22,59,42,0.40)" stroke-width="0.8"/>
+    <text x="518" y="449" fill="#163b2a" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">SOCIAL</text>
+    <text x="588" y="464" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">social-ingest</text>
+    <text x="588" y="480" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">Telethon sidecar</text>
+
+    <!-- Data nodes -->
+    <rect x="852" y="248" width="236" height="56" rx="6" fill="#fafaf7"/>
+    <rect x="852" y="248" width="236" height="56" rx="6" fill="rgba(22,59,42,0.05)" stroke="#5b6b60" stroke-width="1"/>
+    <rect x="860" y="256" width="40" height="12" rx="2" fill="transparent" stroke="rgba(79,93,117,0.50)" stroke-width="0.8"/>
+    <text x="880" y="265" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">DB</text>
+    <text x="970" y="276" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Postgres 16</text>
+    <text x="970" y="292" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">reloadsol_db</text>
+
+    <rect x="852" y="160" width="236" height="48" rx="6" fill="#fafaf7"/>
+    <rect x="852" y="160" width="236" height="48" rx="6" fill="rgba(22,59,42,0.05)" stroke="#5b6b60" stroke-width="1"/>
+    <rect x="860" y="168" width="40" height="12" rx="2" fill="transparent" stroke="rgba(79,93,117,0.50)" stroke-width="0.8"/>
+    <text x="880" y="177" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">DB</text>
+    <text x="970" y="188" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">PgBouncer</text>
+    <text x="970" y="200" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">:5432 tx pool</text>
+
+    <rect x="852" y="344" width="236" height="56" rx="6" fill="#fafaf7"/>
+    <rect x="852" y="344" width="236" height="56" rx="6" fill="rgba(22,59,42,0.05)" stroke="#5b6b60" stroke-width="1"/>
+    <rect x="860" y="352" width="40" height="12" rx="2" fill="transparent" stroke="rgba(79,93,117,0.50)" stroke-width="0.8"/>
+    <text x="880" y="361" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">KV</text>
+    <text x="970" y="372" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Redis</text>
+    <text x="970" y="388" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">cache · locks · SSE</text>
+
+    <!-- Legend -->
+    <line x1="32" y1="468" x2="1128" y2="468" stroke="rgba(22,59,42,0.10)" stroke-width="0.8"/>
+    <text x="32" y="484" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.18em">LEGEND</text>
+    <rect x="32" y="500" width="14" height="10" rx="2" fill="rgba(132,204,22,0.12)" stroke="#84cc16" stroke-width="1"/>
+    <text x="52" y="508" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">Focal</text>
+    <rect x="120" y="500" width="14" height="10" rx="2" fill="#ffffff" stroke="#163b2a" stroke-width="1"/>
+    <text x="140" y="508" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">Service</text>
+    <rect x="240" y="500" width="14" height="10" rx="2" fill="rgba(22,59,42,0.05)" stroke="#5b6b60" stroke-width="1"/>
+    <text x="260" y="508" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">Store</text>
+    <line x1="360" y1="505" x2="388" y2="505" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+    <text x="396" y="508" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">HTTP</text>
+    <line x1="476" y1="505" x2="504" y2="505" stroke="#5b6b60" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+    <text x="512" y="508" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">SSE / async</text>
+  </svg>
+</div>
+</body>
+</html>

@@ -1,5 +1,7 @@
 # Strategies & Automation
 
+> **Diagram:** [Strategy engine spine](./diagrams/04-strategy-engine.html).
+
 Single entry doc for what ReloadSOL calls "strategies": the automated monitoring / paper-trading workers that watch markets, wallets and social channels, then **alert** (Telegram / Discord / UI toasts) or **act** (open / manage / close sim or live positions). Primary source: `src/` + `main.go` + `worker_tracker.go` (code wins when docs disagree). Related: [algo_overview.md](./algo_overview.md), [STRATEGY_ARCHITECTURE.md](./STRATEGY_ARCHITECTURE.md), [GMGN_STRATEGY.md](./GMGN_STRATEGY.md), [ARCHITECTURE_SUMMARY.md](./ARCHITECTURE_SUMMARY.md). Legacy/historical only: [ReloadSOL_Algo_Strategy.md](./_archive/ReloadSOL_Algo_Strategy.md) — an old pre-Phase-2 plan; its `trades`/Supabase references are stale and not current code.
 
 ## 1. What a "strategy" is

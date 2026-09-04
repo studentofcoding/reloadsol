@@ -1,5 +1,7 @@
 # ReloadSOL — Machine Learning (condensed)
 
+> **Diagram:** [ML pipeline](./diagrams/05-ml-pipeline.html).
+
 Condensed from `docs/deep_dive_ml.md`, `docs/ML_GATE_PLAN.md`, `docs/ARCHITECTURE_SUMMARY.md` (§4 ML), `docs/mcap-tracker.md` (Pattern ML + sim-track), and `ml/README.md` (**present** at `ml/README.md`). Verify details in those files before acting.
 
 ## 1. Purpose and consumers

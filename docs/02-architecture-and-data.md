@@ -7,6 +7,8 @@ the SQL and source files cited inline.
 
 ## 1. Topology
 
+> **Diagram:** [System architecture on one VPS](./diagrams/03-system-architecture.html).
+
 ReloadSOL is a **Docker Compose stack** on one VPS. A Next.js app serves UI + API and
 a Go service drives scheduled workers; all app data lives in Postgres `reloadsol_db`.
 

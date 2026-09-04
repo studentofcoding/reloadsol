@@ -1,5 +1,7 @@
 # ReloadSOL — Operations & Deployment (condensed)
 
+> **Diagram:** [Web deploy runbook](./diagrams/06-deploy-and-ops.html).
+
 Condensed from `PRODUCTION_DEPLOYMENT.md`, `OPERATIONS_TRACKING_GUIDE.md` (**empty — single blank line; nothing to cite**), `docs/OPERATOR_STATE.md`, `docs/FIX_STATUS_CONSTRAINT_README.md`, `docs/HOW_WE_GET_THE_SIGNALS.md`, `PNL_AUTOMATION_SETUP.md`, `PRICE_API_INTEGRATION.md`, `scripts/docker-deploy.sh`, `docker-compose.yml` (+ `docker-compose.prod.yml`), and `.env.docker.example`. Key NAMES only — no secrets/values.
 
 ## 1. Environment / preflight
