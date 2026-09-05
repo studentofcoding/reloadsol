@@ -149,8 +149,10 @@ function pruneOpenPositionsByHoldings(
   return positions.filter((pos) => {
     if (pos.isSimulation) return true;
 
-    const walletTok = walletTokens.find(
-      (wt) => wt.mintAddress === pos.mintAddress,
+    const walletTok = walletTokens.find((wt) =>
+      wt.mintAddress.startsWith("0x") || pos.mintAddress.startsWith("0x")
+        ? wt.mintAddress.toLowerCase() === pos.mintAddress.toLowerCase()
+        : wt.mintAddress === pos.mintAddress,
     );
     if (!walletTok || walletTok.uiAmount <= HOLDINGS_DUST_UI) return false;
 
@@ -752,11 +754,17 @@ export default function PnLTracker() {
           const solPerToken = (op.solAmount ?? 0) / op.successCount;
 
           for (const tkn of tokensInOp) {
-            const mint = tkn.mintAddress;
-            if (!mint) continue;
+            const rawMint = tkn.mintAddress;
+            if (!rawMint) continue;
 
             const isSim = !!op.is_simulation;
             const opChain: "sol" | "robinhood" = op.chain ?? "sol";
+            // EVM addresses are case-insensitive but get stored checksummed or
+            // lowercase depending on the flow that wrote them. Normalize so a
+            // checksummed buy pairs with a lowercase sell (and vice versa) —
+            // otherwise cycles never close and RH PnL stays empty.
+            const mint =
+              opChain === "robinhood" ? rawMint.toLowerCase() : rawMint;
             const cycleKey = `${opChain}:${mint}-${isSim ? "sim" : "real"}`;
 
             if (isBuy) {
@@ -1049,7 +1057,13 @@ export default function PnLTracker() {
             walletTokens.forEach((wt) => {
               // Add if not already tracked and has balance
               // We use a lower threshold here to ensure we capture even small bot positions
-              if (!trackedMints.has(wt.mintAddress) && wt.uiAmount > 0) {
+              const alreadyTracked =
+                wt.mintAddress.startsWith("0x")
+                  ? [...trackedMints].some(
+                      (m) => m.toLowerCase() === wt.mintAddress.toLowerCase(),
+                    )
+                  : trackedMints.has(wt.mintAddress);
+              if (!alreadyTracked && wt.uiAmount > 0) {
                 // Create a new untracked open position
                 openPositionsResult.push({
                   id: `open-${wt.mintAddress}`,

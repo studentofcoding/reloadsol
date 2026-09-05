@@ -1,7 +1,7 @@
 "use client";
 
 import { OptimizedImage } from "@/components/OptimizedImage";
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { TrackingRecord, TrackingStats } from "@/utils/trading-tracker";
 import { usePortfolioWallet } from "@/hooks/usePortfolioWallet";
 import { useTradingData } from "./TradingDataProvider";
@@ -9,6 +9,7 @@ import { useWalletSession } from "./WalletSessionContext";
 import WalletSignInPrompt from "./WalletSignInPrompt";
 import TokenSkeleton from "./TokenSkeleton";
 import { useSolPrice } from "@/hooks/useSolPrice";
+import { useQuery } from "@tanstack/react-query";
 import { RH_CHAIN_ID, txUrl } from "@/utils/dlmm/rh-clmm/config";
 import {
   TRADE_LIST_SORT_OPTIONS,
@@ -74,12 +75,20 @@ function processTradingRecords(
       );
 
       if (closeRecord) {
+        const combinedTokens = [...record.tokens, ...closeRecord.tokens];
         combinedRecords.push({
           ...record,
           operationType: "sell" as const,
-          tokens: [...record.tokens, ...closeRecord.tokens].filter(
+          tokens: combinedTokens.filter(
             (token, index, self) =>
-              index === self.findIndex((t) => t.mintAddress === token.mintAddress),
+              index ===
+              self.findIndex((t) =>
+                t.mintAddress?.startsWith("0x") ||
+                token.mintAddress?.startsWith("0x")
+                  ? t.mintAddress?.toLowerCase() ===
+                    token.mintAddress?.toLowerCase()
+                  : t.mintAddress === token.mintAddress,
+              ),
           ),
           successCount: record.successCount + closeRecord.successCount,
           failureCount: record.failureCount + closeRecord.failureCount,
@@ -196,6 +205,104 @@ export default function TradingHistory() {
     ? "Browser storage is not available. Trading history will not be saved."
     : "";
   const displayError = error || storageWarning;
+
+  // Resolve missing token symbol/name/icon by mint so RH records (often saved
+  // without a symbol when bought outside holdings) still display their token.
+  const missingMetaMints = useMemo(() => {
+    const mints = new Set<string>();
+    for (const r of processedRecords) {
+      for (const t of r.tokens ?? []) {
+        if (!t.mintAddress) continue;
+        if (!t.symbol && !t.name) mints.add(t.mintAddress);
+      }
+    }
+    return Array.from(mints);
+  }, [processedRecords]);
+
+  const { data: tokenMetaMap } = useQuery({
+    queryKey: ["history-token-meta", network, missingMetaMints.join(",")],
+    queryFn: async (): Promise<Map<string, { symbol?: string; name?: string; logoURI?: string }>> => {
+      const out = new Map<string, { symbol?: string; name?: string; logoURI?: string }>();
+      if (missingMetaMints.length === 0) return out;
+      // Robinhood tokens resolve via GMGN token search; Solana via Jupiter.
+      const url =
+        network === "robinhood"
+          ? `/api/gmgn/token/search?chain=robinhood&query=`
+          : `/api/trending/search?query=`;
+      const settled = await Promise.allSettled(
+        missingMetaMints.map(async (mint) => {
+          const res = await fetch(url + encodeURIComponent(mint));
+          if (!res.ok) return;
+          const data = (await res.json()) as Array<{
+            id?: string;
+            address?: string;
+            symbol?: string;
+            name?: string;
+            icon?: string;
+          }>;
+          const match = Array.isArray(data)
+            ? data.find(
+                (t) =>
+                  t.id?.toLowerCase() === mint.toLowerCase() ||
+                  t.address?.toLowerCase() === mint.toLowerCase(),
+              )
+            : null;
+          if (match?.symbol || match?.name) {
+            out.set(mint, {
+              symbol: match.symbol || undefined,
+              name: match.name || undefined,
+              logoURI: match.icon || undefined,
+            });
+          }
+        }),
+      );
+      settled.forEach((s) => {
+        if (s.status === "rejected") {
+          console.warn("History token meta lookup failed:", s.reason);
+        }
+      });
+      return out;
+    },
+    enabled: missingMetaMints.length > 0,
+    staleTime: 10 * 60 * 1000,
+  });
+
+  const metaOf = useCallback(
+    (mint: string | undefined): { symbol?: string; name?: string; logoURI?: string } => {
+      if (!mint) return {};
+      const meta = tokenMetaMap?.get(mint);
+      if (meta) return meta;
+      // Case-insensitive fallback for EVM records (checksum vs lower storage).
+      if (mint.startsWith("0x") && tokenMetaMap) {
+        const lower = mint.toLowerCase();
+        for (const [k, v] of tokenMetaMap) {
+          if (k.toLowerCase() === lower) return v;
+        }
+      }
+      return {};
+    },
+    [tokenMetaMap],
+  );
+
+  // Records whose stored token payload lacks symbol/icon are overlaid with
+  // resolved metadata so cards show the actual token (RH buys especially).
+  const enrichedRecords = useMemo(
+    () =>
+      filteredRecords.map((record) => {
+        const tokens = (record.tokens ?? []).map((t) => {
+          if (t.symbol && t.logoURI) return t;
+          const meta = metaOf(t.mintAddress);
+          return {
+            ...t,
+            symbol: t.symbol || meta.symbol || undefined,
+            name: t.name || meta.name || undefined,
+            logoURI: t.logoURI || meta.logoURI || undefined,
+          };
+        });
+        return { ...record, tokens };
+      }),
+    [filteredRecords, metaOf],
+  );
 
   // Enhanced operation icon with bot support
   const getOperationIcon = (type: string, isBot?: boolean, status?: string) => {
@@ -467,7 +574,7 @@ export default function TradingHistory() {
             tracking your history.
           </p>
         </div>
-      ) : filteredRecords.length === 0 ? (
+      ) : enrichedRecords.length === 0 ? (
         <div className="text-center py-4">
           <p className="text-gray-400 text-sm">
             {modeFilter === "all"
@@ -477,7 +584,7 @@ export default function TradingHistory() {
         </div>
       ) : (
         <div className="flex space-x-2 overflow-x-auto mb-3 scrollbar-hide">
-          {filteredRecords.slice(0, 10).map((record: TrackingRecord) => (
+          {enrichedRecords.slice(0, 10).map((record: TrackingRecord) => (
             <div
               key={record.id}
               className={`relative flex-shrink-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[100px] rounded-lg cursor-pointer group py-2 px-3 mr-2 border ${
