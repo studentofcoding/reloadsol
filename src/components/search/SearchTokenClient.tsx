@@ -16,6 +16,8 @@ import GmgnKlineChart from '@/components/GmgnKlineChart'
 import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
 import { isValidTradeTokenAddress } from '@/utils/gmgn-currencies'
 import type { TokenLocateResult } from '@/strategies/token-locate'
+import { formatAppDateTime } from '@/utils/datetime'
+import { formatCompactNumber } from '@/utils/formatters'
 
 type SearchTokenClientProps = {
   /** Pre-selected chain from the route segment. If absent, falls back to useAppNetwork().effectiveChain. */
@@ -35,6 +37,22 @@ function copy(text: string) {
   if (typeof navigator !== 'undefined' && navigator.clipboard) {
     void navigator.clipboard.writeText(text)
   }
+}
+
+function FirstSeenLine({
+  at,
+  mcap,
+}: {
+  at?: string
+  mcap?: number
+}) {
+  if (!at) return null
+  return (
+    <div className="text-xs text-gray-500">
+      First seen {formatAppDateTime(at)}
+      {mcap != null && mcap > 0 ? ` · $${formatCompactNumber(mcap)}` : ''}
+    </div>
+  )
 }
 
 export default function SearchTokenClient(props: SearchTokenClientProps) {
@@ -262,6 +280,10 @@ function SystemPresence({
             <span className="text-sm text-white">{result.symbol}</span>
           ) : null}
         </div>
+        <FirstSeenLine
+          at={result.locations.mcap?.firstSeenAt}
+          mcap={result.locations.mcap?.firstMcap}
+        />
         {presence.length > 0 ? (
           <ul className="space-y-1">
             {presence.slice(0, 8).map((p) => (
@@ -349,6 +371,7 @@ function ResultRow({
           {token.mcap ? (
             <div className="text-xs text-gray-500">MCap ${token.mcap.toLocaleString()}</div>
           ) : null}
+          <FirstSeenLine at={token.first_seen_at} mcap={token.first_mcap} />
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <button

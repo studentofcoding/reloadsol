@@ -27,7 +27,7 @@ export default function ChartOverview({
   const chartUrl =
     resolvedChain === 'robinhood'
       ? getGmgnKlineUrl(tokenAddress, {
-          interval: '1D',
+          interval: '5',
           theme: 'dark',
           chain: 'robinhood',
         })

@@ -246,6 +246,8 @@ export interface TransformedToken {
   last_updated?: number
   price_change?: number
   created_at?: number
+  first_seen_at?: string
+  first_mcap?: number
 }
 
 export interface TokenCache {

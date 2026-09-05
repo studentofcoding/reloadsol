@@ -10,6 +10,8 @@ export type GmgnSearchToken = {
   symbol: string
   icon?: string
   mcap?: number
+  first_seen_at?: string
+  first_mcap?: number
 }
 
 async function searchGmgnTokens(

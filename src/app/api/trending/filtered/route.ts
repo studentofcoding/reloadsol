@@ -13,6 +13,7 @@ import {
 // import type { TransformedToken } from '../route'
 import { TransformedToken } from '@/types'
 import { tokenCache, fetchAndUpdateCache } from '../route'
+import { attachFirstDetections } from '@/utils/first-detection'
 
 // Environment variable for Discord webhook URL
 const DISCORD_WEBHOOK_URL =
@@ -739,7 +740,7 @@ export const GET = withUnifiedLogging(async (request: NextRequest, logger) => {
 
         // Prepare response data
         const responseData = {
-            tokens: sortedTokens,
+            tokens: await attachFirstDetections(sortedTokens, 'sol'),
             cached: currentTime < tokenCache.expiresAt,
             cache_age: cacheAge,
             expires_in: expiresIn,

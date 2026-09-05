@@ -12,7 +12,7 @@ function topicAddress(topic: string | undefined): string | null {
 
 /** Sum ERC20 Transfer amounts of `token` received by `recipient`. */
 export function erc20ReceivedFromLogs(
-  logs: readonly Pick<Log, 'address' | 'topics' | 'data'>[],
+  logs: readonly { address: string; topics: readonly string[]; data: string }[],
   token: string,
   recipient: string,
 ): bigint {

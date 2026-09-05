@@ -2066,7 +2066,7 @@ export default function BulkTokenBuyer() {
                       tokenMint={selectedToken}
                       chain={effectiveChain}
                       height={400}
-                      interval="1D"
+                      interval="5"
                     />
                   </div>
                 </div>

@@ -7,9 +7,11 @@ import {
   type GmgnFilteredTrendingToken,
 } from '@/utils/gmgn-trending-filtered'
 import { bulkTrackTokenMcaps, isInTrackingRange } from '@/utils/mcap-tracker'
-import { cacheGet, cacheSet } from '@/utils/redis-cache'
+import { attachFirstDetections } from '@/utils/first-detection'
+import { fetchWithCache } from '@/utils/portfolio-cache'
 
 const CACHE_TTL_SECONDS = 30
+const STALE_TTL_SECONDS = 600
 
 export type GmgnFilteredTrendingPayload = {
   tokens: GmgnFilteredTrendingToken[]
@@ -36,33 +38,41 @@ function ingestMcap(tokens: GmgnFilteredTrendingToken[], chain: GmgnTradeChain) 
 export async function getFilteredGmgnTrending(
   chain: GmgnTradeChain,
 ): Promise<GmgnFilteredTrendingPayload & { cached: boolean }> {
-  const cacheKey = `gmgn:trending:filtered:${chain}`
-  const cached = await cacheGet<GmgnFilteredTrendingPayload>(cacheKey)
-  if (cached) return { ...cached, cached: true }
+  const { data, origin } = await fetchWithCache<GmgnFilteredTrendingPayload>({
+    key: `gmgn:trending:filtered:${chain}`,
+    staleKey: `gmgn:trending:filtered:${chain}:stale`,
+    ttlSeconds: CACHE_TTL_SECONDS,
+    staleTtlSeconds: STALE_TTL_SECONDS,
+    fetch: async () => {
+      const criteria = criteriaForChain(chain)
+      const rank = await marketTrending({
+        chain,
+        interval: '1h',
+        limit: 100,
+        // Robinhood is too young for the Solana-tuned floor — let the local filter
+        // decide what we expose instead of pre-filtering at the GMGN layer.
+        ...(chain === 'robinhood'
+          ? {}
+          : { minMarketcap: criteria.min_mcap }),
+        orderBy: 'volume',
+        direction: 'desc',
+      })
 
-  const criteria = criteriaForChain(chain)
-  const rank = await marketTrending({
-    chain,
-    interval: '1h',
-    limit: 100,
-    // Robinhood is too young for the Solana-tuned floor — let the local filter
-    // decide what we expose instead of pre-filtering at the GMGN layer.
-    ...(chain === 'robinhood'
-      ? {}
-      : { minMarketcap: criteria.min_mcap }),
-    orderBy: 'volume',
-    direction: 'desc',
+      const filtered = filterAndSortGmgnTrending(rank, chain)
+      const payload: GmgnFilteredTrendingPayload = {
+        tokens: filtered.tokens,
+        total_before_filter: filtered.total_before_filter,
+        total_after_filter: filtered.total_after_filter,
+        filter_criteria: criteria,
+      }
+      ingestMcap(payload.tokens, chain)
+      return payload
+    },
   })
 
-  const filtered = filterAndSortGmgnTrending(rank, chain)
-  const payload: GmgnFilteredTrendingPayload = {
-    tokens: filtered.tokens,
-    total_before_filter: filtered.total_before_filter,
-    total_after_filter: filtered.total_after_filter,
-    filter_criteria: criteria,
+  return {
+    ...data,
+    tokens: await attachFirstDetections(data.tokens, chain),
+    cached: origin !== 'miss',
   }
-  await cacheSet(cacheKey, payload, CACHE_TTL_SECONDS)
-  ingestMcap(payload.tokens, chain)
-
-  return { ...payload, cached: false }
 }

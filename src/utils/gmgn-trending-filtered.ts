@@ -60,6 +60,8 @@ export type GmgnFilteredTrendingToken = {
   visitingCount?: number
   communityCue?: 'komun_ok' | 'komun_thin'
   fomoCue?: 'fomo_hot' | 'fomo_quiet'
+  first_seen_at?: string
+  first_mcap?: number
 }
 
 export function numOrUndef(v: unknown): number | undefined {

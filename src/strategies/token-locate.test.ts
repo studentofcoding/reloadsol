@@ -79,6 +79,7 @@ describe('locateTokenByAddress', () => {
           token_symbol: 'SOL',
           label: 'potential',
           first_mcap: 100_000,
+          first_seen_at: '2026-09-01T03:00:00.000Z',
           current_mcap: 250_000,
           mcap_growth_percent: 150,
         }
@@ -92,6 +93,7 @@ describe('locateTokenByAddress', () => {
     expect(result.symbol).toBe('SOL')
     expect(result.locations.mcap?.present).toBe(true)
     expect(result.locations.mcap?.label).toBe('potential')
+    expect(result.locations.mcap?.firstSeenAt).toBe('2026-09-01T03:00:00.000Z')
 
     const mcapSection = result.rawSections.find((s) => s.id === 'mcap-tracking')
     expect(mcapSection?.recordLabel).toBe('potential')

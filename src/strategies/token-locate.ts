@@ -68,6 +68,7 @@ export type TokenLocateResult = {
     mcap: {
       present: boolean
       label?: string
+      firstSeenAt?: string
       firstMcap?: number
       currentMcap?: number
       growthPct?: number
@@ -124,6 +125,15 @@ function toNum(v: unknown): number | undefined {
 
 function toStr(v: unknown): string | undefined {
   return typeof v === 'string' && v.length > 0 ? v : undefined
+}
+
+function toIso(v: unknown): string | undefined {
+  if (v instanceof Date && !Number.isNaN(v.getTime())) return v.toISOString()
+  if (typeof v === 'string' && v.trim()) {
+    const d = new Date(v)
+    return Number.isNaN(d.getTime()) ? undefined : d.toISOString()
+  }
+  return undefined
 }
 
 function hasData(data: unknown): boolean {
@@ -633,6 +643,7 @@ export async function locateTokenByAddress(
       ? {
           present: true,
           label: toStr(mcapRow.label),
+          firstSeenAt: toIso(mcapRow.first_seen_at),
           firstMcap: toNum(mcapRow.first_mcap),
           currentMcap: toNum(mcapRow.current_mcap),
           growthPct: toNum(mcapRow.mcap_growth_percent),

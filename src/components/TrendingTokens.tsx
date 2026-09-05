@@ -1,7 +1,7 @@
 'use client'
 
 import { OptimizedImage } from "@/components/OptimizedImage";
-import React, { useEffect, useState, useRef } from 'react'
+import React, { useEffect, useState, useRef, useMemo } from 'react'
 import ChartOverview from './ChartOverview'
 import TokenSkeleton from './TokenSkeleton'
 import { fetchAxiomTokenInfo, getRiskIndicators, formatRiskDisplay, calculateFeeToMarketCapRatio } from '@/utils/axiom'
@@ -10,6 +10,12 @@ import {
   TokenStatsGrid,
   type TokenStats,
 } from '@/components/signals/shared/TokenStatsGrid'
+import { formatAppDateTime } from '@/utils/datetime'
+import { formatCompactNumber } from '@/utils/formatters'
+import {
+  sortTrendingTokens,
+  type TrendingSort,
+} from '@/utils/trending-token-sort'
 
 interface TrendingToken {
   token_symbol: string
@@ -34,6 +40,8 @@ interface TrendingToken {
   visitingCount?: number
   communityCue?: 'komun_ok' | 'komun_thin'
   fomoCue?: 'fomo_hot' | 'fomo_quiet'
+  first_seen_at?: string
+  first_mcap?: number
 }
 
 interface AxiomTokenInfo {
@@ -85,6 +93,9 @@ export default function TrendingTokens({
   chain?: 'sol' | 'robinhood'
 }) {
   const [trendingTokens, setTrendingTokens] = useState<TrendingToken[]>([])
+  const [sort, setSort] = useState<TrendingSort>('newest')
+  const tokensRef = useRef<TrendingToken[]>([])
+  tokensRef.current = trendingTokens
   const [isLoading, setIsLoading] = useState<boolean>(true)
   const [error, setError] = useState<string | null>(null)
   const [isPriceUpdating, setIsPriceUpdating] = useState<boolean>(false)
@@ -115,6 +126,9 @@ export default function TrendingTokens({
             : '/api/trending/filtered'
         const response = await fetch(url)
         if (!response.ok) {
+          if (response.status === 429 && tokensRef.current.length > 0) {
+            return
+          }
           throw new Error(`Failed to fetch trending tokens: ${response.status}`)
         }
         const data = (await response.json()) as { tokens?: TrendingToken[] }
@@ -125,9 +139,9 @@ export default function TrendingTokens({
             tokenMap.set(token.token_address, token)
           }
         })
-        uniqueTokens = Array.from(tokenMap.values())
+        uniqueTokens = Array.from(tokenMap.values()).slice(0, 40)
 
-        setTrendingTokens(uniqueTokens.slice(0, 10)) // Take top 10 unique tokens
+        setTrendingTokens(uniqueTokens)
       } catch (err) {
         console.error('Error fetching trending tokens:', err)
         setError('Failed to load trending tokens. Please try again later.')
@@ -140,7 +154,7 @@ export default function TrendingTokens({
 
     // Sol has a separate 10s price poll below; RH refreshes the whole list instead
     // (server caches the GMGN call for 30s, so this costs one upstream call per window).
-    const refreshMs = chain === 'robinhood' ? 30 * 1000 : 5 * 60 * 1000
+    const refreshMs = chain === 'robinhood' ? 60 * 1000 : 5 * 60 * 1000
     const intervalId = setInterval(() => {
       // Skip a tick if the previous fetch is still running (slow upstream /
       // rate-limit backoff) so polls never stack.
@@ -280,6 +294,11 @@ export default function TrendingTokens({
     return () => window.removeEventListener('resize', checkMobile)
   }, [])
   
+  const displayedTokens = useMemo(
+    () => sortTrendingTokens(trendingTokens, sort).slice(0, 6),
+    [trendingTokens, sort],
+  )
+
   const formatPercentage = (value: number) => {
     return `${value >= 0 ? '+' : ''}${(value * 100).toFixed(2)}%`
   }
@@ -425,7 +444,21 @@ export default function TrendingTokens({
     <div className="h-full">
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-xl font-bold text-white">Trending Tokens</h3>
-        <div className="flex items-center">
+        <div className="flex items-center gap-2">
+          <label className="sr-only" htmlFor="trending-sort">
+            Sort trending tokens
+          </label>
+          <select
+            id="trending-sort"
+            value={sort}
+            onChange={(e) => setSort(e.target.value as TrendingSort)}
+            className="text-xs bg-gray-800 border border-gray-700 text-gray-200 rounded px-2 py-1"
+          >
+            <option value="newest">Newest</option>
+            <option value="oldest">Oldest</option>
+            <option value="mcap_high">Top mcap</option>
+            <option value="mcap_low">Low mcap</option>
+          </select>
           {isPriceUpdating && (
             <div className="w-3 h-3 mr-2 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
           )}
@@ -459,16 +492,16 @@ export default function TrendingTokens({
           className={
             isMobile
               ? 'flex space-x-3 overflow-x-auto pb-2 scroll-smooth snap-x snap-mandatory'
-              : `space-y-3 ${shouldScroll ? 'max-h-[600px] overflow-y-auto' : ''} pr-2 scroll-smooth`
+              : 'space-y-3 max-h-[80vh] overflow-y-auto pr-2 scroll-smooth'
           }
           onMouseEnter={() => setIsHovering(true)}
           onMouseLeave={() => setIsHovering(false)}
           style={isMobile ? { scrollbarWidth: 'thin', WebkitOverflowScrolling: 'touch' } : { scrollbarWidth: 'thin' }}
         >
-          {trendingTokens.length === 0 ? (
+          {displayedTokens.length === 0 ? (
             <div className="text-gray-400 text-center py-6">No trending tokens found</div>
           ) : (
-            trendingTokens.map((token, index) => {
+            displayedTokens.map((token, index) => {
               // console.log(`Token ${token.token_symbol} (${token.token_address}):`, {
               //   created_at: token.created_at,
               //   type: typeof token.created_at
@@ -508,6 +541,14 @@ export default function TrendingTokens({
                         <div className="text-xs text-gray-400 truncate max-w-32">
                           {token.created_at ? formatTimeAgo(token.created_at) : 'New'}
                       </div>
+                      {token.first_seen_at ? (
+                        <div className="text-xs text-gray-500 max-w-[14rem]">
+                          First seen {formatAppDateTime(token.first_seen_at)}
+                          {token.first_mcap != null && token.first_mcap > 0
+                            ? ` · $${formatCompactNumber(token.first_mcap)}`
+                            : ''}
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                   <div className="text-right">
