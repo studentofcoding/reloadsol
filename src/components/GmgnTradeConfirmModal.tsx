@@ -192,7 +192,7 @@ export default function GmgnTradeConfirmModal({
             {volatile || quoteRefreshing ? (
               <div className="mt-3 rounded-lg border border-amber-700/60 bg-amber-900/20 px-3 py-2 text-xs text-amber-200">
                 {volatile
-                  ? `Impact above ${AUTO_SLIPPAGE_CAP_BPS} bps — refreshing until it cools.`
+                  ? `High price impact (auto slippage capped at ${AUTO_SLIPPAGE_CAP_BPS / 100}%). You can still confirm.`
                   : 'Refreshing quote…'}
               </div>
             ) : null}
@@ -259,7 +259,7 @@ export default function GmgnTradeConfirmModal({
               <button
                 type="button"
                 onClick={onConfirm}
-                disabled={isSubmitting || Boolean(volatile)}
+                disabled={isSubmitting}
                 className="btn-primary rounded-lg px-4 py-2 text-sm disabled:opacity-50"
               >
                 {isSubmitting ? (
@@ -267,8 +267,6 @@ export default function GmgnTradeConfirmModal({
                     <span className="h-3 w-3 animate-spin rounded-full border-2 border-black/30 border-t-black" />
                     Submitting…
                   </span>
-                ) : volatile ? (
-                  'Waiting for calmer quote'
                 ) : autoConfirm ? (
                   'Will auto-submit'
                 ) : (

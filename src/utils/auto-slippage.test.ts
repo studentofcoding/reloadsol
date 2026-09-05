@@ -27,16 +27,11 @@ describe('resolveAutoSlippageBps', () => {
   it('adds buffer and never exceeds cap', () => {
     expect(resolveAutoSlippageBps(0.5)).toEqual({ ok: true, bps: 70 })
     expect(resolveAutoSlippageBps(1.2)).toEqual({ ok: true, bps: 140 })
-    expect(resolveAutoSlippageBps(1.4)).toEqual({
+    expect(resolveAutoSlippageBps(1.4)).toEqual({ ok: true, bps: 160 })
+    expect(resolveAutoSlippageBps(9)).toEqual({
       ok: true,
       bps: AUTO_SLIPPAGE_CAP_BPS,
     })
-  })
-
-  it('refuses when quoted impact is already above the cap', () => {
-    const r = resolveAutoSlippageBps(2)
-    expect(r.ok).toBe(false)
-    if (!r.ok) expect(r.error).toMatch(/above the auto cap/)
   })
 })
 
@@ -49,9 +44,9 @@ describe('resolveTradeSlippageBps', () => {
     expect(resolveTradeSlippageBps(AUTO_SLIPPAGE_BPS, 0.5)).toBe(70)
   })
 
-  it('throws when auto is blocked by the cap', () => {
-    expect(() => resolveTradeSlippageBps(AUTO_SLIPPAGE_BPS, 2)).toThrow(
-      /above the auto cap/,
+  it('clamps auto to the 8% cap', () => {
+    expect(resolveTradeSlippageBps(AUTO_SLIPPAGE_BPS, 9)).toBe(
+      AUTO_SLIPPAGE_CAP_BPS,
     )
   })
 })
@@ -78,9 +73,9 @@ describe('prefetchSlippageBps', () => {
 })
 
 describe('quoteIsVolatile', () => {
-  it('is volatile when impact is missing or above the 150bps cap', () => {
+  it('is volatile when impact is missing or above 8%', () => {
     expect(quoteIsVolatile([])).toBe(true)
-    expect(quoteIsVolatile([1.4])).toBe(false)
-    expect(quoteIsVolatile([1.6])).toBe(true)
+    expect(quoteIsVolatile([7.9])).toBe(false)
+    expect(quoteIsVolatile([8.1])).toBe(true)
   })
 })

@@ -185,26 +185,26 @@ describe('prepareKyberSwapLegsParallel auto slippage', () => {
     )
   })
 
-  it('refuses Auto and skips Kyber build when impact is above the cap', async () => {
+  it('clamps Auto to 8% and still builds when impact is above the cap', async () => {
     const { clientKyberRoute, clientKyberBuild } = await import(
       '@/utils/kyber-aggregator'
     )
-    const buildsBefore = vi.mocked(clientKyberBuild).mock.calls.length
     vi.mocked(clientKyberRoute).mockResolvedValueOnce({
-      routeSummary: { priceImpact: 2 },
+      routeSummary: { priceImpact: 9 },
       routerAddress: ROUTER,
       amountIn: '1000',
     })
     const publicClient = fakePublicClient(() => BigInt(1_000_000))
-    await expect(
-      prepareKyberSwapLegsParallel({
-        publicClient,
-        account: ACCOUNT as `0x${string}`,
-        legs,
-        slippageBps: -1,
-      }),
-    ).rejects.toThrow(/above the auto cap/)
-    expect(vi.mocked(clientKyberBuild).mock.calls.length).toBe(buildsBefore)
+    const { slippageBps } = await prepareKyberSwapLegsParallel({
+      publicClient,
+      account: ACCOUNT as `0x${string}`,
+      legs,
+      slippageBps: -1,
+    })
+    expect(slippageBps).toBe(800)
+    expect(vi.mocked(clientKyberBuild).mock.calls.at(-1)?.[0].slippageTolerance).toBe(
+      800,
+    )
   })
 })
 
