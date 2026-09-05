@@ -34,6 +34,7 @@ import { useRhEvmWallet } from "@/hooks/useRhEvmWallet";
 import { useRhWalletTokens } from "@/hooks/useRhWalletTokens";
 import { usePortfolioWallet } from "@/hooks/usePortfolioWallet";
 import { executeRhParentKyberBuy } from "@/utils/dlmm/rh-kyber-swap";
+import { isWalletUserRejection } from "@/utils/wallet-rejection";
 import GmgnChartEmbed from "@/components/signals/shared/GmgnChartEmbed";
 import type { Address } from "viem";
 
@@ -276,6 +277,9 @@ export default function ChartBuyModal({
         });
         const hash = results.find((r) => r.hash)?.hash;
         const fail = results.find((r) => !r.success);
+        if (fail && isWalletUserRejection(fail.error)) {
+          return;
+        }
         const buyResult: BulkBuyResult = {
           success,
           successfulPurchases: success
@@ -313,6 +317,7 @@ export default function ChartBuyModal({
           setError(fail.error);
         }
       } catch (err) {
+        if (isWalletUserRejection(err)) return;
         setError(err instanceof Error ? err.message : "Buy failed");
       } finally {
         setIsBuying(false);
@@ -460,6 +465,7 @@ export default function ChartBuyModal({
         });
       }
     } catch (err) {
+      if (isWalletUserRejection(err)) return;
       setError(
         err instanceof Error ? err.message : "An unknown error occurred",
       );

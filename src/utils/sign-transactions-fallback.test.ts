@@ -18,6 +18,12 @@ describe("isWalletUserRejection", () => {
     expect(isWalletUserRejection(new Error("batch not supported"))).toBe(
       false,
     );
+    expect(isWalletUserRejection({ code: 4001, message: "denied" })).toBe(true);
+    expect(
+      isWalletUserRejection(
+        "000000000000000000000000000000000008e1bc9bf040001736e774d0000000",
+      ),
+    ).toBe(true);
   });
 });
 

@@ -6,6 +6,7 @@
 import type { Address, Hex, PublicClient, WalletClient } from 'viem'
 import { getCapabilities, sendCalls, waitForCallsStatus } from 'viem/actions'
 import { RH_CHAIN_ID } from '@/utils/dlmm/rh-univ2'
+import { isWalletUserRejection } from '@/utils/wallet-rejection'
 
 export type RhTxCall = {
   to: Address
@@ -31,12 +32,7 @@ export class RhSequentialWriteError extends Error {
 
 export function shouldFallbackFromSendCalls(err: unknown): boolean {
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
-  if (
-    msg.includes('user rejected') ||
-    msg.includes('user denied') ||
-    msg.includes('rejected the request') ||
-    msg.includes('denied transaction')
-  ) {
+  if (isWalletUserRejection(err)) {
     return false
   }
   return (

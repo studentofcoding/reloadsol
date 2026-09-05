@@ -3,6 +3,8 @@
 import React, { useEffect, useState } from 'react'
 import { BulkBuyResult } from '@/types'
 import { BulkSellResult } from '@/utils/jupiter'
+import { isWalletUserRejection } from '@/utils/wallet-rejection'
+import { txSignatureExplorer } from '@/utils/tx-explorer'
 
 type CloseResult = {
   successful: string[]
@@ -83,40 +85,20 @@ export default function TransactionResultModal({
     })()
   }, [isOpen, operation, result, tokenNames])
 
-  // Helper function to check if the error is a user rejection
-  const isUserRejection = (error: string): boolean => {
-    const rejectionPhrases = [
-      'user rejected',
-      'user denied',
-      'user cancelled',
-      'user canceled',
-      'transaction was not confirmed',
-      'rejected by user',
-      'declined by user'
-    ]
-    return rejectionPhrases.some(phrase => 
-      error.toLowerCase().includes(phrase.toLowerCase())
-    )
-  }
-
-  // Check if the result contains user rejection
   const checkForUserRejection = (): boolean => {
     if (!result) return false
 
     if ('failedPurchases' in result) {
-      // BulkBuyResult
-      return result.failedPurchases.some(failure => 
-        isUserRejection(failure.error)
+      return result.failedPurchases.some((failure) =>
+        isWalletUserRejection(failure.error),
       )
     } else if ('failedSwaps' in result) {
-      // BulkSellResult
-      return result.failedSwaps.some(failure => 
-        isUserRejection(failure.error)
+      return result.failedSwaps.some((failure) =>
+        isWalletUserRejection(failure.error),
       )
     } else if ('failed' in result) {
-      // CloseResult
-      return result.failed.some(failure => 
-        isUserRejection(failure.error)
+      return result.failed.some((failure) =>
+        isWalletUserRejection(failure.error),
       )
     }
     return false
@@ -443,10 +425,12 @@ export default function TransactionResultModal({
                   Check the transaction signatures here
                 </h4>
                 <div className="space-y-2 max-h-32 overflow-y-auto">
-                  {signatures.map((sig: string, index: number) => (
+                  {signatures.map((sig: string, index: number) => {
+                    const explorer = txSignatureExplorer(sig)
+                    return (
                     <a
                       key={index}
-                      href={`https://solscan.io/tx/${sig}`}
+                      href={explorer.href}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="block bg-slate-700/30 hover:bg-slate-600/30 rounded-lg p-3 transition-colors border border-slate-600/30 hover:border-blue-500/30"
@@ -456,14 +440,15 @@ export default function TransactionResultModal({
                           {sig.substring(0, 8)}...{sig.slice(-8)}
                         </span>
                         <div className="flex items-center text-blue-400 text-sm">
-                          <span className="mr-2">View on Solscan</span>
+                          <span className="mr-2">{explorer.label}</span>
                           <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                           </svg>
                         </div>
                       </div>
                     </a>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
             )}
