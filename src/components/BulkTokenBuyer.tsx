@@ -3,6 +3,7 @@
 import { OptimizedImage } from "@/components/OptimizedImage";
 import React, { useState, useCallback, useEffect, useRef, useMemo, useDeferredValue } from "react";
 import Link from "next/link";
+import { tokenSearchDetailHref } from "@/components/signals/shared/token-search-href";
 import { useSearchParams } from "next/navigation";
 import {
   useWallet,
@@ -1993,7 +1994,7 @@ export default function BulkTokenBuyer() {
                               )}
                               {isDevUser && (
                                 <Link
-                                  href={`/dev/token-search?address=${encodeURIComponent(selectedToken)}`}
+                                  href={tokenSearchDetailHref(selectedToken)}
                                   prefetch
                                   className="text-xs text-blue-400 hover:text-blue-300 underline"
                                 >
@@ -2041,7 +2042,7 @@ export default function BulkTokenBuyer() {
                               )}
                               {isDevUser && (
                                 <Link
-                                  href={`/dev/token-search?address=${encodeURIComponent(selectedToken)}`}
+                                  href={tokenSearchDetailHref(selectedToken)}
                                   prefetch
                                   className="text-xs text-blue-400 hover:text-blue-300 underline"
                                 >

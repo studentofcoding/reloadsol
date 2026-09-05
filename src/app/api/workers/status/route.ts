@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, connection } from 'next/server'
 import { getStrategyDomainHeartbeats } from '@/strategies/db'
 import { getCronServiceUrl } from '@/utils/workers/config'
 
@@ -21,6 +21,7 @@ type CronWorkerRow = {
 }
 
 export async function GET() {
+  await connection()
   const cronUrl = getCronServiceUrl()
   let cronReachable = false
   let cronUptime: string | null = null

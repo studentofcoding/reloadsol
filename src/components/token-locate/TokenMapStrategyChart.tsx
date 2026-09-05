@@ -158,10 +158,12 @@ export default function TokenMapStrategyChart({
   tokenAddress,
   activities,
   hours = 24,
+  chain,
 }: {
   tokenAddress: string
   activities: TokenMapActivityItem[]
   hours?: number
+  chain?: 'sol' | 'robinhood'
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -256,9 +258,12 @@ export default function TokenMapStrategyChart({
         ohlcSource: 'none',
       }
       try {
-        const res = await fetch(
-          `/api/strategies/token-chart?address=${encodeURIComponent(tokenAddress)}&hours=${hours}`,
-        )
+        const qs = new URLSearchParams({
+          address: tokenAddress,
+          hours: String(hours),
+        })
+        if (chain) qs.set('chain', chain)
+        const res = await fetch(`/api/strategies/token-chart?${qs}`)
         const json = (await res.json()) as ChartPayload & {
           success?: boolean
           error?: string
@@ -410,7 +415,7 @@ export default function TokenMapStrategyChart({
     }
     // enabledDomains applied in separate effect after mount; initial paint uses current set
     // eslint-disable-next-line react-hooks/exhaustive-deps -- refetch on token/hours/activities/refresh
-  }, [tokenAddress, hours, activityKey, activities, applyDomainPaint, refreshKey])
+  }, [tokenAddress, hours, chain, activityKey, activities, applyDomainPaint, refreshKey])
 
   // Re-paint candles/markers when domain toggles change (no refetch)
   useEffect(() => {

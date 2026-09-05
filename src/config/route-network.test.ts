@@ -5,7 +5,7 @@ import {
 } from './route-network'
 
 describe('routeSupportsNetwork', () => {
-  it('allows RH buy/sell/swap/history/pnl/search-token', () => {
+  it('allows RH buy/sell/swap/history/pnl/dev/search-token', () => {
     expect(routeSupportsNetwork('/buy', 'robinhood')).toBe(true)
     expect(routeSupportsNetwork('/buy/solana', 'robinhood')).toBe(true)
     expect(routeSupportsNetwork('/buy/robinhood', 'robinhood')).toBe(true)
@@ -17,16 +17,16 @@ describe('routeSupportsNetwork', () => {
     expect(routeSupportsNetwork('/swap/robinhood', 'robinhood')).toBe(true)
     expect(routeSupportsNetwork('/history', 'robinhood')).toBe(true)
     expect(routeSupportsNetwork('/pnl', 'robinhood')).toBe(true)
-    expect(routeSupportsNetwork('/search-token', 'robinhood')).toBe(true)
-    expect(routeSupportsNetwork('/search-token/solana', 'robinhood')).toBe(true)
-    expect(routeSupportsNetwork('/search-token/robinhood', 'robinhood')).toBe(true)
+    expect(routeSupportsNetwork('/dev/search-token', 'robinhood')).toBe(true)
+    expect(routeSupportsNetwork('/dev/search-token/solana', 'robinhood')).toBe(true)
+    expect(routeSupportsNetwork('/dev/search-token/robinhood', 'robinhood')).toBe(true)
+    expect(routeSupportsNetwork('/dev/search-token/detail', 'robinhood')).toBe(true)
   })
 
-  it('treats /search-token as a dev route (network-agnostic)', () => {
-    // The dev-gate is in DevRouteGate; routeSupportsNetwork still says both
-    // networks are fine so dev users can search on either chain.
-    expect(routeSupportsNetwork('/search-token', 'sol')).toBe(true)
-    expect(routeSupportsNetwork('/search-token', 'robinhood')).toBe(true)
+  it('treats /dev/search-token as a network-agnostic dev route', () => {
+    expect(routeSupportsNetwork('/dev/search-token', 'sol')).toBe(true)
+    expect(routeSupportsNetwork('/dev/search-token', 'robinhood')).toBe(true)
+    expect(routeSupportsNetwork('/dev/search-token/detail', 'sol')).toBe(true)
   })
 
   it('allows the strategy hubs on RH; keeps sol-only hubs closed', () => {
@@ -37,6 +37,7 @@ describe('routeSupportsNetwork', () => {
     expect(routeSupportsNetwork('/dev/social', 'robinhood')).toBe(true)
     expect(routeSupportsNetwork('/dev/fomo', 'robinhood')).toBe(true)
     expect(routeSupportsNetwork('/dev/token-search', 'robinhood')).toBe(true)
+    expect(routeSupportsNetwork('/dev/search-token', 'robinhood')).toBe(true)
     expect(routeSupportsNetwork('/dev/arbitrage', 'robinhood')).toBe(false)
   })
 

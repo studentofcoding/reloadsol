@@ -42,7 +42,7 @@ export default function NavigationTabs({
     "/swap",
     "/history",
     "/pnl",
-    "/search-token",
+    "/dev/search-token",
     "/dev/signals",
     "/dev/algo-tester",
     "/dev/dlmm",
@@ -156,11 +156,11 @@ export default function NavigationTabs({
                 </Link>
                 ) : null}
 
-                {can("/search-token") ? (
+                {can("/dev/search-token") ? (
                 <Link
-                  href="/search-token"
+                  href="/dev/search-token"
                   className={`px-3 py-3 rounded-lg font-semibold transition-all duration-200 ${
-                    isActive("/search-token")
+                    isActive("/dev/search-token")
                       ? "tab-active"
                       : "text-gray-400 hover:text-white hover:bg-gray-700"
                   }`}
@@ -336,11 +336,11 @@ export default function NavigationTabs({
                       </svg>
                     </Link>
                     ) : null}
-                    {can("/search-token") ? (
+                    {can("/dev/search-token") ? (
                     <Link
-                      href="/search-token"
+                      href="/dev/search-token"
                       className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
-                        isActive("/search-token")
+                        isActive("/dev/search-token")
                           ? "bg-gray-700 text-white"
                           : "text-gray-400 hover:text-white hover:bg-gray-800"
                       }`}
@@ -601,11 +601,11 @@ export default function NavigationTabs({
             </Link>
             ) : null}
 
-            {can("/search-token") ? (
+            {can("/dev/search-token") ? (
             <Link
-              href="/search-token"
+              href="/dev/search-token"
               className={`flex shrink-0 flex-col items-center px-4 py-2 rounded-lg transition-all duration-200 ${
-                isActive("/search-token") ? "tab-active" : "text-gray-400"
+                isActive("/dev/search-token") ? "tab-active" : "text-gray-400"
               }`}
             >
               <svg
@@ -771,11 +771,11 @@ export default function NavigationTabs({
                   <span className="text-xs font-medium">Strategies</span>
                 </Link>
                 ) : null}
-                {can("/dev/token-search") ? (
+                {can("/dev/search-token") ? (
                 <Link
-                  href="/search-token"
+                  href="/dev/search-token"
                   className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
-                    isActive("/search-token")
+                    isActive("/dev/search-token")
                       ? "bg-white text-black"
                       : "text-gray-400"
                   }`}

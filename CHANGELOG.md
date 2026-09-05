@@ -8,6 +8,17 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Token search lives under `/dev/search-token`
+
+- Find tokens at `/dev/search-token` (chain pages `/solana` and `/robinhood`).
+- Token map (Freeview / List) is `/dev/search-token/detail?address=&view=`.
+- `/search-token*` and `/dev/token-search` 308 to those URLs (query preserved).
+- Magnifiers, buy “Search this token”, and search Open map / View chart use
+  `tokenSearchDetailHref` (`TokenSearchMapView`, `TokenSearchDetailHref`).
+- Search results no longer inline the strategy chart; chart is on detail freeview.
+- `/api/workers/status` awaits `connection()` and skips domain heartbeats when
+  `DATABASE_URL` is unset, so `next build` does not log `DATABASE_URL must be set`.
+
 ### Fixed — Trending prices routes no longer HTML-leak (use-cache pattern removed)
 
 - `/api/trending/prices` and `/api/trending/volume-1h-buyers-1000` still mixed

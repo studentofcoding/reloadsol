@@ -445,6 +445,25 @@ export async function tokenInfo(params: {
   return data ?? {}
 }
 
+/** OHLCV kline for painting charts (sol / robinhood). */
+export async function tokenKline(params: {
+  chain: string
+  address: string
+  resolution: string
+  from: number
+  to: number
+}): Promise<unknown> {
+  return unwrapApiData(
+    await gmgnFetch('/v1/market/token_kline', {
+      chain: params.chain,
+      address: params.address,
+      resolution: params.resolution,
+      from: String(params.from),
+      to: String(params.to),
+    }),
+  )
+}
+
 export async function tokenSecurity(params: {
   chain: string
   address: string

@@ -294,7 +294,23 @@ const nextConfig = {
 
   // ===== REDIRECTS & REWRITES =====
   async redirects() {
-    return [];
+    return [
+      {
+        source: '/search-token',
+        destination: '/dev/search-token',
+        permanent: true,
+      },
+      {
+        source: '/search-token/:path*',
+        destination: '/dev/search-token/:path*',
+        permanent: true,
+      },
+      {
+        source: '/dev/token-search',
+        destination: '/dev/search-token/detail',
+        permanent: true,
+      },
+    ]
   },
 
   async rewrites() {

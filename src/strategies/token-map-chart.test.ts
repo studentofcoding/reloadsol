@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+vi.mock('@/utils/gmgn-api', () => ({
+  tokenKline: vi.fn(),
+}))
+
+import { tokenKline } from '@/utils/gmgn-api'
 import {
   fetchTokenOhlc,
   getCachedTokenOhlc24h1m,
+  mapGmgnKlineBars,
   tokenOhlcToRugBars,
 } from '@/strategies/token-map-chart'
 
@@ -80,6 +86,57 @@ describe('fetchTokenOhlc', () => {
       hours: 6,
     })
     expect(result).toEqual({ candles: [], source: 'none' })
+  })
+
+  it('uses GMGN kline for 0x / robinhood addresses', async () => {
+    vi.mocked(tokenKline).mockResolvedValue({
+      list: [
+        {
+          time: 1700000000000,
+          open: 1,
+          high: 2,
+          low: 0.5,
+          close: 1.5,
+          volume: 9,
+        },
+      ],
+    })
+    const result = await fetchTokenOhlc({
+      tokenAddress: '0x1111111111111111111111111111111111111111',
+      hours: 24,
+      chain: 'robinhood',
+    })
+    expect(result.source).toBe('gmgn')
+    expect(result.candles).toEqual([
+      {
+        time: 1700000000,
+        open: 1,
+        high: 2,
+        low: 0.5,
+        close: 1.5,
+        volume: 9,
+      },
+    ])
+    expect(tokenKline).toHaveBeenCalledOnce()
+  })
+})
+
+describe('mapGmgnKlineBars', () => {
+  it('maps list bars and converts ms timestamps', () => {
+    expect(
+      mapGmgnKlineBars({
+        list: [{ time: 1_700_000_000_000, o: 1, h: 2, l: 0.5, c: 1.5, v: 3 }],
+      }),
+    ).toEqual([
+      {
+        time: 1_700_000_000,
+        open: 1,
+        high: 2,
+        low: 0.5,
+        close: 1.5,
+        volume: 3,
+      },
+    ])
   })
 })
 

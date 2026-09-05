@@ -10,6 +10,7 @@ import type { TokenMapActivityItem } from '@/strategies/token-map-types'
 import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
 import { isValidMintAddress } from '@/utils/jupiter'
 import { useQuery } from '@tanstack/react-query'
+import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 type LocateResponse = TokenLocateResult & { success: boolean; error?: string; cached?: boolean }
@@ -283,6 +284,18 @@ export default function TokenLocateHub({
 
   return (
     <div className="space-y-6">
+      <Link
+        href={
+          (activeMint || address)
+            ? chainForAddress(activeMint || address) === 'robinhood'
+              ? '/dev/search-token/robinhood'
+              : '/dev/search-token/solana'
+            : '/dev/search-token'
+        }
+        className="inline-block text-sm text-gray-400 hover:text-white"
+      >
+        Back to search
+      </Link>
       <form onSubmit={handleSubmit} className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
         <input
           type="text"

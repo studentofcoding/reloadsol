@@ -3,6 +3,8 @@ import { fetchTrackerTokenMetrics } from '@/strategies/sim-monitor-snapshots'
 import { parsePriceHistory } from '@/strategies/trade-window-chart-data'
 import type { TokenMapDomain } from '@/strategies/token-map-types'
 import type { OhlcRugBar } from '@/strategies/ohlc-rug-rules'
+import { tokenKline } from '@/utils/gmgn-api'
+import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
 import { cacheGet, cacheSet } from '@/utils/redis-cache'
 
 /** ponytail: 90s collapses Telegram + Freeview + label capture bursts; upgrade = longer TTL + stampede lock */
@@ -133,18 +135,68 @@ function mapStBars(raw: unknown): TokenOhlcBar[] {
   return out
 }
 
-/** Live OHLCV from Solana Tracker Data API (no local candle ingest). */
-export async function fetchTokenOhlc(params: {
-  tokenAddress: string
+function klineList(raw: unknown): unknown[] {
+  if (Array.isArray(raw)) return raw
+  if (!raw || typeof raw !== 'object') return []
+  const rec = raw as Record<string, unknown>
+  for (const key of ['list', 'kline', 'candles'] as const) {
+    const v = rec[key]
+    if (Array.isArray(v)) return v
+  }
+  return []
+}
+
+function toUnixBarTime(v: number): number {
+  return v > 1e12 ? Math.floor(v / 1000) : Math.floor(v)
+}
+
+/** Map GMGN token_kline payload to chart bars. */
+export function mapGmgnKlineBars(raw: unknown): TokenOhlcBar[] {
+  const out: TokenOhlcBar[] = []
+  for (const row of klineList(raw)) {
+    if (!row || typeof row !== 'object') continue
+    const r = row as Record<string, unknown>
+    const timeRaw = num(r.time) ?? num(r.timestamp) ?? num(r.t)
+    const open = num(r.open) ?? num(r.o)
+    const high = num(r.high) ?? num(r.h)
+    const low = num(r.low) ?? num(r.l)
+    const close = num(r.close) ?? num(r.c)
+    if (
+      timeRaw == null ||
+      open == null ||
+      high == null ||
+      low == null ||
+      close == null
+    ) {
+      continue
+    }
+    const volume = num(r.volume) ?? num(r.v)
+    out.push({
+      time: toUnixBarTime(timeRaw),
+      open,
+      high,
+      low,
+      close,
+      ...(volume != null ? { volume } : {}),
+    })
+  }
+  out.sort((a, b) => a.time - b.time)
+  return out
+}
+
+function wantsGmgnOhlc(
+  chain: GmgnTradeChain | undefined,
+  tokenAddress: string,
+): boolean {
+  return chain === 'robinhood' || /^0x[a-fA-F0-9]{40}$/i.test(tokenAddress)
+}
+
+function ohlcWindow(params: {
   hours?: number
   interval?: string
-  /** Unix seconds — when set with timeTo, overrides hours window. */
   timeFrom?: number
   timeTo?: number
-}): Promise<{ candles: TokenOhlcBar[]; source: string }> {
-  const apiKey = process.env.SOLANATRACKER_DATA_API_KEY?.trim()
-  if (!apiKey) return { candles: [], source: 'none' }
-
+}): { timeFrom: number; timeTo: number; type: string } {
   const nowSec = Math.floor(Date.now() / 1000)
   let timeTo =
     params.timeTo != null && Number.isFinite(params.timeTo)
@@ -168,6 +220,42 @@ export async function fetchTokenOhlc(params: {
   const hoursClamped = Math.min(spanHours, 168)
   const type =
     params.interval?.trim() || ohlcIntervalForHours(hoursClamped)
+  return { timeFrom, timeTo, type }
+}
+
+/** Live OHLCV: Solana Tracker on sol, GMGN kline on robinhood / 0x. */
+export async function fetchTokenOhlc(params: {
+  tokenAddress: string
+  hours?: number
+  interval?: string
+  chain?: GmgnTradeChain
+  /** Unix seconds — when set with timeTo, overrides hours window. */
+  timeFrom?: number
+  timeTo?: number
+}): Promise<{ candles: TokenOhlcBar[]; source: string }> {
+  const { timeFrom, timeTo, type } = ohlcWindow(params)
+  const gmgnChain: GmgnTradeChain =
+    params.chain ??
+    (/^0x[a-fA-F0-9]{40}$/i.test(params.tokenAddress) ? 'robinhood' : 'sol')
+  if (wantsGmgnOhlc(gmgnChain, params.tokenAddress)) {
+    try {
+      const raw = await tokenKline({
+        chain: gmgnChain,
+        address: params.tokenAddress,
+        resolution: type,
+        from: timeFrom,
+        to: timeTo,
+      })
+      const candles = mapGmgnKlineBars(raw)
+      if (candles.length === 0) return { candles: [], source: 'none' }
+      return { candles, source: 'gmgn' }
+    } catch {
+      return { candles: [], source: 'none' }
+    }
+  }
+
+  const apiKey = process.env.SOLANATRACKER_DATA_API_KEY?.trim()
+  if (!apiKey) return { candles: [], source: 'none' }
 
   const url = new URL(
     `${ST_CHART_BASE}/${encodeURIComponent(params.tokenAddress)}`,
@@ -243,19 +331,24 @@ export async function getCachedTokenOhlc24h1m(
 export async function loadTokenMapChart(params: {
   tokenAddress: string
   hours?: number
+  chain?: GmgnTradeChain
 }): Promise<TokenMapChartPayload> {
   const hours = Math.min(Math.max(params.hours ?? 24, 1), 168)
   const sinceMs = Date.now() - hours * 60 * 60 * 1000
   const sinceIso = new Date(sinceMs).toISOString()
+  const chain =
+    params.chain ??
+    (/^0x[a-fA-F0-9]{40}$/i.test(params.tokenAddress) ? 'robinhood' : 'sol')
 
   const [metrics, outcomesResult, ohlc] = await Promise.all([
     fetchTrackerTokenMetrics(params.tokenAddress),
     listStrategyOutcomes({
       tokenAddress: params.tokenAddress,
+      chain,
       limit: 100,
       offset: 0,
     }),
-    fetchTokenOhlc({ tokenAddress: params.tokenAddress, hours }),
+    fetchTokenOhlc({ tokenAddress: params.tokenAddress, hours, chain }),
   ])
 
   const history = parsePriceHistory(metrics?.price_history)

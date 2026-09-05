@@ -12,7 +12,7 @@ import { useConnection } from '@/components/WalletProvider'
 import { useRpc } from '@/contexts/RpcContext'
 import { useAppNetwork } from '@/contexts/AppNetworkContext'
 import { OptimizedImage } from '@/components/OptimizedImage'
-import GmgnKlineChart from '@/components/GmgnKlineChart'
+import { tokenSearchDetailHref } from '@/components/signals/shared/token-search-href'
 import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
 import { isValidTradeTokenAddress } from '@/utils/gmgn-currencies'
 import type { TokenLocateResult } from '@/strategies/token-locate'
@@ -63,13 +63,14 @@ export default function SearchTokenClient(props: SearchTokenClientProps) {
   const chain: GmgnTradeChain = chainProp ?? ctxChain
   const [query, setQuery] = useState(initialQuery ?? '')
 
-  // Allow ?chain= override on the bare /search-token route.
+  // Allow ?chain= override on the bare /dev/search-token route.
   useEffect(() => {
     if (chainProp) return
     const raw = params?.get('chain')
-    if (raw === 'sol' || raw === 'robinhood') {
-      // Replace the path with the chain-specific deep-link for bookmarkability.
-      router.replace(`/search-token/${raw}`)
+    if (raw === 'sol') {
+      router.replace('/dev/search-token/solana')
+    } else if (raw === 'robinhood') {
+      router.replace('/dev/search-token/robinhood')
     }
   }, [chainProp, params, router])
 
@@ -316,6 +317,13 @@ function SystemPresence({
         >
           Open in strategies
         </Link>
+        {' '}
+        <Link
+          href={tokenSearchDetailHref(result.tokenAddress, 'freeview')}
+          className="inline-block text-xs text-blue-400 hover:text-blue-300"
+        >
+          Open map
+        </Link>
       </div>
     </div>
   )
@@ -362,7 +370,6 @@ function ResultRow({
   onPickAction: (action: Action, token: GmgnSearchToken) => void
 }) {
   const [showActions, setShowActions] = useState(false)
-  const [showChart, setShowChart] = useState(false)
   return (
     <li className="border-b border-gray-800 last:border-b-0">
       <div className="flex items-center px-4 py-3 gap-3">
@@ -402,8 +409,8 @@ function ResultRow({
         <div className="flex flex-wrap gap-2 px-4 pb-3">
           <ActionPill onClick={() => onPickAction('add-to-buy', token)}>Add to buy</ActionPill>
           <ActionPill onClick={() => onPickAction('add-to-swap', token)}>Add to swap</ActionPill>
-          <ActionPill onClick={() => setShowChart((v) => !v)}>
-            {showChart ? 'Hide chart' : 'View chart'}
+          <ActionPill href={tokenSearchDetailHref(token.address, 'freeview')}>
+            View chart
           </ActionPill>
           <ActionPill onClick={() => copy(token.address)}>Copy CA</ActionPill>
           <ActionPill
@@ -411,15 +418,6 @@ function ResultRow({
           >
             Open in strategies
           </ActionPill>
-        </div>
-      ) : null}
-      {showChart ? (
-        <div className="px-4 pb-3">
-          <GmgnKlineChart
-            tokenMint={token.address}
-            symbol={token.symbol}
-            chain={token.chain ?? chain}
-          />
         </div>
       ) : null}
     </li>

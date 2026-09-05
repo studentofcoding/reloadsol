@@ -23,9 +23,10 @@ export const ROUTE_NETWORK_REGISTRY: readonly NetworkRouteEntry[] = [
   { path: '/swap/robinhood', networks: ['sol', 'robinhood'] },
   { path: '/history', networks: ['sol', 'robinhood'] },
   { path: '/pnl', networks: ['sol', 'robinhood'] },
-  { path: '/search-token', networks: ['sol', 'robinhood'] },
-  { path: '/search-token/solana', networks: ['sol', 'robinhood'] },
-  { path: '/search-token/robinhood', networks: ['sol', 'robinhood'] },
+  { path: '/dev/search-token', networks: ['sol', 'robinhood'] },
+  { path: '/dev/search-token/solana', networks: ['sol', 'robinhood'] },
+  { path: '/dev/search-token/robinhood', networks: ['sol', 'robinhood'] },
+  { path: '/dev/search-token/detail', networks: ['sol', 'robinhood'] },
   // Strategy hubs are open on RH, but RH definitions are paper-only (sim_only).
   { path: '/dev/signals', networks: ['sol', 'robinhood'] },
   { path: '/dev/algo-tester', networks: ['sol', 'robinhood'] },

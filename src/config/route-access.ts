@@ -15,10 +15,10 @@ export const DEV_ROUTES = [
   '/dev/strategies',
   '/dev/rpc-tester',
   '/dev/token-search',
+  '/dev/search-token',
   '/dev/ohlc-labels',
   '/dev/arbitrage',
   '/dev/fomo',
-  '/search-token',
 ] as const;
 
 export type WalletRequiredRoute = (typeof WALLET_REQUIRED_ROUTES)[number];

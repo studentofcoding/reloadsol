@@ -1,8 +1,9 @@
 'use client'
 
 import Link from 'next/link'
+import { tokenSearchDetailHref } from './token-search-href'
 
-/** Magnifier link to Freeview token-search for a mint. */
+/** Magnifier link to token map detail for a mint. */
 export default function TokenSearchLink({
   address,
   className = '',
@@ -13,7 +14,7 @@ export default function TokenSearchLink({
   if (!address) return null
   return (
     <Link
-      href={`/dev/token-search?address=${encodeURIComponent(address)}`}
+      href={tokenSearchDetailHref(address)}
       prefetch
       title="Open in token search"
       aria-label="Open in token search"

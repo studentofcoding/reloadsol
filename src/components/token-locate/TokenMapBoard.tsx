@@ -65,6 +65,7 @@ export default function TokenMapBoard({
   )
 
   const concentrationBanned = concBan?.banned === true
+  const chartChain = /^0x/i.test(result.tokenAddress) ? 'robinhood' : 'sol'
 
   return (
     <div className="space-y-3">
@@ -122,6 +123,7 @@ export default function TokenMapBoard({
           <div className="min-w-0 h-[300px] w-full overflow-hidden rounded-xl border border-gray-700 bg-black md:w-[90%] md:flex-1">
             <GmgnChartEmbed
               tokenAddress={result.tokenAddress}
+              chain={chartChain}
               height="100%"
               className="w-full h-full"
               title={`GMGN · ${result.symbol ?? result.tokenAddress.slice(0, 8)}`}
@@ -156,6 +158,7 @@ export default function TokenMapBoard({
               tokenAddress={result.tokenAddress}
               activities={activities}
               hours={24}
+              chain={chartChain}
             />
           </div>
         ) : null}

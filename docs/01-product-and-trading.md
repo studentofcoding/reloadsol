@@ -42,6 +42,7 @@ selection back to `sol`.
 | Bulk sell / dust sweep / reload | `/sell` | Sell many tokens at once to reload native; dust categories (sellable / unsellable / zero-balance / frozen / NFT); empty-ATA close + rent reclaim via Jupiter reclaim; post-sell 100% closes | `src/components/BulkTokenSeller.tsx`, `src/utils/jupiter.ts`, `src/utils/swap-executor.ts` |
 | Single swap | `/swap` (+ solana/robinhood subroutes) | Solana: **Jupiter Terminal** widget with SOL/USDC presets; Robinhood: in-house RhSwap panel (quote-pair or token→token) | `src/app/(trade)/swap/SwapPageClient.tsx`, `src/components/RhGmgnSwapPanel.tsx`, `src/components/JupiterTerminal.tsx` |
 | Chart buy modal | modals over charts / signals / trend boards | Quick single-token buy from any chart surface, keyboard navigable | `src/components/ChartBuyModal.tsx` |
+| Token search (dev) | `/dev/search-token` (`/solana`, `/robinhood`); map at `/dev/search-token/detail?address=&view=` | Name/symbol/CA search; Open map / View chart go to TokenLocateHub (Freeview / List). `/search-token*` and `/dev/token-search` redirect here | `src/components/search/SearchTokenClient.tsx`, `src/components/token-locate/TokenLocateHub.tsx`, `src/components/signals/shared/token-search-href.ts` |
 | PnL tracker / history | `/pnl`, `/history` | Open vs completed trades, Real/Sim filters, realized/unrealized PnL, Fast Sell | `src/components/PnLTracker.tsx`, `src/components/TradingHistory.tsx` |
 
 ## 4. Swap execution model (per network + wallet)

@@ -1740,6 +1740,9 @@ export async function getStrategyDomainHeartbeats(params?: {
     'gmgn',
     'social',
   ]
+  if (!process.env.DATABASE_URL?.trim()) {
+    return domains.map((domain) => ({ domain, last_outcome_at: null }))
+  }
   const results: StrategyDomainHeartbeat[] = []
   const workerById = params?.workerLastSuccessById ?? {}
 
