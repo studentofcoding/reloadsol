@@ -6,6 +6,15 @@ export function parseDbChain(raw: string | null | undefined): AppNetwork {
   return parseAppNetwork(raw)
 }
 
+/** RH wallets are compared case-insensitively (checksum vs lower). */
+export function normalizeRecordWallet(
+  wallet: string,
+  chain: AppNetwork,
+): string {
+  const w = wallet.trim()
+  return chain === 'robinhood' ? w.toLowerCase() : w
+}
+
 /** RH strategy ids are seeded with `_rh` suffix (see registry-chain.test). */
 export function chainFromStrategyId(strategyId: string): AppNetwork {
   return strategyId.endsWith('_rh') ? 'robinhood' : 'sol'

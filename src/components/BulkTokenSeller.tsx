@@ -56,6 +56,7 @@ import {
   fetchEthUsdSpot,
   simulateRhBoundSellLeg,
   simulateRhParentSellLeg,
+  rawAmountToHuman,
 } from "@/utils/rh-trade-sim";
 import {
   buildRhSellToken,
@@ -984,11 +985,18 @@ export default function BulkTokenSeller() {
                 sel && sel.usdValue > 0 && sel.uiAmount > 0
                   ? sel.usdValue / sel.uiAmount
                   : undefined;
+              const receivedQuote = r.estOut
+                ? rawAmountToHuman(
+                    r.estOut,
+                    rhQuoteCurrency === "USDG" ? 6 : 18,
+                  )
+                : undefined;
               return buildRhSellToken({
                 mintAddress: r.tokenAddress,
                 symbol: r.symbol ?? sel?.symbol,
                 soldTokenAmount,
                 tokenPriceUsd,
+                receivedQuote,
                 usdPerUnit,
               });
             });

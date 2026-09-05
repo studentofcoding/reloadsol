@@ -26,12 +26,16 @@ const TRADING_RECORDS_REDIS_TTL_SECONDS = 10
 const MAX_CACHE_ENTRIES = 50
 const REQUEST_TIMEOUT = 10000
 
+function recordsCacheWallet(walletAddress: string): string {
+  return walletAddress.startsWith('0x') ? walletAddress.toLowerCase() : walletAddress
+}
+
 function recordsRedisKey(
   walletAddress: string,
   limit: number,
   chain = 'sol',
 ): string {
-  return `records:${walletAddress}:${chain}:${limit}`
+  return `records:${recordsCacheWallet(walletAddress)}:${chain}:${limit}`
 }
 
 function cleanupRecordsCache() {
@@ -62,7 +66,7 @@ export function generateRecordsCacheKey(
   limit: number,
   chain = 'sol',
 ): string {
-  return `${walletAddress}-${chain}-${limit}`
+  return `${recordsCacheWallet(walletAddress)}-${chain}-${limit}`
 }
 
 export async function getCachedRecords(
@@ -102,7 +106,7 @@ export function setCachedRecords(
 
   tradingRecordsCache.set(cacheKey, {
     data,
-    walletAddress,
+    walletAddress: recordsCacheWallet(walletAddress),
     limit,
     timestamp: now,
     expiresAt: now + TRADING_RECORDS_CACHE_TTL_MS,
@@ -118,15 +122,16 @@ export function setCachedRecords(
 }
 
 export function invalidateTradingRecordsCache(walletAddress: string): number {
+  const wallet = recordsCacheWallet(walletAddress)
   const keysToDelete: string[] = []
   for (const [key, cache] of Array.from(tradingRecordsCache.entries())) {
-    if (cache.walletAddress === walletAddress) {
+    if (cache.walletAddress === wallet) {
       keysToDelete.push(key)
     }
   }
   keysToDelete.forEach((key) => tradingRecordsCache.delete(key))
 
-  void cacheDelByPrefix(`records:${walletAddress}:`)
+  void cacheDelByPrefix(`records:${wallet}:`)
 
   return keysToDelete.length
 }

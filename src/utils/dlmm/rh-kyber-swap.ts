@@ -48,6 +48,7 @@ import {
   kyberQuoteTokenAddress,
   toKyberAmountRaw,
 } from '@/utils/kyber-aggregator'
+import { fillConfirmedRhLegAmounts } from '@/utils/dlmm/rh-receipt-fills'
 
 /** Wei to wrap so WETH balance covers `need` (0 if already covered). */
 export function wethWrapShortfall(need: bigint, wethBal: bigint): bigint {
@@ -116,6 +117,7 @@ async function quoteAndBuild(params: {
   routerAddress: Address
   amountIn: string
   valueWei: bigint
+  amountOut?: string
 }> {
   const route = await clientKyberRoute({
     tokenIn: params.tokenIn,
@@ -138,6 +140,7 @@ async function quoteAndBuild(params: {
     routerAddress,
     amountIn: build.amountIn,
     valueWei: build.valueWei,
+    amountOut: build.amountOut ?? route.amountOut,
   }
 }
 
@@ -183,6 +186,7 @@ export type KyberPreparedSwap = {
   data: `0x${string}`
   valueWei: bigint
   amountIn: bigint
+  amountOut?: string
 }
 
 /**
@@ -247,6 +251,7 @@ export async function prepareKyberSwapLegsParallel(params: {
                 routerAddress,
                 amountIn: build.amountIn,
                 valueWei: build.valueWei,
+                amountOut: build.amountOut ?? route.amountOut,
               }
             })
             .catch((e: unknown) => (e instanceof Error ? e : new Error(String(e)))),
@@ -318,6 +323,7 @@ export async function prepareKyberSwapLegsParallel(params: {
       data: built.data,
       valueWei: built.valueWei,
       amountIn: BigInt(built.amountIn),
+      amountOut: built.amountOut,
     }
     const calls: RhTxCall[] = []
     if (!isKyberNative(leg.tokenIn)) {
@@ -720,7 +726,10 @@ export async function executeRhParentKyberBuy(params: {
         account: params.account,
         calls: walletCalls,
       })
-      // Atomic: one hash confirms every leg.
+      const quotedOutByToken: Record<string, string | undefined> = {}
+      for (const p of prepared) {
+        quotedOutByToken[p.item.tokenAddress.toLowerCase()] = p.swap.amountOut
+      }
       const batchResults: GmgnBulkLegResult[] = prepared.map(({ item }) => ({
         tokenAddress: item.tokenAddress,
         symbol: item.symbol,
@@ -728,7 +737,14 @@ export async function executeRhParentKyberBuy(params: {
         hash,
         status: 'confirmed',
       }))
-      const results = [...prepFailures, ...batchResults]
+      const results = await fillConfirmedRhLegAmounts({
+        publicClient: params.publicClient,
+        account: params.account,
+        hash,
+        results: [...prepFailures, ...batchResults],
+        quotedOutByToken,
+        receiveTokenFor: (leg) => leg.tokenAddress,
+      })
       return {
         success: results.length > 0 && results.every((r) => r.success),
         results,
@@ -792,6 +808,10 @@ export async function executeRhParentKyberBuy(params: {
       calls: plan.flatCalls,
       onProgress: plan.onProgress,
     })
+    const quotedOutByToken: Record<string, string | undefined> = {}
+    for (const p of prepared) {
+      quotedOutByToken[p.item.tokenAddress.toLowerCase()] = p.swap.amountOut
+    }
     const batchResults = buildKyberLegResults({
       legs: prepared.map(({ item }) => item),
       legEndCallIndex: plan.legEndCallIndex,
@@ -799,7 +819,14 @@ export async function executeRhParentKyberBuy(params: {
       failedCallIndex: null,
       batchHash: hash,
     })
-    const results = [...prepFailures, ...batchResults]
+    const results = await fillConfirmedRhLegAmounts({
+      publicClient: params.publicClient,
+      account: params.account,
+      hash,
+      results: [...prepFailures, ...batchResults],
+      quotedOutByToken,
+      receiveTokenFor: (leg) => leg.tokenAddress,
+    })
     return {
       success: results.length > 0 && results.every((r) => r.success),
       results,
@@ -983,7 +1010,11 @@ export async function executeRhParentKyberSell(params: {
         account: params.account,
         calls: walletCalls,
       })
-      // Atomic: one hash confirms every leg.
+      const quotedOutByToken: Record<string, string | undefined> = {}
+      for (const p of prepared) {
+        quotedOutByToken[p.leg.tokenAddress.toLowerCase()] = p.swap.amountOut
+      }
+      const receiveToken = isKyberNative(tokenOut) ? RH_WETH : tokenOut
       const batchResults: GmgnBulkLegResult[] = prepared.map(({ leg }) => ({
         tokenAddress: leg.tokenAddress,
         symbol: leg.symbol,
@@ -991,7 +1022,14 @@ export async function executeRhParentKyberSell(params: {
         hash,
         status: 'confirmed',
       }))
-      const results = [...prepFailures, ...batchResults]
+      const results = await fillConfirmedRhLegAmounts({
+        publicClient: params.publicClient,
+        account: params.account,
+        hash,
+        results: [...prepFailures, ...batchResults],
+        quotedOutByToken,
+        receiveTokenFor: () => receiveToken,
+      })
       return {
         success: results.length > 0 && results.every((r) => r.success),
         results,
@@ -1023,6 +1061,11 @@ export async function executeRhParentKyberSell(params: {
       calls: plan.flatCalls,
       onProgress: plan.onProgress,
     })
+    const quotedOutByToken: Record<string, string | undefined> = {}
+    for (const p of prepared) {
+      quotedOutByToken[p.leg.tokenAddress.toLowerCase()] = p.swap.amountOut
+    }
+    const receiveToken = isKyberNative(tokenOut) ? RH_WETH : tokenOut
     const batchResults = buildKyberLegResults({
       legs: prepared.map(({ leg }) => leg),
       legEndCallIndex: plan.legEndCallIndex,
@@ -1030,7 +1073,14 @@ export async function executeRhParentKyberSell(params: {
       failedCallIndex: null,
       batchHash: hash,
     })
-    const results = [...prepFailures, ...batchResults]
+    const results = await fillConfirmedRhLegAmounts({
+      publicClient: params.publicClient,
+      account: params.account,
+      hash,
+      results: [...prepFailures, ...batchResults],
+      quotedOutByToken,
+      receiveTokenFor: () => receiveToken,
+    })
     return {
       success: results.length > 0 && results.every((r) => r.success),
       results,

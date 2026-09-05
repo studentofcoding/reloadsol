@@ -22,10 +22,10 @@ function assertWalletMatchesSession(sessionAddress: string, wallet: unknown) {
 }
 
 export async function addTradingRecord(record: TrackingRecord) {
-  const session = await requireActionSession();
   const chain = parseDbChain(record.chain);
 
   if (chain === 'sol') {
+    const session = await requireActionSession();
     assertWalletMatchesSession(session.address, record.walletAddress);
   } else if (!/^0x[a-fA-F0-9]{40}$/.test(String(record.walletAddress))) {
     throw new Error('Robinhood wallet must be a 0x address');
@@ -50,10 +50,10 @@ export async function addTradingRecord(record: TrackingRecord) {
 }
 
 export async function updateTradingRecord(id: string, record: TrackingRecord) {
-  const session = await requireActionSession();
   const chain = parseDbChain(record.chain);
 
   if (chain === 'sol') {
+    const session = await requireActionSession();
     assertWalletMatchesSession(session.address, record.walletAddress);
   } else if (!/^0x[a-fA-F0-9]{40}$/.test(String(record.walletAddress))) {
     throw new Error('Robinhood wallet must be a 0x address');

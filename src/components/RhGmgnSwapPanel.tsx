@@ -37,6 +37,7 @@ import GmgnTradeConfirmModal, {
 } from '@/components/GmgnTradeConfirmModal'
 import {
   fetchEthUsdSpot,
+  rawAmountToHuman,
   simulateRhBoundBuyLeg,
   simulateRhBoundSellLeg,
   simulateRhParentBuyLeg,
@@ -669,10 +670,15 @@ export default function RhGmgnSwapPanel({
         )
         const ethUsd = pendingSim?.ethUsd ?? 0
         const usdPerUnit = rhQuoteUsdPerUnit(quote, ethUsd)
-        const receivedQuote =
-          pendingSim?.amountOutHuman && pendingSim.amountOutHuman > 0
+        const receivedQuote = (() => {
+          const raw = ok[0]?.estOut
+          if (raw) {
+            return rawAmountToHuman(raw, quote === 'USDG' ? 6 : 18)
+          }
+          return pendingSim?.amountOutHuman && pendingSim.amountOutHuman > 0
             ? pendingSim.amountOutHuman
             : undefined
+        })()
         const built = ok.map((r) =>
           buildRhSellToken({
             mintAddress: r.tokenAddress,

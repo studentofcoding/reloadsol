@@ -1,5 +1,5 @@
 import { bulkInsert, query, type BulkWriteStats } from '@/utils/db'
-import { parseDbChain } from '@/utils/app-network-db'
+import { parseDbChain, normalizeRecordWallet } from '@/utils/app-network-db'
 import type { TrackingRecord } from '@/utils/trading-tracker'
 import { invalidateTradingRecordsCache } from '@/utils/trading-records-cache'
 import { broadcastTradeUpdateServer } from '@/utils/trading-notifications'
@@ -36,11 +36,12 @@ export async function insertTradingRecord(
   }
 
   const chain = parseDbChain(record.chain)
-  const data: TrackingRecord = { ...record, chain }
+  const walletAddress = normalizeRecordWallet(record.walletAddress, chain)
+  const data: TrackingRecord = { ...record, chain, walletAddress }
 
   const dbRecord: Omit<DatabaseRecord, 'created_at'> = {
     id: record.id,
-    wallet_address: record.walletAddress,
+    wallet_address: walletAddress,
     operation_type: record.operationType,
     timestamp: new Date(record.timestamp).toISOString(),
     data,
@@ -59,7 +60,7 @@ export async function insertTradingRecord(
     ],
   )
 
-  await afterTradingRecordInserted(record)
+  await afterTradingRecordInserted(data)
 
   return { inserted: true }
 }
@@ -94,12 +95,13 @@ export async function insertTradingRecords(
       continue
     }
     const chain = parseDbChain(record.chain)
-    const data: TrackingRecord = { ...record, chain }
+    const walletAddress = normalizeRecordWallet(record.walletAddress, chain)
+    const data: TrackingRecord = { ...record, chain, walletAddress }
     accepted.push({
-      record,
+      record: data,
       values: [
         record.id,
-        record.walletAddress,
+        walletAddress,
         record.operationType,
         new Date(record.timestamp).toISOString(),
         JSON.stringify(data),

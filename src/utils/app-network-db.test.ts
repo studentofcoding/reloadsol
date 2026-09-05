@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   chainFromStrategyId,
   filterRecordsByChain,
+  normalizeRecordWallet,
   parseDbChain,
 } from './app-network-db'
 
@@ -16,6 +17,17 @@ describe('parseDbChain', () => {
   })
 })
 
+describe('normalizeRecordWallet', () => {
+  it('lowercases Robinhood 0x addresses', () => {
+    expect(
+      normalizeRecordWallet('0xABCDEFabcdefABCDEFabcdefABCDEFabcdefABCD', 'robinhood'),
+    ).toBe('0xabcdefabcdefabcdefabcdefabcdefabcdefabcd')
+  })
+
+  it('leaves Solana addresses unchanged', () => {
+    expect(normalizeRecordWallet('Abc123', 'sol')).toBe('Abc123')
+  })
+})
 describe('chainFromStrategyId', () => {
   it('maps _rh suffix to robinhood', () => {
     expect(chainFromStrategyId('mcap_enter_at_80_rh')).toBe('robinhood')

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse, connection } from 'next/server'
 import { assertSessionWallet, requireWalletSession } from '@/utils/api-auth'
-import { parseDbChain } from '@/utils/app-network-db'
+import { parseDbChain, normalizeRecordWallet } from '@/utils/app-network-db'
 import type { AppNetwork } from '@/utils/app-network'
 import { query } from '@/utils/db'
 import {
@@ -83,10 +83,10 @@ async function fetchTradingRecordsFromDB(
 ): Promise<any[]> {
   const { rows } = await query<DatabaseRecord>(
     `SELECT * FROM trading_records
-     WHERE wallet_address = $1 AND chain = $2
+     WHERE lower(wallet_address) = lower($1) AND chain = $2
      ORDER BY timestamp DESC
      LIMIT $3`,
-    [walletAddress, chain, limit],
+    [normalizeRecordWallet(walletAddress, chain), chain, limit],
   )
 
   return rows.map((item) => {
