@@ -65,17 +65,30 @@ function mapRow(row: Record<string, unknown>): RhUniv2Position {
 
 export async function listRhUniv2Positions(
   status?: string,
+  owner?: string,
 ): Promise<RhUniv2Position[]> {
   try {
     await ensureRhUniv2PositionsTable()
-    const { rows } = status
-      ? await query<Record<string, unknown>>(
-          `SELECT * FROM rh_univ2_positions WHERE status = $1 ORDER BY updated_at DESC`,
-          [status],
-        )
-      : await query<Record<string, unknown>>(
-          `SELECT * FROM rh_univ2_positions ORDER BY updated_at DESC`,
-        )
+    const ownerLc = owner?.trim().toLowerCase()
+    const { rows } =
+      status && ownerLc
+        ? await query<Record<string, unknown>>(
+            `SELECT * FROM rh_univ2_positions WHERE status = $1 AND lower(owner_address) = $2 ORDER BY updated_at DESC`,
+            [status, ownerLc],
+          )
+        : ownerLc
+          ? await query<Record<string, unknown>>(
+              `SELECT * FROM rh_univ2_positions WHERE lower(owner_address) = $1 ORDER BY updated_at DESC`,
+              [ownerLc],
+            )
+          : status
+            ? await query<Record<string, unknown>>(
+                `SELECT * FROM rh_univ2_positions WHERE status = $1 ORDER BY updated_at DESC`,
+                [status],
+              )
+            : await query<Record<string, unknown>>(
+                `SELECT * FROM rh_univ2_positions ORDER BY updated_at DESC`,
+              )
     return rows.map(mapRow)
   } catch (error) {
     if (isDbConnectivityError(error)) return []

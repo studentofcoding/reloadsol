@@ -1,4 +1,4 @@
-export type LpTerminalProto = 'univ2' | 'univ3'
+export type LpTerminalProto = 'univ2' | 'univ3' | 'univ4'
 
 export type LpTerminalTokenMeta = {
   address: string
@@ -26,7 +26,7 @@ export type LpTerminalPoolsResponse = {
   ready?: boolean
   asof?: number
   count?: number
-  totals?: { univ2?: number; univ3?: number }
+  totals?: { univ2?: number; univ3?: number; univ4?: number }
   pools?: LpTerminalPoolRaw[]
   tokens?: Record<string, LpTerminalTokenMeta>
 }
@@ -74,6 +74,7 @@ export function pairLabel(
 }
 
 export function protoBadge(proto: string): string {
+  if (proto === 'univ4') return 'UNI V4'
   if (proto === 'univ3') return 'UNI V3'
   if (proto === 'univ2') return 'UNI V2'
   return proto.toUpperCase()
@@ -83,6 +84,11 @@ export function feeTierLabel(pool: LpTerminalPoolRaw): string {
   const feePct = feeRateFromPpm(pool.feePpm) * 100
   const feeStr =
     feePct >= 1 ? `${feePct.toFixed(2)}%` : `${feePct.toFixed(3)}%`
+  if (pool.proto === 'univ4') {
+    return pool.tickSpacing != null
+      ? `v4 ts${pool.tickSpacing} · ${feeStr}`
+      : `v4 · ${feeStr}`
+  }
   if (pool.proto === 'univ3' && pool.tickSpacing != null) {
     return `v3 ts${pool.tickSpacing} · ${feeStr}`
   }

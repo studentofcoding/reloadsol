@@ -11,10 +11,13 @@ function authHeaders(): HeadersInit {
   }
 }
 
-export function useRhUniv2Positions(status?: string) {
-  const qs = status ? `?status=${encodeURIComponent(status)}` : ''
+export function useRhUniv2Positions(status?: string, owner?: string) {
+  const sp = new URLSearchParams()
+  if (status) sp.set('status', status)
+  if (owner) sp.set('owner', owner)
+  const qs = sp.toString() ? `?${sp.toString()}` : ''
   return useQuery({
-    queryKey: ['rh-univ2-positions', status ?? 'all'],
+    queryKey: ['rh-univ2-positions', status ?? 'all', owner ?? ''],
     queryFn: async () => {
       const res = await fetch(`/api/dlmm/rh-univ2-positions${qs}`)
       const data = await res.json()

@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse, connection } from 'next/server'
 import { getLpTerminalIndexerBase } from '@/utils/dlmm/lp-terminal'
 import type { LpTerminalPoolRaw, LpTerminalTokenMeta } from '@/utils/dlmm/lp-terminal-pools'
+import {
+  fetchClmmPoolFallbacks,
+  mergeLpFallbackCatalog,
+  type LpFallbackWant,
+} from '@/utils/dlmm/lp-terminal-pools-fallback'
 
 const ALLOWED_SORT = new Set(['tvl', 'vol', 'created'])
 
@@ -202,6 +207,26 @@ async function fetchRhUniv2FromSubgraph(opts: {
   return { pools, tokens, count: pairs.length }
 }
 
+function poolProto(p: LpTerminalPoolRaw): string {
+  return String(p.proto).toLowerCase()
+}
+
+function wantFromQuery(proto?: string): LpFallbackWant {
+  return proto === 'univ2' || proto === 'univ3' || proto === 'univ4' ? proto : ''
+}
+
+function jsonPools(body: unknown): LpTerminalPoolRaw[] {
+  if (!body || typeof body !== 'object' || !('pools' in body)) return []
+  const pools = (body as { pools?: LpTerminalPoolRaw[] }).pools
+  return Array.isArray(pools) ? pools : []
+}
+
+function jsonTokens(body: unknown): Record<string, LpTerminalTokenMeta> {
+  if (!body || typeof body !== 'object' || !('tokens' in body)) return {}
+  const tokens = (body as { tokens?: Record<string, LpTerminalTokenMeta> }).tokens
+  return tokens && typeof tokens === 'object' ? tokens : {}
+}
+
 export async function GET(req: NextRequest) {
   // Dynamic GET route (reads search params, does live fetch): calling
   // `await connection()` bails the route out of the cacheComponents static
@@ -244,6 +269,51 @@ export async function GET(req: NextRequest) {
   try {
     const text = await fetchLpPoolsRaw(url)
     const body = parseLpIndexerBody(text)
+    const want = wantFromQuery(proto)
+    const pools = jsonPools(body)
+    const missingV3 =
+      (want === '' || want === 'univ3') &&
+      !pools.some((p) => poolProto(p) === 'univ3')
+    const missingV4 =
+      (want === '' || want === 'univ4') &&
+      !pools.some((p) => poolProto(p) === 'univ4')
+    if (missingV3 || missingV4) {
+      try {
+        const clmm = await fetchClmmPoolFallbacks(q)
+        const minTvlNum = minTvl != null && minTvl !== '' ? Number(minTvl) : undefined
+        const merged = mergeLpFallbackCatalog({
+          want,
+          univ2: pools.filter((p) => poolProto(p) === 'univ2'),
+          univ3: missingV3
+            ? clmm.univ3
+            : pools.filter((p) => poolProto(p) === 'univ3'),
+          univ4: missingV4
+            ? clmm.univ4
+            : pools.filter((p) => poolProto(p) === 'univ4'),
+          tokens: { ...jsonTokens(body), ...clmm.tokens },
+          minTvl: Number.isFinite(minTvlNum) ? minTvlNum : undefined,
+        })
+        return NextResponse.json(
+          {
+            success: true,
+            upstream: `${upstreamBase} (+dex v3/v4)`,
+            ready: true,
+            ...(typeof body === 'object' && body ? body : {}),
+            pools: merged.pools,
+            tokens: merged.tokens,
+            count: merged.count,
+            totals: merged.totals,
+          },
+          {
+            headers: {
+              'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=60',
+            },
+          },
+        )
+      } catch {
+        /* indexer body is still usable */
+      }
+    }
     return NextResponse.json(
       { success: true, upstream: upstreamBase, ...(body as object) },
       {
@@ -253,37 +323,38 @@ export async function GET(req: NextRequest) {
       },
     )
   } catch (error) {
-    // Primary indexer unreachable OR returned non-JSON/HTML (e.g. the public LP
-    // Terminal indexer retired → HTTP 410 or an HTML page). Fall back to the
-    // Goldsky RH UniV2 subgraph so the RH DLMM pools table keeps working.
-    if (proto && proto !== 'univ2') {
-      return NextResponse.json(
-        {
-          success: false,
-          error: errorMessage(error, 'Failed to reach LP Terminal indexer'),
-          upstream: upstreamBase,
-        },
-        { status: 502 },
-      )
-    }
+    // Primary indexer unreachable OR returned non-JSON/HTML. Merge Goldsky
+    // UniV2 + Dexscreener UniV3 + Dexscreener/Explore UniV4 so proto chips work.
+    const want: LpFallbackWant = wantFromQuery(proto)
+    const minTvlNum = minTvl != null && minTvl !== '' ? Number(minTvl) : undefined
 
     try {
-      const fallback = await fetchRhUniv2FromSubgraph({
-        q,
-        sort,
-        limit,
-        offset,
-        minTvl,
+      const [v2, clmm] = await Promise.all([
+        want === 'univ3' || want === 'univ4'
+          ? Promise.resolve({ pools: [] as LpTerminalPoolRaw[], tokens: {} as Record<string, LpTerminalTokenMeta>, count: 0 })
+          : fetchRhUniv2FromSubgraph({ q, sort, limit, offset, minTvl }),
+        want === 'univ2'
+          ? Promise.resolve({ univ3: [] as LpTerminalPoolRaw[], univ4: [] as LpTerminalPoolRaw[], tokens: {} as Record<string, LpTerminalTokenMeta> })
+          : fetchClmmPoolFallbacks(q),
+      ])
+      const tokens = { ...v2.tokens, ...clmm.tokens }
+      const merged = mergeLpFallbackCatalog({
+        want,
+        univ2: v2.pools,
+        univ3: clmm.univ3,
+        univ4: clmm.univ4,
+        tokens,
+        minTvl: Number.isFinite(minTvlNum) ? minTvlNum : undefined,
       })
       return NextResponse.json(
         {
           success: true,
-          upstream: `${upstreamBase} (subgraph fallback)`,
+          upstream: `${upstreamBase} (subgraph+dex fallback)`,
           ready: true,
-          pools: fallback.pools,
-          tokens: fallback.tokens,
-          count: fallback.count,
-          totals: { univ2: fallback.count, univ3: 0 },
+          pools: merged.pools,
+          tokens: merged.tokens,
+          count: merged.count,
+          totals: merged.totals,
         },
         {
           headers: {

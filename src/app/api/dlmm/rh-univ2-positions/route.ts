@@ -9,6 +9,10 @@ import {
   getRhUniv2Position,
 } from '@/utils/dlmm/rh-univ2-db'
 import { markRhUniv2Position } from '@/utils/dlmm/rh-univ2-mark'
+import {
+  listOnchainRhUniv2Positions,
+  mergeUniv2DbAndOnchain,
+} from '@/utils/dlmm/rh-univ2-onchain'
 import { getDlmmDbStatus } from '@/utils/dlmm/db-status'
 
 function getPassword(req: NextRequest): string | null {
@@ -23,11 +27,25 @@ export async function GET(req: NextRequest) {
   const wrong = rejectWrongNetwork(req, 'robinhood')
   if (wrong) return wrong
   try {
-    const status = new URL(req.url).searchParams.get('status') ?? undefined
-    const [positions, dbStatus] = await Promise.all([
-      listRhUniv2Positions(status ?? undefined),
+    const sp = new URL(req.url).searchParams
+    const status = sp.get('status') ?? undefined
+    const owner = sp.get('owner')?.trim() || undefined
+    const [dbPositions, dbStatus] = await Promise.all([
+      listRhUniv2Positions(status ?? undefined, owner),
       getDlmmDbStatus(),
     ])
+    let positions = dbPositions
+    if (owner && status !== 'closed') {
+      try {
+        const onchain = await listOnchainRhUniv2Positions(owner)
+        positions = mergeUniv2DbAndOnchain(dbPositions, onchain)
+      } catch (err) {
+        console.warn(
+          '[rh-univ2] on-chain list failed',
+          err instanceof Error ? err.message : err,
+        )
+      }
+    }
     return NextResponse.json({ success: true, positions, dbStatus })
   } catch (error) {
     return NextResponse.json({

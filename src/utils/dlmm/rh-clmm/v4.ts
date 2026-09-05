@@ -8,6 +8,7 @@ import {
   keccak256,
   maxUint256,
   pad,
+  parseAbiItem,
   toHex,
   type Address,
   type Hash,
@@ -1327,16 +1328,99 @@ async function filterOwnedTokenIds(
   return owned;
 }
 
+/** ERC721 Transfer tokenIds from POSM logs (topics[3] = indexed tokenId). */
+export function posmTokenIdsFromTransferLogs(
+  logs: readonly { topics?: readonly Hex[]; data?: Hex }[],
+): bigint[] {
+  const ids = new Set<string>();
+  for (const log of logs) {
+    const topics = log.topics;
+    if (!topics || topics.length < 4) continue;
+    try {
+      const decoded = decodeEventLog({
+        abi: v4PositionManagerAbi,
+        data: log.data ?? '0x',
+        topics: topics as [Hex, ...Hex[]],
+      });
+      if (decoded.eventName === 'Transfer' && decoded.args.tokenId != null) {
+        ids.add(decoded.args.tokenId.toString());
+        continue;
+      }
+    } catch {
+      /* fall through to raw topic */
+    }
+    ids.add(BigInt(topics[3]!).toString());
+  }
+  return [...ids].map((s) => BigInt(s));
+}
+
+const POSM_LOG_CHUNK = 8_000n;
+const POSM_LOG_LOOKBACK = 400_000n;
+const POSM_LOG_BUDGET_MS = 12_000;
+
+const POSM_TRANSFER = parseAbiItem(
+  'event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)',
+);
+
+async function collectPosmTokenIdsFromTransferLogs(
+  chainId: SupportedChainId,
+  posm: Address,
+  owner: Address,
+): Promise<string[]> {
+  const client = getPublicClient(chainId);
+  const head = await client.getBlockNumber();
+  const floor = head > POSM_LOG_LOOKBACK ? head - POSM_LOG_LOOKBACK : 0n;
+  const found = new Set<string>();
+  const t0 = Date.now();
+  let toBlock = head;
+  while (toBlock >= floor && Date.now() - t0 < POSM_LOG_BUDGET_MS) {
+    const fromBlock =
+      toBlock - floor >= POSM_LOG_CHUNK ? toBlock - POSM_LOG_CHUNK + 1n : floor;
+    try {
+      const logs = await client.getLogs({
+        address: posm,
+        event: POSM_TRANSFER,
+        args: { to: owner },
+        fromBlock,
+        toBlock,
+      });
+      for (const id of posmTokenIdsFromTransferLogs(logs)) {
+        found.add(id.toString());
+      }
+    } catch (e) {
+      console.warn(
+        '[v4] Transfer getLogs failed',
+        fromBlock.toString(),
+        toBlock.toString(),
+        e instanceof Error ? e.message : e,
+      );
+    }
+    if (fromBlock === floor) break;
+    toBlock = fromBlock - 1n;
+  }
+  return [...found];
+}
+
+function mergeOwned(owned: bigint[], extra: bigint[]): bigint[] {
+  const have = new Set(owned.map((x) => x.toString()));
+  for (const id of extra) {
+    const s = id.toString();
+    if (!have.has(s)) {
+      have.add(s);
+      owned.push(id);
+    }
+  }
+  return owned;
+}
+
 /**
- * Discover v4 PositionManager NFTs for the hot wallet (fast path).
+ * Discover v4 PositionManager NFTs for the connected owner.
  *
- * POSM is not ERC721Enumerable. Heavy getLogs/reverse-scan made /list hang on BSC.
- *
- * Order:
- * 1) balanceOf — if 0, only verify open ledger ids and return
- * 2) open (+ recent closed) ledger ids
- * 3) Alchemy getNFTsForOwner when available (optional)
- * 4) short reverse-scan only if still short of balanceOf (≤300 ids)
+ * POSM is not ERC721Enumerable. Order:
+ * 1) balanceOf — if 0, only verify ledger ids
+ * 2) ledger / known token ids
+ * 3) POSM Transfer logs (to = owner), chunked, until balanceOf is met
+ * 4) reverse-scan ≤300 nextTokenId only if logs still short
  */
 async function discoverV4TokenIds(chainId: SupportedChainId, knownTokenIds: bigint[] = []): Promise<bigint[]> {
   const t0 = Date.now();
@@ -1360,7 +1444,6 @@ async function discoverV4TokenIds(chainId: SupportedChainId, knownTokenIds: bigi
 
   for (const id of knownTokenIds) ids.add(id.toString());
 
-  // Fast path: no v4 NFTs — skip Alchemy/logs/scan entirely
   if (bal === BigInt(0)) {
     const owned = ids.size
       ? await filterOwnedTokenIds(chainId, posm, ownerLc, ids)
@@ -1371,18 +1454,20 @@ async function discoverV4TokenIds(chainId: SupportedChainId, knownTokenIds: bigi
     return owned;
   }
 
-  // Verify current candidates before any reverse scan
   let owned = await filterOwnedTokenIds(chainId, posm, ownerLc, ids);
 
-  // Marks already cover balanceOf — skip reverse-scan
   if (BigInt(owned.length) >= bal) {
     console.log(
-      `[v4] discover skip scan chain=${chainId} balanceOf=${bal} owned=${owned.length} ${Date.now() - t0}ms`,
+      `[v4] discover skip logs chain=${chainId} balanceOf=${bal} owned=${owned.length} ${Date.now() - t0}ms`,
     );
     return owned;
   }
 
-  // Short reverse-scan only if still missing (no multi-minute 3k scan)
+  const fromLogs = await collectPosmTokenIdsFromTransferLogs(chainId, posm, owner);
+  for (const s of fromLogs) ids.add(s);
+  const logOwned = await filterOwnedTokenIds(chainId, posm, ownerLc, fromLogs);
+  owned = mergeOwned(owned, logOwned);
+
   if (BigInt(owned.length) < bal) {
     let nextId = BigInt(0);
     try {
@@ -1395,7 +1480,7 @@ async function discoverV4TokenIds(chainId: SupportedChainId, knownTokenIds: bigi
       nextId = BigInt(0);
     }
     if (nextId > BigInt(1)) {
-      const maxScan = BigInt(300); // ~300 RPCs worst case, batched
+      const maxScan = BigInt(300);
       const toCheck: string[] = [];
       let scanned = BigInt(0);
       for (let id = nextId - BigInt(1); id > BigInt(0) && scanned < maxScan; id--, scanned++) {
@@ -1404,14 +1489,11 @@ async function discoverV4TokenIds(chainId: SupportedChainId, knownTokenIds: bigi
       }
       if (toCheck.length) {
         const more = await filterOwnedTokenIds(chainId, posm, ownerLc, toCheck);
-        const have = new Set(owned.map((x) => x.toString()));
-        for (const id of more) {
-          if (!have.has(id.toString())) owned.push(id);
-        }
+        owned = mergeOwned(owned, more);
       }
       if (BigInt(owned.length) < bal) {
         console.warn(
-          `[v4] discover incomplete chain=${chainId} balanceOf=${bal} owned=${owned.length} (scan≤${maxScan})`,
+          `[v4] discover incomplete chain=${chainId} balanceOf=${bal} owned=${owned.length} (logs+scan≤${maxScan})`,
         );
       }
     }

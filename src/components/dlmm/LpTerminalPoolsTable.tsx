@@ -19,7 +19,7 @@ import {
   type SortDir,
 } from '@/utils/dlmm/table-sort'
 
-type ProtoFilter = '' | 'univ3' | 'univ2'
+type ProtoFilter = '' | 'univ3' | 'univ2' | 'univ4'
 
 type SortKey =
   | 'pair'
@@ -161,7 +161,8 @@ export default function LpTerminalPoolsTable() {
   }, [rows, sortKey, sortDir])
 
   const statusLine = useMemo(() => {
-    const catalog = (totals.univ2 || 0) + (totals.univ3 || 0)
+    const catalog =
+      (totals.univ2 || 0) + (totals.univ3 || 0) + (totals.univ4 || 0)
     return `${sortedRows.length} shown · uniswap catalog ${catalog.toLocaleString()}${
       count ? ` · ${count.toLocaleString()} match` : ''
     }${!ready ? ' · indexer warming…' : ''}`
@@ -207,6 +208,7 @@ export default function LpTerminalPoolsTable() {
         />
         <div className="flex flex-wrap gap-1.5">
           {chip('', 'ALL', proto === '')}
+          {chip('univ4', 'UNI V4', proto === 'univ4')}
           {chip('univ3', 'UNI V3', proto === 'univ3')}
           {chip('univ2', 'UNI V2', proto === 'univ2')}
           {chip('dust', hideDust ? 'HIDE <$1K' : 'SHOW DUST', hideDust)}
@@ -225,7 +227,7 @@ export default function LpTerminalPoolsTable() {
         {statusLine}
         {' · '}
         <span className="text-gray-400">
-          Add v1 = CLMM UniV3 · Add v2 = DAMM UniV2 zap · click Pair for GMGN
+          Add v1 = CLMM UniV3/V4 · Add v2 = DAMM UniV2 zap · click Pair for GMGN
         </span>
       </p>
 

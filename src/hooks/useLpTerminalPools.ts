@@ -9,8 +9,7 @@ import {
 
 export type LpTerminalPoolsQuery = {
   q?: string
-  /** empty = all, or 'univ3' | 'univ2' */
-  proto?: '' | 'univ3' | 'univ2'
+  proto?: '' | 'univ3' | 'univ2' | 'univ4'
   hideDust?: boolean
   sort?: 'tvl' | 'vol' | 'created'
   limit?: number
@@ -21,7 +20,7 @@ type ProxyResponse = LpTerminalPoolsResponse & {
   error?: string
   upstream?: string
   count?: number
-  totals?: { univ2?: number; univ3?: number }
+  totals?: { univ2?: number; univ3?: number; univ4?: number }
 }
 
 async function fetchLpTerminalPools(
@@ -29,7 +28,7 @@ async function fetchLpTerminalPools(
 ): Promise<{
   rows: LpTerminalPoolRow[]
   count: number
-  totals: { univ2: number; univ3: number }
+  totals: { univ2: number; univ3: number; univ4: number }
   ready: boolean
   upstream: string
 }> {
@@ -63,6 +62,7 @@ async function fetchLpTerminalPools(
     totals: {
       univ2: data.totals?.univ2 ?? 0,
       univ3: data.totals?.univ3 ?? 0,
+      univ4: data.totals?.univ4 ?? 0,
     },
     ready: data.ready !== false,
     upstream: data.upstream ?? '',
@@ -91,7 +91,7 @@ export function useLpTerminalPools(
   return {
     rows: query.data?.rows ?? [],
     count: query.data?.count ?? 0,
-    totals: query.data?.totals ?? { univ2: 0, univ3: 0 },
+    totals: query.data?.totals ?? { univ2: 0, univ3: 0, univ4: 0 },
     ready: query.data?.ready ?? true,
     upstream: query.data?.upstream ?? '',
     isLoading: query.isLoading,

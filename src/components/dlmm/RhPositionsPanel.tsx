@@ -37,6 +37,10 @@ import {
   isAlreadyEmptyCloseError,
 } from '@/utils/dlmm/rh-clmm-already-empty'
 import { nextCloseProtocolAfterEmpty } from '@/utils/dlmm/rh-clmm-pool-protocol'
+import {
+  closedClmmKeys,
+  mergeClmmOpenPositions,
+} from '@/utils/dlmm/rh-position-rows'
 
 type StatusFilter = 'open' | 'oor' | 'closed'
 
@@ -192,16 +196,8 @@ export default function RhPositionsPanel() {
     [closedClmmData?.positions],
   )
 
-  const markByKey = useMemo(() => {
-    const map = new Map<string, RhClmmPosition>()
-    for (const m of openMarks) {
-      map.set(`${m.protocol}:${m.token_id}`, m)
-    }
-    return map
-  }, [openMarks])
-
-  const dammOpenQ = useRhUniv2Positions('open')
-  const dammClosedQ = useRhUniv2Positions('closed')
+  const dammOpenQ = useRhUniv2Positions('open', wallet.address ?? undefined)
+  const dammClosedQ = useRhUniv2Positions('closed', wallet.address ?? undefined)
 
   const ownerLc = wallet.address?.toLowerCase() ?? ''
   const dammOpen = useMemo(
@@ -374,13 +370,50 @@ export default function RhPositionsPanel() {
   }
 
   const openRows: UnifiedRow[] = useMemo(() => {
-    const byKey = new Map<string, UnifiedRow>()
+    const rows: UnifiedRow[] = []
+    const merged = mergeClmmOpenPositions(
+      openMarks,
+      liveRows,
+      closedClmmKeys(closedClmmMarks),
+    )
 
-    // Seed CLMM from marks first (instant paint)
-    for (const m of openMarks) {
-      const key = `${m.protocol}:${m.token_id}`
-      byKey.set(key, {
-        key: `clmm-${key}`,
+    for (const item of merged) {
+      const m = item.mark
+      const r = item.live
+      if (r) {
+        const entry = r.entryValueUsd ?? m?.entry_value_usd ?? 0
+        const pnl =
+          r.pnlPct != null
+            ? r.pnlPct
+            : entry > 0
+              ? ((r.valueUsd - entry) / entry) * 100
+              : (m?.pnl_pct ?? null)
+        const poolAddr = r.poolAddress || m?.pool_address || ''
+        rows.push({
+          key: `clmm-${item.key}`,
+          kind: 'clmm',
+          pair: r.pairLabel,
+          protocolLabel: r.protocol.toUpperCase(),
+          valueUsd: r.valueUsd,
+          unclaimedUsd: r.unclaimedFeesUsd,
+          inRange: r.inRange,
+          pnlPct: pnl != null && Number.isFinite(pnl) ? pnl : null,
+          aprPct: poolAddr
+            ? (aprByPool.get(poolAddr.toLowerCase()) ?? null)
+            : null,
+          ageMs: ageFromIso(r.createdAt ?? m?.created_at),
+          poolAddress: poolAddr,
+          live: true,
+          clmm: liveRowToOnChain(r),
+          clmmMarkId: r.markId ?? m?.id,
+          clmmTokenId: BigInt(r.tokenId),
+          clmmProtocol: r.protocol === 'v4' ? 'v4' : 'v3',
+        })
+        continue
+      }
+      if (!m) continue
+      rows.push({
+        key: `clmm-${item.key}`,
         kind: 'clmm',
         pair: m.pair_label || `#${m.token_id}`,
         protocolLabel: m.protocol.toUpperCase(),
@@ -421,44 +454,6 @@ export default function RhPositionsPanel() {
             : undefined,
       })
     }
-
-    // Enrich from Redis/API live snapshot — only for marks still open.
-    // Live-only rows after a close must not resurrect into the Open list.
-    for (const r of liveRows) {
-      const key = `${r.protocol}:${r.tokenId}`
-      const mark = markByKey.get(key)
-      if (!mark) continue
-      const entry = r.entryValueUsd ?? mark.entry_value_usd ?? 0
-      const pnl =
-        r.pnlPct != null
-          ? r.pnlPct
-          : entry > 0
-            ? ((r.valueUsd - entry) / entry) * 100
-            : (mark.pnl_pct ?? null)
-      const poolAddr = r.poolAddress || mark.pool_address || ''
-      byKey.set(key, {
-        key: `clmm-${key}`,
-        kind: 'clmm',
-        pair: r.pairLabel,
-        protocolLabel: r.protocol.toUpperCase(),
-        valueUsd: r.valueUsd,
-        unclaimedUsd: r.unclaimedFeesUsd,
-        inRange: r.inRange,
-        pnlPct: pnl != null && Number.isFinite(pnl) ? pnl : null,
-        aprPct: poolAddr
-          ? (aprByPool.get(poolAddr.toLowerCase()) ?? null)
-          : null,
-        ageMs: ageFromIso(r.createdAt ?? mark.created_at),
-        poolAddress: poolAddr,
-        live: true,
-        clmm: liveRowToOnChain(r),
-        clmmMarkId: r.markId ?? mark.id,
-        clmmTokenId: BigInt(r.tokenId),
-        clmmProtocol: r.protocol === 'v4' ? 'v4' : 'v3',
-      })
-    }
-
-    const rows = [...byKey.values()]
     for (const p of dammOpen) {
       rows.push({
         key: `damm-${p.id}`,
@@ -477,7 +472,7 @@ export default function RhPositionsPanel() {
       })
     }
     return rows
-  }, [openMarks, liveRows, markByKey, dammOpen, aprByPool])
+  }, [openMarks, liveRows, closedClmmMarks, dammOpen, aprByPool])
 
   const closedRows: UnifiedRow[] = useMemo(() => {
     const rows: UnifiedRow[] = []
@@ -702,8 +697,7 @@ export default function RhPositionsPanel() {
             const canCloseClmm =
               r.kind === 'clmm' &&
               closeTokenId != null &&
-              closeProtocol != null &&
-              !!r.clmmMarkId
+              closeProtocol != null
             return (
               <tr
                 key={r.key}

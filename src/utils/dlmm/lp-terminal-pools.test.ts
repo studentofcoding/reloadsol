@@ -4,6 +4,7 @@ import {
   feeRateFromPpm,
   fees24hUsd,
   pairLabel,
+  protoBadge,
   toPoolRows,
   type LpTerminalPoolRaw,
 } from './lp-terminal-pools'
@@ -51,5 +52,9 @@ describe('lp-terminal-pools helpers', () => {
     expect(rows[0]!.fees24hUsd).toBeCloseTo(10_000)
     expect(rows[0]!.feeAprPct).toBeCloseTo(365)
     expect(rows[0]!.protoLabel).toBe('UNI V3')
+  })
+
+  it('badges univ4', () => {
+    expect(protoBadge('univ4')).toBe('UNI V4')
   })
 })
