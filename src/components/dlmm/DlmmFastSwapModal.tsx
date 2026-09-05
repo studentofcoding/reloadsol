@@ -23,7 +23,7 @@ import {
   executeGmgnBulkBuy,
 } from '@/utils/gmgn-bulk-trade'
 import { executeRhParentKyberBuy } from '@/utils/dlmm/rh-kyber-swap'
-import { getRhBatchExecutorAddress } from '@/utils/dlmm/rh-batch-executor'
+import { getRhBatchExecutorAddress, RH_PLATFORM_FEE_LABEL } from '@/utils/dlmm/rh-batch-executor'
 import type { RhSwapQuote } from '@/utils/dlmm/rh-univ2-swap'
 import { RH_USDG, RH_WETH } from '@/utils/dlmm/rh-univ2'
 import {
@@ -432,6 +432,11 @@ function DlmmFastSwapModalBody({
         sequentialSignHint={
           isRh && isParent && !getRhBatchExecutorAddress()
         }
+        feeHint={
+          isRh && isParent && getRhBatchExecutorAddress()
+            ? RH_PLATFORM_FEE_LABEL
+            : undefined
+        }
         onCancel={() => setConfirmOpen(false)}
         onConfirm={() => void runConfirmed()}
       />
@@ -574,6 +579,9 @@ function DlmmFastSwapModalBody({
             {busy ? '…' : 'Review'}
           </button>
         </div>
+        {isRh && isParent && getRhBatchExecutorAddress() ? (
+          <p className="text-xs text-gray-500 text-center">{RH_PLATFORM_FEE_LABEL}</p>
+        ) : null}
       </div>
     </div>
   )

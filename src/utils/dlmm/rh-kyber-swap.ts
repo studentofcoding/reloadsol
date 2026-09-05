@@ -30,8 +30,16 @@ import {
   isRhPermit2SwapsEnabled,
   permit2Abi,
   planExecutorBatch,
+  platformFeeAmount,
+  platformFeeCover,
   type ExecutorSwapLeg,
 } from '@/utils/dlmm/rh-batch-executor'
+import {
+  isAutoSlippage,
+  rawImpactToPct,
+  resolveTradeSlippageBps,
+  worstImpactPct,
+} from '@/utils/auto-slippage'
 import {
   clientKyberBuild,
   clientKyberRoute,
@@ -133,6 +141,27 @@ async function quoteAndBuild(params: {
   }
 }
 
+function kyberRouteImpactPct(
+  summary: Record<string, unknown> | undefined,
+): number | null {
+  if (!summary) return null
+  const raw = summary.priceImpact ?? summary.priceImpactPct ?? summary.price_impact
+  const n = typeof raw === 'number' ? raw : Number(raw)
+  if (!Number.isFinite(n)) return null
+  return rawImpactToPct(n)
+}
+
+function resolveBuildSlippageBps(
+  selectedBps: number,
+  routes: Array<Error | { routeSummary: Record<string, unknown> }>,
+): number {
+  if (!isAutoSlippage(selectedBps)) return selectedBps
+  const impacts = routes.map((r) =>
+    r instanceof Error ? null : kyberRouteImpactPct(r.routeSummary),
+  )
+  return resolveTradeSlippageBps(selectedBps, worstImpactPct(impacts))
+}
+
 type KyberBuilt = Awaited<ReturnType<typeof quoteAndBuild>>
 
 /**
@@ -170,11 +199,14 @@ export async function prepareKyberSwapLegsParallel(params: {
   slippageBps: number
   approval?: KyberApprovalPlan
   buildSender?: Address
-}): Promise<Array<{ calls: RhTxCall[]; swap: KyberPreparedSwap } | { error: string }>> {
+}): Promise<{
+  plans: Array<{ calls: RhTxCall[]; swap: KyberPreparedSwap } | { error: string }>
+  slippageBps: number
+}> {
   const { publicClient, account, legs, slippageBps } = params
   const approval: KyberApprovalPlan = params.approval ?? { mode: 'router' }
   const buildSender = params.buildSender ?? account
-  if (legs.length === 0) return []
+  if (legs.length === 0) return { plans: [], slippageBps }
 
   // Phase 1: all routes concurrently (per-leg errors isolated)
   const routes = await Promise.all(
@@ -191,6 +223,8 @@ export async function prepareKyberSwapLegsParallel(params: {
     ),
   )
 
+  const buildSlippageBps = resolveBuildSlippageBps(slippageBps, routes)
+
   // Phase 2: all builds concurrently (skip legs whose route failed)
   const builds = await Promise.all(
     routes.map((route) =>
@@ -200,7 +234,7 @@ export async function prepareKyberSwapLegsParallel(params: {
             routeSummary: route.routeSummary,
             sender: buildSender,
             recipient: account,
-            slippageTolerance: slippageBps,
+            slippageTolerance: buildSlippageBps,
           })
             .then((build): KyberBuilt => {
               const routerAddress = (build.routerAddress ||
@@ -274,7 +308,7 @@ export async function prepareKyberSwapLegsParallel(params: {
   )
 
   const now = Math.floor(Date.now() / 1000)
-  return legs.map((leg, i) => {
+  const plans = legs.map((leg, i) => {
     const built = builds[i]
     if (built instanceof Error) return { error: built.message }
     const state = allowanceStates[i]
@@ -302,7 +336,12 @@ export async function prepareKyberSwapLegsParallel(params: {
         }
       } else {
         // REL-7: Permit2 path (mirrors v4.ts planPermit2Calls).
-        if (state.permit2Erc20Allowance < amountIn) {
+        const spender = (approval as { mode: 'permit2'; spender?: Address }).spender ?? built.routerAddress
+        const executorSpender = Boolean(
+          (approval as { mode: 'permit2'; spender?: Address }).spender,
+        )
+        const walletDebit = executorSpender ? platformFeeCover(amountIn) : amountIn
+        if (state.permit2Erc20Allowance < walletDebit) {
           calls.push({
             to: token,
             data: encodeFunctionData({
@@ -312,8 +351,11 @@ export async function prepareKyberSwapLegsParallel(params: {
             }),
           })
         }
-        const spender = (approval as { mode: 'permit2'; spender?: Address }).spender ?? built.routerAddress
-        const need = amountIn > PERMIT2_MAX_UINT160 ? PERMIT2_MAX_UINT160 : amountIn
+        const need = executorSpender
+          ? PERMIT2_MAX_UINT160
+          : amountIn > PERMIT2_MAX_UINT160
+            ? PERMIT2_MAX_UINT160
+            : amountIn
         if (state.allowedAmount < need || state.expiration <= now + 60) {
           calls.push({
             to: PERMIT2,
@@ -333,6 +375,7 @@ export async function prepareKyberSwapLegsParallel(params: {
     })
     return { calls, swap }
   })
+  return { plans, slippageBps: buildSlippageBps }
 }
 
 /**
@@ -506,20 +549,21 @@ export async function executeRhParentKyberSwap(params: {
 /** Parent bulk buy — amountHuman is per-token (caller splits). */
 export async function executeRhParentKyberBuy(params: {
   publicClient: PublicClient
-  walletClient: WalletClient
+  walletClient: WalletClient | Promise<WalletClient>
   account: Address
   amountHuman: number
   tokenMints: GmgnBulkBuyItem[]
   slippageBps: number
   quote?: RhSwapQuote
-}): Promise<{ success: boolean; results: GmgnBulkLegResult[] }> {
+}): Promise<{ success: boolean; results: GmgnBulkLegResult[]; slippageBps: number }> {
   const quote = params.quote ?? 'ETH'
   const tokenIn = kyberQuoteTokenAddress(quote)
   const decimals = kyberQuoteDecimals(quote)
   const amountIn = toKyberAmountRaw(params.amountHuman, decimals)
+  const walletClientReady = Promise.resolve(params.walletClient)
 
   if (params.tokenMints.length === 0) {
-    return { success: false, results: [] }
+    return { success: false, results: [], slippageBps: params.slippageBps }
   }
 
   const prepared: Array<{
@@ -541,18 +585,36 @@ export async function executeRhParentKyberBuy(params: {
       ? { mode: 'permit2' }
       : { mode: 'router' }
 
-  const legPlans = await prepareKyberSwapLegsParallel({
-    publicClient: params.publicClient,
-    account: params.account,
-    legs: params.tokenMints.map((item) => ({
-      tokenIn,
-      tokenOut: item.tokenAddress,
-      amountIn,
-    })),
-    slippageBps: params.slippageBps,
-    approval,
-    buildSender: executor ?? undefined,
-  })
+  let legPlans: Awaited<ReturnType<typeof prepareKyberSwapLegsParallel>>['plans']
+  let usedSlippageBps = params.slippageBps
+  try {
+    const preparedLegs = await prepareKyberSwapLegsParallel({
+      publicClient: params.publicClient,
+      account: params.account,
+      legs: params.tokenMints.map((item) => ({
+        tokenIn,
+        tokenOut: item.tokenAddress,
+        amountIn,
+      })),
+      slippageBps: params.slippageBps,
+      approval,
+      buildSender: executor ?? undefined,
+    })
+    legPlans = preparedLegs.plans
+    usedSlippageBps = preparedLegs.slippageBps
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error)
+    return {
+      success: false,
+      slippageBps: params.slippageBps,
+      results: params.tokenMints.map((item) => ({
+        tokenAddress: item.tokenAddress,
+        symbol: item.symbol,
+        success: false,
+        error: msg,
+      })),
+    }
+  }
   legPlans.forEach((plan, i) => {
     const item = params.tokenMints[i]
     if ('error' in plan) {
@@ -570,8 +632,10 @@ export async function executeRhParentKyberBuy(params: {
   })
 
   if (prepared.length === 0) {
-    return { success: false, results: prepFailures }
+    return { success: false, results: prepFailures, slippageBps: usedSlippageBps }
   }
+
+  const walletClient = await walletClientReady
 
   // ── REL-6: executor mode — ONE atomic executeBatch tx for wrap+N swaps ──
   if (executor) {
@@ -593,9 +657,9 @@ export async function executeRhParentKyberBuy(params: {
             address: params.account,
           })
           const reserve = GAS_RESERVE_WEI[RH_CHAIN_ID]
-          if (ethBal < shortfall + reserve) {
+          if (ethBal < shortfall + platformFeeAmount(shortfall) + reserve) {
             throw new Error(
-              'Insufficient ETH/WETH (need wrap shortfall + gas reserve)',
+              'Insufficient ETH/WETH (need wrap shortfall + 0.25% fee + gas reserve)',
             )
           }
         }
@@ -613,6 +677,7 @@ export async function executeRhParentKyberBuy(params: {
       const msg = error instanceof Error ? error.message : String(error)
       return {
         success: false,
+        slippageBps: usedSlippageBps,
         results: [
           ...prepFailures,
           ...prepared.map(({ item }) => ({
@@ -634,7 +699,7 @@ export async function executeRhParentKyberBuy(params: {
       swapData: p.swap.data,
       swapValueWei: p.swap.valueWei,
     }))
-    const { batch, txValue } = planExecutorBatch({
+    const { batch, txValue, feeTokens, tradeAmounts } = planExecutorBatch({
       executor,
       account: params.account,
       wethWrapWei,
@@ -642,7 +707,7 @@ export async function executeRhParentKyberBuy(params: {
     })
     const batchCall: RhTxCall = {
       to: executor,
-      data: encodeExecuteBatch(batch),
+      data: encodeExecuteBatch(batch, feeTokens, tradeAmounts),
       value: txValue,
     }
     // Wallet calls: per-leg Permit2 approvals (everything but the direct swap
@@ -651,7 +716,7 @@ export async function executeRhParentKyberBuy(params: {
     try {
       const { hash } = await executeRhWalletCalls({
         publicClient: params.publicClient,
-        walletClient: params.walletClient,
+        walletClient,
         account: params.account,
         calls: walletCalls,
       })
@@ -667,6 +732,7 @@ export async function executeRhParentKyberBuy(params: {
       return {
         success: results.length > 0 && results.every((r) => r.success),
         results,
+        slippageBps: usedSlippageBps,
       }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error)
@@ -674,6 +740,7 @@ export async function executeRhParentKyberBuy(params: {
       // failed, no leg executed.
       return {
         success: false,
+        slippageBps: usedSlippageBps,
         results: [
           ...prepFailures,
           ...prepared.map(({ item }) => ({
@@ -703,6 +770,7 @@ export async function executeRhParentKyberBuy(params: {
     const msg = error instanceof Error ? error.message : String(error)
     return {
       success: false,
+      slippageBps: usedSlippageBps,
       results: [
         ...prepFailures,
         ...prepared.map(({ item }) => ({
@@ -719,7 +787,7 @@ export async function executeRhParentKyberBuy(params: {
   try {
     const { hash } = await executeRhWalletCalls({
       publicClient: params.publicClient,
-      walletClient: params.walletClient,
+      walletClient,
       account: params.account,
       calls: plan.flatCalls,
       onProgress: plan.onProgress,
@@ -735,6 +803,7 @@ export async function executeRhParentKyberBuy(params: {
     return {
       success: results.length > 0 && results.every((r) => r.success),
       results,
+      slippageBps: usedSlippageBps,
     }
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
@@ -754,6 +823,7 @@ export async function executeRhParentKyberBuy(params: {
     return {
       success: false,
       results: [...prepFailures, ...legResults],
+      slippageBps: usedSlippageBps,
     }
   }
 }
@@ -800,7 +870,11 @@ export async function executeRhParentKyberSell(params: {
     ),
   )
 
-  const sellable: Array<{ leg: (typeof params.legs)[number]; amountIn: string }> = []
+  const sellable: Array<{
+    leg: (typeof params.legs)[number]
+    amountIn: string
+    feeNotional: bigint
+  }> = []
   const prepFailures: GmgnBulkLegResult[] = []
   balancePlans.forEach((plan, i) => {
     const leg = params.legs[i]
@@ -812,22 +886,39 @@ export async function executeRhParentKyberSell(params: {
         error: plan.message,
       })
     } else {
-      sellable.push(plan)
+        sellable.push({ ...plan, feeNotional: BigInt(plan.amountIn) })
     }
   })
 
   // Phase 2: parallel route+build for the sellable legs
   // (mode selection mirrors the buy path — see executeRhParentKyberBuy).
   const executor = getRhBatchExecutorAddress()
+  const kyberSellable = sellable.flatMap((s) => {
+    if (!executor) return [s]
+    const kyberIn = s.feeNotional - platformFeeAmount(s.feeNotional)
+    if (kyberIn <= BigInt(0)) {
+      prepFailures.push({
+        tokenAddress: s.leg.tokenAddress,
+        symbol: s.leg.symbol,
+        success: false,
+        error: 'Amount too small for 0.25% platform fee',
+      })
+      return []
+    }
+    return [{ ...s, amountIn: kyberIn.toString() }]
+  })
+  if (kyberSellable.length === 0) {
+    return { success: false, results: prepFailures }
+  }
   const approval: KyberApprovalPlan = executor
     ? { mode: 'permit2', spender: executor }
     : isRhPermit2SwapsEnabled()
       ? { mode: 'permit2' }
       : { mode: 'router' }
-  const legPlans = await prepareKyberSwapLegsParallel({
+  const { plans: legPlans } = await prepareKyberSwapLegsParallel({
     publicClient: params.publicClient,
     account: params.account,
-    legs: sellable.map(({ leg, amountIn }) => ({
+    legs: kyberSellable.map(({ leg, amountIn }) => ({
       tokenIn: leg.tokenAddress,
       tokenOut,
       amountIn,
@@ -841,9 +932,10 @@ export async function executeRhParentKyberSell(params: {
     leg: (typeof params.legs)[number]
     calls: RhTxCall[]
     swap: KyberPreparedSwap
+    feeNotional: bigint
   }> = []
   legPlans.forEach((plan, i) => {
-    const { leg } = sellable[i]
+    const { leg, feeNotional } = kyberSellable[i]
     if ('error' in plan) {
       prepFailures.push({
         tokenAddress: leg.tokenAddress,
@@ -852,7 +944,7 @@ export async function executeRhParentKyberSell(params: {
         error: plan.error,
       })
     } else {
-      prepared.push({ leg, calls: plan.calls, swap: plan.swap })
+      prepared.push({ leg, calls: plan.calls, swap: plan.swap, feeNotional })
     }
   })
 
@@ -870,8 +962,9 @@ export async function executeRhParentKyberSell(params: {
       approveAmount: p.swap.amountIn,
       swapData: p.swap.data,
       swapValueWei: p.swap.valueWei,
+      feeNotional: p.feeNotional,
     }))
-    const { batch, txValue } = planExecutorBatch({
+    const { batch, txValue, feeTokens, tradeAmounts } = planExecutorBatch({
       executor,
       account: params.account,
       wethWrapWei: BigInt(0),
@@ -879,7 +972,7 @@ export async function executeRhParentKyberSell(params: {
     })
     const batchCall: RhTxCall = {
       to: executor,
-      data: encodeExecuteBatch(batch),
+      data: encodeExecuteBatch(batch, feeTokens, tradeAmounts),
       value: txValue,
     }
     const walletCalls = executorWalletCalls(prepared, batchCall)

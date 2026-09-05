@@ -82,7 +82,7 @@ import {
 } from "@/utils/gmgn-bulk-trade";
 import type { RhSwapQuote } from "@/utils/dlmm/rh-univ2-swap";
 import { executeRhParentKyberBuy } from "@/utils/dlmm/rh-kyber-swap";
-import { getRhBatchExecutorAddress } from "@/utils/dlmm/rh-batch-executor";
+import { getRhBatchExecutorAddress, RH_PLATFORM_FEE_LABEL } from "@/utils/dlmm/rh-batch-executor";
 import { prefetchSwapTransaction, fetchSwapQuote } from "@/utils/swap-executor";
 import {
   AUTO_SLIPPAGE_BPS,
@@ -755,17 +755,8 @@ export default function BulkTokenBuyer() {
       const ethUsd = await fetchEthUsdSpot();
       const impacts = await Promise.all(
         validMints.map(async (mint) => {
+          if (!tradeFromAddress) return null;
           try {
-            if (useRhParentPath) {
-              const sim = await simulateRhParentBuyLeg({
-                amountHuman: perTokenHuman,
-                tokenAddress: mint,
-                quote: rhQuote,
-                ethUsd,
-              });
-              return sim.priceImpactPct;
-            }
-            if (!tradeFromAddress) return null;
             const sim = await simulateRhBoundBuyLeg({
               from: tradeFromAddress,
               amountHuman: perTokenHuman,
@@ -806,7 +797,6 @@ export default function BulkTokenBuyer() {
     solAmount,
     validMints,
     isRhChain,
-    useRhParentPath,
     tradeFromAddress,
     rhQuote,
     selectedCurrency,
@@ -842,21 +832,21 @@ export default function BulkTokenBuyer() {
       const totalHuman = parseFloat(solAmount);
       const perTokenHuman =
         tokenMints.length > 0 ? totalHuman / tokenMints.length : totalHuman;
-      const slippageBps = await resolveBuySlippageBps();
+      let slippageBps = slippage;
       let results: Awaited<ReturnType<typeof executeGmgnBulkBuy>>["results"];
       let success: boolean;
       if (useRhParentPath) {
-        const wc = await rhWallet.getWalletClient();
-        ({ results, success } = await executeRhParentKyberBuy({
+        ({ results, success, slippageBps } = await executeRhParentKyberBuy({
           publicClient: rhWallet.getPublicClient(),
-          walletClient: wc,
+          walletClient: rhWallet.getWalletClient(),
           account: tradeFromAddress as Address,
           amountHuman: perTokenHuman,
           tokenMints,
-          slippageBps,
+          slippageBps: slippage,
           quote: rhQuote,
         }));
       } else {
+        slippageBps = await resolveBuySlippageBps();
         const inputToken =
           effectiveChain === "sol" && selectedCurrency === "USDC"
             ? TOKENS.USDC
@@ -1627,6 +1617,11 @@ export default function BulkTokenBuyer() {
         busy={gmgnConfirmBusy}
         sequentialSignHint={
           useRhParentPath && !getRhBatchExecutorAddress()
+        }
+        feeHint={
+          useRhParentPath && getRhBatchExecutorAddress()
+            ? RH_PLATFORM_FEE_LABEL
+            : undefined
         }
         onCancel={() => setGmgnConfirmOpen(false)}
         onConfirm={() => void runConfirmedRhBuy()}
@@ -2621,7 +2616,7 @@ export default function BulkTokenBuyer() {
                   <div className="space-y-3 text-xs text-gray-400">
                     {isRhChain
                       ? useRhParentPath
-                        ? "Robinhood Parent: Kyber + Rabby. No Solana Raptor/Jupiter."
+                        ? `Robinhood Parent: Kyber + Rabby. ${getRhBatchExecutorAddress() ? RH_PLATFORM_FEE_LABEL + ". " : ""}No Solana Raptor/Jupiter.`
                         : "Robinhood Bound: GMGN server-sign. No Solana Raptor/Jupiter."
                       : `Execution via GMGN (${chainNative.nativeSymbol}). Fees set by the router.`}
                   </div>

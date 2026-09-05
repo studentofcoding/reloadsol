@@ -20,7 +20,7 @@ import {
   executeRhParentKyberBuy,
   executeRhParentKyberSell,
 } from '@/utils/dlmm/rh-kyber-swap'
-import { getRhBatchExecutorAddress } from '@/utils/dlmm/rh-batch-executor'
+import { getRhBatchExecutorAddress, RH_PLATFORM_FEE_LABEL } from '@/utils/dlmm/rh-batch-executor'
 import {
   GMGN_RH_USDG,
   GMGN_RH_WETH,
@@ -682,6 +682,11 @@ export default function RhGmgnSwapPanel({
         legs={confirmLegs}
         busy={busy}
         sequentialSignHint={isParent && !getRhBatchExecutorAddress()}
+        feeHint={
+          isParent && getRhBatchExecutorAddress()
+            ? RH_PLATFORM_FEE_LABEL
+            : undefined
+        }
         submitPhase={submitPhase}
         resultMessage={submitResult && !submitResult.ok ? submitResult.message : undefined}
         txHash={submitResult?.hash}
@@ -823,6 +828,9 @@ export default function RhGmgnSwapPanel({
               className="mt-1 w-full rounded-lg bg-gray-800 border border-gray-600 px-3 py-2 text-white"
             />
           </label>
+          {isParent && getRhBatchExecutorAddress() ? (
+            <p className="text-xs text-gray-500">{RH_PLATFORM_FEE_LABEL}</p>
+          ) : null}
 
           {error ? <p className="text-sm text-red-400">{error}</p> : null}
           {okMsg ? <p className="text-sm text-emerald-400">{okMsg}</p> : null}
@@ -901,6 +909,9 @@ export default function RhGmgnSwapPanel({
               className="mt-1 w-full rounded-lg bg-gray-800 border border-gray-600 px-3 py-2 text-white"
             />
           </label>
+          {isParent && getRhBatchExecutorAddress() ? (
+            <p className="text-xs text-gray-500">{RH_PLATFORM_FEE_LABEL}</p>
+          ) : null}
 
           {error ? <p className="text-sm text-red-400">{error}</p> : null}
           {okMsg ? <p className="text-sm text-emerald-400">{okMsg}</p> : null}

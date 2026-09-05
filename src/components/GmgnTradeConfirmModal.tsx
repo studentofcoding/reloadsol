@@ -36,6 +36,7 @@ export default function GmgnTradeConfirmModal({
   legs,
   busy,
   sequentialSignHint,
+  feeHint,
   submitPhase,
   resultMessage,
   txHash,
@@ -50,6 +51,8 @@ export default function GmgnTradeConfirmModal({
   busy?: boolean
   /** Parent Rabby: wallet may ask once per Approve / Swap (no EIP-5792 atomic). */
   sequentialSignHint?: boolean
+  /** Parent BatchExecutor: non-skippable input fee, e.g. "0.25% platform fee". */
+  feeHint?: string
   /**
    * On-chain settlement phase. Defaults from `busy` when omitted so existing
    * callers keep the legacy "Submitting…" button. When provided, the modal
@@ -171,6 +174,9 @@ export default function GmgnTradeConfirmModal({
                 supported; otherwise Approve then Swap (two prompts, one app
                 click).
               </p>
+            ) : null}
+            {feeHint ? (
+              <p className="mt-2 text-xs text-gray-400">{feeHint}</p>
             ) : null}
 
             {isSubmitting ? (

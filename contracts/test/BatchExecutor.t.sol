@@ -143,6 +143,7 @@ contract MockRouter {
 contract BatchExecutorTest is TestBase {
     address constant OWNER = address(0xA11CE);
     address constant USER2 = address(0xB0B);
+    address constant FEE_TO = address(0xFEE);
 
     MockWETH weth;
     MockERC20 usdg;
@@ -157,7 +158,7 @@ contract BatchExecutorTest is TestBase {
         tokenOut = new MockERC20("OUT");
         permit2 = new MockPermit2Pull();
         router = new MockRouter();
-        exec = new BatchExecutor(address(permit2), address(weth), OWNER);
+        exec = new BatchExecutor(address(permit2), address(weth), OWNER, FEE_TO);
 
         // Fund owner with USDG and set up Permit2 path:
         usdg.mint(OWNER, 1_000 ether);
@@ -179,6 +180,22 @@ contract BatchExecutorTest is TestBase {
         returns (BatchExecutor.Call memory)
     {
         return BatchExecutor.Call({target: target, value: value, data: data, allowFailure: false});
+    }
+
+    function _none() internal pure returns (address[] memory t, uint256[] memory a) {
+        t = new address[](0);
+        a = new uint256[](0);
+    }
+
+    function _oneFee(address token, uint256 trade)
+        internal
+        pure
+        returns (address[] memory t, uint256[] memory a)
+    {
+        t = new address[](1);
+        a = new uint256[](1);
+        t[0] = token;
+        a[0] = trade;
     }
 
     // Happy path: pull USDG via Permit2 + approve router + swap, one tx.
@@ -211,7 +228,7 @@ contract BatchExecutorTest is TestBase {
         );
 
         vm.prank(OWNER);
-        exec.executeBatch(calls);
+        exec.executeBatch(calls, new address[](0), new uint256[](0));
 
         assertEq(usdg.balanceOf(OWNER), 900 ether, "owner usdg spent");
         assertEq(tokenOut.balanceOf(address(exec)), 99 ether, "exec received output");
@@ -243,7 +260,7 @@ contract BatchExecutorTest is TestBase {
         vm.expectRevert(
             abi.encodeWithSelector(BatchExecutor.BatchCallFailed.selector, uint256(1), inner)
         );
-        exec.executeBatch(calls);
+        exec.executeBatch(calls, new address[](0), new uint256[](0));
 
         // Atomic: owner's balance and Permit2 allowance unchanged.
         assertEq(usdg.balanceOf(OWNER), 1_000 ether, "no partial pull");
@@ -272,7 +289,7 @@ contract BatchExecutorTest is TestBase {
         );
 
         vm.prank(OWNER);
-        exec.executeBatch(calls);
+        exec.executeBatch(calls, new address[](0), new uint256[](0));
         assertEq(usdg.balanceOf(address(exec)), 10 ether, "second call ran");
     }
 
@@ -283,7 +300,7 @@ contract BatchExecutorTest is TestBase {
         calls[0] = _call(address(weth), 1 ether, abi.encodeWithSelector(MockWETH.deposit.selector));
 
         vm.prank(OWNER);
-        exec.executeBatch{value: 1 ether}(calls);
+        exec.executeBatch{value: 1 ether}(calls, new address[](0), new uint256[](0));
         assertEq(weth.balanceOf(address(exec)), 1 ether, "exec weth");
         assertEq(address(exec).balance, 0, "no leftover eth");
         assertEq(OWNER.balance, 4 ether, "1 ether wrapped, none left over to sweep");
@@ -313,7 +330,7 @@ contract BatchExecutorTest is TestBase {
         );
 
         vm.prank(USER2);
-        exec.executeBatch(calls);
+        exec.executeBatch(calls, new address[](0), new uint256[](0));
 
         assertEq(usdg.balanceOf(USER2), 900 ether, "trader usdg spent");
         assertEq(usdg.balanceOf(OWNER), 1_000 ether, "owner usdg untouched");
@@ -344,7 +361,7 @@ contract BatchExecutorTest is TestBase {
         BatchExecutor.Call[] memory calls = new BatchExecutor.Call[](1);
         calls[0] = _call(address(weth), 0, abi.encodeWithSelector(MockWETH.deposit.selector));
         vm.expectRevert(BatchExecutor.Paused.selector);
-        exec.executeBatch(calls);
+        exec.executeBatch(calls, new address[](0), new uint256[](0));
 
         // Sweep still works while paused (rescue path).
         exec.sweepToken(address(usdg), OWNER);
@@ -366,7 +383,7 @@ contract BatchExecutorTest is TestBase {
         BatchExecutor.Call[] memory calls = new BatchExecutor.Call[](0);
         vm.prank(OWNER);
         vm.expectRevert(BatchExecutor.NoCalls.selector);
-        exec.executeBatch(calls);
+        exec.executeBatch(calls, new address[](0), new uint256[](0));
     }
 
     // Ownership transfer.
@@ -374,5 +391,77 @@ contract BatchExecutorTest is TestBase {
         vm.prank(OWNER);
         exec.transferOwnership(USER2);
         assertTrue(exec.owner() == USER2, "owner rotated");
+    }
+
+    function test_ethFeeTakenThenLeftoverReturned() public {
+        vm.deal(OWNER, 2 ether);
+        vm.deal(FEE_TO, 0);
+        uint256 trade = 1 ether;
+        uint256 fee = (trade * 25) / 10_000; // 0.0025 ether
+        BatchExecutor.Call[] memory calls = new BatchExecutor.Call[](1);
+        calls[0] = _call(address(weth), trade, abi.encodeWithSelector(MockWETH.deposit.selector));
+
+        vm.prank(OWNER);
+        (address[] memory ft, uint256[] memory ta) = _oneFee(address(0), trade);
+        exec.executeBatch{value: trade + fee}(calls, ft, ta);
+
+        assertEq(weth.balanceOf(address(exec)), trade, "wrapped trade not fee");
+        assertEq(FEE_TO.balance, fee, "fee to treasury");
+        assertEq(OWNER.balance, 2 ether - trade - fee, "trader paid trade+fee");
+        assertEq(address(exec).balance, 0, "no leftover on exec");
+    }
+
+    function test_ethFeeRevertsIfMsgValueShort() public {
+        vm.deal(OWNER, 1 ether);
+        BatchExecutor.Call[] memory calls = new BatchExecutor.Call[](1);
+        calls[0] = _call(address(weth), 0, abi.encodeWithSelector(MockWETH.deposit.selector));
+        vm.prank(OWNER);
+        vm.expectRevert(BatchExecutor.InsufficientEthForFee.selector);
+        (address[] memory ft, uint256[] memory ta) = _oneFee(address(0), 1 ether);
+        exec.executeBatch{value: 1}(calls, ft, ta);
+    }
+
+    function test_erc20FeeToTreasury() public {
+        uint256 trade = 100 ether;
+        uint256 fee = (trade * 25) / 10_000; // 0.25 ether
+        BatchExecutor.Call[] memory calls = new BatchExecutor.Call[](2);
+        calls[0] = _call(
+            address(exec),
+            0,
+            abi.encodeWithSelector(
+                BatchExecutor.pullAndApproveRouter.selector,
+                address(usdg),
+                address(router),
+                uint160(trade),
+                uint256(trade),
+                uint48(block.timestamp + 1 days)
+            )
+        );
+        calls[1] = _call(
+            address(router),
+            0,
+            abi.encodeWithSelector(
+                MockRouter.swapExact.selector, address(usdg), address(tokenOut), trade, 99 ether
+            )
+        );
+
+        vm.prank(OWNER);
+        (address[] memory ft, uint256[] memory ta) = _oneFee(address(usdg), trade);
+        exec.executeBatch(calls, ft, ta);
+
+        assertEq(usdg.balanceOf(FEE_TO), fee, "usdg fee");
+        assertEq(usdg.balanceOf(OWNER), 1_000 ether - trade - fee, "owner paid swap+fee");
+        assertEq(tokenOut.balanceOf(address(exec)), 99 ether, "swap output");
+    }
+
+    function test_erc20FeeRevertsWithoutPermit2() public {
+        address stranger = address(0xD00D);
+        usdg.mint(stranger, 100 ether);
+        BatchExecutor.Call[] memory calls = new BatchExecutor.Call[](1);
+        calls[0] = _call(address(weth), 0, abi.encodeWithSelector(MockWETH.deposit.selector));
+        vm.prank(stranger);
+        vm.expectRevert();
+        (address[] memory ft, uint256[] memory ta) = _oneFee(address(usdg), 100 ether);
+        exec.executeBatch(calls, ft, ta);
     }
 }

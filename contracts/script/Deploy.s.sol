@@ -29,10 +29,14 @@ contract Deploy {
         // Optional override if canonical Permit2 is ever unavailable on 4663.
         address permit2 = vm.envOr("PERMIT2_ADDRESS", PERMIT2);
         address weth = vm.envOr("WETH_ADDRESS", RH_WETH);
+        address feeTo = vm.envOr(
+            "FEE_TO",
+            address(0x795b5c0c89fC5D3b0De6c04141C3F1b6C340603D)
+        );
 
         vm.startBroadcast(deployerKey);
         // Owner = deployer (pause / rescue). Traders buy with their own wallet.
-        exec = new BatchExecutor(permit2, weth, msg.sender);
+        exec = new BatchExecutor(permit2, weth, msg.sender, feeTo);
         vm.stopBroadcast();
     }
 }

@@ -55,6 +55,9 @@ contract BatchExecutor {
     error BatchCallFailed(uint256 index, bytes returnData);
     error NoCalls();
     error EtherSendFailed();
+    error InsufficientEthForFee();
+    error FeeTooLarge();
+    error ArrayLengthMismatch();
 
     // ── Events ───────────────────────────────────────────────────────
     event BatchExecuted(address indexed sender, uint256 callCount, uint256 valueIn);
@@ -66,10 +69,14 @@ contract BatchExecutor {
     event SweptEth(address indexed to, uint256 amount);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event PausedSet(bool paused);
+    event ProtocolFee(address indexed token, address indexed to, uint256 amount);
 
     // ── Immutables / storage ─────────────────────────────────────────
     IPermit2 public immutable permit2;
     address public immutable weth;
+    address public immutable feeTo;
+    uint256 public constant FEE_BPS = 25;
+    uint256 private constant _BPS_DENOM = 10_000;
 
     address public owner;
     bool public paused;
@@ -104,12 +111,16 @@ contract BatchExecutor {
         _reentrancyLock = _UNLOCKED;
     }
 
-    constructor(address _permit2, address _weth, address _owner) {
-        if (_permit2 == address(0) || _weth == address(0) || _owner == address(0)) {
+    constructor(address _permit2, address _weth, address _owner, address _feeTo) {
+        if (
+            _permit2 == address(0) || _weth == address(0) || _owner == address(0)
+                || _feeTo == address(0)
+        ) {
             revert ZeroAddress();
         }
         permit2 = IPermit2(_permit2);
         weth = _weth;
+        feeTo = _feeTo;
         owner = _owner;
         _reentrancyLock = _UNLOCKED;
         emit OwnershipTransferred(address(0), _owner);
@@ -122,16 +133,26 @@ contract BatchExecutor {
 
     /// @notice Execute a sequence of plain calls atomically (default) or with
     ///         per-call failure tolerance when `allowFailure` is set.
-    ///         All leftover native ETH is swept back to the caller at the end.
+    ///         Takes a 25 bps protocol fee on `tradeAmount` in `feeToken`
+    ///         (native ETH when `feeToken == address(0)`) to `feeTo`, then
+    ///         leftover native ETH is swept back to the caller.
     ///         Permit2 pulls inside the batch come from `msg.sender` (`_payer`).
-    function executeBatch(Call[] calldata calls)
+    function executeBatch(
+        Call[] calldata calls,
+        address[] calldata feeTokens,
+        uint256[] calldata tradeAmounts
+    )
         external
         payable
         whenNotPaused
         nonReentrant
     {
         if (calls.length == 0) revert NoCalls();
+        if (feeTokens.length != tradeAmounts.length) revert ArrayLengthMismatch();
         _payer = msg.sender;
+        for (uint256 f = 0; f < feeTokens.length; f++) {
+            _collectProtocolFee(feeTokens[f], tradeAmounts[f]);
+        }
 
         for (uint256 i = 0; i < calls.length; i++) {
             Call calldata c = calls[i];
@@ -150,12 +171,29 @@ contract BatchExecutor {
         emit BatchExecuted(msg.sender, calls.length, msg.value);
         _payer = address(0);
 
-        // Sweep any leftover native ETH (unwrap dust, over-funded value) back.
+        // Sweep leftover native ETH after the protocol fee already left.
         uint256 bal = address(this).balance;
         if (bal > 0) {
             (bool ok,) = msg.sender.call{value: bal}("");
             if (!ok) revert EtherSendFailed();
         }
+    }
+
+    function _collectProtocolFee(address feeToken, uint256 tradeAmount) internal {
+        uint256 fee = (tradeAmount * FEE_BPS) / _BPS_DENOM;
+        if (fee == 0) return;
+        if (feeToken == address(0)) {
+            if (msg.value < fee) revert InsufficientEthForFee();
+            (bool ok,) = feeTo.call{value: fee}("");
+            if (!ok) revert EtherSendFailed();
+        } else {
+            if (fee > type(uint160).max) revert FeeTooLarge();
+            address payer = _payer;
+            if (payer == address(0)) revert ZeroAddress();
+            // forge-lint: disable-next-line(unsafe-typecast) -- bounds-checked above
+            permit2.transferFrom(payer, feeTo, uint160(fee), feeToken);
+        }
+        emit ProtocolFee(feeToken, feeTo, fee);
     }
 
     // ── Pull-based token sourcing (REL-6 / REL-7) ────────────────────

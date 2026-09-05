@@ -40,7 +40,7 @@ import { walletsMatch } from "@/utils/rh-wallet-holdings";
 import { executeGmgnBulkSell } from "@/utils/gmgn-bulk-trade";
 import type { RhSwapQuote } from "@/utils/dlmm/rh-univ2-swap";
 import { executeRhParentKyberSell } from "@/utils/dlmm/rh-kyber-swap";
-import { getRhBatchExecutorAddress } from "@/utils/dlmm/rh-batch-executor";
+import { getRhBatchExecutorAddress, RH_PLATFORM_FEE_LABEL } from "@/utils/dlmm/rh-batch-executor";
 import { prefetchSwapTransaction } from "@/utils/swap-executor";
 import {
   AUTO_SLIPPAGE_BPS,
@@ -2094,6 +2094,11 @@ export default function BulkTokenSeller() {
         sequentialSignHint={
           useRhParentPath && !getRhBatchExecutorAddress()
         }
+        feeHint={
+          useRhParentPath && getRhBatchExecutorAddress()
+            ? RH_PLATFORM_FEE_LABEL
+            : undefined
+        }
         onCancel={() => setGmgnConfirmOpen(false)}
         onConfirm={() => void runConfirmedRhSell()}
       />
@@ -2812,6 +2817,11 @@ export default function BulkTokenSeller() {
                         Auto uses quote impact + 20 bps, capped at 1.5%. Impact above
                         that must be cut or set manually.
                       </p>
+                      {useRhParentPath && getRhBatchExecutorAddress() ? (
+                        <p className="text-xs text-gray-500">
+                          {RH_PLATFORM_FEE_LABEL}
+                        </p>
+                      ) : null}
                     </div>
 
                     {/* Priority Fee — Sol Jupiter path only */}

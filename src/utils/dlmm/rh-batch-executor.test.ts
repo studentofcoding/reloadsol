@@ -2,6 +2,7 @@ import { decodeFunctionData } from 'viem'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   PERMIT2,
+  RH_NATIVE_FEE_TOKEN,
   RH_WETH,
   batchExecutorAbi,
   computePullAmounts,
@@ -10,6 +11,7 @@ import {
   getRhBatchExecutorAddress,
   isRhPermit2SwapsEnabled,
   planExecutorBatch,
+  platformFeeAmount,
   type ExecutorSwapLeg,
 } from '@/utils/dlmm/rh-batch-executor'
 
@@ -129,6 +131,40 @@ describe('planExecutorBatch + encoding', () => {
     expect(txValue).toBe(BigInt(0))
   })
 
+  it('records ERC20 pull notionals for the 25 bps fee', () => {
+    const { feeTokens, tradeAmounts } = planExecutorBatch({
+      executor: EXECUTOR as `0x${string}`,
+      account: ACCOUNT as `0x${string}`,
+      wethWrapWei: BigInt(0),
+      legs: [
+        {
+          ...erc20Leg,
+          pullAmount: BigInt(10_000),
+          approveAmount: BigInt(10_000),
+        },
+      ],
+    })
+    expect(feeTokens[0]?.toLowerCase()).toBe(TOKEN.toLowerCase())
+    expect(tradeAmounts[0]).toBe(BigInt(10_000))
+  })
+
+  it('uses feeNotional when the Kyber size is already net of the fee', () => {
+    const { tradeAmounts } = planExecutorBatch({
+      executor: EXECUTOR as `0x${string}`,
+      account: ACCOUNT as `0x${string}`,
+      wethWrapWei: BigInt(0),
+      legs: [
+        {
+          ...erc20Leg,
+          pullAmount: BigInt(9_975),
+          approveAmount: BigInt(9_975),
+          feeNotional: BigInt(10_000),
+        },
+      ],
+    })
+    expect(tradeAmounts[0]).toBe(BigInt(10_000))
+  })
+
   it('routes native-in legs straight to the router with value', () => {
     const nativeLeg: ExecutorSwapLeg = {
       nativeIn: true,
@@ -150,14 +186,34 @@ describe('planExecutorBatch + encoding', () => {
     expect(txValue).toBe(BigInt(7))
   })
 
+  it('adds 25 bps extra ETH when the batch spends native value', () => {
+    const nativeLeg: ExecutorSwapLeg = {
+      nativeIn: true,
+      router: ROUTER as `0x${string}`,
+      pullAmount: BigInt(0),
+      approveAmount: BigInt(0),
+      swapData: '0xcafe',
+      swapValueWei: BigInt(10_000),
+    }
+    const { txValue, feeTokens, tradeAmounts } = planExecutorBatch({
+      executor: EXECUTOR as `0x${string}`,
+      account: ACCOUNT as `0x${string}`,
+      wethWrapWei: BigInt(0),
+      legs: [nativeLeg],
+    })
+    expect(tradeAmounts).toEqual([BigInt(10_000)])
+    expect(feeTokens[0]).toBe(RH_NATIVE_FEE_TOKEN)
+    expect(txValue).toBe(BigInt(10_000) + platformFeeAmount(BigInt(10_000)))
+  })
+
   it('encodeExecuteBatch round-trips through the ABI', () => {
-    const { batch } = planExecutorBatch({
+    const { batch, feeTokens, tradeAmounts } = planExecutorBatch({
       executor: EXECUTOR as `0x${string}`,
       account: ACCOUNT as `0x${string}`,
       wethWrapWei: BigInt(1),
       legs: [erc20Leg],
     })
-    const encoded = encodeExecuteBatch(batch)
+    const encoded = encodeExecuteBatch(batch, feeTokens, tradeAmounts)
     const decoded = decodeFunctionData({ abi: batchExecutorAbi, data: encoded })
     expect(decoded.functionName).toBe('executeBatch')
     const calls = decoded.args[0] as unknown as Array<{
@@ -167,6 +223,8 @@ describe('planExecutorBatch + encoding', () => {
     expect(calls).toHaveLength(batch.length)
     expect(calls[0].target.toLowerCase()).toBe(RH_WETH.toLowerCase())
     expect(calls[0].value).toBe(BigInt(1))
+    expect(decoded.args[1]).toEqual(feeTokens)
+    expect(decoded.args[2]).toEqual(tradeAmounts)
   })
 
   it('encodePullAndApproveRouter uses the Permit2 max expiration by default', () => {

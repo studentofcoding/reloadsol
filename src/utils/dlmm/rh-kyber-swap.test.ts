@@ -77,12 +77,13 @@ describe('prepareKyberSwapLegsParallel approval planning', () => {
 
   it('legacy router mode: approves the router when allowance is short', async () => {
     const publicClient = fakePublicClient(() => BigInt(0))
-    const [plan] = await prepareKyberSwapLegsParallel({
+    const { plans } = await prepareKyberSwapLegsParallel({
       publicClient,
       account: ACCOUNT as `0x${string}`,
       legs,
       slippageBps: 100,
     })
+    const [plan] = plans
     if ('error' in plan) throw new Error(plan.error)
     expect(plan.calls).toHaveLength(2)
     expect(plan.calls[0].to).toBe(TOKEN_IN) // approve(router, maxUint256)
@@ -97,7 +98,7 @@ describe('prepareKyberSwapLegsParallel approval planning', () => {
       }
       return BigInt(0) // erc20 allowance to Permit2
     })
-    const [plan] = await prepareKyberSwapLegsParallel({
+    const { plans: [plan] } = await prepareKyberSwapLegsParallel({
       publicClient,
       account: ACCOUNT as `0x${string}`,
       legs,
@@ -119,7 +120,7 @@ describe('prepareKyberSwapLegsParallel approval planning', () => {
       }
       return BigInt(1_000_000)
     })
-    const [plan] = await prepareKyberSwapLegsParallel({
+    const { plans: [plan] } = await prepareKyberSwapLegsParallel({
       publicClient,
       account: ACCOUNT as `0x${string}`,
       legs,
@@ -141,7 +142,7 @@ describe('prepareKyberSwapLegsParallel approval planning', () => {
       }
       return BigInt(1_000_000) // erc20 allowance to Permit2 already ok
     })
-    const [plan] = await prepareKyberSwapLegsParallel({
+    const { plans: [plan] } = await prepareKyberSwapLegsParallel({
       publicClient,
       account: ACCOUNT as `0x${string}`,
       legs,
@@ -156,6 +157,54 @@ describe('prepareKyberSwapLegsParallel approval planning', () => {
     expect(vi.mocked(clientKyberBuild).mock.calls.at(-1)?.[0].sender).toBe(
       EXECUTOR,
     )
+  })
+})
+
+describe('prepareKyberSwapLegsParallel auto slippage', () => {
+  const legs = [{ tokenIn: TOKEN_IN, tokenOut: TOKEN_OUT, amountIn: '1000' }]
+
+  it('builds with quote impact + 20 bps from the same Kyber route', async () => {
+    const { clientKyberRoute, clientKyberBuild } = await import(
+      '@/utils/kyber-aggregator'
+    )
+    vi.mocked(clientKyberRoute).mockResolvedValueOnce({
+      routeSummary: { priceImpact: 0.005 },
+      routerAddress: ROUTER,
+      amountIn: '1000',
+    })
+    const publicClient = fakePublicClient(() => BigInt(1_000_000))
+    const { slippageBps } = await prepareKyberSwapLegsParallel({
+      publicClient,
+      account: ACCOUNT as `0x${string}`,
+      legs,
+      slippageBps: -1,
+    })
+    expect(slippageBps).toBe(70)
+    expect(vi.mocked(clientKyberBuild).mock.calls.at(-1)?.[0].slippageTolerance).toBe(
+      70,
+    )
+  })
+
+  it('refuses Auto and skips Kyber build when impact is above the cap', async () => {
+    const { clientKyberRoute, clientKyberBuild } = await import(
+      '@/utils/kyber-aggregator'
+    )
+    const buildsBefore = vi.mocked(clientKyberBuild).mock.calls.length
+    vi.mocked(clientKyberRoute).mockResolvedValueOnce({
+      routeSummary: { priceImpact: 2 },
+      routerAddress: ROUTER,
+      amountIn: '1000',
+    })
+    const publicClient = fakePublicClient(() => BigInt(1_000_000))
+    await expect(
+      prepareKyberSwapLegsParallel({
+        publicClient,
+        account: ACCOUNT as `0x${string}`,
+        legs,
+        slippageBps: -1,
+      }),
+    ).rejects.toThrow(/above the auto cap/)
+    expect(vi.mocked(clientKyberBuild).mock.calls.length).toBe(buildsBefore)
   })
 })
 

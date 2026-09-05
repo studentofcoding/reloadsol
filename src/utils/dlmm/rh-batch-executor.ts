@@ -72,6 +72,8 @@ export const batchExecutorAbi = [
           { name: 'allowFailure', type: 'bool' },
         ],
       },
+      { name: 'feeTokens', type: 'address[]' },
+      { name: 'tradeAmounts', type: 'uint256[]' },
     ],
     outputs: [],
   },
@@ -113,11 +115,34 @@ export type RhExecutorCall = {
 export const PERMIT2_MAX_UINT160 = (BigInt(1) << BigInt(160)) - BigInt(1)
 export const PERMIT2_MAX_UINT48 = (BigInt(1) << BigInt(48)) - BigInt(1)
 
-export function encodeExecuteBatch(calls: RhExecutorCall[]): Hex {
+export const RH_PLATFORM_FEE_BPS = 25
+export const RH_PLATFORM_FEE_TO =
+  '0x795b5c0c89fC5D3b0De6c04141C3F1b6C340603D' as Address
+export const RH_NATIVE_FEE_TOKEN =
+  '0x0000000000000000000000000000000000000000' as Address
+export const RH_PLATFORM_FEE_LABEL = '0.25% platform fee'
+
+export function platformFeeAmount(tradeAmount: bigint): bigint {
+  return (tradeAmount * BigInt(RH_PLATFORM_FEE_BPS)) / BigInt(10_000)
+}
+
+/** Gross wallet debit so Permit2 allowance covers floor(25 bps) plus 1-wei rounding. */
+export function platformFeeCover(amount: bigint): bigint {
+  return (
+    amount +
+    (amount * BigInt(RH_PLATFORM_FEE_BPS) + BigInt(9_999)) / BigInt(10_000)
+  )
+}
+
+export function encodeExecuteBatch(
+  calls: RhExecutorCall[],
+  feeTokens: Address[] = [],
+  tradeAmounts: bigint[] = [],
+): Hex {
   return encodeFunctionData({
     abi: batchExecutorAbi,
     functionName: 'executeBatch',
-    args: [calls],
+    args: [calls, feeTokens, tradeAmounts],
   })
 }
 
@@ -186,6 +211,8 @@ export type ExecutorSwapLeg = {
   swapData: Hex
   /** Native value the swap consumes (nativeIn legs). */
   swapValueWei: bigint
+  /** 25 bps notional; defaults to pullAmount for ERC20. Sells pass the pre-fee size. */
+  feeNotional?: bigint
 }
 
 /**
@@ -199,7 +226,12 @@ export function planExecutorBatch(params: {
   /** Native ETH to wrap into WETH inside the batch (aggregate shortfall). */
   wethWrapWei: bigint
   legs: ExecutorSwapLeg[]
-}): { batch: RhExecutorCall[]; txValue: bigint } {
+}): {
+  batch: RhExecutorCall[]
+  txValue: bigint
+  feeTokens: Address[]
+  tradeAmounts: bigint[]
+} {
   const batch: RhExecutorCall[] = []
   let txValue = BigInt(0)
 
@@ -255,5 +287,30 @@ export function planExecutorBatch(params: {
     })
   }
 
-  return { batch, txValue }
+  const feeTokens: Address[] = []
+  const tradeAmounts: bigint[] = []
+  let ethTrade = params.wethWrapWei
+  const erc20 = new Map<string, bigint>()
+  for (const leg of params.legs) {
+    if (leg.nativeIn) {
+      ethTrade += leg.swapValueWei
+      continue
+    }
+    if (!leg.tokenIn) continue
+    const notional = leg.feeNotional ?? leg.pullAmount
+    if (notional <= BigInt(0)) continue
+    const key = leg.tokenIn.toLowerCase()
+    erc20.set(key, (erc20.get(key) ?? BigInt(0)) + notional)
+  }
+  if (ethTrade > BigInt(0)) {
+    feeTokens.push(RH_NATIVE_FEE_TOKEN)
+    tradeAmounts.push(ethTrade)
+    txValue += platformFeeAmount(ethTrade)
+  }
+  for (const [token, amount] of erc20) {
+    feeTokens.push(token as Address)
+    tradeAmounts.push(amount)
+  }
+
+  return { batch, txValue, feeTokens, tradeAmounts }
 }
