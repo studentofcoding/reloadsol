@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest'
+import { MIN_BALANCE_UI } from './jupiter'
 import {
   fetchBlockscoutErc20Tokens,
+  isRhHeldToken,
   normalizeBlockscoutErc20,
   normalizeGmgnHolding,
   normalizeSubscribeWallet,
+  parseRhSkipAddresses,
+  rpcZeroAddresses,
   sortRhTokensByUsd,
+  uniqueRhRpcCandidates,
   walletsMatch,
 } from './rh-wallet-holdings'
 
@@ -115,6 +120,48 @@ describe('normalizeSubscribeWallet', () => {
     expect(
       walletsMatch(RH_PARENT_WALLET, RH_PARENT_WALLET.toLowerCase()),
     ).toBe(true)
+  })
+})
+
+describe('isRhHeldToken + RPC skip', () => {
+  it('hides zero and dust-empty balances', () => {
+    expect(isRhHeldToken({ uiAmount: 1 })).toBe(true)
+    expect(isRhHeldToken({ uiAmount: 0 })).toBe(false)
+    expect(isRhHeldToken({ uiAmount: MIN_BALANCE_UI })).toBe(false)
+    expect(isRhHeldToken({ uiAmount: MIN_BALANCE_UI + 1e-12 })).toBe(true)
+  })
+
+  it('omits skip list from RPC unique candidates', () => {
+    const a = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    const b = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+    const unique = uniqueRhRpcCandidates(
+      [
+        { address: a, symbol: 'A' },
+        { address: a.toUpperCase(), symbol: 'A2' },
+        { address: b, symbol: 'B' },
+      ],
+      parseRhSkipAddresses(a),
+    )
+    expect(unique.map((c) => c.address)).toEqual([b])
+  })
+
+  it('reports probed addresses that did not come back held', () => {
+    const probed = [
+      { address: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' },
+      { address: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' },
+    ]
+    const held = [
+      {
+        mintAddress: '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        balance: 1,
+        decimals: 18,
+        uiAmount: 1,
+        usdValue: 1,
+      },
+    ]
+    expect(rpcZeroAddresses(probed, held)).toEqual([
+      '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    ])
   })
 })
 

@@ -2,27 +2,33 @@
 import Link from 'next/link';
 import UniversalWalletButton from '@/components/UniversalWalletButton';
 import {
-  useDevUserAccess,
+  useDevWalletAccess,
   useRhWalletAddress,
   useWalletAddress,
 } from '@/components/WalletProvider';
+import { useAppNetwork } from '@/contexts/AppNetworkContext';
 
 export default function DevRouteGate({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const { network } = useAppNetwork();
   const solAddress = useWalletAddress();
   const evmAddress = useRhWalletAddress();
-  const connectedAddress = solAddress ?? evmAddress;
-  const isDevUser = useDevUserAccess();
+  const connectedAddress =
+    network === 'robinhood' ? evmAddress : solAddress;
+  const isDevUser = useDevWalletAccess();
 
   if (!connectedAddress) {
     return (
       <div className="mx-auto max-w-lg rounded-lg border border-gray-700 bg-gray-900 p-8 text-center text-gray-300">
         <p className="text-lg font-medium text-white">Connect your wallet</p>
         <p className="mt-2 text-sm text-gray-400">
-          Dev tools require a connected wallet first.
+          Dev tools require a connected {network === 'robinhood'
+            ? 'Robinhood'
+            : 'Solana'}{' '}
+          wallet first.
         </p>
         <div className="mt-6 flex justify-center">
           <UniversalWalletButton />

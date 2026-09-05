@@ -15,6 +15,30 @@ export function coerceAppNetwork(
   return network
 }
 
+const networkListeners = new Set<() => void>()
+
+function emitAppNetworkChange(): void {
+  for (const cb of networkListeners) cb()
+}
+
+/** Subscribe for useSyncExternalStore (same-tab writes + other-tab storage). */
+export function subscribeAppNetwork(onStoreChange: () => void): () => void {
+  networkListeners.add(onStoreChange)
+  if (typeof window === 'undefined') {
+    return () => {
+      networkListeners.delete(onStoreChange)
+    }
+  }
+  const onStorage = (e: StorageEvent) => {
+    if (e.key === APP_NETWORK_STORAGE_KEY || e.key == null) onStoreChange()
+  }
+  window.addEventListener('storage', onStorage)
+  return () => {
+    networkListeners.delete(onStoreChange)
+    window.removeEventListener('storage', onStorage)
+  }
+}
+
 function readLocal(): string | null {
   try {
     return localStorage.getItem(APP_NETWORK_STORAGE_KEY)
@@ -61,4 +85,5 @@ export function writeStoredAppNetwork(network: AppNetwork): void {
   } catch {
     /* ignore */
   }
+  emitAppNetworkChange()
 }

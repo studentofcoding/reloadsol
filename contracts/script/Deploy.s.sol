@@ -7,6 +7,7 @@ import {BatchExecutor} from "../src/BatchExecutor.sol";
 interface Vm {
     function envUint(string calldata name) external returns (uint256);
     function envOr(string calldata name, address defaultValue) external returns (address);
+    function addr(uint256 privateKey) external returns (address);
     function startBroadcast(uint256 privateKey) external;
     function stopBroadcast() external;
 }
@@ -34,9 +35,12 @@ contract Deploy {
             address(0x795b5c0c89fC5D3b0De6c04141C3F1b6C340603D)
         );
 
+        // Script `msg.sender` is Foundry's DefaultSender, not the EOA. Owner
+        // must be the broadcasting key (pause / rescue). Optional OWNER=.
+        address owner = vm.envOr("OWNER", vm.addr(deployerKey));
+
         vm.startBroadcast(deployerKey);
-        // Owner = deployer (pause / rescue). Traders buy with their own wallet.
-        exec = new BatchExecutor(permit2, weth, msg.sender, feeTo);
+        exec = new BatchExecutor(permit2, weth, owner, feeTo);
         vm.stopBroadcast();
     }
 }

@@ -373,6 +373,7 @@ export async function locateTokenByAddress(
 
   const chain = options.chain
   const lookup = normalizeLookupAddress(address)
+  const skipJupiter = chain === 'robinhood'
   const tracker = trackerTable()
   const fetchedAt = new Date().toISOString()
   const links: TokenLocateResult['links'] = {
@@ -397,6 +398,11 @@ export async function locateTokenByAddress(
     : `token_address = $1 AND expires_at > NOW()`
   const locksParams: unknown[] = chain ? [lookup, chain] : [lookup]
 
+  const mcapWhere = chain ? `token_address = $1 AND chain = $2` : `token_address = $1`
+  const mcapParams: unknown[] = chain ? [lookup, chain] : [lookup]
+  const signalsWhere = chain ? `token_address = $1 AND chain = $2` : `token_address = $1`
+  const signalsParams: unknown[] = chain ? [lookup, chain] : [lookup]
+
   const [
     strategyDefs,
     jupiterV2Raw,
@@ -416,27 +422,29 @@ export async function locateTokenByAddress(
     rugList,
     botLocks,
   ] = await Promise.all([
-    loadStrategyDefinitionRows(),
-    fetchJupiterV2SearchRaw(address).catch(() => null),
-    fetchTokenMetadataFromJupiter(address).catch(() => null),
-    fetchJupiterDatapiSearchRaw(address).catch(() => null),
-    fetchJupiterPriceRaw(address).catch(() => null),
-    searchTokenStats(address).catch(() => null),
+    loadStrategyDefinitionRows(undefined, chain),
+    skipJupiter ? Promise.resolve(null) : fetchJupiterV2SearchRaw(address).catch(() => null),
+    skipJupiter ? Promise.resolve(null) : fetchTokenMetadataFromJupiter(address).catch(() => null),
+    skipJupiter ? Promise.resolve(null) : fetchJupiterDatapiSearchRaw(address).catch(() => null),
+    skipJupiter ? Promise.resolve(null) : fetchJupiterPriceRaw(address).catch(() => null),
+    skipJupiter ? Promise.resolve(null) : searchTokenStats(address).catch(() => null),
+    skipJupiter
+      ? Promise.resolve(null)
+      : safeQueryOne<Record<string, unknown>>(
+          `SELECT * FROM ${tracker} WHERE token_address = $1 LIMIT 1`,
+          [lookup],
+        ),
     safeQueryOne<Record<string, unknown>>(
-      `SELECT * FROM ${tracker} WHERE token_address = $1 LIMIT 1`,
-      [lookup],
-    ),
-    safeQueryOne<Record<string, unknown>>(
-      `SELECT * FROM token_mcap_tracking WHERE token_address = $1 LIMIT 1`,
-      [lookup],
+      `SELECT * FROM token_mcap_tracking WHERE ${mcapWhere} LIMIT 1`,
+      mcapParams,
     ),
     safeQuery<Record<string, unknown>>(
       `SELECT * FROM mcap_threshold_notifications WHERE token_address = $1 ORDER BY notified_at DESC`,
       [lookup],
     ),
     safeQueryOne<Record<string, unknown>>(
-      `SELECT * FROM trading_signals WHERE token_address = $1 LIMIT 1`,
-      [lookup],
+      `SELECT * FROM trading_signals WHERE ${signalsWhere} LIMIT 1`,
+      signalsParams,
     ),
     fetchSocialRollup(address),
     fetchRecentSocialEvents(address, 20),

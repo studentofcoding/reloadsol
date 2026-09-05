@@ -3,7 +3,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Script from 'next/script'
+import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import JupiterTerminal from '@/components/JupiterTerminal'
+import HoldingsTokenList from '@/components/HoldingsTokenList'
+import { useWalletTokens } from '@/hooks/useWalletTokens'
 import { TOKENS } from '@/utils/solana'
 
 type SwapPreset = {
@@ -15,7 +18,19 @@ type SwapPreset = {
 
 export default function SolSwapClient() {
   const searchParams = useSearchParams()
-  const requestedTokenMint = searchParams.get('tokenMint')?.trim() ?? ''
+  const { connection } = useConnection()
+  const { publicKey, connected } = useWallet()
+  const walletAddress = publicKey?.toBase58() ?? null
+  const walletTokens = useWalletTokens({
+    connection,
+    publicKey,
+    walletAddress,
+    enabled: connected,
+    includeZeroBalance: false,
+  })
+  const [pickedMint, setPickedMint] = useState('')
+  const requestedTokenMint =
+    (pickedMint || searchParams.get('tokenMint')?.trim()) ?? ''
   const requestedFromMint = searchParams.get('fromMint')?.trim() ?? ''
   const requestedToMint = searchParams.get('toMint')?.trim() ?? ''
   const tokenMint =
@@ -25,17 +40,21 @@ export default function SolSwapClient() {
       ? requestedTokenMint
       : null
   const fromMint =
-    requestedFromMint &&
-    requestedFromMint !== TOKENS.SOL &&
-    requestedFromMint !== TOKENS.USDC
-      ? requestedFromMint
-      : null
+    pickedMint
+      ? null
+      : requestedFromMint &&
+          requestedFromMint !== TOKENS.SOL &&
+          requestedFromMint !== TOKENS.USDC
+        ? requestedFromMint
+        : null
   const toMint =
-    requestedToMint &&
-    requestedToMint !== TOKENS.SOL &&
-    requestedToMint !== TOKENS.USDC
-      ? requestedToMint
-      : null
+    pickedMint
+      ? null
+      : requestedToMint &&
+          requestedToMint !== TOKENS.SOL &&
+          requestedToMint !== TOKENS.USDC
+        ? requestedToMint
+        : null
 
   const swapPresets = useMemo<SwapPreset[]>(() => {
     // True any-to-any: both sides are non-quote SPL mints.
@@ -297,6 +316,30 @@ export default function SolSwapClient() {
       className="flex flex-col items-center justify-center gap-4"
       style={{ minHeight: '550px' }}
     >
+      <div className="w-full max-w-2xl space-y-2">
+        <h3 className="text-sm font-semibold text-white">Your tokens</h3>
+        <HoldingsTokenList
+          mode="pick"
+          tokens={walletTokens.sellable.filter((t) => !t.isNFT)}
+          isLoading={connected && walletTokens.isLoading}
+          error={
+            walletTokens.error instanceof Error
+              ? walletTokens.error.message
+              : walletTokens.error
+                ? String(walletTokens.error)
+                : null
+          }
+          emptyTitle={
+            connected ? 'No tokens found' : 'Connect a wallet to pick a holding'
+          }
+          isSelected={(t) => t.mintAddress === requestedTokenMint}
+          onToggle={(t) => {
+            setPickedMint(t.mintAddress)
+            setSelectedPresetKey(null)
+          }}
+          onRetry={() => void walletTokens.refetchTokens(true)}
+        />
+      </div>
       <div className="flex w-full max-w-2xl flex-wrap justify-center gap-2">
         {swapPresets.map((preset) => {
           const isActive = preset.key === activePreset.key

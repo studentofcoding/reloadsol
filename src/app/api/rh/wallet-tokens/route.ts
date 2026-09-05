@@ -6,7 +6,10 @@ import {
   fetchBlockscoutErc20Tokens,
   fetchRpcErc20Tokens,
   isEvmAddress,
+  isRhHeldToken,
   normalizeGmgnHolding,
+  parseRhSkipAddresses,
+  rpcZeroAddresses,
   sortRhTokensByUsd,
   type RhTokenMeta,
 } from '@/utils/rh-wallet-holdings'
@@ -80,6 +83,23 @@ async function getRhTradeCandidates(wallet: string): Promise<RhTokenMeta[]> {
   } catch (err) {
     console.warn('[rh/wallet-tokens] trade candidates failed:', err)
     return []
+  }
+}
+
+async function pruneSeenZeros(
+  wallet: string,
+  zeroAddresses: string[],
+): Promise<void> {
+  if (zeroAddresses.length === 0) return
+  try {
+    const prev = (await cacheGet<RhTokenMeta[]>(seenKey(wallet))) ?? []
+    if (prev.length === 0) return
+    const drop = new Set(zeroAddresses.map((a) => a.toLowerCase()))
+    const next = prev.filter((m) => !drop.has(m.address.toLowerCase()))
+    if (next.length === prev.length) return
+    await cacheSet(seenKey(wallet), next, SEEN_TOKENS_TTL_S)
+  } catch {
+    // best-effort
   }
 }
 
@@ -166,6 +186,10 @@ export async function GET(request: NextRequest) {
     // Post-trade refresh: bypass the response cache so the just-bought/sold
     // token shows up immediately instead of waiting out the TTL.
     const skipCache = request.nextUrl.searchParams.get('fresh') === '1'
+    const skip = parseRhSkipAddresses(
+      request.nextUrl.searchParams.get('skip'),
+    )
+    let rpcZeros: string[] = []
 
     const cacheKey = portfolioKey('robinhood', walletNorm, 'holdings')
     const staleKey = `${cacheKey}:stale`
@@ -229,11 +253,14 @@ export async function GET(request: NextRequest) {
           cacheGet<RhTokenMeta[]>(seenKey(walletNorm)).catch(() => null),
           getRhTradeCandidates(walletNorm),
         ])
-        tokens = await fetchRpcErc20Tokens(walletNorm, [
-          ...QUOTE_CANDIDATES,
-          ...(seen ?? []),
-          ...trade,
-        ])
+        const rpc = await fetchRpcErc20Tokens(
+          walletNorm,
+          [...QUOTE_CANDIDATES, ...(seen ?? []), ...trade],
+          { skip },
+        )
+        tokens = rpc.tokens.filter(isRhHeldToken)
+        rpcZeros = rpcZeroAddresses(rpc.probed, tokens)
+        if (rpcZeros.length > 0) void pruneSeenZeros(walletNorm, rpcZeros)
         tokens = await fillMissingUsd(tokens)
       } catch (err) {
         console.warn('[rh/wallet-tokens] RPC holdings failed:', err)
@@ -241,7 +268,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    tokens = sortRhTokensByUsd(tokens)
+    tokens = sortRhTokensByUsd(tokens.filter(isRhHeldToken))
 
     // Cache a valid snapshot + a longer-lived last-known-good copy (SWR). Only
     // persist when a source of truth (indexer) found holdings — an empty shell
@@ -280,6 +307,7 @@ export async function GET(request: NextRequest) {
       source,
       wallet: walletNorm,
       fresh: skipCache,
+      rpcZeros,
     })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)

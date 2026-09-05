@@ -12,6 +12,8 @@ interface ProgressiveTokenItemProps {
   selectedToken?: any
   onUpdateSellPercentage?: (mintAddress: string, percentage: number) => void
   onUpdateSellAmount?: (mintAddress: string, tokenAmount: number) => void
+  /** Sell list only — hide the checkbox/slider on buy/swap pick. */
+  showSellControls?: boolean
 }
 
 const ProgressiveTokenItem: React.FC<ProgressiveTokenItemProps> = ({
@@ -23,7 +25,8 @@ const ProgressiveTokenItem: React.FC<ProgressiveTokenItemProps> = ({
   onRefreshPrice,
   selectedToken,
   onUpdateSellPercentage,
-  onUpdateSellAmount
+  onUpdateSellAmount,
+  showSellControls = true,
 }) => {
   const hasBasicData = token.symbol !== 'Unknown' || token.name !== 'Unknown Token'
   const hasLogo = token.logoURI && token.logoURI !== ''
@@ -42,7 +45,7 @@ const ProgressiveTokenItem: React.FC<ProgressiveTokenItemProps> = ({
         onClick={() => onToggleSelection(token)}
       >
         <div className="flex items-center space-x-3">
-          {/* Checkbox */}
+          {showSellControls ? (
           <div className="flex items-center justify-center">
             <div className={`w-4 h-4 sm:w-4 sm:h-4 rounded border-2 flex items-center justify-center transition-colors ${
               isSelected 
@@ -56,6 +59,7 @@ const ProgressiveTokenItem: React.FC<ProgressiveTokenItemProps> = ({
               )}
             </div>
           </div>
+          ) : null}
 
           {/* Logo with progressive loading */}
           <div className={`w-4 h-4 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-white font-bold ${
@@ -147,7 +151,7 @@ const ProgressiveTokenItem: React.FC<ProgressiveTokenItemProps> = ({
       </div>
       
       {/* Sell Amount Controls (visible when selected) */}
-      {isSelected && selectedToken && onUpdateSellPercentage && (
+      {showSellControls && isSelected && selectedToken && onUpdateSellPercentage && (
         <div className="mt-4 pt-3 border-t border-gray-600">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm font-medium text-gray-300">Sell Amount</span>

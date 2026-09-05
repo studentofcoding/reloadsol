@@ -82,7 +82,7 @@ export default function WelcomeModal({ isOpen, onClose }: WelcomeModalProps) {
             <ul className="text-gray-300 text-sm space-y-2">
               <li className="flex items-start">
                 <span className="text-blue-400 mr-2">•</span>
-                Robust Buy and Sell (up to 10 tokens at onces)
+                Robust Buy and Sell (up to 5 tokens at once)
               </li>
               <li className="flex items-start">
                 <span className="text-blue-400 mr-2">•</span>

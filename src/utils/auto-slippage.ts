@@ -32,6 +32,15 @@ export function resolveAutoSlippageBps(
   }
 }
 
+/** True when quote impact is missing or above the auto cap (keep re-quoting). */
+export function quoteIsVolatile(
+  impacts: Array<number | null | undefined>,
+): boolean {
+  const worst = worstImpactPct(impacts)
+  if (worst == null) return true
+  return Math.round(worst * 100) > AUTO_SLIPPAGE_CAP_BPS
+}
+
 export function worstImpactPct(
   impacts: Array<number | null | undefined>,
 ): number | null {

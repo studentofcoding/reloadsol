@@ -1945,7 +1945,7 @@ export default function LiveTab() {
 
   return (
     <>
-    <div className="max-w-8xl mx-auto px-4 py-8 flex flex-col md:flex-row-reverse gap-6">
+    <div className="max-w-6xl mx-auto px-4 py-8 flex flex-col md:flex-row-reverse gap-6">
       {/* Main content: Trending tokens grid */}
       <div className="flex-1">
         {/* Header */}

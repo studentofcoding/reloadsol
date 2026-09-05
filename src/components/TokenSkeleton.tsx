@@ -178,16 +178,26 @@ const TokenSkeleton: React.FC<TokenSkeletonProps> = ({
 
   switch (variant) {
     case 'progressive':
-      return renderProgressiveSkeleton()
+      return (
+        <div className="max-w-6xl mx-auto w-full">{renderProgressiveSkeleton()}</div>
+      )
     case 'trending':
-      return renderTrendingSkeleton()
+      return (
+        <div className="max-w-6xl mx-auto w-full">{renderTrendingSkeleton()}</div>
+      )
     case 'trading-history':
-      return renderTradingHistorySkeleton()
+      return (
+        <div className="max-w-6xl mx-auto w-full">{renderTradingHistorySkeleton()}</div>
+      )
     case 'token-chips':
-      return renderTokenChipsSkeleton()
+      return (
+        <div className="max-w-6xl mx-auto w-full">{renderTokenChipsSkeleton()}</div>
+      )
     case 'default':
     default:
-      return renderDefaultSkeleton()
+      return (
+        <div className="max-w-6xl mx-auto w-full">{renderDefaultSkeleton()}</div>
+      )
   }
 }
 

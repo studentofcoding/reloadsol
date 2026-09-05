@@ -3,6 +3,7 @@
 import React from 'react'
 import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
 import { RH_CHAIN_ID, txUrl } from '@/utils/dlmm/rh-clmm/config'
+import { AUTO_SLIPPAGE_CAP_BPS } from '@/utils/auto-slippage'
 
 export type GmgnConfirmLeg = {
   tokenAddress: string
@@ -43,6 +44,10 @@ export default function GmgnTradeConfirmModal({
   onCancel,
   onConfirm,
   onDone,
+  volatile,
+  quoteRefreshing,
+  autoConfirm,
+  onAutoConfirmChange,
 }: {
   open: boolean
   chain: GmgnTradeChain
@@ -68,6 +73,11 @@ export default function GmgnTradeConfirmModal({
   onConfirm: () => void
   /** Closes the result screen (success/failed). */
   onDone?: () => void
+  /** Impact above auto cap — quotes keep refreshing. */
+  volatile?: boolean
+  quoteRefreshing?: boolean
+  autoConfirm?: boolean
+  onAutoConfirmChange?: (on: boolean) => void
 }) {
   if (!open) return null
   const phase: SubmitPhase = submitPhase ?? (busy ? 'submitting' : 'idle')
@@ -179,6 +189,26 @@ export default function GmgnTradeConfirmModal({
               <p className="mt-2 text-xs text-gray-400">{feeHint}</p>
             ) : null}
 
+            {volatile || quoteRefreshing ? (
+              <div className="mt-3 rounded-lg border border-amber-700/60 bg-amber-900/20 px-3 py-2 text-xs text-amber-200">
+                {volatile
+                  ? `Impact above ${AUTO_SLIPPAGE_CAP_BPS} bps — refreshing until it cools.`
+                  : 'Refreshing quote…'}
+              </div>
+            ) : null}
+
+            {onAutoConfirmChange ? (
+              <label className="mt-3 flex items-center gap-2 text-xs text-gray-300">
+                <input
+                  type="checkbox"
+                  checked={Boolean(autoConfirm)}
+                  onChange={(e) => onAutoConfirmChange(e.target.checked)}
+                  disabled={isSubmitting}
+                />
+                Auto confirm (sign in wallet only)
+              </label>
+            ) : null}
+
             {isSubmitting ? (
               <div className="mt-4 flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-800/60 px-3 py-2 text-sm text-gray-300">
                 <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/20 border-t-white" />
@@ -229,7 +259,7 @@ export default function GmgnTradeConfirmModal({
               <button
                 type="button"
                 onClick={onConfirm}
-                disabled={isSubmitting}
+                disabled={isSubmitting || Boolean(volatile)}
                 className="btn-primary rounded-lg px-4 py-2 text-sm disabled:opacity-50"
               >
                 {isSubmitting ? (
@@ -237,6 +267,10 @@ export default function GmgnTradeConfirmModal({
                     <span className="h-3 w-3 animate-spin rounded-full border-2 border-black/30 border-t-black" />
                     Submitting…
                   </span>
+                ) : volatile ? (
+                  'Waiting for calmer quote'
+                ) : autoConfirm ? (
+                  'Will auto-submit'
                 ) : (
                   'Confirm & submit'
                 )}

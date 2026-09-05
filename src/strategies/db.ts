@@ -635,6 +635,69 @@ export async function listStrategyOutcomes(params: {
   return { rows: enriched, total }
 }
 
+export type RecentStrategyToken = {
+  address: string
+  symbol: string
+  source: 'outcomes' | 'mcap'
+}
+
+/** Distinct tokens last seen by strategies / mcap tracker on a chain. */
+export async function listRecentStrategyTokens(
+  chain: StrategyChain,
+  limit = 30,
+): Promise<RecentStrategyToken[]> {
+  try {
+    await ensureStrategyChainColumns()
+    const [outcomes, mcap] = await Promise.all([
+      query<{ token_address: string; symbol: string | null }>(
+        `SELECT token_address, symbol FROM (
+           SELECT DISTINCT ON (lower(token_address))
+             token_address,
+             COALESCE(NULLIF(token_symbol, ''), features->>'token_symbol') AS symbol,
+             created_at
+           FROM strategy_outcomes
+           WHERE chain = $1
+             AND token_address IS NOT NULL
+             AND token_address <> ''
+           ORDER BY lower(token_address), created_at DESC NULLS LAST
+         ) t
+         ORDER BY created_at DESC NULLS LAST
+         LIMIT $2`,
+        [chain, limit],
+      ).catch(() => ({ rows: [] as Array<{ token_address: string; symbol: string | null }> })),
+      query<{ token_address: string; token_symbol: string | null }>(
+        `SELECT token_address, token_symbol
+         FROM token_mcap_tracking
+         WHERE chain = $1
+           AND token_address IS NOT NULL
+           AND token_address <> ''
+         ORDER BY last_updated_at DESC NULLS LAST
+         LIMIT $2`,
+        [chain, limit],
+      ).catch(() => ({ rows: [] as Array<{ token_address: string; token_symbol: string | null }> })),
+    ])
+    const out: RecentStrategyToken[] = []
+    const seen = new Set<string>()
+    const push = (address: string, symbol: string | null, source: RecentStrategyToken['source']) => {
+      const key = address.startsWith('0x') ? address.toLowerCase() : address
+      if (!key || seen.has(key)) return
+      seen.add(key)
+      out.push({
+        address: key,
+        symbol: (symbol ?? '').trim() || key.slice(0, 6),
+        source,
+      })
+    }
+    for (const row of outcomes.rows) push(row.token_address, row.symbol, 'outcomes')
+    for (const row of mcap.rows) push(row.token_address, row.token_symbol, 'mcap')
+    return out.slice(0, limit)
+  } catch (error) {
+    if (isMissingSchemaError(error)) return []
+    console.warn('[strategies/db] recent tokens failed:', errorMessage(error))
+    return []
+  }
+}
+
 /** All closed outcomes for ML dataset stats (no pagination). */
 export async function loadOutcomesForMlDataset(params?: {
   domain?: StrategyDomain

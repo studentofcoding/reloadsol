@@ -7,6 +7,7 @@ import {
   rawImpactToPct,
   resolveAutoSlippageBps,
   resolveTradeSlippageBps,
+  quoteIsVolatile,
   worstImpactPct,
 } from '@/utils/auto-slippage'
 
@@ -73,5 +74,13 @@ describe('prefetchSlippageBps', () => {
   it('replaces Auto with the floor', () => {
     expect(prefetchSlippageBps(AUTO_SLIPPAGE_BPS)).toBe(AUTO_SLIPPAGE_FLOOR_BPS)
     expect(prefetchSlippageBps(100)).toBe(100)
+  })
+})
+
+describe('quoteIsVolatile', () => {
+  it('is volatile when impact is missing or above the 150bps cap', () => {
+    expect(quoteIsVolatile([])).toBe(true)
+    expect(quoteIsVolatile([1.4])).toBe(false)
+    expect(quoteIsVolatile([1.6])).toBe(true)
   })
 })

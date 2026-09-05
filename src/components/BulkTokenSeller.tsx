@@ -21,7 +21,7 @@ import UniversalWalletButton from "./UniversalWalletButton";
 import TradeOutcomeModal, { useTradeOutcome } from "./TradeOutcomeModal";
 import TokenSkeleton from "./TokenSkeleton";
 import ConfirmTransportSelect from "./ConfirmTransportSelect";
-import ProgressiveTokenItem from "./ProgressiveTokenItem";
+import HoldingsTokenList from "./HoldingsTokenList";
 import GmgnTradeConfirmModal, {
   type GmgnConfirmLeg,
 } from "./GmgnTradeConfirmModal";
@@ -41,11 +41,13 @@ import { executeGmgnBulkSell } from "@/utils/gmgn-bulk-trade";
 import type { RhSwapQuote } from "@/utils/dlmm/rh-univ2-swap";
 import { executeRhParentKyberSell } from "@/utils/dlmm/rh-kyber-swap";
 import { getRhBatchExecutorAddress, RH_PLATFORM_FEE_LABEL } from "@/utils/dlmm/rh-batch-executor";
+import { MAX_TRADE_TOKENS, capTradeTokens } from "@/utils/trade-ui-limits";
 import { prefetchSwapTransaction } from "@/utils/swap-executor";
 import {
   AUTO_SLIPPAGE_BPS,
   AUTO_SLIPPAGE_CAP_BPS,
   prefetchSlippageBps,
+  quoteIsVolatile,
   resolveTradeSlippageBps,
   worstImpactPct,
 } from "@/utils/auto-slippage";
@@ -59,6 +61,10 @@ import {
   buildRhSellToken,
   rhQuoteUsdPerUnit,
 } from "@/utils/rh-trade-record";
+import {
+  readTradeAutoConfirm,
+  writeTradeAutoConfirm,
+} from "@/utils/trade-auto-confirm";
 import {
   LAMPORTS_PER_SOL,
 } from "@solana/web3.js";
@@ -184,6 +190,9 @@ export default function BulkTokenSeller() {
   const [gmgnConfirmOpen, setGmgnConfirmOpen] = useState(false);
   const [gmgnConfirmLegs, setGmgnConfirmLegs] = useState<GmgnConfirmLeg[]>([]);
   const [gmgnConfirmBusy, setGmgnConfirmBusy] = useState(false);
+  const [tradeAutoConfirm, setTradeAutoConfirm] = useState(readTradeAutoConfirm);
+  const [gmgnQuoteRefreshing, setGmgnQuoteRefreshing] = useState(false);
+  const autoConfirmFiredRef = useRef(false);
   const [rhQuoteCurrency, setRhQuoteCurrency] =
     useState<RhSwapQuote>("ETH");
   const boundWallets = useGmgnBoundWallets();
@@ -208,20 +217,6 @@ export default function BulkTokenSeller() {
         ? boundWallets.sol
         : null;
   const rhWalletTokens = useRhWalletTokens();
-  const rhHoldingsQuery = useMemo(
-    () => ({
-      data: rhWalletTokens.tokens,
-      isLoading: rhWalletTokens.isLoading,
-      refetch: rhWalletTokens.refetch,
-      source: rhWalletTokens.source,
-    }),
-    [
-      rhWalletTokens.tokens,
-      rhWalletTokens.isLoading,
-      rhWalletTokens.refetch,
-      rhWalletTokens.source,
-    ],
-  );
 
   const rosterSellRecsQuery = useQuery({
     queryKey: ["gmgn-roster-sell-recs", effectiveChain],
@@ -280,7 +275,7 @@ export default function BulkTokenSeller() {
   });
 
   const allTokensCount = isRhChain
-    ? rhHoldingsQuery.data?.length ?? 0
+    ? rhWalletTokens.tokens.length
     : allTokens.length;
   const fetchError = isRhChain
     ? rhWalletTokens.error instanceof Error
@@ -294,7 +289,7 @@ export default function BulkTokenSeller() {
         ? String(tokensQueryError)
         : lastFetchMeta?.error ?? "";
   const isInitialLoadTokens = isRhChain
-    ? rhWalletTokens.isLoading && (rhHoldingsQuery.data?.length ?? 0) === 0
+    ? rhWalletTokens.isLoading && rhWalletTokens.tokens.length === 0
     : isInitialLoad;
   const isLoadingTokensList = isRhChain
     ? rhWalletTokens.isFetching || rhWalletTokens.isLoading
@@ -611,8 +606,8 @@ export default function BulkTokenSeller() {
         return prev.filter((t) => t.mintAddress !== token.mintAddress);
       } else {
         // Check if already at the limit
-        if (prev.length >= 22) {
-          setError("Maximum 22 tokens can be selected for selling");
+        if (prev.length >= MAX_TRADE_TOKENS) {
+          setError(`Maximum ${MAX_TRADE_TOKENS} tokens per sell`);
           return prev;
         }
         // Convert UserToken to TokenToSell with default 100% sell amount
@@ -703,11 +698,9 @@ export default function BulkTokenSeller() {
       sellPercentage: 100,
     }));
 
-    if (tokensToSell.length > 22) {
-      setSelectedTokens(tokensToSell.slice(0, 22));
-      setError(
-        "Selection limited to first 22 tokens (Solana transaction limit)",
-      );
+    if (tokensToSell.length > MAX_TRADE_TOKENS) {
+      setSelectedTokens(capTradeTokens(tokensToSell));
+      setError(`Selection limited to first ${MAX_TRADE_TOKENS} tokens`);
     } else {
       setSelectedTokens(tokensToSell);
     }
@@ -1053,7 +1046,7 @@ export default function BulkTokenSeller() {
       });
       if (success) {
         setSelectedTokens([]);
-        void rhHoldingsQuery.refetch();
+        void rhWalletTokens.refetch();
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -1072,16 +1065,95 @@ export default function BulkTokenSeller() {
     rhQuoteCurrency,
     resolveSellSlippageBps,
     showOutcome,
-    rhHoldingsQuery,
+    rhWalletTokens,
     trackOperation,
   ]);
 
   const runGmgnBulkSell = runConfirmedRhSell;
 
+  const previewRhSellLegs = useCallback(async (): Promise<GmgnConfirmLeg[]> => {
+    const ethUsd = await fetchEthUsdSpot();
+    const legs: GmgnConfirmLeg[] = [];
+    for (const t of selectedTokens) {
+      const pct = t.sellPercentage || 100;
+      let fromUsd: number | null = null;
+      let toUsd: number | null = null;
+      let priceImpactPct: number | null = null;
+      let estOut: string | undefined;
+      try {
+        if (useRhParentPath) {
+          const sim = await simulateRhParentSellLeg({
+            publicClient: rhWallet.getPublicClient(),
+            account: tradeFromAddress as Address,
+            tokenAddress: t.mintAddress,
+            percent: pct,
+            quote: rhQuoteCurrency,
+            ethUsd,
+            tokenDecimals: t.decimals,
+          });
+          fromUsd = sim.fromUsd;
+          toUsd = sim.toUsd;
+          priceImpactPct = sim.priceImpactPct;
+          estOut = sim.amountOutRaw ?? undefined;
+        } else if (tradeFromAddress) {
+          const bal = (await rhWallet.getPublicClient().readContract({
+            address: t.mintAddress as Address,
+            abi: erc20Abi,
+            functionName: "balanceOf",
+            args: [tradeFromAddress as Address],
+          })) as bigint;
+          const amountRaw = (
+            (bal * BigInt(Math.floor(pct * 100))) /
+            BigInt(10_000)
+          ).toString();
+          const sim = await simulateRhBoundSellLeg({
+            from: tradeFromAddress,
+            tokenAddress: t.mintAddress,
+            percent: pct,
+            quote: rhQuoteCurrency,
+            slippageBps: prefetchSlippageBps(slippage),
+            ethUsd,
+            amountRaw,
+          });
+          fromUsd = sim.fromUsd;
+          toUsd = sim.toUsd;
+          priceImpactPct = sim.priceImpactPct;
+          estOut = sim.amountOutRaw ?? undefined;
+        }
+      } catch {
+        /* sim optional */
+      }
+      legs.push({
+        tokenAddress: t.mintAddress,
+        symbol: t.symbol,
+        amountLabel: `${pct}% → ${rhQuoteCurrency}${
+          useRhParentPath ? " · Kyber / Rabby" : ""
+        }`,
+        side: "sell",
+        estOut,
+        fromUsd,
+        toUsd,
+        priceImpactPct,
+      });
+    }
+    return legs;
+  }, [
+    selectedTokens,
+    useRhParentPath,
+    rhWallet,
+    tradeFromAddress,
+    rhQuoteCurrency,
+    slippage,
+  ]);
+
   // Handle bulk sell with better error handling
   const handleBulkSell = useCallback(async () => {
     if (selectedTokens.length === 0 && selectedZeroBalanceTokens.length === 0) {
       setError("Please select at least one token");
+      return;
+    }
+    if (selectedTokens.length > MAX_TRADE_TOKENS) {
+      setError(`Maximum ${MAX_TRADE_TOKENS} tokens per sell`);
       return;
     }
 
@@ -1107,77 +1179,11 @@ export default function BulkTokenSeller() {
         );
         return;
       }
-      if (useRhParentPath && getRhBatchExecutorAddress()) {
-        await runConfirmedRhSell();
-        return;
-      }
       setIsLoading(true);
       setError("");
       try {
-        const ethUsd = await fetchEthUsdSpot();
-        const legs: GmgnConfirmLeg[] = [];
-        for (const t of selectedTokens) {
-          const pct = t.sellPercentage || 100;
-          let fromUsd: number | null = null;
-          let toUsd: number | null = null;
-          let priceImpactPct: number | null = null;
-          let estOut: string | undefined;
-          try {
-            if (useRhParentPath) {
-              const sim = await simulateRhParentSellLeg({
-                publicClient: rhWallet.getPublicClient(),
-                account: tradeFromAddress as Address,
-                tokenAddress: t.mintAddress,
-                percent: pct,
-                quote: rhQuoteCurrency,
-                ethUsd,
-                tokenDecimals: t.decimals,
-              });
-              fromUsd = sim.fromUsd;
-              toUsd = sim.toUsd;
-              priceImpactPct = sim.priceImpactPct;
-              estOut = sim.amountOutRaw ?? undefined;
-            } else {
-              const bal = (await rhWallet.getPublicClient().readContract({
-                address: t.mintAddress as Address,
-                abi: erc20Abi,
-                functionName: "balanceOf",
-                args: [tradeFromAddress as Address],
-              })) as bigint;
-              const amountRaw = (
-                (bal * BigInt(Math.floor(pct * 100))) /
-                BigInt(10_000)
-              ).toString();
-              const sim = await simulateRhBoundSellLeg({
-                from: tradeFromAddress,
-                tokenAddress: t.mintAddress,
-                percent: pct,
-                quote: rhQuoteCurrency,
-                slippageBps: prefetchSlippageBps(slippage),
-                ethUsd,
-                amountRaw,
-              });
-              fromUsd = sim.fromUsd;
-              toUsd = sim.toUsd;
-              priceImpactPct = sim.priceImpactPct;
-              estOut = sim.amountOutRaw ?? undefined;
-            }
-          } catch {
-            /* sim optional */
-          }
-          legs.push({
-            tokenAddress: t.mintAddress,
-            symbol: t.symbol,
-            amountLabel: `${pct}% → ${rhQuoteCurrency}${
-              useRhParentPath ? " · Kyber / Rabby" : ""
-            }`,
-            side: "sell",
-            estOut,
-            fromUsd,
-            toUsd,
-            priceImpactPct,
-          });
-        }
+        const legs = await previewRhSellLegs();
+        autoConfirmFiredRef.current = false;
         setGmgnConfirmLegs(legs);
         setGmgnConfirmOpen(true);
       } finally {
@@ -1607,6 +1613,46 @@ export default function BulkTokenSeller() {
     rhQuoteCurrency,
     rhWallet.getPublicClient(),
     runConfirmedRhSell,
+    previewRhSellLegs,
+  ]);
+
+  useEffect(() => {
+    if (!gmgnConfirmOpen || !isRhChain || gmgnConfirmBusy) return;
+    let cancelled = false;
+    const tick = async () => {
+      setGmgnQuoteRefreshing(true);
+      try {
+        const legs = await previewRhSellLegs();
+        if (!cancelled) setGmgnConfirmLegs(legs);
+      } catch {
+        /* keep last */
+      } finally {
+        if (!cancelled) setGmgnQuoteRefreshing(false);
+      }
+    };
+    void tick();
+    const id = window.setInterval(() => void tick(), 2500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [gmgnConfirmOpen, isRhChain, gmgnConfirmBusy, previewRhSellLegs]);
+
+  useEffect(() => {
+    if (!gmgnConfirmOpen || !isRhChain || !tradeAutoConfirm || gmgnConfirmBusy) {
+      return;
+    }
+    if (quoteIsVolatile(gmgnConfirmLegs.map((l) => l.priceImpactPct))) return;
+    if (autoConfirmFiredRef.current) return;
+    autoConfirmFiredRef.current = true;
+    void runConfirmedRhSell();
+  }, [
+    gmgnConfirmOpen,
+    isRhChain,
+    tradeAutoConfirm,
+    gmgnConfirmBusy,
+    gmgnConfirmLegs,
+    runConfirmedRhSell,
   ]);
 
   /** Close emptied ATAs offered on the post-sell success modal. */
@@ -2006,9 +2052,7 @@ export default function BulkTokenSeller() {
 
   const displayUserTokens = useMemo(() => {
     if (isRhChain) {
-      return (rhHoldingsQuery.data ?? []).filter(
-        (t) => (t.uiAmount ?? 0) > 0,
-      );
+      return rhWalletTokens.tokens;
     }
     if (showDustOnly) {
       return dustTokenList;
@@ -2019,7 +2063,7 @@ export default function BulkTokenSeller() {
     return allBalancedTokens;
   }, [
     isRhChain,
-    rhHoldingsQuery.data,
+    rhWalletTokens.tokens,
     showDustOnly,
     showZeroBalance,
     dustTokenList,
@@ -2032,8 +2076,8 @@ export default function BulkTokenSeller() {
   /** RH: sum of holdings USD for header (no Sol fee/rent math). */
   const rhHoldingsUsdTotal = useMemo(() => {
     if (!isRhChain) return 0;
-    return (rhHoldingsQuery.data ?? []).reduce((s, t) => s + (t.usdValue || 0), 0);
-  }, [isRhChain, rhHoldingsQuery.data]);
+    return rhWalletTokens.tokens.reduce((s, t) => s + (t.usdValue || 0), 0);
+  }, [isRhChain, rhWalletTokens.tokens]);
 
   const incompleteRpcBanner = useMemo(() => {
     if (diagnostics.length === 0 || !selectedEndpoint) return null;
@@ -2099,7 +2143,20 @@ export default function BulkTokenSeller() {
             ? RH_PLATFORM_FEE_LABEL
             : undefined
         }
-        onCancel={() => setGmgnConfirmOpen(false)}
+        volatile={
+          isRhChain &&
+          quoteIsVolatile(gmgnConfirmLegs.map((l) => l.priceImpactPct))
+        }
+        quoteRefreshing={gmgnQuoteRefreshing}
+        autoConfirm={tradeAutoConfirm}
+        onAutoConfirmChange={(on) => {
+          setTradeAutoConfirm(on);
+          writeTradeAutoConfirm(on);
+        }}
+        onCancel={() => {
+          autoConfirmFiredRef.current = false;
+          setGmgnConfirmOpen(false);
+        }}
         onConfirm={() => void runConfirmedRhSell()}
       />
       {/* Header */}
@@ -2284,7 +2341,7 @@ export default function BulkTokenSeller() {
                 : showDustOnly
                   ? "dust"
                   : "valuable"}{" "}
-              tokens selected
+              tokens selected (max {MAX_TRADE_TOKENS} to sell)
             </p>
           </div>
           <div className="flex items-center space-x-3">
@@ -2363,9 +2420,9 @@ export default function BulkTokenSeller() {
         <div className="flex justify-between items-center">
           <h3 className="text-md font-semibold text-white mb-1">
             Your Tokens
-            {isRhChain && rhHoldingsQuery.source ? (
+            {isRhChain && rhWalletTokens.source ? (
               <span className="ml-2 text-xs font-normal text-gray-500 uppercase">
-                via {rhHoldingsQuery.source}
+                via {rhWalletTokens.source}
               </span>
             ) : null}
           </h3>
@@ -2560,71 +2617,83 @@ export default function BulkTokenSeller() {
             </button>
           </div>
         ) : (
-          <div className="grid max-h-96 overflow-y-auto border border-gray-600 rounded-xl">
-            {filteredUserTokens.map((token) => {
-              if (zeroBalanceMintSet.has(token.mintAddress)) {
-                const isSelected = selectedZeroBalanceTokens.some(
-                  (t) => t.mintAddress === token.mintAddress,
-                );
-                return (
-                  <div
-                    key={token.mintAddress}
-                    className={`group p-2 m-1 rounded-xl transition-all duration-200 ${
-                      isSelected ? "bg-gray-700" : "bg-gray-900"
-                    }`}
-                  >
-                    <div
-                      className="flex items-center justify-between cursor-pointer"
-                      onClick={() => toggleZeroBalanceTokenSelection(token)}
-                    >
-                      <div className="flex items-center space-x-3">
-                        <div
-                          className={`w-4 h-4 rounded border-2 flex items-center justify-center ${
-                            isSelected
-                              ? "bg-blue-500 border-blue-500"
-                              : "border-gray-500"
-                          }`}
-                        >
-                          {isSelected && (
-                            <span className="text-white text-xs">✓</span>
-                          )}
-                        </div>
-                        <span className="font-semibold text-gray-300">
-                          {token.name || token.symbol || "Unknown"}
-                        </span>
-                        <span className="text-xs text-gray-500">Close only</span>
-                      </div>
-                    </div>
-                  </div>
-                );
+          <>
+            {filteredUserTokens.filter(
+              (t) => !zeroBalanceMintSet.has(t.mintAddress),
+            ).length > 0 ? (
+            <HoldingsTokenList
+              mode="select"
+              tokens={filteredUserTokens.filter(
+                (t) => !zeroBalanceMintSet.has(t.mintAddress),
+              )}
+              isSelected={(token) =>
+                selectedTokens.some((t) =>
+                  isRhChain
+                    ? walletsMatch(t.mintAddress, token.mintAddress)
+                    : t.mintAddress === token.mintAddress,
+                )
               }
-
-              const isSelected = selectedTokens.some((t) =>
-                isRhChain
-                  ? walletsMatch(t.mintAddress, token.mintAddress)
-                  : t.mintAddress === token.mintAddress,
-              );
-              const selectedToken = selectedTokens.find((t) =>
-                isRhChain
-                  ? walletsMatch(t.mintAddress, token.mintAddress)
-                  : t.mintAddress === token.mintAddress,
-              );
-              return (
-                <ProgressiveTokenItem
-                  key={token.mintAddress}
-                  token={token}
-                  isSelected={isSelected}
-                  isLoading={false}
-                  onToggleSelection={toggleTokenSelection}
-                  onSelectToken={handleSelectToken}
-                  onRefreshPrice={refreshTokenPrice}
-                  selectedToken={selectedToken}
-                  onUpdateSellPercentage={updateTokenSellPercentage}
-                  onUpdateSellAmount={updateTokenSellAmount}
-                />
-              );
-            })}
-          </div>
+              selectedToken={(token) =>
+                selectedTokens.find((t) =>
+                  isRhChain
+                    ? walletsMatch(t.mintAddress, token.mintAddress)
+                    : t.mintAddress === token.mintAddress,
+                )
+              }
+              onToggle={toggleTokenSelection}
+              onSelectChart={handleSelectToken}
+              onRefreshPrice={refreshTokenPrice}
+              onUpdateSellPercentage={updateTokenSellPercentage}
+              onUpdateSellAmount={updateTokenSellAmount}
+            />
+            ) : null}
+            {filteredUserTokens.some((t) =>
+              zeroBalanceMintSet.has(t.mintAddress),
+            ) ? (
+              <div className="mt-2 grid max-h-48 overflow-y-auto border border-gray-600 rounded-xl">
+                {filteredUserTokens
+                  .filter((t) => zeroBalanceMintSet.has(t.mintAddress))
+                  .map((token) => {
+                    const isSelected = selectedZeroBalanceTokens.some(
+                      (t) => t.mintAddress === token.mintAddress,
+                    );
+                    return (
+                      <div
+                        key={token.mintAddress}
+                        className={`group p-2 m-1 rounded-xl transition-all duration-200 ${
+                          isSelected ? "bg-gray-700" : "bg-gray-900"
+                        }`}
+                      >
+                        <div
+                          className="flex items-center justify-between cursor-pointer"
+                          onClick={() => toggleZeroBalanceTokenSelection(token)}
+                        >
+                          <div className="flex items-center space-x-3">
+                            <div
+                              className={`w-4 h-4 rounded border-2 flex items-center justify-center ${
+                                isSelected
+                                  ? "bg-blue-500 border-blue-500"
+                                  : "border-gray-500"
+                              }`}
+                            >
+                              {isSelected && (
+                                <span className="text-white text-xs">✓</span>
+                              )}
+                            </div>
+                            <span className="font-semibold text-gray-300">
+                              {token.name || token.symbol || "Unknown"}
+                            </span>
+                            <span className="text-xs text-gray-500">
+                              Close only
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            ) : null}
+          </>
         )}
 
         {/* Zero-Balance Tokens Section — Sol only */}

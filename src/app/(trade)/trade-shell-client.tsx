@@ -56,7 +56,7 @@ export default function TradeShellClient({
         onTabSelect={setActiveOverlayTab}
       />
 
-      <div className="max-w-8xl mx-auto min-h-[300px] mt-4 relative">
+      <div className="max-w-6xl mx-auto min-h-[300px] mt-4 relative">
         {activeOverlayTab === "history" && (
           <WalletConnectGate
             title="Connect to view history"

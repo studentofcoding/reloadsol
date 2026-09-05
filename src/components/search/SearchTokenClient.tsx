@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
+import { useQuery } from '@tanstack/react-query'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useGmgnTokenSearch, useGmgnTrending, type GmgnSearchToken } from '@/hooks/useGmgnTokenSearch'
 import { useRhWalletTokens } from '@/hooks/useRhWalletTokens'
@@ -13,6 +14,8 @@ import { useAppNetwork } from '@/contexts/AppNetworkContext'
 import { OptimizedImage } from '@/components/OptimizedImage'
 import GmgnKlineChart from '@/components/GmgnKlineChart'
 import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
+import { isValidTradeTokenAddress } from '@/utils/gmgn-currencies'
+import type { TokenLocateResult } from '@/strategies/token-locate'
 
 type SearchTokenClientProps = {
   /** Pre-selected chain from the route segment. If absent, falls back to useAppNetwork().effectiveChain. */
@@ -53,7 +56,7 @@ export default function SearchTokenClient(props: SearchTokenClientProps) {
   }, [chainProp, params, router])
 
   return (
-    <div className="space-y-4">
+    <div className="mx-auto max-w-6xl space-y-4">
       <SearchTokenHeader chain={chain} returnTo={returnTo} />
       <SearchTokenInput
         value={query}
@@ -146,20 +149,73 @@ function SearchTokenResults({
   const trimmed = query.trim()
   const search = useGmgnTokenSearch(chain, trimmed, { enabled: trimmed.length > 0 })
   const trending = useGmgnTrending(chain, trimmed.length === 0)
-  const isRh = chain === 'robinhood'
+  const isAddressQuery = isValidTradeTokenAddress(chain, trimmed)
+  const strategyTokens = useQuery({
+    queryKey: ['strategy-recent-tokens', chain],
+    queryFn: async (): Promise<GmgnSearchToken[]> => {
+      const res = await fetch(`/api/strategies/recent-tokens?chain=${chain}&limit=30`)
+      const json = (await res.json()) as {
+        success?: boolean
+        tokens?: Array<{ address: string; symbol: string }>
+      }
+      if (!res.ok || !json.success) return []
+      return (json.tokens ?? []).map((t) => ({
+        id: t.address,
+        address: t.address,
+        name: t.symbol,
+        symbol: t.symbol,
+      }))
+    },
+    enabled: trimmed.length === 0,
+    staleTime: 30_000,
+  })
+  const locate = useQuery({
+    queryKey: ['token-locate', chain, trimmed],
+    queryFn: async (): Promise<TokenLocateResult & { success?: boolean }> => {
+      const params = new URLSearchParams({ address: trimmed, chain })
+      const res = await fetch(`/api/strategies/token-locate?${params}`)
+      const json = (await res.json()) as TokenLocateResult & {
+        success?: boolean
+        error?: string
+      }
+      if (!res.ok || json.success === false) {
+        throw new Error(json.error || 'Lookup failed')
+      }
+      return json
+    },
+    enabled: isAddressQuery,
+    staleTime: 15_000,
+  })
 
   return (
     <div className="space-y-2">
       {trimmed.length > 0 ? (
-        <ResultsList
-          title={search.isFetching ? 'Searching…' : `Search Results (${search.data?.length ?? 0})`}
-          tokens={search.data ?? []}
-          empty={!search.isFetching && (search.data?.length ?? 0) === 0}
-          chain={chain}
-          onPickAction={onPickAction}
-        />
+        <>
+          {isAddressQuery ? (
+            <SystemPresence
+              loading={locate.isFetching}
+              result={locate.data ?? null}
+            />
+          ) : null}
+          <ResultsList
+            title={search.isFetching ? 'Searching…' : `Search Results (${search.data?.length ?? 0})`}
+            tokens={search.data ?? []}
+            empty={!search.isFetching && (search.data?.length ?? 0) === 0}
+            chain={chain}
+            onPickAction={onPickAction}
+          />
+        </>
       ) : (
         <>
+          <ResultsList
+            title={`In strategies (${strategyTokens.data?.length ?? 0})`}
+            tokens={strategyTokens.data ?? []}
+            empty={
+              !strategyTokens.isFetching && (strategyTokens.data?.length ?? 0) === 0
+            }
+            chain={chain}
+            onPickAction={onPickAction}
+          />
           <ResultsList
             title={`Trending on ${CHAIN_LABEL[chain]}`}
             tokens={trending.data ?? []}
@@ -170,6 +226,63 @@ function SearchTokenResults({
           <YourHoldings chain={chain} onPickAction={onPickAction} />
         </>
       )}
+    </div>
+  )
+}
+
+function SystemPresence({
+  loading,
+  result,
+}: {
+  loading: boolean
+  result: (TokenLocateResult & { success?: boolean }) | null
+}) {
+  if (loading && !result) {
+    return <Section title="On this system" loading />
+  }
+  if (!result) return null
+  const presence = result.strategyPresence ?? []
+  return (
+    <div className="bg-gray-900/40 border border-gray-800 rounded-xl overflow-hidden">
+      <div className="px-4 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-800 bg-gray-800/60">
+        On this system
+      </div>
+      <div className="px-4 py-3 space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {result.found ? (
+            <span className="rounded bg-green-900/50 px-2 py-0.5 text-xs text-green-300">
+              Detected in DB
+            </span>
+          ) : (
+            <span className="rounded bg-gray-800 px-2 py-0.5 text-xs text-gray-400">
+              Not in internal DB
+            </span>
+          )}
+          {result.symbol ? (
+            <span className="text-sm text-white">{result.symbol}</span>
+          ) : null}
+        </div>
+        {presence.length > 0 ? (
+          <ul className="space-y-1">
+            {presence.slice(0, 8).map((p) => (
+              <li key={`${p.domain}-${p.strategyId}-${p.source}`} className="text-xs text-gray-300">
+                <span className="text-gray-400">{p.domain}</span>
+                {p.strategyName ? ` · ${p.strategyName}` : ''}
+                {p.status ? ` · ${p.status}` : ''}
+                {p.label ? ` · ${p.label}` : ''}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-xs text-gray-500">No strategy rows for this chain.</p>
+        )}
+        <Link
+          href={`/dev/strategies?tab=outcomes&tokenAddress=${encodeURIComponent(result.tokenAddress)}`}
+          className="inline-block text-xs text-emerald-400 hover:text-emerald-300"
+        >
+          Open in strategies
+        </Link>
+      </div>
     </div>
   )
 }

@@ -1,16 +1,27 @@
 /**
  * Developer wallet utilities — Jupiter Universal Wallet compatible.
  * Resolves addresses from publicKey, adapter.publicKey, or base58 strings.
+ * Sol and Robinhood allowlists are separate: a Sol pubkey never grants RH
+ * dev UI, and the RH deployer never grants Sol-only tools.
  */
 
 import { PublicKey } from '@solana/web3.js';
+import type { AppNetwork } from '@/utils/app-network';
 
-/** Built-in dev wallets (always available in client bundles). */
-export const DEFAULT_DEV_WALLETS = [
+export const DEFAULT_SOL_DEV_WALLETS = [
   '3V3N5xh6vUUVU3CnbjMAXoyXendfXzXYKzTVEsFrLkgX',
   '2KbA4Z1twQCYZj4MNvX5RKNKh8vWGpiQbGBPcAjtBpYS',
-  // EVM (Robinhood) dev wallet — matched case-insensitively (0x-prefixed).
-  '0x795b5c0c89fc5d3b0de6c04141c3f1b6c340603d',
+] as const;
+
+/** RH BatchExecutor owner / deployer. */
+export const DEFAULT_RH_DEV_WALLETS = [
+  '0x795b5c0c89fC5D3b0De6c04141C3F1b6C340603D',
+] as const;
+
+/** Built-in defaults (Sol + RH). Prefer the per-chain lists when checking access. */
+export const DEFAULT_DEV_WALLETS = [
+  ...DEFAULT_SOL_DEV_WALLETS,
+  ...DEFAULT_RH_DEV_WALLETS,
 ] as const;
 
 type WalletLike =
@@ -20,7 +31,8 @@ type WalletLike =
   | null
   | undefined;
 
-let cachedDevWallets: Set<string> | null = null;
+let cachedSol: Set<string> | null = null;
+let cachedRh: Set<string> | null = null;
 
 function parseWalletList(raw: string): string[] {
   return raw
@@ -29,11 +41,13 @@ function parseWalletList(raw: string): string[] {
     .filter((wallet) => wallet.length > 0);
 }
 
+function isEvmAddress(address: string): boolean {
+  return address.startsWith('0x') || address.startsWith('0X');
+}
+
 function normalizeAddress(address: string): string {
   const trimmed = address.trim();
-  // EVM addresses are case-insensitive (lowercase / CHECKSUM / HEX) — match
-  // them all against the allowlist by folding to lowercase.
-  return trimmed.startsWith('0x') ? trimmed.toLowerCase() : trimmed;
+  return isEvmAddress(trimmed) ? trimmed.toLowerCase() : trimmed;
 }
 
 /**
@@ -88,30 +102,51 @@ export function toWalletAddress(wallet: WalletLike): string | null {
   return null;
 }
 
-function getDevWalletSet(): Set<string> {
-  if (cachedDevWallets !== null) {
-    return cachedDevWallets;
-  }
-
+function envWallets(): { sol: string[]; rh: string[] } {
   const fromEnv = parseWalletList(
-    process.env.NEXT_PUBLIC_DEV_WALLETS ||
-      process.env.DEV_WALLETS ||
-      '',
+    process.env.NEXT_PUBLIC_DEV_WALLETS || process.env.DEV_WALLETS || '',
   );
-
-  cachedDevWallets = new Set(
-    [...DEFAULT_DEV_WALLETS, ...fromEnv].map(normalizeAddress),
-  );
-
-  return cachedDevWallets;
+  const sol: string[] = [];
+  const rh: string[] = [];
+  for (const w of fromEnv) {
+    if (isEvmAddress(w)) rh.push(w);
+    else sol.push(w);
+  }
+  return { sol, rh };
 }
 
-/** Check if a wallet address belongs to a developer. */
-export function isDevWallet(wallet: WalletLike): boolean {
+function getSolDevWalletSet(): Set<string> {
+  if (cachedSol !== null) return cachedSol;
+  cachedSol = new Set(
+    [...DEFAULT_SOL_DEV_WALLETS, ...envWallets().sol].map(normalizeAddress),
+  );
+  return cachedSol;
+}
+
+function getRhDevWalletSet(): Set<string> {
+  if (cachedRh !== null) return cachedRh;
+  cachedRh = new Set(
+    [...DEFAULT_RH_DEV_WALLETS, ...envWallets().rh].map(normalizeAddress),
+  );
+  return cachedRh;
+}
+
+function setForNetwork(network?: AppNetwork): Set<string> {
+  if (network === 'robinhood') return getRhDevWalletSet();
+  if (network === 'sol') return getSolDevWalletSet();
+  return new Set([...getSolDevWalletSet(), ...getRhDevWalletSet()]);
+}
+
+/** Check if a wallet is a developer wallet. Pass `network` to keep Sol/RH lists apart. */
+export function isDevWallet(wallet: WalletLike, network?: AppNetwork): boolean {
   const address = toWalletAddress(wallet);
   if (!address) return false;
 
-  const isMatch = getDevWalletSet().has(normalizeAddress(address));
+  const normalized = normalizeAddress(address);
+  if (network === 'robinhood' && !isEvmAddress(address)) return false;
+  if (network === 'sol' && isEvmAddress(address)) return false;
+
+  const isMatch = setForNetwork(network).has(normalized);
 
   if (isMatch && process.env.NODE_ENV !== 'production') {
     console.log(`🛠️ Developer wallet detected: ${address.slice(0, 8)}...`);
@@ -120,11 +155,12 @@ export function isDevWallet(wallet: WalletLike): boolean {
   return isMatch;
 }
 
-/** All configured developer wallets (defaults + env). */
+/** All configured developer wallets (Sol + RH defaults + env). */
 export function getConfiguredDevWallets(): string[] {
-  return Array.from(getDevWalletSet());
+  return Array.from(setForNetwork());
 }
 
 export function clearDevWalletCache(): void {
-  cachedDevWallets = null;
+  cachedSol = null;
+  cachedRh = null;
 }

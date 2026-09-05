@@ -26,6 +26,7 @@ import UniversalWalletButton from "./UniversalWalletButton";
 import TrendingTokens from "./TrendingTokens";
 import TradeOutcomeModal, { useTradeOutcome } from "./TradeOutcomeModal";
 import TokenSkeleton from "./TokenSkeleton";
+import HoldingsTokenList from "./HoldingsTokenList";
 import RiskAnalysis from "./RiskAnalysis";
 import GmgnTradeConfirmModal, {
   type GmgnConfirmLeg,
@@ -83,11 +84,18 @@ import {
 import type { RhSwapQuote } from "@/utils/dlmm/rh-univ2-swap";
 import { executeRhParentKyberBuy } from "@/utils/dlmm/rh-kyber-swap";
 import { getRhBatchExecutorAddress, RH_PLATFORM_FEE_LABEL } from "@/utils/dlmm/rh-batch-executor";
+import { useSolPrice } from "@/hooks/useSolPrice";
+import {
+  MAX_TRADE_TOKENS,
+  MIN_BUY_USD_PER_TOKEN,
+  buyMeetsMinUsdPerToken,
+} from "@/utils/trade-ui-limits";
 import { prefetchSwapTransaction, fetchSwapQuote } from "@/utils/swap-executor";
 import {
   AUTO_SLIPPAGE_BPS,
   AUTO_SLIPPAGE_CAP_BPS,
   prefetchSlippageBps,
+  quoteIsVolatile,
   rawImpactToPct,
   resolveTradeSlippageBps,
   worstImpactPct,
@@ -100,6 +108,7 @@ import {
   RH_WETH_GAS_RESERVE_ETH,
 } from "@/hooks/usePortfolioWallet";
 import { RH_WETH } from "@/utils/dlmm/rh-univ2";
+import { walletsMatch } from "@/utils/rh-wallet-holdings";
 import {
   fetchEthUsdSpot,
   simulateRhBoundBuyLeg,
@@ -109,6 +118,10 @@ import {
   buildRhBuyToken,
   rhQuoteUsdPerUnit,
 } from "@/utils/rh-trade-record";
+import {
+  readTradeAutoConfirm,
+  writeTradeAutoConfirm,
+} from "@/utils/trade-auto-confirm";
 
 type SpendCurrency = "SOL" | "USDC" | "ETH" | "USDG" | "WETH";
 
@@ -138,7 +151,7 @@ export default function BulkTokenBuyer() {
   const getInitialSolAmount = () => {
     const fromUrl = readBuySpendAmount(searchParams, network);
     if (fromUrl) return fromUrl;
-    return network === "robinhood" ? "0.001" : "0.1";
+    return network === "robinhood" ? "0.003" : "0.1";
   };
 
   // Chart mint from toast→/buy queue; drained once with initial tokenMints (not in an effect).
@@ -147,7 +160,7 @@ export default function BulkTokenBuyer() {
   const getInitialTokenMints = () => {
     const fromUrl = (searchParams.get("mints") ?? "")
       .split(",")
-      .slice(0, 10)
+      .slice(0, MAX_TRADE_TOKENS)
       .map((m) => m.trim())
       .filter(Boolean);
     const pending = drainBuyPendingMints();
@@ -158,7 +171,7 @@ export default function BulkTokenBuyer() {
     for (const mint of pending) {
       if (!merged.includes(mint)) merged.push(mint);
     }
-    return merged.join("\n");
+    return merged.slice(0, MAX_TRADE_TOKENS).join("\n");
   };
 
   // Form state
@@ -172,6 +185,9 @@ export default function BulkTokenBuyer() {
   const [gmgnConfirmOpen, setGmgnConfirmOpen] = useState(false);
   const [gmgnConfirmLegs, setGmgnConfirmLegs] = useState<GmgnConfirmLeg[]>([]);
   const [gmgnConfirmBusy, setGmgnConfirmBusy] = useState(false);
+  const [tradeAutoConfirm, setTradeAutoConfirm] = useState(readTradeAutoConfirm);
+  const [gmgnQuoteRefreshing, setGmgnQuoteRefreshing] = useState(false);
+  const autoConfirmFiredRef = useRef(false);
   const [solPrefetchOut, setSolPrefetchOut] = useState<Record<string, string>>(
     {},
   );
@@ -205,6 +221,19 @@ export default function BulkTokenBuyer() {
   const selectedCurrency: SpendCurrency = isRhChain ? rhCurrency : solCurrency;
   const rhQuote: RhSwapQuote = rhCurrency;
   const spendUnit: SpendCurrency = selectedCurrency;
+  const { data: solUsd } = useSolPrice();
+  const { data: ethUsdSpot } = useQuery({
+    queryKey: ["eth-usd-spot"],
+    queryFn: fetchEthUsdSpot,
+    staleTime: 60_000,
+    enabled: isRhChain && rhQuote !== "USDG",
+  });
+  const spendUsdPerUnit =
+    spendUnit === "USDG" || spendUnit === "USDC"
+      ? 1
+      : spendUnit === "SOL"
+        ? solUsd ?? 0
+        : ethUsdSpot ?? 0;
 
   // URL parameter initialization state
   const [initialized] = useState<boolean>(true);
@@ -291,7 +320,7 @@ export default function BulkTokenBuyer() {
 
   const displayUserTokens = useMemo(() => {
     if (isRhChain) {
-      return rhWalletTokens.tokens.filter((t) => (t.usdValue ?? 0) > 0);
+      return rhWalletTokens.tokens;
     }
     if (showDustOnly) {
       return dustTokenList.filter((token) => !token.isNFT);
@@ -413,8 +442,14 @@ export default function BulkTokenBuyer() {
 
   // Parse and validate mint addresses (chain-aware)
   const validMints = useMemo(
-    () => parseTradeTokenAddresses(effectiveChain, tokenMints, 10),
+    () =>
+      parseTradeTokenAddresses(effectiveChain, tokenMints, MAX_TRADE_TOKENS),
     [effectiveChain, tokenMints],
+  );
+  const meetsMinBuyUsd = buyMeetsMinUsdPerToken(
+    parseFloat(solAmount),
+    validMints.length,
+    spendUsdPerUnit,
   );
   const parsedMints = useMemo(
     () =>
@@ -573,14 +608,15 @@ export default function BulkTokenBuyer() {
   // Handle adding a token to the list
   const handleAddToken = useCallback(
     (mintAddress: string) => {
-      // Check if the mint address is already in the list
-      if (!parsedMints.includes(mintAddress)) {
-        // Add the new mint address to the existing ones
-        const newTokenMints = tokenMints
-          ? tokenMints.trim() + "\n" + mintAddress
-          : mintAddress;
-        setTokenMints(newTokenMints);
+      if (parsedMints.includes(mintAddress)) return;
+      if (parsedMints.length >= MAX_TRADE_TOKENS) {
+        setError(`Maximum ${MAX_TRADE_TOKENS} tokens per buy`);
+        return;
       }
+      const newTokenMints = tokenMints
+        ? tokenMints.trim() + "\n" + mintAddress
+        : mintAddress;
+      setTokenMints(newTokenMints);
     },
     [tokenMints, parsedMints],
   );
@@ -722,12 +758,7 @@ export default function BulkTokenBuyer() {
 
   // Add mint address from search result
   const handleAddFromSearch = (mintAddress: string) => {
-    if (!parsedMints.includes(mintAddress)) {
-      const newTokenMints = tokenMints
-        ? tokenMints.trim() + "\n" + mintAddress
-        : mintAddress;
-      setTokenMints(newTokenMints);
-    }
+    handleAddToken(mintAddress);
     setShowResults(false);
     setSearchTerm("");
     handleSelectToken(mintAddress);
@@ -981,6 +1012,75 @@ export default function BulkTokenBuyer() {
 
   const runGmgnBulkBuy = runConfirmedRhBuy;
 
+  const previewRhBuyLegs = useCallback(async (): Promise<GmgnConfirmLeg[]> => {
+    const totalHuman = parseFloat(solAmount);
+    const perTokenHuman =
+      validMints.length > 0 ? totalHuman / validMints.length : totalHuman;
+    const perLabel =
+      spendUnit === "ETH" || spendUnit === "WETH"
+        ? perTokenHuman.toFixed(6)
+        : perTokenHuman.toFixed(4);
+    const ethUsd = await fetchEthUsdSpot();
+    const legs: GmgnConfirmLeg[] = [];
+    for (const mint of validMints) {
+      let estOut: string | undefined;
+      let fromUsd: number | null = null;
+      let toUsd: number | null = null;
+      let priceImpactPct: number | null = null;
+      try {
+        if (useRhParentPath) {
+          const sim = await simulateRhParentBuyLeg({
+            amountHuman: perTokenHuman,
+            tokenAddress: mint,
+            quote: rhQuote,
+            ethUsd,
+          });
+          estOut = sim.amountOutRaw ?? undefined;
+          fromUsd = sim.fromUsd;
+          toUsd = sim.toUsd;
+          priceImpactPct = sim.priceImpactPct;
+        } else {
+          const sim = await simulateRhBoundBuyLeg({
+            from: tradeFromAddress!,
+            amountHuman: perTokenHuman,
+            tokenAddress: mint,
+            quote: rhQuote,
+            slippageBps: prefetchSlippageBps(slippage),
+            ethUsd,
+          });
+          estOut = sim.amountOutRaw ?? undefined;
+          fromUsd = sim.fromUsd;
+          toUsd = sim.toUsd;
+          priceImpactPct = sim.priceImpactPct;
+        }
+      } catch {
+        /* sim optional for confirm display */
+      }
+      legs.push({
+        tokenAddress: mint,
+        symbol: tokenList.find((t) => t.address === mint)?.symbol,
+        amountLabel: `${perLabel} ${spendUnit}${
+          useRhParentPath ? " · Kyber / Rabby" : ""
+        }`,
+        estOut,
+        fromUsd,
+        toUsd,
+        priceImpactPct,
+        side: "buy",
+      });
+    }
+    return legs;
+  }, [
+    solAmount,
+    validMints,
+    spendUnit,
+    useRhParentPath,
+    rhQuote,
+    tradeFromAddress,
+    slippage,
+    tokenList,
+  ]);
+
   // Handle form submission
   const handleBulkBuy = useCallback(async () => {
     if (!solAmount || parseFloat(solAmount) <= 0) {
@@ -993,8 +1093,22 @@ export default function BulkTokenBuyer() {
       return;
     }
 
-    if (validMints.length > 10) {
-      setError("Maximum 10 token addresses allowed");
+    if (validMints.length > MAX_TRADE_TOKENS) {
+      setError(`Maximum ${MAX_TRADE_TOKENS} tokens per buy`);
+      return;
+    }
+
+    const totalHuman = parseFloat(solAmount);
+    if (
+      !buyMeetsMinUsdPerToken(
+        totalHuman,
+        validMints.length,
+        spendUsdPerUnit,
+      )
+    ) {
+      setError(
+        `Minimum $${MIN_BUY_USD_PER_TOKEN} per token (split your spend across the list)`,
+      );
       return;
     }
 
@@ -1012,69 +1126,11 @@ export default function BulkTokenBuyer() {
         );
         return;
       }
-      if (useRhParentPath && getRhBatchExecutorAddress()) {
-        await runConfirmedRhBuy();
-        return;
-      }
       setIsLoading(true);
       setError("");
       try {
-        const totalHuman = parseFloat(solAmount);
-        const perTokenHuman =
-          validMints.length > 0 ? totalHuman / validMints.length : totalHuman;
-        const perLabel =
-          spendUnit === "ETH" || spendUnit === "WETH"
-            ? perTokenHuman.toFixed(6)
-            : perTokenHuman.toFixed(4);
-        const ethUsd = await fetchEthUsdSpot();
-        const legs: GmgnConfirmLeg[] = [];
-        for (const mint of validMints) {
-          let estOut: string | undefined;
-          let fromUsd: number | null = null;
-          let toUsd: number | null = null;
-          let priceImpactPct: number | null = null;
-          try {
-            if (useRhParentPath) {
-              const sim = await simulateRhParentBuyLeg({
-                amountHuman: perTokenHuman,
-                tokenAddress: mint,
-                quote: rhQuote,
-                ethUsd,
-              });
-              estOut = sim.amountOutRaw ?? undefined;
-              fromUsd = sim.fromUsd;
-              toUsd = sim.toUsd;
-              priceImpactPct = sim.priceImpactPct;
-            } else {
-              const sim = await simulateRhBoundBuyLeg({
-                from: tradeFromAddress,
-                amountHuman: perTokenHuman,
-                tokenAddress: mint,
-                quote: rhQuote,
-                slippageBps: prefetchSlippageBps(slippage),
-                ethUsd,
-              });
-              estOut = sim.amountOutRaw ?? undefined;
-              fromUsd = sim.fromUsd;
-              toUsd = sim.toUsd;
-              priceImpactPct = sim.priceImpactPct;
-            }
-          } catch {
-            /* sim optional for confirm display */
-          }
-          legs.push({
-            tokenAddress: mint,
-            symbol: tokenList.find((t) => t.address === mint)?.symbol,
-            amountLabel: `${perLabel} ${spendUnit}${
-              useRhParentPath ? " · Kyber / Rabby" : ""
-            }`,
-            estOut,
-            fromUsd,
-            toUsd,
-            priceImpactPct,
-            side: "buy",
-          });
-        }
+        const legs = await previewRhBuyLegs();
+        autoConfirmFiredRef.current = false;
         setGmgnConfirmLegs(legs);
         setGmgnConfirmOpen(true);
       } finally {
@@ -1421,6 +1477,47 @@ export default function BulkTokenBuyer() {
     rhQuote,
     refetchTokensFresh,
     runConfirmedRhBuy,
+    spendUsdPerUnit,
+    previewRhBuyLegs,
+  ]);
+
+  useEffect(() => {
+    if (!gmgnConfirmOpen || !isRhChain || gmgnConfirmBusy) return;
+    let cancelled = false;
+    const tick = async () => {
+      setGmgnQuoteRefreshing(true);
+      try {
+        const legs = await previewRhBuyLegs();
+        if (!cancelled) setGmgnConfirmLegs(legs);
+      } catch {
+        /* keep last legs */
+      } finally {
+        if (!cancelled) setGmgnQuoteRefreshing(false);
+      }
+    };
+    void tick();
+    const id = window.setInterval(() => void tick(), 2500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [gmgnConfirmOpen, isRhChain, gmgnConfirmBusy, previewRhBuyLegs]);
+
+  useEffect(() => {
+    if (!gmgnConfirmOpen || !isRhChain || !tradeAutoConfirm || gmgnConfirmBusy) {
+      return;
+    }
+    if (quoteIsVolatile(gmgnConfirmLegs.map((l) => l.priceImpactPct))) return;
+    if (autoConfirmFiredRef.current) return;
+    autoConfirmFiredRef.current = true;
+    void runConfirmedRhBuy();
+  }, [
+    gmgnConfirmOpen,
+    isRhChain,
+    tradeAutoConfirm,
+    gmgnConfirmBusy,
+    gmgnConfirmLegs,
+    runConfirmedRhBuy,
   ]);
 
   // Handle metadata updates from background enrichment
@@ -1500,18 +1597,26 @@ export default function BulkTokenBuyer() {
     const pastedAddresses = parseTradeTokenAddresses(
       effectiveChain,
       pastedText,
+      MAX_TRADE_TOKENS,
     );
 
     if (pastedAddresses.length === 0) return;
 
-    // Add unique addresses to the current list
     const currentAddresses = new Set(parsedMints);
+    const slots = Math.max(0, MAX_TRADE_TOKENS - parsedMints.length);
+    if (slots <= 0) {
+      setError(`Maximum ${MAX_TRADE_TOKENS} tokens per buy`);
+      return;
+    }
     let newAddresses = "";
+    let added = 0;
 
     pastedAddresses.forEach((addr) => {
+      if (added >= slots) return;
       if (!currentAddresses.has(addr)) {
         newAddresses += (newAddresses ? "\n" : "") + addr;
         currentAddresses.add(addr);
+        added += 1;
       }
     });
 
@@ -1623,7 +1728,20 @@ export default function BulkTokenBuyer() {
             ? RH_PLATFORM_FEE_LABEL
             : undefined
         }
-        onCancel={() => setGmgnConfirmOpen(false)}
+        volatile={
+          isRhChain &&
+          quoteIsVolatile(gmgnConfirmLegs.map((l) => l.priceImpactPct))
+        }
+        quoteRefreshing={gmgnQuoteRefreshing}
+        autoConfirm={tradeAutoConfirm}
+        onAutoConfirmChange={(on) => {
+          setTradeAutoConfirm(on);
+          writeTradeAutoConfirm(on);
+        }}
+        onCancel={() => {
+          autoConfirmFiredRef.current = false;
+          setGmgnConfirmOpen(false);
+        }}
         onConfirm={() => void runConfirmedRhBuy()}
       />
 
@@ -1947,7 +2065,7 @@ export default function BulkTokenBuyer() {
                       isRhChain
                         ? selectedCurrency === "USDG"
                           ? "10"
-                          : "0.001"
+                        : "0.003"
                         : "0.1"
                     }
                     className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl shadow-inner text-white placeholder-gray-400 focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
@@ -1964,8 +2082,10 @@ export default function BulkTokenBuyer() {
                     </button>
                   </div>
                 </div>
-
-                {/* Balance Display */}
+                <p className="text-xs text-gray-500">
+                  Min ${MIN_BUY_USD_PER_TOKEN} per token · max {MAX_TRADE_TOKENS}{" "}
+                  tokens
+                </p>
                 {isSolTrade &&
                   connected &&
                   (walletBalance !== null || usdcBalance !== null) && (
@@ -2127,135 +2247,68 @@ export default function BulkTokenBuyer() {
                   </div>
                 </div>
 
-                {isInitialLoadTokens &&
-                (isRhChain
-                  ? Boolean(rhWalletTokens.walletAddress)
-                  : isWalletReady) ? (
-                  <TokenSkeleton count={3} variant="progressive" />
-                ) : isLoadingUserTokens ? (
-                  <TokenSkeleton count={2} variant="progressive" />
-                ) : tokensFetchError ? (
-                  <div className="text-center py-8 border border-gray-600 rounded-xl">
-                    <p className="text-gray-400 mb-3">{tokensFetchError}</p>
-                    <button
-                      type="button"
-                      onClick={() => refetchTokens(true)}
-                      className="px-4 py-2 bg-white hover:bg-gray-100 text-black rounded-lg text-sm"
-                    >
-                      Retry
-                    </button>
-                  </div>
-                ) : displayUserTokens.length === 0 ? (
-                  <div className="text-center py-8 border border-gray-600 rounded-xl">
-                    <p className="text-gray-400 mb-3">
-                      {isRhChain
-                        ? "No ERC-20 holdings found"
-                        : showDustOnly
-                          ? "No dust tokens found"
-                          : showZeroBalance
-                            ? "No tokens in wallet"
-                            : allBalancedTokens.length === 0 &&
-                                dustTokenList.length > 0
-                              ? "No tokens worth $1+ — try Dust only"
-                              : "No tokens found"}
-                    </p>
-                    {!isRhChain &&
-                      allBalancedTokens.length === 0 &&
+                <HoldingsTokenList
+                  mode="add"
+                  tokens={displayUserTokens}
+                  isLoading={
+                    (isRhChain
+                      ? Boolean(rhWalletTokens.walletAddress)
+                      : isWalletReady) &&
+                    (isInitialLoadTokens || isLoadingUserTokens)
+                  }
+                  error={tokensFetchError}
+                  emptyTitle={
+                    isRhChain
+                      ? "No ERC-20 holdings found"
+                      : showDustOnly
+                        ? "No dust tokens found"
+                        : showZeroBalance
+                          ? "No tokens in wallet"
+                          : allBalancedTokens.length === 0 &&
+                              dustTokenList.length > 0
+                            ? "No tokens worth $1+ — try Dust only"
+                            : "No tokens found"
+                  }
+                  isSelected={(token) =>
+                    parsedMints.some((m) =>
+                      isRhChain
+                        ? walletsMatch(m, token.mintAddress)
+                        : m === token.mintAddress,
+                    )
+                  }
+                  onToggle={(token) => handleAddFromSearch(token.mintAddress)}
+                  onSelectChart={(mint) => void handleSelectToken(mint)}
+                  onRetry={() => void refetchTokens(true)}
+                />
+                {!isRhChain &&
+                displayUserTokens.length === 0 &&
+                !tokensFetchError &&
+                !(isWalletReady && (isInitialLoadTokens || isLoadingUserTokens)) ? (
+                  <div className="flex flex-wrap justify-center gap-2">
+                    {allBalancedTokens.length === 0 &&
                       dustTokenList.length > 0 &&
                       !showDustOnly && (
-                      <button
-                        type="button"
-                        onClick={() => setShowDustOnly(true)}
-                        className="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-white rounded-lg text-sm"
-                      >
-                        Show dust tokens
-                      </button>
-                    )}
-                    {!isRhChain &&
-                      allBalancedTokens.length === 0 &&
+                        <button
+                          type="button"
+                          onClick={() => setShowDustOnly(true)}
+                          className="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-white rounded-lg text-sm"
+                        >
+                          Show dust tokens
+                        </button>
+                      )}
+                    {allBalancedTokens.length === 0 &&
                       emptyAccountTokens.length > 0 &&
                       !showZeroBalance && (
                         <button
                           type="button"
                           onClick={() => setShowZeroBalance(true)}
-                          className="ml-2 px-4 py-2 bg-white hover:bg-gray-100 text-black rounded-lg text-sm"
+                          className="px-4 py-2 bg-white hover:bg-gray-100 text-black rounded-lg text-sm"
                         >
                           Show zero balance
                         </button>
                       )}
                   </div>
-                ) : (
-                  <div className="grid max-h-72 overflow-y-auto border border-gray-600 rounded-xl divide-y divide-gray-700">
-                    {displayUserTokens.map((token) => {
-                      const isAdded = isRhChain
-                        ? parsedMints.some(
-                            (m) =>
-                              m.toLowerCase() ===
-                              token.mintAddress.toLowerCase(),
-                          )
-                        : parsedMints.includes(token.mintAddress);
-                      const isEmptyAccount = token.uiAmount <= MIN_BALANCE_UI;
-                      return (
-                        <button
-                          key={token.mintAddress}
-                          type="button"
-                          disabled={isAdded || isEmptyAccount}
-                          onClick={() => handleAddFromSearch(token.mintAddress)}
-                          className={`flex items-center w-full px-4 py-3 text-left transition-all ${
-                            isAdded
-                              ? "bg-gray-800 text-gray-500 cursor-not-allowed"
-                              : isEmptyAccount
-                                ? "bg-gray-900 text-gray-500 cursor-not-allowed"
-                                : "hover:bg-gray-800 text-white"
-                          }`}
-                        >
-                          {token.logoURI && (
-                            <OptimizedImage
-                              src={token.logoURI}
-                              alt={token.symbol ?? "Token"}
-                              className="w-8 h-8 mr-3 rounded-full shrink-0"
-                            />
-                          )}
-                          <div className="flex-1 min-w-0">
-                            <div className="font-semibold flex items-center gap-2">
-                              <span>{token.name || token.symbol || "Unknown"}</span>
-                              {token.symbol && (
-                                <span className="text-xs text-gray-400">
-                                  ({token.symbol})
-                                </span>
-                              )}
-                              {isAdded && (
-                                <span className="text-xs bg-gray-600 text-gray-300 px-2 py-0.5 rounded">
-                                  Added
-                                </span>
-                              )}
-                              {isEmptyAccount && (
-                                <span className="text-xs text-gray-500">Empty</span>
-                              )}
-                            </div>
-                            <div className="text-xs text-gray-400 flex justify-between gap-2 mt-0.5">
-                              <span className="truncate font-mono">
-                                {token.mintAddress}
-                              </span>
-                              {!isEmptyAccount && (
-                                <span className="shrink-0">
-                                  {token.uiAmount.toLocaleString(undefined, {
-                                    maximumFractionDigits: 6,
-                                  })}
-                                  {token.usdValue > 0 && (
-                                    <span className="ml-1 text-green-400">
-                                      ${token.usdValue.toFixed(2)}
-                                    </span>
-                                  )}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
+                ) : null}
               </div>
 
               {/* Token Mint Addresses */}
@@ -2265,7 +2318,7 @@ export default function BulkTokenBuyer() {
                     htmlFor="tokenMints"
                     className="block text-sm font-semibold text-gray-200 uppercase tracking-wide"
                   >
-                    Token to buy (up to 10)
+                    Token to buy (up to {MAX_TRADE_TOKENS})
                   </label>
                   {validMints.length > 0 && (
                     <button
@@ -2657,13 +2710,15 @@ export default function BulkTokenBuyer() {
                   isLoading ||
                   !tradeReady ||
                   !solAmount ||
-                  validMints.length === 0
+                  validMints.length === 0 ||
+                  !meetsMinBuyUsd
                 }
                 className={`w-full py-4 px-6 rounded-xl font-semibold text-lg transition-all duration-200 ${
                   isLoading ||
                   !tradeReady ||
                   !solAmount ||
-                  validMints.length === 0
+                  validMints.length === 0 ||
+                  !meetsMinBuyUsd
                     ? "bg-gray-600 text-gray-400 cursor-not-allowed"
                     : "bg-white hover:bg-gray-100 text-black shadow-lg hover:shadow-xl"
                 }`}

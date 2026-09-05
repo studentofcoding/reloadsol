@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Address } from 'viem'
 import { useAppNetwork } from '@/contexts/AppNetworkContext'
 import { useRhWalletMode } from '@/contexts/RhWalletModeContext'
@@ -48,6 +48,13 @@ import {
   buildRhTokenToTokenSwap,
   rhQuoteUsdPerUnit,
 } from '@/utils/rh-trade-record'
+import { quoteIsVolatile } from '@/utils/auto-slippage'
+import {
+  readTradeAutoConfirm,
+  writeTradeAutoConfirm,
+} from '@/utils/trade-auto-confirm'
+import HoldingsTokenList from '@/components/HoldingsTokenList'
+import { walletsMatch } from '@/utils/rh-wallet-holdings'
 
 type Side = 'buy' | 'sell'
 type SwapMode = 'quote' | 'tokenToToken'
@@ -90,6 +97,9 @@ export default function RhGmgnSwapPanel({
   const [okMsg] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [confirmLegs, setConfirmLegs] = useState<GmgnConfirmLeg[]>([])
+  const [tradeAutoConfirm, setTradeAutoConfirm] = useState(readTradeAutoConfirm)
+  const [quoteRefreshing, setQuoteRefreshing] = useState(false)
+  const autoConfirmFiredRef = useRef(false)
   // Sim snapshot captured at review time; reused to record the trade so we
   // don't re-quote and so the tracked record carries real token amounts.
   const [pendingSim, setPendingSim] = useState<{
@@ -111,21 +121,50 @@ export default function RhGmgnSwapPanel({
     hash?: string
   } | null>(null)
   const pendingRef = useRef<string | null>(null)
+  const openConfirmRef = useRef<(opts?: { silent?: boolean }) => Promise<void>>(
+    async () => {},
+  )
+  const runConfirmedRef = useRef<() => Promise<void>>(async () => {})
+
+  useEffect(() => {
+    if (network !== 'robinhood' || !confirmOpen || submitPhase !== 'idle') return
+    const id = window.setInterval(() => {
+      void openConfirmRef.current({ silent: true })
+    }, 2500)
+    return () => window.clearInterval(id)
+  }, [network, confirmOpen, submitPhase])
+
+  useEffect(() => {
+    if (network !== 'robinhood' || !confirmOpen || submitPhase !== 'idle' || busy) {
+      return
+    }
+    if (!tradeAutoConfirm) return
+    if (quoteIsVolatile(confirmLegs.map((l) => l.priceImpactPct))) return
+    if (autoConfirmFiredRef.current) return
+    autoConfirmFiredRef.current = true
+    void runConfirmedRef.current()
+  }, [
+    network,
+    confirmOpen,
+    submitPhase,
+    busy,
+    tradeAutoConfirm,
+    confirmLegs,
+  ])
 
   if (network !== 'robinhood') return null
 
-  async function openConfirm() {
+  async function openConfirm(opts?: { silent?: boolean }) {
+    const silent = Boolean(opts?.silent)
+    if (silent && !confirmOpen) return
     setError('')
     if (!from) {
+      if (silent) return
       setError(
         isParent
           ? 'Connect Rabby (parent wallet)'
           : 'Bind a GMGN EVM wallet or switch to Parent',
       )
-      return
-    }
-    if (isParent && getRhBatchExecutorAddress()) {
-      await runConfirmed()
       return
     }
     // ── Token-to-token mode ────────────────────────────────────────────
@@ -149,7 +188,8 @@ export default function RhGmgnSwapPanel({
         setError('Sell % must be 1–100')
         return
       }
-      setBusy(true)
+      if (!silent) setBusy(true)
+      else setQuoteRefreshing(true)
       try {
         const ethUsd = await fetchEthUsdSpot()
         const fromHeld = holdings.tokens.find(
@@ -217,11 +257,15 @@ export default function RhGmgnSwapPanel({
           toUsd: sim.toUsd,
         })
         setConfirmLegs([leg])
-        setConfirmOpen(true)
+        if (!silent) {
+          autoConfirmFiredRef.current = false
+          setConfirmOpen(true)
+        }
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err))
+        if (!silent) setError(err instanceof Error ? err.message : String(err))
       } finally {
-        setBusy(false)
+        if (silent) setQuoteRefreshing(false)
+        else setBusy(false)
       }
       return
     }
@@ -235,7 +279,8 @@ export default function RhGmgnSwapPanel({
       setError('Cannot trade WETH against WETH')
       return
     }
-    setBusy(true)
+    if (!silent) setBusy(true)
+    else setQuoteRefreshing(true)
     try {
       const ethUsd = await fetchEthUsdSpot()
       const held = holdings.tokens.find(
@@ -339,11 +384,15 @@ export default function RhGmgnSwapPanel({
         })
       }
       setConfirmLegs([leg])
-      setConfirmOpen(true)
+      if (!silent) {
+        autoConfirmFiredRef.current = false
+        setConfirmOpen(true)
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      if (!silent) setError(err instanceof Error ? err.message : String(err))
     } finally {
-      setBusy(false)
+      if (silent) setQuoteRefreshing(false)
+      else setBusy(false)
     }
   }
 
@@ -673,8 +722,11 @@ export default function RhGmgnSwapPanel({
     }
   }
 
+  openConfirmRef.current = openConfirm
+  runConfirmedRef.current = runConfirmed
+
   return (
-    <div className="w-full max-w-md mx-auto rounded-2xl border border-gray-700 bg-gray-900/80 p-6 space-y-4">
+    <div className="w-full max-w-6xl mx-auto rounded-2xl border border-gray-700 bg-gray-900/80 p-6 space-y-4">
       <GmgnTradeConfirmModal
         open={confirmOpen}
         chain="robinhood"
@@ -690,7 +742,15 @@ export default function RhGmgnSwapPanel({
         submitPhase={submitPhase}
         resultMessage={submitResult && !submitResult.ok ? submitResult.message : undefined}
         txHash={submitResult?.hash}
+        volatile={quoteIsVolatile(confirmLegs.map((l) => l.priceImpactPct))}
+        quoteRefreshing={quoteRefreshing}
+        autoConfirm={tradeAutoConfirm}
+        onAutoConfirmChange={(on) => {
+          setTradeAutoConfirm(on)
+          writeTradeAutoConfirm(on)
+        }}
         onCancel={() => {
+          autoConfirmFiredRef.current = false
           setSubmitPhase('idle')
           setConfirmOpen(false)
         }}
@@ -781,15 +841,18 @@ export default function RhGmgnSwapPanel({
             />
           </label>
 
-          {from && holdings.tokens.length > 0 ? (
-            <HoldingsPicker
+          {from ? (
+            <HoldingsTokenList
+              mode="pick"
               tokens={holdings.tokens}
-              active={token.trim()}
-              onPick={setToken}
+              isLoading={holdings.isLoading}
+              error={holdings.error?.message ?? null}
+              emptyTitle="No ERC-20 holdings found"
               source={holdings.source}
+              isSelected={(t) => walletsMatch(t.mintAddress, token)}
+              onToggle={(t) => setToken(t.mintAddress)}
+              onRetry={() => void holdings.refetchFresh()}
             />
-          ) : from && holdings.isLoading ? (
-            <p className="text-xs text-gray-500">Loading holdings…</p>
           ) : null}
 
           {side === 'buy' ? (
@@ -866,25 +929,36 @@ export default function RhGmgnSwapPanel({
             />
           </label>
 
-          {from && holdings.tokens.length > 0 ? (
-            <div className="grid grid-cols-2 gap-2">
-              <HoldingsPicker
-                title="From"
-                tokens={holdings.tokens}
-                active={fromToken.trim()}
-                onPick={setFromToken}
-                source={holdings.source}
-              />
-              <HoldingsPicker
-                title="To"
-                tokens={holdings.tokens}
-                active={token.trim()}
-                onPick={setToken}
-                source={holdings.source}
-              />
+          {from ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <p className="text-xs uppercase text-gray-500">From</p>
+                <HoldingsTokenList
+                  mode="pick"
+                  tokens={holdings.tokens}
+                  isLoading={holdings.isLoading}
+                  error={holdings.error?.message ?? null}
+                  emptyTitle="No ERC-20 holdings found"
+                  source={holdings.source}
+                  isSelected={(t) => walletsMatch(t.mintAddress, fromToken)}
+                  onToggle={(t) => setFromToken(t.mintAddress)}
+                  onRetry={() => void holdings.refetchFresh()}
+                />
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs uppercase text-gray-500">To</p>
+                <HoldingsTokenList
+                  mode="pick"
+                  tokens={holdings.tokens}
+                  isLoading={holdings.isLoading}
+                  error={holdings.error?.message ?? null}
+                  emptyTitle="No ERC-20 holdings found"
+                  isSelected={(t) => walletsMatch(t.mintAddress, token)}
+                  onToggle={(t) => setToken(t.mintAddress)}
+                  onRetry={() => void holdings.refetchFresh()}
+                />
+              </div>
             </div>
-          ) : from && holdings.isLoading ? (
-            <p className="text-xs text-gray-500">Loading holdings…</p>
           ) : null}
 
           <label className="block text-xs text-gray-400">
@@ -928,60 +1002,6 @@ export default function RhGmgnSwapPanel({
           </button>
         </>
       )}
-    </div>
-  )
-}
-
-/** Compact picker for holdings; supports an optional title (used in 2×2 layout). */
-function HoldingsPicker({
-  title,
-  tokens,
-  active,
-  onPick,
-  source,
-}: {
-  title?: string
-  tokens: { mintAddress: string; symbol?: string; usdValue: number }[]
-  active: string
-  onPick: (addr: string) => void
-  source?: string
-}) {
-  return (
-    <div className="space-y-1.5">
-      <div className="flex items-center justify-between text-xs uppercase text-gray-500">
-        <span>{title ?? 'Holdings'}</span>
-        {title == null && source ? <span>via {source}</span> : null}
-      </div>
-      <div className="max-h-36 overflow-y-auto space-y-1 rounded-lg border border-gray-700 p-1.5">
-        {tokens.slice(0, 40).map((t) => {
-          const usd =
-            t.usdValue > 0
-              ? `$${t.usdValue.toLocaleString(undefined, {
-                  maximumFractionDigits: 2,
-                })}`
-              : '$—'
-          const isActive = active.toLowerCase() === t.mintAddress.toLowerCase()
-          return (
-            <button
-              key={t.mintAddress}
-              type="button"
-              onClick={() => onPick(t.mintAddress)}
-              className={`w-full flex items-center justify-between rounded-md px-2 py-1.5 text-left text-xs ${
-                isActive
-                  ? 'bg-white text-black'
-                  : 'bg-gray-800/80 text-gray-200 hover:bg-gray-800'
-              }`}
-            >
-              <span className="font-medium truncate">
-                {t.symbol || '???'}
-              </span>
-              <span className={isActive ? 'text-gray-700' : 'text-gray-400'}>
-                {usd}
-              </span>
-            </button>
-          )
-        })}
-      </div>
     </div>
   )
 }

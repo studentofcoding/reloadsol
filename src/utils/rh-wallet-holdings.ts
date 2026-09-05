@@ -1,4 +1,5 @@
 import type { UserToken } from '@/utils/jupiter'
+import { MIN_BALANCE_UI } from '@/utils/jupiter'
 import { isValidSolanaAddress } from '@/utils/solana-address'
 import { createPublicClient, http, type Address } from 'viem'
 import { RH_CHAIN, getRhRpcUrl } from '@/utils/dlmm/rh-univ2'
@@ -6,6 +7,50 @@ import { RH_CHAIN, getRhRpcUrl } from '@/utils/dlmm/rh-univ2'
 const EVM_RE = /^0x[a-fA-F0-9]{40}$/
 export const RH_BLOCKSCOUT_BASE =
   'https://robinhoodchain.blockscout.com'
+
+/** RH has no empty-account close — hide dust-zero ERC-20s from every list. */
+export function isRhHeldToken(t: { uiAmount?: number | null }): boolean {
+  return (t.uiAmount ?? 0) > MIN_BALANCE_UI
+}
+
+export function parseRhSkipAddresses(raw: string | null | undefined): Set<string> {
+  const out = new Set<string>()
+  if (!raw?.trim()) return out
+  for (const part of raw.split(',')) {
+    const a = part.trim().toLowerCase()
+    if (isEvmAddress(a)) out.add(a)
+  }
+  return out
+}
+
+/** Deduped RPC candidate list minus session-skip addresses. */
+export function uniqueRhRpcCandidates(
+  candidates: RhTokenMeta[],
+  skip?: Set<string>,
+): RhTokenMeta[] {
+  const seen = new Set<string>()
+  const unique: RhTokenMeta[] = []
+  for (const c of candidates) {
+    const addr = String(c.address ?? '').trim().toLowerCase()
+    if (!isEvmAddress(addr) || seen.has(addr)) continue
+    if (skip?.has(addr)) continue
+    seen.add(addr)
+    unique.push({ ...c, address: addr })
+  }
+  return unique
+}
+
+export function rpcZeroAddresses(
+  probed: RhTokenMeta[],
+  held: UserToken[],
+): string[] {
+  const have = new Set(
+    held.map((t) => t.mintAddress.trim().toLowerCase()).filter(Boolean),
+  )
+  return probed
+    .map((c) => c.address.toLowerCase())
+    .filter((a) => !have.has(a))
+}
 
 export function isEvmAddress(addr: string): boolean {
   return EVM_RE.test(addr.trim())
@@ -237,20 +282,14 @@ const BALANCE_OF_ABI = [
 export async function fetchRpcErc20Tokens(
   wallet: string,
   candidates: RhTokenMeta[],
-  opts?: { rpcUrl?: string; concurrency?: number },
-): Promise<UserToken[]> {
+  opts?: { rpcUrl?: string; concurrency?: number; skip?: Set<string> },
+): Promise<{ tokens: UserToken[]; probed: RhTokenMeta[] }> {
   const client = createPublicClient({
     chain: RH_CHAIN,
     transport: http(opts?.rpcUrl ?? getRhRpcUrl()),
   })
   const account = wallet as Address
-  const seen = new Set<string>()
-  const unique = candidates.filter((c) => {
-    const addr = String(c.address ?? '').trim().toLowerCase()
-    if (!isEvmAddress(addr) || seen.has(addr)) return false
-    seen.add(addr)
-    return true
-  })
+  const unique = uniqueRhRpcCandidates(candidates, opts?.skip)
 
   const out: UserToken[] = []
   const concurrency = Math.max(1, opts?.concurrency ?? 8)
@@ -276,7 +315,7 @@ export async function fetchRpcErc20Tokens(
       const decimals = Math.max(0, Math.floor(r.c.decimals ?? 18))
       const balanceRaw = Number(r.bal)
       const uiAmount = decimals > 0 ? balanceRaw / 10 ** decimals : balanceRaw
-      if (!(uiAmount > 0)) continue
+      if (!isRhHeldToken({ uiAmount })) continue
       out.push({
         mintAddress: r.c.address.toLowerCase(),
         balance: balanceRaw,
@@ -290,5 +329,5 @@ export async function fetchRpcErc20Tokens(
       })
     }
   }
-  return out
+  return { tokens: out, probed: unique }
 }

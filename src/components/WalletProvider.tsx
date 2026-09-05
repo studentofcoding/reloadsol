@@ -47,23 +47,28 @@ const WALLET_APP_URL =
  * provider installed (e.g. bound-wallet trades).
  */
 export function useRhNetworkAccess(): boolean {
-  const isDevUser = useDevUserAccess();
   const solAddress = useWalletAddress();
   const rh = useRhEvmWallet();
   const bound = useGmgnBoundWallets();
+  const isRhDev =
+    Boolean(rh.address) && isDevWallet(rh.address, "robinhood");
   return (
     rh.hasProvider ||
     canUseRobinhoodNetwork({
       solAddress,
       evmAddress: rh.address,
-      isDevUser,
+      isDevUser: isRhDev,
     }) ||
     isRhWhitelisted(bound.evm)
   );
 }
 
 function AppNetworkBridge({ children }: { children: React.ReactNode }) {
-  const isDevUser = useDevUserAccess();
+  const solAddress = useWalletAddress();
+  const evmAddress = useRhWalletAddress();
+  const isDevUser =
+    (solAddress !== null && isDevWallet(solAddress, "sol")) ||
+    (evmAddress !== null && isDevWallet(evmAddress, "robinhood"));
   const canUseRh = useRhNetworkAccess();
   return (
     <AppNetworkProvider isDevUser={isDevUser} canUseRh={canUseRh}>
@@ -243,22 +248,20 @@ export function useRhWalletAddress(): string | null {
 }
 
 /**
- * True when a dev-listed wallet is connected (Sol OR EVM). Either address
- * matching the allowlist is enough — dev wallets can be on either chain.
- */
-export function useDevUserAccess(): boolean {
-  const solAddress = useWalletAddress();
-  const evmAddress = useRhWalletAddress();
-  if (solAddress && isDevWallet(solAddress)) return true;
-  if (evmAddress && isDevWallet(evmAddress)) return true;
-  return false;
-}
-
-/**
- * @deprecated Use `useDevUserAccess` instead. Kept for Sol-only call sites
- * that legitimately need to check the Jupiter wallet specifically.
+ * True when a chain-correct dev wallet is connected (Sol pubkey on Sol,
+ * RH deployer on Robinhood). Does not use the other chain's wallet.
  */
 export function useDevWalletAccess(): boolean {
-  const address = useWalletAddress();
-  return address !== null && isDevWallet(address);
+  const { network } = useAppNetwork();
+  const solAddress = useWalletAddress();
+  const evmAddress = useRhWalletAddress();
+  if (network === "robinhood") {
+    return evmAddress !== null && isDevWallet(evmAddress, "robinhood");
+  }
+  return solAddress !== null && isDevWallet(solAddress, "sol");
+}
+
+/** Same as `useDevWalletAccess` — kept for existing call sites. */
+export function useDevUserAccess(): boolean {
+  return useDevWalletAccess();
 }
