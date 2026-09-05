@@ -17,6 +17,20 @@ export function buyMeetsMinUsdPerToken(
   return (totalHuman / tokenCount) * usdPerUnit >= MIN_BUY_USD_PER_TOKEN
 }
 
+/**
+ * Button gate: allow click while USD/spot is still loading; submit re-checks
+ * with a fresh quote once price is known.
+ */
+export function buyMeetsMinUsdPerTokenOrPending(
+  totalHuman: number,
+  tokenCount: number,
+  usdPerUnit: number,
+): boolean {
+  if (!(tokenCount > 0) || !(totalHuman > 0)) return false
+  if (!(usdPerUnit > 0)) return true
+  return buyMeetsMinUsdPerToken(totalHuman, tokenCount, usdPerUnit)
+}
+
 /** Spend units needed for $5 × tokens (at least one token). */
 export function minBuyHumanAmount(
   tokenCount: number,

@@ -5,12 +5,13 @@ import {
   useCallback,
   useContext,
   useMemo,
-  useState,
+  useSyncExternalStore,
   type ReactNode,
 } from 'react'
 import {
   parseRhWalletMode,
   readStoredRhWalletMode,
+  subscribeRhWalletMode,
   writeStoredRhWalletMode,
   type RhWalletMode,
 } from '@/utils/rh-wallet-mode'
@@ -22,14 +23,19 @@ type RhWalletModeContextValue = {
 
 const RhWalletModeContext = createContext<RhWalletModeContextValue | null>(null)
 
+function getServerRhWalletModeSnapshot(): RhWalletMode {
+  return 'parent'
+}
+
 export function RhWalletModeProvider({ children }: { children: ReactNode }) {
-  const [mode, setModeState] = useState<RhWalletMode>(() =>
-    readStoredRhWalletMode(),
+  const mode = useSyncExternalStore(
+    subscribeRhWalletMode,
+    readStoredRhWalletMode,
+    getServerRhWalletModeSnapshot,
   )
 
   const setMode = useCallback((m: RhWalletMode) => {
     const next = parseRhWalletMode(m)
-    setModeState(next)
     writeStoredRhWalletMode(next)
   }, [])
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   MAX_TRADE_TOKENS,
   buyMeetsMinUsdPerToken,
+  buyMeetsMinUsdPerTokenOrPending,
   capTradeTokens,
   minBuyHumanAmount,
   minBuySliderPercent,
@@ -21,6 +22,12 @@ describe('trade UI limits', () => {
     expect(buyMeetsMinUsdPerToken(10, 2, 1)).toBe(true)
     expect(buyMeetsMinUsdPerToken(9, 2, 1)).toBe(false)
     expect(buyMeetsMinUsdPerToken(5, 0, 1)).toBe(false)
+  })
+
+  it('pending min check passes while spot price is unknown', () => {
+    expect(buyMeetsMinUsdPerTokenOrPending(0.01, 1, 0)).toBe(true)
+    expect(buyMeetsMinUsdPerTokenOrPending(0, 1, 0)).toBe(false)
+    expect(buyMeetsMinUsdPerTokenOrPending(0.001, 1, 2500)).toBe(false)
   })
 
   it('slider floor is $5 per token as a percent of balance', () => {

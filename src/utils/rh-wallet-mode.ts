@@ -13,6 +13,20 @@ export function parseRhWalletMode(raw: string | null | undefined): RhWalletMode 
   return raw === 'bound' ? 'bound' : 'parent'
 }
 
+const modeListeners = new Set<() => void>()
+
+function emitRhWalletModeChange(): void {
+  for (const cb of modeListeners) cb()
+}
+
+/** Subscribe for useSyncExternalStore (same-tab writes). */
+export function subscribeRhWalletMode(onStoreChange: () => void): () => void {
+  modeListeners.add(onStoreChange)
+  return () => {
+    modeListeners.delete(onStoreChange)
+  }
+}
+
 export function readStoredRhWalletMode(): RhWalletMode {
   if (typeof window === 'undefined') return 'parent'
   try {
@@ -29,6 +43,7 @@ export function writeStoredRhWalletMode(mode: RhWalletMode): void {
   } catch {
     /* ignore */
   }
+  emitRhWalletModeChange()
 }
 
 /** Active RH address for reads/trades. Parent with no Rabby → null. */

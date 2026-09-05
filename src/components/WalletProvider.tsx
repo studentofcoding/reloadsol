@@ -111,19 +111,23 @@ function WalletContextBridge({ children }: { children: React.ReactNode }) {
 }
 
 export function WalletProvider({ children }: WalletProviderProps) {
-  const [autoConnect] = useState(() => {
-    if (typeof window === "undefined") return false;
+  // ponytail: defer localStorage read to effect — reading in useState initializer
+  // mismatches SSR (false) vs client (true) and triggers React #418.
+  const [autoConnect, setAutoConnect] = useState(false);
+  useEffect(() => {
     let prior: string | null = null;
     try {
       prior = localStorage.getItem(WALLET_STORAGE_KEY);
     } catch {
       prior = null;
     }
-    return shouldAutoConnectWallet({
-      hasDisconnected: Boolean(sessionStorage.getItem("hasDisconnected")),
-      priorWalletName: prior,
-    });
-  });
+    setAutoConnect(
+      shouldAutoConnectWallet({
+        hasDisconnected: Boolean(sessionStorage.getItem("hasDisconnected")),
+        priorWalletName: prior,
+      }),
+    );
+  }, []);
 
   const metadata = useMemo(
     () => ({

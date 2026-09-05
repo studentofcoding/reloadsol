@@ -89,6 +89,7 @@ import {
   MAX_TRADE_TOKENS,
   MIN_BUY_USD_PER_TOKEN,
   buyMeetsMinUsdPerToken,
+  buyMeetsMinUsdPerTokenOrPending,
   minBuyHumanAmount,
   minBuySliderPercent,
 } from "@/utils/trade-ui-limits";
@@ -448,7 +449,7 @@ export default function BulkTokenBuyer() {
       parseTradeTokenAddresses(effectiveChain, tokenMints, MAX_TRADE_TOKENS),
     [effectiveChain, tokenMints],
   );
-  const meetsMinBuyUsd = buyMeetsMinUsdPerToken(
+  const meetsMinBuyUsd = buyMeetsMinUsdPerTokenOrPending(
     parseFloat(solAmount),
     validMints.length,
     spendUsdPerUnit,
@@ -1101,11 +1102,33 @@ export default function BulkTokenBuyer() {
     }
 
     const totalHuman = parseFloat(solAmount);
+    let usdPerUnit = spendUsdPerUnit;
+    if (!(usdPerUnit > 0) && spendUnit !== "USDG" && spendUnit !== "USDC") {
+      if (spendUnit === "SOL") {
+        if (solUsd && solUsd > 0) {
+          usdPerUnit = solUsd;
+        } else {
+          try {
+            const res = await fetch("/api/solprice");
+            const data = (await res.json()) as { price?: number };
+            usdPerUnit = Number(data.price) || 0;
+          } catch {
+            usdPerUnit = 0;
+          }
+        }
+      } else {
+        usdPerUnit = await fetchEthUsdSpot();
+      }
+    }
+    if (!(usdPerUnit > 0)) {
+      setError("Could not fetch price — try again in a moment");
+      return;
+    }
     if (
       !buyMeetsMinUsdPerToken(
         totalHuman,
         validMints.length,
-        spendUsdPerUnit,
+        usdPerUnit,
       )
     ) {
       setError(
@@ -1489,6 +1512,7 @@ export default function BulkTokenBuyer() {
     refetchTokensFresh,
     runConfirmedRhBuy,
     spendUsdPerUnit,
+    solUsd,
     previewRhBuyLegs,
     tradeAutoConfirm,
   ]);

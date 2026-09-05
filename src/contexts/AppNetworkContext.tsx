@@ -4,13 +4,16 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
-  useState,
+  useRef,
+  useSyncExternalStore,
   type ReactNode,
 } from 'react'
 import {
   coerceAppNetwork,
   readStoredAppNetwork,
+  subscribeAppNetwork,
   writeStoredAppNetwork,
   type AppNetwork,
 } from '@/utils/app-network'
@@ -28,6 +31,10 @@ type AppNetworkContextValue = {
 
 const AppNetworkContext = createContext<AppNetworkContextValue | null>(null)
 
+function getServerNetworkSnapshot(): AppNetwork {
+  return 'sol'
+}
+
 export function AppNetworkProvider({
   children,
   isDevUser,
@@ -37,24 +44,26 @@ export function AppNetworkProvider({
   isDevUser: boolean
   canUseRh: boolean
 }) {
-  // Do not coerce on first paint — disconnected wallets report canUseRh=false and
-  // would wipe a stored robinhood preference before reconnect.
-  const [network, setNetworkState] = useState<AppNetwork>(() =>
-    readStoredAppNetwork(),
+  const network = useSyncExternalStore(
+    subscribeAppNetwork,
+    readStoredAppNetwork,
+    getServerNetworkSnapshot,
   )
-  const [rhGate, setRhGate] = useState(canUseRh)
+  const prevCanUseRh = useRef(canUseRh)
 
-  if (rhGate !== canUseRh) {
+  useEffect(() => {
+    if (prevCanUseRh.current === canUseRh) return
     const { network: next, shouldWrite } = resolveNetworkOnRhGateChange({
-      prevCanUseRh: rhGate,
+      prevCanUseRh: prevCanUseRh.current,
       canUseRh,
       current: network,
       stored: readStoredAppNetwork(),
     })
-    setRhGate(canUseRh)
-    if (next !== network) setNetworkState(next)
-    if (shouldWrite) writeStoredAppNetwork(next)
-  }
+    prevCanUseRh.current = canUseRh
+    if (next !== network || shouldWrite) {
+      writeStoredAppNetwork(next)
+    }
+  }, [canUseRh, network])
 
   const setNetwork = useCallback(
     (n: AppNetwork, opts?: { skipCoerce?: boolean }) => {
@@ -62,7 +71,6 @@ export function AppNetworkProvider({
         opts?.skipCoerce && n === 'robinhood'
           ? 'robinhood'
           : coerceAppNetwork(n, canUseRh)
-      setNetworkState(next)
       writeStoredAppNetwork(next)
     },
     [canUseRh],
@@ -74,11 +82,6 @@ export function AppNetworkProvider({
       setNetwork,
       isDevUser,
       canUseRh,
-      // The active network IS the effective chain — the per-chain pages
-      // (NetworkPreface) ensure this matches the URL on mount, and the
-      // setNetwork() callback still coerces manual selections. We no longer
-      // force RH to 'sol' when canUseRh is false; that would clobber
-      // /buy/robinhood for a user who hasn't connected a wallet yet.
       effectiveChain: network as GmgnTradeChain,
     }),
     [network, setNetwork, isDevUser, canUseRh],
