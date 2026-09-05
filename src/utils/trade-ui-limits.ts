@@ -16,3 +16,25 @@ export function buyMeetsMinUsdPerToken(
   if (!(tokenCount > 0) || !(totalHuman > 0) || !(usdPerUnit > 0)) return false
   return (totalHuman / tokenCount) * usdPerUnit >= MIN_BUY_USD_PER_TOKEN
 }
+
+/** Spend units needed for $5 × tokens (at least one token). */
+export function minBuyHumanAmount(
+  tokenCount: number,
+  usdPerUnit: number,
+): number {
+  if (!(usdPerUnit > 0)) return 0
+  return (MIN_BUY_USD_PER_TOKEN * Math.max(1, tokenCount)) / usdPerUnit
+}
+
+/** Range-slider floor so 1% steps never go below the $5/token minimum. */
+export function minBuySliderPercent(
+  balance: number,
+  tokenCount: number,
+  usdPerUnit: number,
+  maxPercent: number,
+): number {
+  if (!(balance > 0)) return 0
+  const minHuman = minBuyHumanAmount(tokenCount, usdPerUnit)
+  if (!(minHuman > 0)) return 0
+  return Math.min(maxPercent, Math.ceil((minHuman / balance) * 100))
+}

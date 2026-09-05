@@ -89,6 +89,8 @@ import {
   MAX_TRADE_TOKENS,
   MIN_BUY_USD_PER_TOKEN,
   buyMeetsMinUsdPerToken,
+  minBuyHumanAmount,
+  minBuySliderPercent,
 } from "@/utils/trade-ui-limits";
 import { prefetchSwapTransaction, fetchSwapQuote } from "@/utils/swap-executor";
 import {
@@ -1575,13 +1577,29 @@ export default function BulkTokenBuyer() {
     : selectedCurrency === "SOL"
       ? walletBalance
       : usdcBalance;
+  const minPercent = minBuySliderPercent(
+    currentBalance ?? 0,
+    validMints.length,
+    spendUsdPerUnit,
+    maxPercent,
+  );
+  const minHuman = minBuyHumanAmount(validMints.length, spendUsdPerUnit);
   const sliderValue =
     currentBalance && solAmount
       ? Math.round((parseFloat(solAmount) / currentBalance) * 100)
-      : 0;
+      : minPercent;
+  const clampedSlider =
+    sliderValue > maxPercent
+      ? maxPercent
+      : sliderValue < minPercent
+        ? minPercent
+        : sliderValue;
   const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!currentBalance) return;
-    const percent = parseInt(e.target.value, 10);
+    const percent = Math.min(
+      maxPercent,
+      Math.max(minPercent, parseInt(e.target.value, 10) || minPercent),
+    );
     const decimals =
       spendUnit === "ETH" || spendUnit === "WETH" || spendUnit === "SOL"
         ? 4
@@ -2035,12 +2053,10 @@ export default function BulkTokenBuyer() {
                     <div className="flex items-center space-x-3">
                       <input
                         type="range"
-                        min={0}
+                        min={minPercent}
                         max={maxPercent}
                         step={1}
-                        value={
-                          sliderValue > maxPercent ? maxPercent : sliderValue
-                        }
+                        value={clampedSlider}
                         onChange={handleSliderChange}
                         disabled={
                           !portfolioConnected || (currentBalance ?? 0) <= 0
@@ -2048,7 +2064,7 @@ export default function BulkTokenBuyer() {
                         className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
                       />
                       <span className="text-xs text-gray-400 font-mono w-12 text-right">
-                        {sliderValue > maxPercent ? maxPercent : sliderValue}%
+                        {clampedSlider}%
                       </span>
                     </div>
                   )}
@@ -2058,7 +2074,7 @@ export default function BulkTokenBuyer() {
                     id="solAmount"
                     type="number"
                     step="0.001"
-                    min="0"
+                    min={minHuman > 0 ? minHuman : 0}
                     value={solAmount}
                     onChange={(e) => setSolAmount(e.target.value)}
                     placeholder={
