@@ -1135,6 +1135,10 @@ export default function BulkTokenBuyer() {
         autoConfirmFiredRef.current = false;
         setGmgnConfirmLegs(legs);
         setGmgnConfirmOpen(true);
+        if (tradeAutoConfirm && legs.length > 0) {
+          autoConfirmFiredRef.current = true;
+          void runConfirmedRhBuy();
+        }
       } finally {
         setIsLoading(false);
       }
@@ -1188,8 +1192,13 @@ export default function BulkTokenBuyer() {
             side: "buy",
           });
         }
+        autoConfirmFiredRef.current = false;
         setGmgnConfirmLegs(legs);
         setGmgnConfirmOpen(true);
+        if (tradeAutoConfirm && legs.length > 0) {
+          autoConfirmFiredRef.current = true;
+          void runConfirmedRhBuy();
+        }
       } finally {
         setIsLoading(false);
       }
@@ -1481,6 +1490,7 @@ export default function BulkTokenBuyer() {
     runConfirmedRhBuy,
     spendUsdPerUnit,
     previewRhBuyLegs,
+    tradeAutoConfirm,
   ]);
 
   useEffect(() => {
@@ -1506,16 +1516,13 @@ export default function BulkTokenBuyer() {
   }, [gmgnConfirmOpen, isRhChain, gmgnConfirmBusy, previewRhBuyLegs]);
 
   useEffect(() => {
-    if (!gmgnConfirmOpen || !isRhChain || !tradeAutoConfirm || gmgnConfirmBusy) {
-      return;
-    }
-    if (quoteIsVolatile(gmgnConfirmLegs.map((l) => l.priceImpactPct))) return;
+    if (!gmgnConfirmOpen || !tradeAutoConfirm || gmgnConfirmBusy) return;
+    if (gmgnConfirmLegs.length === 0) return;
     if (autoConfirmFiredRef.current) return;
     autoConfirmFiredRef.current = true;
     void runConfirmedRhBuy();
   }, [
     gmgnConfirmOpen,
-    isRhChain,
     tradeAutoConfirm,
     gmgnConfirmBusy,
     gmgnConfirmLegs,

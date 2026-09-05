@@ -138,8 +138,7 @@ export default function RhGmgnSwapPanel({
     if (network !== 'robinhood' || !confirmOpen || submitPhase !== 'idle' || busy) {
       return
     }
-    if (!tradeAutoConfirm) return
-    if (quoteIsVolatile(confirmLegs.map((l) => l.priceImpactPct))) return
+    if (!tradeAutoConfirm || confirmLegs.length === 0) return
     if (autoConfirmFiredRef.current) return
     autoConfirmFiredRef.current = true
     void runConfirmedRef.current()
@@ -190,6 +189,7 @@ export default function RhGmgnSwapPanel({
       }
       if (!silent) setBusy(true)
       else setQuoteRefreshing(true)
+      let opened = false
       try {
         const ethUsd = await fetchEthUsdSpot()
         const fromHeld = holdings.tokens.find(
@@ -260,12 +260,17 @@ export default function RhGmgnSwapPanel({
         if (!silent) {
           autoConfirmFiredRef.current = false
           setConfirmOpen(true)
+          opened = true
         }
       } catch (err) {
         if (!silent) setError(err instanceof Error ? err.message : String(err))
       } finally {
         if (silent) setQuoteRefreshing(false)
         else setBusy(false)
+      }
+      if (opened && tradeAutoConfirm) {
+        autoConfirmFiredRef.current = true
+        void runConfirmed()
       }
       return
     }
@@ -281,6 +286,7 @@ export default function RhGmgnSwapPanel({
     }
     if (!silent) setBusy(true)
     else setQuoteRefreshing(true)
+    let opened = false
     try {
       const ethUsd = await fetchEthUsdSpot()
       const held = holdings.tokens.find(
@@ -387,12 +393,17 @@ export default function RhGmgnSwapPanel({
       if (!silent) {
         autoConfirmFiredRef.current = false
         setConfirmOpen(true)
+        opened = true
       }
     } catch (err) {
       if (!silent) setError(err instanceof Error ? err.message : String(err))
     } finally {
       if (silent) setQuoteRefreshing(false)
       else setBusy(false)
+    }
+    if (opened && tradeAutoConfirm) {
+      autoConfirmFiredRef.current = true
+      void runConfirmed()
     }
   }
 

@@ -73,8 +73,9 @@ describe('prefetchSlippageBps', () => {
 })
 
 describe('quoteIsVolatile', () => {
-  it('is volatile when impact is missing or above 8%', () => {
-    expect(quoteIsVolatile([])).toBe(true)
+  it('is volatile only when impact is known and above 8%', () => {
+    expect(quoteIsVolatile([])).toBe(false)
+    expect(quoteIsVolatile([null])).toBe(false)
     expect(quoteIsVolatile([7.9])).toBe(false)
     expect(quoteIsVolatile([8.1])).toBe(true)
   })
