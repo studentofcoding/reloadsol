@@ -392,7 +392,7 @@ export async function locateTokenByAddress(
     signals: `/dev/signals?tab=board&addresses=${encodeURIComponent(address)}`,
     algoTester: '/dev/algo-tester',
     social: '/dev/social',
-    strategies: `/dev/strategies?tab=outcomes&tokenAddress=${encodeURIComponent(address)}`,
+    strategies: `/dev/strategies?tab=outcomes&tokenAddress=${encodeURIComponent(address)}${chain ? `&chain=${chain}` : ''}`,
     dlmm: '/dev/dlmm',
   }
 

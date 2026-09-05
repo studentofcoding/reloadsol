@@ -364,7 +364,8 @@ function AdminToastBanner({
 }
 
 function parseTabParam(value: string | null): TabId {
-  if (value === "reports" || value === "workers" || value === "review") return value;
+  if (value === "outcomes" || value === "reports") return "reports";
+  if (value === "workers" || value === "review") return value;
   return "config";
 }
 
@@ -380,6 +381,7 @@ function buildOutcomesQuery(params: {
   reportPnlFilter: string;
   reportEntryMcapBand: string;
   outcomesOffset: number;
+  tokenAddress?: string;
 }) {
   const q = new URLSearchParams();
   q.set("limit", String(OUTCOMES_PAGE_SIZE));
@@ -394,6 +396,7 @@ function buildOutcomesQuery(params: {
   if (params.reportStatus) q.set("status", params.reportStatus);
   if (params.reportPnlFilter) q.set("pnl_filter", params.reportPnlFilter);
   if (params.reportEntryMcapBand) q.set("entry_mcap_band", params.reportEntryMcapBand);
+  if (params.tokenAddress?.trim()) q.set("tokenAddress", params.tokenAddress.trim());
   return q.toString();
 }
 
@@ -427,7 +430,7 @@ function buildCsvHref(params: {
 
 export default function StrategyAdminHub() {
   const queryClient = useQueryClient();
-  const { network } = useAppNetwork();
+  const { network, setNetwork } = useAppNetwork();
   const isRobinhood = network === "robinhood";
   const [tab, setTab] = useState<TabId>(() => {
     if (typeof window === "undefined") return "config";
@@ -449,6 +452,18 @@ export default function StrategyAdminHub() {
   const [reportPnlFilter, setReportPnlFilter] = useState("");
   const [reportEntryMcapBand, setReportEntryMcapBand] = useState("");
   const [outcomesOffset, setOutcomesOffset] = useState(0);
+  const [tokenSearch, setTokenSearch] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return (
+      new URLSearchParams(window.location.search).get("tokenAddress") ?? ""
+    );
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const c = new URLSearchParams(window.location.search).get("chain");
+    if (c === "sol" || c === "robinhood") setNetwork(c);
+  }, [setNetwork]);
   const [selectedOutcomeIndex, setSelectedOutcomeIndex] = useState<number | null>(
     null,
   );
@@ -517,6 +532,7 @@ export default function StrategyAdminHub() {
         reportPnlFilter,
         reportEntryMcapBand,
         outcomesOffset,
+        tokenSearch,
       ] as const,
     [
       network,
@@ -532,6 +548,7 @@ export default function StrategyAdminHub() {
       reportPnlFilter,
       reportEntryMcapBand,
       outcomesOffset,
+      tokenSearch,
     ],
   );
 
@@ -583,6 +600,7 @@ export default function StrategyAdminHub() {
         reportPnlFilter,
         reportEntryMcapBand,
         outcomesOffset,
+        tokenAddress: tokenSearch,
       });
 
       const [strRes, outRes, repRes] = await Promise.all([
@@ -1604,6 +1622,24 @@ export default function StrategyAdminHub() {
             )}
             <div className="flex flex-wrap items-start justify-between gap-3 mb-2">
               <h2 className="text-xl font-bold text-white">Outcomes (ML feed)</h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="search"
+                  value={tokenSearch}
+                  onChange={(e) => {
+                    setTokenSearch(e.target.value);
+                    setOutcomesOffset(0);
+                    if (typeof window !== "undefined") {
+                      const url = new URL(window.location.href);
+                      const v = e.target.value.trim();
+                      if (v) url.searchParams.set("tokenAddress", v);
+                      else url.searchParams.delete("tokenAddress");
+                      window.history.replaceState({}, "", url.toString());
+                    }
+                  }}
+                  placeholder="Search token / CA"
+                  className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white w-56"
+                />
               <button
                 type="button"
                 disabled={backfillPhase !== "idle"}
@@ -1617,6 +1653,7 @@ export default function StrategyAdminHub() {
                     ? "Backfilling…"
                     : "Backfill auto labels"}
               </button>
+              </div>
             </div>
             <p className="text-gray-500 text-xs mb-4">
               Closed trades only — partial TP sells stay open in Algo tester until 100% sold.

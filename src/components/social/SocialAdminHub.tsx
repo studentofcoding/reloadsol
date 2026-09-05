@@ -11,7 +11,6 @@ import type { AppNetwork } from "@/utils/app-network";
 import { isValidTradeTokenAddress } from "@/utils/gmgn-currencies";
 import { isValidMintAddress } from "@/utils/jupiter";
 import { useQuery } from "@tanstack/react-query";
-import { useRouter } from "next/navigation";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 
 type TrackedWallet = {
@@ -270,7 +269,6 @@ function TokenCell({
 
 export default function SocialAdminHub() {
   const { network } = useAppNetwork();
-  const router = useRouter();
   const isRobinhood = network === "robinhood";
   const [activeTab, setActiveTab] = useState<
     "overview" | "crosscheck" | "patterns"
@@ -366,16 +364,10 @@ export default function SocialAdminHub() {
   const openBuyModal = useCallback(
     (tokenAddress: string, list: string[]) => {
       if (!isSocialTokenAddress(network, tokenAddress)) return;
-      if (network === "robinhood") {
-        router.push(
-          `/chart/${encodeURIComponent(tokenAddress)}?chain=robinhood`,
-        );
-        return;
-      }
       setModalTokenList(list);
       setModalTokenAddress(tokenAddress);
     },
-    [network, router],
+    [network],
   );
 
   const refresh = useCallback(async () => {

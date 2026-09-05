@@ -264,6 +264,7 @@ const ChartItem = React.memo(
     showMoveButtons,
     isMcapSource,
   }: any) => {
+    const { network } = useAppNetwork();
     return (
       <DraggableCard
         id={addr}
@@ -302,6 +303,7 @@ const ChartItem = React.memo(
             <GmgnChartEmbed
               tokenAddress={addr}
               interval={interval}
+              chain={network === "robinhood" ? "robinhood" : "sol"}
               className={`w-full h-full ${isDraggingGlobal ? "pointer-events-none" : ""}`}
               height="200px"
             />

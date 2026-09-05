@@ -24,7 +24,7 @@ function toMcap(v: unknown): number | null {
 /** Bulk first-sighting from token_mcap_tracking (our ingest, not pool create). */
 export async function lookupFirstDetections(
   addresses: string[],
-  chain: GmgnTradeChain,
+  chain?: GmgnTradeChain,
 ): Promise<Map<string, FirstDetection>> {
   const keys = [
     ...new Set(
@@ -40,10 +40,16 @@ export async function lookupFirstDetections(
       first_seen_at: unknown
       first_mcap: unknown
     }>(
-      `SELECT token_address, first_seen_at, first_mcap
-       FROM token_mcap_tracking
-       WHERE chain = $1 AND lower(token_address) = ANY($2::text[])`,
-      [chain, keys.map((k) => k.toLowerCase())],
+      chain
+        ? `SELECT token_address, first_seen_at, first_mcap
+           FROM token_mcap_tracking
+           WHERE chain = $1 AND lower(token_address) = ANY($2::text[])`
+        : `SELECT token_address, first_seen_at, first_mcap
+           FROM token_mcap_tracking
+           WHERE lower(token_address) = ANY($1::text[])`,
+      chain
+        ? [chain, keys.map((k) => k.toLowerCase())]
+        : [keys.map((k) => k.toLowerCase())],
     )
     for (const row of rows) {
       const seen = toIso(row.first_seen_at)
@@ -75,7 +81,7 @@ export function mergeFirstDetection<T extends { address?: string; token_address?
 
 export async function attachFirstDetections<
   T extends { address?: string; token_address?: string },
->(tokens: T[], chain: GmgnTradeChain): Promise<(T & { first_seen_at?: string; first_mcap?: number })[]> {
+>(tokens: T[], chain?: GmgnTradeChain): Promise<(T & { first_seen_at?: string; first_mcap?: number })[]> {
   const map = await lookupFirstDetections(
     tokens.map((t) => t.address ?? t.token_address ?? ''),
     chain,

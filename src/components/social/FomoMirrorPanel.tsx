@@ -1,8 +1,9 @@
 "use client";
 
+import ChartBuyModal from "@/components/ChartBuyModal";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import React from "react";
+import React, { useMemo, useState } from "react";
 
 export type FomoFillRow = {
   source_fill_id: number | string;
@@ -63,7 +64,28 @@ export default function FomoMirrorPanel({
   });
 
   const data = q.data;
-  const fills = data?.fills ?? [];
+  const fills = useMemo(() => data?.fills ?? [], [data?.fills]);
+  const tokenList = useMemo(() => {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const f of fills) {
+      const a = f.token_address?.trim();
+      if (!a) continue;
+      const key = a.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(a);
+    }
+    return out;
+  }, [fills]);
+  const [modalTokenAddress, setModalTokenAddress] = useState<string | null>(
+    null,
+  );
+  const modalIndex = modalTokenAddress
+    ? tokenList.findIndex(
+        (a) => a.toLowerCase() === modalTokenAddress.toLowerCase(),
+      )
+    : -1;
   const ingestAgeMs = data?.last_ingest_at
     ? Date.now() - new Date(data.last_ingest_at).getTime()
     : null;
@@ -156,7 +178,13 @@ export default function FomoMirrorPanel({
                   {formatUsd(f.usd, f.priced)}
                 </td>
                 <td className="px-3 py-2 font-mono text-xs">
-                  {f.symbol ?? truncateAddr(f.token_address)}
+                  <button
+                    type="button"
+                    className="text-left text-blue-400 hover:text-blue-300 underline-offset-2 hover:underline"
+                    onClick={() => setModalTokenAddress(f.token_address)}
+                  >
+                    {f.symbol ?? truncateAddr(f.token_address)}
+                  </button>
                 </td>
                 <td className="px-3 py-2 font-mono text-xs">
                   {truncateAddr(f.wallet_address)}
@@ -177,6 +205,22 @@ export default function FomoMirrorPanel({
           </tbody>
         </table>
       </div>
+      {modalTokenAddress ? (
+        <ChartBuyModal
+          tokenAddress={modalTokenAddress}
+          onClose={() => setModalTokenAddress(null)}
+          onNavigate={(direction) => {
+            if (modalIndex === -1 || tokenList.length === 0) return;
+            const nextIndex =
+              direction === "next" ? modalIndex + 1 : modalIndex - 1;
+            if (nextIndex >= 0 && nextIndex < tokenList.length) {
+              setModalTokenAddress(tokenList[nextIndex]);
+            }
+          }}
+          hasPrev={modalIndex > 0}
+          hasNext={modalIndex >= 0 && modalIndex < tokenList.length - 1}
+        />
+      ) : null}
     </section>
   );
 }

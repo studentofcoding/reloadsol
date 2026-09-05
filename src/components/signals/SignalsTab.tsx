@@ -338,6 +338,10 @@ export default function SignalsTab() {
   // Chart popup handlers
   const handleFastBuy = useCallback(
     async (tokenAddress: string, tokenSymbol?: string) => {
+      if (network === "robinhood") {
+        setChartModalTokenAddress(tokenAddress);
+        return;
+      }
       if (!connected || !publicKey || !signAllTransactions) {
         setBuyStates((prev) => ({
           ...prev,
@@ -429,6 +433,7 @@ export default function SignalsTab() {
       buyConfig.solAmount,
       connected,
       connection,
+      network,
       publicKey,
       signAllTransactions,
     ],
@@ -885,6 +890,7 @@ export default function SignalsTab() {
                       <GmgnChartEmbed
                         tokenAddress={chart.tokenAddress}
                         interval="5"
+                        chain={network === "robinhood" ? "robinhood" : "sol"}
                         className="w-full h-full rounded-b-lg"
                         height="calc(100% - 60px)"
                         title={`GMGN Chart - ${chart.tokenAddress}`}
@@ -940,9 +946,15 @@ export default function SignalsTab() {
                       >
                         <td className="border-b p-2 relative">
                           <div className="flex items-center gap-2">
-                            <span className="font-medium">
+                            <button
+                              type="button"
+                              className="font-medium text-blue-700 hover:underline"
+                              onClick={() =>
+                                setChartModalTokenAddress(s.token_address)
+                              }
+                            >
                               {s.token_symbol || "UNKNOWN"}
-                            </span>
+                            </button>
                             <TokenSearchLink address={s.token_address} />
                             {labelBadge(s.label)}
                             <button
@@ -1136,6 +1148,7 @@ export default function SignalsTab() {
               <GmgnChartEmbed
                 tokenAddress={chart.tokenAddress}
                 interval="5"
+                chain={network === "robinhood" ? "robinhood" : "sol"}
                 className="w-full h-full rounded-b-lg"
                 height="calc(100% - 60px)"
                 title={`GMGN Chart - ${chart.tokenAddress}`}

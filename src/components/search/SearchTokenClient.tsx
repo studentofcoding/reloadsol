@@ -167,7 +167,16 @@ function SearchTokenResults({
   const trimmed = query.trim()
   const search = useGmgnTokenSearch(chain, trimmed, { enabled: trimmed.length > 0 })
   const trending = useGmgnTrending(chain, trimmed.length === 0)
-  const isAddressQuery = isValidTradeTokenAddress(chain, trimmed)
+  const exactHit = (search.data ?? []).find(
+    (t) => t.symbol.toLowerCase() === trimmed.toLowerCase(),
+  )
+  const isAddressQuery = isValidTradeTokenAddress(chain, trimmed) ||
+    isValidTradeTokenAddress('sol', trimmed) ||
+    isValidTradeTokenAddress('robinhood', trimmed)
+  const locateAddress = isAddressQuery
+    ? trimmed
+    : (exactHit?.address ?? (search.data?.length === 1 ? search.data[0].address : undefined))
+  const locateChain = exactHit?.chain ?? search.data?.[0]?.chain ?? chain
   const strategyTokens = useQuery({
     queryKey: ['strategy-recent-tokens', chain],
     queryFn: async (): Promise<GmgnSearchToken[]> => {
@@ -188,9 +197,9 @@ function SearchTokenResults({
     staleTime: 30_000,
   })
   const locate = useQuery({
-    queryKey: ['token-locate', chain, trimmed],
+    queryKey: ['token-locate', locateChain, locateAddress],
     queryFn: async (): Promise<TokenLocateResult & { success?: boolean }> => {
-      const params = new URLSearchParams({ address: trimmed, chain })
+      const params = new URLSearchParams({ address: locateAddress!, chain: locateChain })
       const res = await fetch(`/api/strategies/token-locate?${params}`)
       const json = (await res.json()) as TokenLocateResult & {
         success?: boolean
@@ -201,7 +210,7 @@ function SearchTokenResults({
       }
       return json
     },
-    enabled: isAddressQuery,
+    enabled: Boolean(locateAddress),
     staleTime: 15_000,
   })
 
@@ -209,10 +218,11 @@ function SearchTokenResults({
     <div className="space-y-2">
       {trimmed.length > 0 ? (
         <>
-          {isAddressQuery ? (
+          {locateAddress ? (
             <SystemPresence
               loading={locate.isFetching}
               result={locate.data ?? null}
+              chain={locateChain}
             />
           ) : null}
           <ResultsList
@@ -251,9 +261,11 @@ function SearchTokenResults({
 function SystemPresence({
   loading,
   result,
+  chain,
 }: {
   loading: boolean
   result: (TokenLocateResult & { success?: boolean }) | null
+  chain: GmgnTradeChain
 }) {
   if (loading && !result) {
     return <Section title="On this system" loading />
@@ -299,7 +311,7 @@ function SystemPresence({
           <p className="text-xs text-gray-500">No strategy rows for this chain.</p>
         )}
         <Link
-          href={`/dev/strategies?tab=outcomes&tokenAddress=${encodeURIComponent(result.tokenAddress)}`}
+          href={`/dev/strategies?tab=outcomes&tokenAddress=${encodeURIComponent(result.tokenAddress)}&chain=${chain}`}
           className="inline-block text-xs text-emerald-400 hover:text-emerald-300"
         >
           Open in strategies
@@ -366,6 +378,9 @@ function ResultRow({
         <div className="flex-1 min-w-0">
           <div className="font-semibold text-white truncate">
             {token.name} <span className="text-xs text-gray-400">({token.symbol})</span>
+            {token.chain && token.chain !== chain ? (
+              <span className="ml-2 text-[10px] uppercase text-amber-400">{token.chain}</span>
+            ) : null}
           </div>
           <div className="text-xs text-gray-400 font-mono truncate">{token.address}</div>
           {token.mcap ? (
@@ -391,6 +406,11 @@ function ResultRow({
             {showChart ? 'Hide chart' : 'View chart'}
           </ActionPill>
           <ActionPill onClick={() => copy(token.address)}>Copy CA</ActionPill>
+          <ActionPill
+            href={`/dev/strategies?tab=outcomes&tokenAddress=${encodeURIComponent(token.address)}&chain=${token.chain ?? chain}`}
+          >
+            Open in strategies
+          </ActionPill>
         </div>
       ) : null}
       {showChart ? (
@@ -398,7 +418,7 @@ function ResultRow({
           <GmgnKlineChart
             tokenMint={token.address}
             symbol={token.symbol}
-            chain={chain}
+            chain={token.chain ?? chain}
           />
         </div>
       ) : null}

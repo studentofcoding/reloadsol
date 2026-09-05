@@ -8,6 +8,7 @@ import { useWalletTokens } from "@/hooks/useWalletTokens";
 import { useOwnedTokenPrices } from "@/hooks/useOwnedTokenPrices";
 import { boardTabUrl } from "@/components/signals/shared/parseAddresses";
 import GmgnChartEmbed from "@/components/signals/shared/GmgnChartEmbed";
+import ChartBuyModal from "@/components/ChartBuyModal";
 import TokenSearchLink from "@/components/signals/shared/TokenSearchLink";
 import DlmmChartActions from "@/components/dlmm/DlmmChartActions";
 import GlobalWatchlistButton from "@/components/GlobalWatchlistButton";
@@ -154,6 +155,9 @@ export default function LiveTab() {
   const ownedTokenPrices = ownedPricesQuery.data ?? {};
 
   const [tokens, setTokens] = useState<TrendingToken[]>([]);
+  const [chartModalTokenAddress, setChartModalTokenAddress] = useState<
+    string | null
+  >(null);
   const loading = trendingQuery.isLoading && tokens.length === 0;
   const [error, setError] = useState<string | null>(null);
   const [highlightedTokens, setHighlightedTokens] = useState<Set<string>>(
@@ -778,6 +782,10 @@ export default function LiveTab() {
 
   // Execute buy transaction using existing Jupiter utilities
   const handleBuyToken = async (token: TrendingToken) => {
+    if (network === "robinhood") {
+      setChartModalTokenAddress(token.token_address);
+      return;
+    }
     if (!connected || !publicKey || !signTransaction) {
       alert("Please connect your wallet first");
       return;
@@ -1442,7 +1450,15 @@ export default function LiveTab() {
           <div className="flex-1">
             <div className="flex items-center gap-1.5">
               <h3 className="text-white font-semibold text-lg">
-                {token.token_symbol}
+                <button
+                  type="button"
+                  className="hover:underline"
+                  onClick={() =>
+                    setChartModalTokenAddress(token.token_address)
+                  }
+                >
+                  {token.token_symbol}
+                </button>
               </h3>
               <TokenSearchLink address={token.token_address} />
             </div>
@@ -1569,6 +1585,7 @@ export default function LiveTab() {
                   <GmgnChartEmbed
                     tokenAddress={token.token_address}
                     interval="5"
+                    chain={network === "robinhood" ? "robinhood" : "sol"}
                     className="w-full h-full"
                     height="250px"
                     title={`Chart - ${token.token_symbol}`}
@@ -2252,6 +2269,30 @@ export default function LiveTab() {
       </div>
     </div>
     <TradeOutcomeModal {...outcomeModalProps} />
+    {chartModalTokenAddress ? (
+      <ChartBuyModal
+        tokenAddress={chartModalTokenAddress}
+        onClose={() => setChartModalTokenAddress(null)}
+        onNavigate={(direction) => {
+          const currentIndex = tokens.findIndex(
+            (t) => t.token_address === chartModalTokenAddress,
+          );
+          if (currentIndex === -1) return;
+          const nextIndex =
+            direction === "next" ? currentIndex + 1 : currentIndex - 1;
+          const next = tokens[nextIndex];
+          if (next) setChartModalTokenAddress(next.token_address);
+        }}
+        hasPrev={
+          tokens.findIndex((t) => t.token_address === chartModalTokenAddress) >
+          0
+        }
+        hasNext={
+          tokens.findIndex((t) => t.token_address === chartModalTokenAddress) <
+          tokens.length - 1
+        }
+      />
+    ) : null}
     </>
   );
 }

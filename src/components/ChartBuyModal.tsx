@@ -15,9 +15,6 @@ import TransactionResultModal from "@/components/TransactionResultModal";
 import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import {
   executeBulkBuy,
-  isValidMintAddress,
-  fetchUserTokensEfficient,
-  UserToken,
 } from "@/utils/jupiter";
 import {
   SLIPPAGE_OPTIONS,
@@ -26,10 +23,19 @@ import {
 } from "@/utils/solana";
 import { BulkBuyRequest, BulkBuyResult } from "@/types";
 import { trackBuy } from "@/utils/operations-api";
-import { getGmgnKlineUrl } from "@/utils/gmgn";
+import {
+  isValidAnyChainTokenAddress,
+  isValidTradeTokenAddress,
+} from "@/utils/gmgn-currencies";
 import { fetchTokenPricesForTracking } from "@/utils/trading-tracker";
 import { useTradingData } from "@/components/TradingDataProvider";
 import { usePostBuyRefresh } from "@/hooks/usePostBuyRefresh";
+import { useRhEvmWallet } from "@/hooks/useRhEvmWallet";
+import { useRhWalletTokens } from "@/hooks/useRhWalletTokens";
+import { usePortfolioWallet } from "@/hooks/usePortfolioWallet";
+import { executeRhParentKyberBuy } from "@/utils/dlmm/rh-kyber-swap";
+import GmgnChartEmbed from "@/components/signals/shared/GmgnChartEmbed";
+import type { Address } from "viem";
 
 interface TokenInfo {
   symbol: string;
@@ -73,9 +79,20 @@ export default function ChartBuyModal({
   const { activeRpcUrl } = useRpc();
   const { trackOperation } = useTradingData();
   const triggerPostBuyRefresh = usePostBuyRefresh();
+  const rhWallet = useRhEvmWallet();
+  const rhHoldings = useRhWalletTokens();
+  const portfolio = usePortfolioWallet();
   const walletAddress = connected && publicKey ? publicKey.toString() : null;
+  const isRhToken = Boolean(
+    tokenAddress && isValidTradeTokenAddress("robinhood", tokenAddress),
+  );
   const validTokenAddress =
-    tokenAddress && isValidMintAddress(tokenAddress) ? tokenAddress : null;
+    tokenAddress && isValidAnyChainTokenAddress(tokenAddress)
+      ? tokenAddress
+      : null;
+  const spendUnit = isRhToken ? "ETH" : "SOL";
+  const rhConnected = Boolean(rhWallet.address || portfolio.walletAddress);
+  const tradeConnected = isRhToken ? rhConnected : connected;
 
   const lastUpdateRef = useRef<number>(Date.now());
 
@@ -112,21 +129,23 @@ export default function ChartBuyModal({
     publicKey,
     walletAddress,
     activeRpcUrl,
-    enabled: connected && !!publicKey && !!validTokenAddress,
+    enabled: !isRhToken && connected && !!publicKey && !!validTokenAddress,
   });
 
   const currentPosition = useMemo(() => {
     if (!validTokenAddress) return null;
+    const list = isRhToken ? rhHoldings.tokens : allTokens;
+    const needle = validTokenAddress.toLowerCase();
     return (
-      allTokens.find(
+      list.find(
         (token) =>
-          token.mintAddress === validTokenAddress &&
+          token.mintAddress.toLowerCase() === needle &&
           token.uiAmount > 0.001 &&
           !token.frozen &&
           !token.isNFT,
       ) ?? null
     );
-  }, [allTokens, validTokenAddress]);
+  }, [allTokens, rhHoldings.tokens, isRhToken, validTokenAddress]);
 
   const isLoadingPositions = false;
 
@@ -156,7 +175,7 @@ export default function ChartBuyModal({
   const axiomQuery = useAxiomRisk(
     validTokenAddress ?? "",
     tokenInfo?.marketCap ?? 0,
-    !!validTokenAddress && (tokenInfo?.marketCap ?? 0) > 0,
+    !!validTokenAddress && !isRhToken && (tokenInfo?.marketCap ?? 0) > 0,
   );
 
   const derivedRiskInfo = useMemo((): RiskInfo | null => {
@@ -223,24 +242,86 @@ export default function ChartBuyModal({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onNavigate]);
 
-  // Create the GMGN chart URL with correct format
-  const gmgnChartUrl = tokenAddress
-    ? getGmgnKlineUrl(tokenAddress, { interval: "60", theme: "dark" })
-    : "";
-
   const handleBuy = useCallback(async () => {
-    if (!connected || !publicKey || !signAllTransactions || !tokenAddress) {
-      setError("Please connect your wallet first");
-      return;
-    }
-
-    if (!buyAmount || parseFloat(buyAmount) <= 0) {
-      setError("Please enter a valid SOL amount");
-      return;
-    }
-
-    if (!tokenInfo) {
+    if (!tokenAddress || !tokenInfo) {
       setError("Token information not loaded");
+      return;
+    }
+    if (!buyAmount || parseFloat(buyAmount) <= 0) {
+      setError(`Please enter a valid ${spendUnit} amount`);
+      return;
+    }
+
+    if (isRhToken) {
+      setIsBuying(true);
+      setError("");
+      setResult(null);
+      try {
+        if (!rhWallet.address) await rhWallet.connect();
+        const account = (rhWallet.address ||
+          (portfolio.network === "robinhood" ? portfolio.walletAddress : null)) as
+          | Address
+          | null;
+        if (!account) throw new Error("Connect Rabby first");
+        const amountHuman = parseFloat(buyAmount);
+        const { success, results } = await executeRhParentKyberBuy({
+          publicClient: rhWallet.getPublicClient(),
+          walletClient: rhWallet.getWalletClient(),
+          account,
+          amountHuman,
+          tokenMints: [
+            { tokenAddress, symbol: tokenInfo.symbol },
+          ],
+          slippageBps: slippage,
+        });
+        const hash = results.find((r) => r.hash)?.hash;
+        const fail = results.find((r) => !r.success);
+        const buyResult: BulkBuyResult = {
+          success,
+          successfulPurchases: success
+            ? [
+                {
+                  mintAddress: tokenAddress,
+                  amount: amountHuman,
+                  symbol: tokenInfo.symbol,
+                  name: tokenInfo.name,
+                },
+              ]
+            : [],
+          failedPurchases: fail
+            ? [{ mintAddress: tokenAddress, error: fail.error || "Buy failed" }]
+            : [],
+          totalSpent: amountHuman,
+          signatures: hash ? [hash] : [],
+          feeInfo: {
+            totalFees: 0,
+            devFee: 0,
+            referralFee: 0,
+            feePerOperation: 0,
+            totalOperations: success ? 1 : 0,
+            operationType: "BUY",
+          },
+        };
+        setResult(buyResult);
+        setShowResultModal(true);
+        if (success) {
+          triggerPostBuyRefresh({
+            refreshWalletTokens: () => rhHoldings.refetchFresh(),
+            refreshBalances: portfolio.refreshBalances,
+          });
+        } else if (fail?.error) {
+          setError(fail.error);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Buy failed");
+      } finally {
+        setIsBuying(false);
+      }
+      return;
+    }
+
+    if (!connected || !publicKey || !signAllTransactions) {
+      setError("Please connect your wallet first");
       return;
     }
 
@@ -400,6 +481,11 @@ export default function ChartBuyModal({
     refreshBalances,
     triggerPostBuyRefresh,
     initialBuyAmount,
+    isRhToken,
+    spendUnit,
+    rhWallet,
+    portfolio,
+    rhHoldings,
   ]);
 
   const getRiskBadgeColor = (risk: "LOW" | "MEDIUM" | "HIGH") => {
@@ -509,12 +595,15 @@ export default function ChartBuyModal({
                   Price Chart (GMGN)
                 </span>
               </div>
-              <div className="flex-1 relative">
-                <iframe
-                  src={gmgnChartUrl}
+              <div className="flex-1 relative min-h-[500px]">
+                <GmgnChartEmbed
+                  tokenAddress={tokenAddress}
+                  interval="5"
+                  theme="dark"
+                  chain={isRhToken ? "robinhood" : "sol"}
                   className="w-full h-full min-h-[500px]"
-                  title="Chart"
-                  frameBorder="0"
+                  height="500px"
+                  title={`Chart - ${tokenAddress}`}
                 />
               </div>
             </div>
@@ -525,6 +614,7 @@ export default function ChartBuyModal({
                 <RiskAnalysis
                   tokenAddress={tokenAddress}
                   marketCap={tokenInfo.marketCap}
+                  chain={isRhToken ? "robinhood" : "sol"}
                   defaultExpanded={false}
                 />
               </div>
@@ -550,7 +640,7 @@ export default function ChartBuyModal({
             </div>
 
             {/* Position Card */}
-            {connected && (
+            {tradeConnected && (
               <div className="bg-gray-800 rounded-lg p-4">
                 <h3 className="text-sm font-semibold text-gray-300 mb-2">
                   Your Position
@@ -584,17 +674,30 @@ export default function ChartBuyModal({
               <div className="flex justify-between items-center">
                 <h3 className="text-lg font-bold text-white">Quick Buy</h3>
                 <div className="text-xs text-gray-400">
-                  Bal: {walletBalance?.toFixed(4) || "0"} SOL
+                  Bal:{" "}
+                  {isRhToken
+                    ? `${(portfolio.nativeBalance ?? 0).toFixed(4)} ${spendUnit}`
+                    : `${walletBalance?.toFixed(4) || "0"} SOL`}
                 </div>
               </div>
 
-              {!connected ? (
-                <UniversalWalletButton />
+              {!tradeConnected ? (
+                isRhToken ? (
+                  <button
+                    type="button"
+                    onClick={() => void rhWallet.connect()}
+                    className="w-full bg-gray-700 hover:bg-gray-600 text-white py-2 rounded-lg"
+                  >
+                    Connect Rabby
+                  </button>
+                ) : (
+                  <UniversalWalletButton />
+                )
               ) : (
                 <>
                   <div className="space-y-2">
                     <label className="text-xs text-gray-400">
-                      Amount (SOL)
+                      Amount ({spendUnit})
                     </label>
                     <div className="flex gap-2">
                       <input
@@ -644,6 +747,7 @@ export default function ChartBuyModal({
                           ))}
                         </select>
                       </div>
+                      {!isRhToken ? (
                       <div>
                         <label className="text-xs text-gray-500">
                           Priority Fee
@@ -662,6 +766,7 @@ export default function ChartBuyModal({
                           ))}
                         </select>
                       </div>
+                      ) : null}
 
                       {/* Dev-only: confirmation transport toggle */}
                       <ConfirmTransportSelect compact disabled={isBuying} />
@@ -673,7 +778,7 @@ export default function ChartBuyModal({
                     disabled={isBuying || !tokenInfo}
                     className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white py-3 rounded-lg font-bold text-lg transition-all active:scale-95"
                   >
-                    {isBuying ? "Processing..." : `Buy ${buyAmount} SOL`}
+                    {isBuying ? "Processing..." : `Buy ${buyAmount} ${spendUnit}`}
                   </button>
 
                   {error && (

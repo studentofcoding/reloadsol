@@ -1,5 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { isValidMintAddress } from "@/utils/jupiter";
+import {
+  isValidAnyChainTokenAddress,
+  isValidTradeTokenAddress,
+} from "@/utils/gmgn-currencies";
 
 export type ChartTokenInfo = {
   symbol: string;
@@ -11,9 +14,41 @@ export type ChartTokenInfo = {
   marketCap: number;
 };
 
+async function fetchRhChartTokenInfo(
+  tokenAddress: string,
+): Promise<ChartTokenInfo> {
+  const res = await fetch(
+    `/api/gmgn/token/search?chain=robinhood&query=${encodeURIComponent(tokenAddress)}`,
+  );
+  if (!res.ok) throw new Error("Failed to fetch token metadata");
+  const data: unknown = await res.json();
+  const row = Array.isArray(data) ? data[0] : null;
+  if (!row || typeof row !== "object") throw new Error("Token not found");
+  const t = row as {
+    symbol?: string;
+    name?: string;
+    address?: string;
+    icon?: string;
+    mcap?: number;
+  };
+  return {
+    symbol: t.symbol || "UNKNOWN",
+    name: t.name || "Unknown Token",
+    address: t.address || tokenAddress,
+    price: 0,
+    logoURI: t.icon,
+    decimals: 18,
+    marketCap: typeof t.mcap === "number" && Number.isFinite(t.mcap) ? t.mcap : 0,
+  };
+}
+
 async function fetchChartTokenInfo(
   tokenAddress: string,
 ): Promise<ChartTokenInfo> {
+  if (isValidTradeTokenAddress("robinhood", tokenAddress)) {
+    return fetchRhChartTokenInfo(tokenAddress);
+  }
+
   const jupiterResponse = await fetch(
     `/api/jupiter/metadata?mint=${tokenAddress}`,
   );
@@ -59,7 +94,7 @@ async function fetchChartTokenInfo(
 }
 
 export function useChartTokenInfo(tokenAddress: string | null) {
-  const valid = !!tokenAddress && isValidMintAddress(tokenAddress);
+  const valid = !!tokenAddress && isValidAnyChainTokenAddress(tokenAddress);
 
   return useQuery({
     queryKey: ["chart-token-info", tokenAddress],

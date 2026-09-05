@@ -12,6 +12,7 @@ export type GmgnSearchToken = {
   mcap?: number
   first_seen_at?: string
   first_mcap?: number
+  chain?: GmgnTradeChain
 }
 
 async function searchGmgnTokens(

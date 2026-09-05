@@ -217,8 +217,14 @@ function buildOutcomeWhereClause(params: OutcomeFilterParams): {
     conditions.push(`features->>'entry_mcap_band' = $${values.length}`)
   }
   if (params.tokenAddress) {
-    values.push(params.tokenAddress)
-    conditions.push(`token_address = $${values.length}`)
+    const needle = params.tokenAddress.replace(/[%_\\]/g, '').trim()
+    if (needle) {
+      values.push(needle)
+      const n = values.length
+      conditions.push(
+        `(token_address ILIKE '%' || $${n} || '%' OR COALESCE(features->>'token_symbol','') ILIKE '%' || $${n} || '%' OR COALESCE(features->>'symbol','') ILIKE '%' || $${n} || '%')`,
+      )
+    }
   }
 
   const sql = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
