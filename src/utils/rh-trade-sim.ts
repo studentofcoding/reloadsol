@@ -20,6 +20,7 @@ import {
   toKyberAmountRaw,
   KYBER_NATIVE,
 } from '@/utils/kyber-aggregator'
+import { fetchBybitSpotLast } from '@/utils/bybit-spot'
 
 export type RhTradeSimLeg = {
   fromUsd: number | null
@@ -72,18 +73,7 @@ function numField(obj: Record<string, unknown>, keys: string[]): number | null {
 }
 
 export async function fetchEthUsdSpot(): Promise<number> {
-  try {
-    const res = await fetch(
-      'https://api.coinbase.com/v2/prices/ETH-USD/spot',
-      { cache: 'no-store' },
-    )
-    const json = (await res.json()) as { data?: { amount?: string } }
-    const n = Number(json.data?.amount)
-    if (Number.isFinite(n) && n > 0) return n
-  } catch {
-    /* fall through */
-  }
-  return 0
+  return fetchBybitSpotLast('ETHUSDT')
 }
 
 async function fetchTokenUsd(address: string): Promise<number | null> {

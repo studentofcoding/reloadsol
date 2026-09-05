@@ -1,5 +1,6 @@
 import { getTokenPrice } from './jupiter-api'
 import { cacheGet, cacheSet } from './redis-cache'
+import { fetchBybitSpotLast } from './bybit-spot'
 
 const SOL_PRICE_REDIS_KEY = 'sol:price'
 const SOL_PRICE_REDIS_TTL_SECONDS = 30
@@ -192,6 +193,20 @@ export async function getSolPriceUSDCore(): Promise<{ price: number; source: str
     console.log('Using stale cache to reduce API load');
     // Use originalSource to prevent accumulation
     return { price: priceCache.price, source: `stale_${priceCache.originalSource}` };
+  }
+
+  const bybit = await fetchBybitSpotLast('SOLUSDT')
+  if (bybit > 0) {
+    const currentTime = Date.now()
+    priceCache = {
+      price: bybit,
+      source: 'bybit',
+      timestamp: currentTime,
+      expiresAt: currentTime + CACHE_TTL_MS,
+      originalSource: 'bybit',
+    }
+    await persistSolPriceToRedis()
+    return { price: bybit, source: 'bybit' }
   }
 
   // Try all APIs in parallel for faster response
