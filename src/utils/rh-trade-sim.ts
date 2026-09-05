@@ -73,6 +73,19 @@ function numField(obj: Record<string, unknown>, keys: string[]): number | null {
 }
 
 export async function fetchEthUsdSpot(): Promise<number> {
+  if (typeof window !== 'undefined') {
+    try {
+      const res = await fetch('/api/ethprice', {
+        headers: { 'Cache-Control': 'max-age=60' },
+      })
+      if (!res.ok) return 0
+      const data = (await res.json()) as { price?: number }
+      const n = Number(data.price)
+      return Number.isFinite(n) && n > 0 ? n : 0
+    } catch {
+      return 0
+    }
+  }
   return fetchBybitSpotLast('ETHUSDT')
 }
 
