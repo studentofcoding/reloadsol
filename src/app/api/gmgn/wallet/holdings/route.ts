@@ -5,8 +5,8 @@ import { resolveGmgnBoundWallets, boundAddressForChain } from '@/utils/gmgn-boun
 
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     if (!process.env.GMGN_API_KEY?.trim() || !process.env.GMGN_PRIVATE_KEY?.trim()) {
       return NextResponse.json(
         { success: false, error: 'GMGN keys not set' },

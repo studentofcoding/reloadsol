@@ -8,8 +8,8 @@ import { getAppDayBounds } from '@/utils/datetime'
 const TRACKER_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_tracker_dev' : 'trending_token_tracker'
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const searchParams = request.nextUrl.searchParams
     const page = parseInt(searchParams.get('page') || '1')
     const limit = parseInt(searchParams.get('limit') || '20')

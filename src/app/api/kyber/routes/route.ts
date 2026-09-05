@@ -3,8 +3,8 @@ import { fetchKyberRoute } from '@/utils/kyber-aggregator'
 
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const tokenIn = request.nextUrl.searchParams.get('tokenIn')?.trim() ?? ''
     const tokenOut = request.nextUrl.searchParams.get('tokenOut')?.trim() ?? ''
     const amountIn = request.nextUrl.searchParams.get('amountIn')?.trim() ?? ''

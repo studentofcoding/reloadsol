@@ -172,8 +172,8 @@ async function fillMissingUsd(tokens: UserToken[]): Promise<UserToken[]> {
 }
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const wallet = request.nextUrl.searchParams.get('wallet')?.trim() ?? ''
     if (!isEvmAddress(wallet)) {
       return NextResponse.json(

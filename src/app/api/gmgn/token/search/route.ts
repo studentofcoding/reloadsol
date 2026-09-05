@@ -7,8 +7,8 @@ import { cacheGet, cacheSet } from '@/utils/redis-cache'
 const SEARCH_TTL_S = 30
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     if (!process.env.GMGN_API_KEY?.trim()) {
       return NextResponse.json(
         { success: false, error: 'GMGN_API_KEY is not set' },

@@ -4,8 +4,8 @@ import { isGmgnTradeChain } from '@/utils/gmgn-currencies'
 
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     if (!process.env.GMGN_API_KEY?.trim() || !process.env.GMGN_PRIVATE_KEY?.trim()) {
       return NextResponse.json(
         { success: false, error: 'GMGN_API_KEY / GMGN_PRIVATE_KEY not set' },

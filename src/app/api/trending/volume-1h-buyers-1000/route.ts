@@ -74,8 +74,8 @@ async function getTrendingBuyers1hCached(): Promise<TokenPrice[]> {
 }
 
 export async function GET() {
+  await connection()
   try {
-    await connection()
     const uniquePrices = await getTrendingBuyers1hCached()
 
     return NextResponse.json(

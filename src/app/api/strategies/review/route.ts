@@ -6,8 +6,8 @@ import type { StrategyDomain } from '@/strategies/types'
 
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const { searchParams } = new URL(request.url)
     const weeks = Math.min(26, Math.max(4, Number(searchParams.get('weeks') ?? 12) || 12))
     const domain = searchParams.get('domain') as StrategyDomain | null

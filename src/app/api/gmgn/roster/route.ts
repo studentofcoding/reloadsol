@@ -12,8 +12,8 @@ import {
 
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const status = request.nextUrl.searchParams.get('status') as RosterStatus | null
     const [roster, digRuns, signals] = await Promise.all([
       listRoster(status ? { status, limit: 300 } : { limit: 300 }),

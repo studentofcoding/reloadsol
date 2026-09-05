@@ -33,8 +33,8 @@ function resolveWallet(
 }
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const chain = parseDbChain(request.nextUrl.searchParams.get('chain'));
     const resolved = resolveWallet(request, chain);
     if (resolved instanceof NextResponse) return resolved;

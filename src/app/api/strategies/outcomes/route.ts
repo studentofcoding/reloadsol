@@ -135,8 +135,8 @@ function toCsv(rows: StrategyOutcomeRow[], recomputeLabels: boolean): string {
 }
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const { searchParams } = new URL(request.url)
     const format = searchParams.get('format')
     const strategyId = searchParams.get('strategyId') ?? undefined

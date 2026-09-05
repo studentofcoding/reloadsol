@@ -12,8 +12,8 @@ import {
 } from '@/utils/wallet-session';
 
 export async function GET(req: NextRequest) {
+  await connection()
   try {
-    await connection()
     const address = req.nextUrl.searchParams.get('address')?.trim();
 
     if (!address) {

@@ -15,8 +15,8 @@ function cacheKey(address: string, chain: string): string {
 }
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const { searchParams } = new URL(request.url)
     const address = searchParams.get('address')?.trim()
     const refresh = searchParams.get('refresh') === 'true'

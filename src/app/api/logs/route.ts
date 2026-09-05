@@ -3,8 +3,8 @@ import { getLogs, getLogStats, clearLogs, LogLevel } from '@/utils/api-logger'
 import { formatAppDateTime } from '@/utils/datetime'
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const { searchParams } = new URL(request.url)
     
     // Parse query parameters

@@ -3,8 +3,8 @@ import { fetchMeteoraPools, estimateOrganicScore, getFeeTvlRatio24h } from '@/ut
 import { getLatestCandidates } from '@/utils/dlmm/db';
 
 export async function GET(req: NextRequest) {
+  await connection()
   try {
-    await connection()
     const { searchParams } = new URL(req.url);
     const source = searchParams.get('source') ?? 'live';
     const limit = parseInt(searchParams.get('limit') ?? '50', 10);

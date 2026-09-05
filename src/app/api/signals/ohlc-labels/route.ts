@@ -4,8 +4,8 @@ import type { SignalOhlcLabelKind } from '@/strategies/signal-ohlc-window'
 
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const { searchParams } = new URL(request.url)
     const labelRaw = searchParams.get('label')?.trim()
     const label =

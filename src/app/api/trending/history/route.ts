@@ -110,8 +110,8 @@ function buildWhereClause(params: FilterParams): { sql: string; values: unknown[
 }
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const searchParams = request.nextUrl.searchParams
 
     const status = searchParams.get('status') || 'all'

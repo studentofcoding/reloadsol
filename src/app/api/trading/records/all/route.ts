@@ -5,8 +5,8 @@ import { query } from '@/utils/db'
 
 // GET /api/trading/records/all?limit=<number>
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const { searchParams } = new URL(request.url)
     const limit = parseInt(searchParams.get('limit') || '1000')
 

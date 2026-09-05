@@ -9,8 +9,8 @@ import type { StrategyDomain } from '@/strategies/types'
 
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const { searchParams } = new URL(request.url)
     const domain = searchParams.get('domain') as StrategyDomain | null
     const strategyId = searchParams.get('strategy_id') ?? undefined

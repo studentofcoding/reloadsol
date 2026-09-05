@@ -30,8 +30,8 @@ let lastRequestTime = 0
 const MIN_REQUEST_INTERVAL = 200 // 200ms between requests for batch calls
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const { searchParams } = new URL(request.url)
     const mintAddress = searchParams.get('mint')
 

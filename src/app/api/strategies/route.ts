@@ -17,8 +17,8 @@ import { parseStrategyChain } from '@/strategies/types'
 
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const chain = parseStrategyChain(request.nextUrl.searchParams.get('chain'))
     const [
       registry,

@@ -31,8 +31,8 @@ function calculateBackoff(consecutiveErrors: number, maxBackoff: number): number
 }
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const { searchParams } = new URL(request.url)
     const mintAddress = searchParams.get('pairAddress') // Keep parameter name for backward compatibility
 

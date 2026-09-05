@@ -4,8 +4,8 @@ import { getShyftApiKey, ShyftAPIError } from "@/utils/shyft-api";
 import { fetchShyftAllTokensDirect } from "@/utils/shyft-wallet";
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const apiKey = getShyftApiKey();
     if (!apiKey) {
       return NextResponse.json(

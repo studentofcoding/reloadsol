@@ -110,8 +110,8 @@ export async function POST(request: NextRequest) {
 }
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const { searchParams } = new URL(request.url)
     
     const tokenAddress = searchParams.get('tokenAddress')

@@ -121,8 +121,8 @@ async function getRandomTokensWithCache(count: number): Promise<any[]> {
 }
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const { searchParams } = new URL(request.url)
     const count = parseInt(searchParams.get('count') || '10')
     

@@ -3,11 +3,11 @@ import { requireDevSession } from '@/utils/api-auth'
 import { runTradeComparisonTests, testSingleTrade, benchmarkProviders } from '@/utils/trade-comparison-test'
 
 export async function GET(request: NextRequest) {
+  await connection()
   const auth = requireDevSession(request)
   if (auth instanceof NextResponse) return auth
 
   try {
-    await connection()
     const { searchParams } = new URL(request.url)
     const testType = searchParams.get('type') || 'comprehensive'
     const iterations = parseInt(searchParams.get('iterations') || '3')

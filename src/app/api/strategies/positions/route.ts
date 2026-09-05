@@ -4,8 +4,8 @@ import { parseStrategyChain } from '@/strategies/types'
 
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const limitParam = request.nextUrl.searchParams.get('limit')
     const closedLimit = limitParam ? Math.min(Number(limitParam) || 100, 500) : 100
     const chain = parseStrategyChain(request.nextUrl.searchParams.get('chain'))

@@ -229,8 +229,8 @@ async function findSummaryForDate(dateStr: string): Promise<SummaryRow | null> {
 }
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const searchParams = request.nextUrl.searchParams
     const refresh = searchParams.get('refresh') === 'true'
     const nocache = searchParams.get('nocache') === 'true'

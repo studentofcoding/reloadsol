@@ -22,8 +22,8 @@ interface TradingSignalRow {
 }
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const chain = parseDbChain(request.nextUrl.searchParams.get('chain'))
     const { rows: data } = await query<TradingSignalRow>(
       `SELECT * FROM trading_signals

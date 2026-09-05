@@ -4,8 +4,8 @@ import { isValidAnyChainTokenAddress } from '@/utils/gmgn-currencies'
 
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const { searchParams } = new URL(request.url)
     const address = searchParams.get('address')?.trim() ?? ''
     const hours = Number(searchParams.get('hours') ?? 24)

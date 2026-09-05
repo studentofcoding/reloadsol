@@ -3,8 +3,8 @@ import { listRecentStrategyTokens } from '@/strategies/db'
 import { parseStrategyChain } from '@/strategies/types'
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const chain = parseStrategyChain(request.nextUrl.searchParams.get('chain'))
     const limitRaw = Number(request.nextUrl.searchParams.get('limit') ?? '30')
     const limit = Number.isFinite(limitRaw) ? Math.min(50, Math.max(1, limitRaw)) : 30

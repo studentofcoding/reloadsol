@@ -19,8 +19,8 @@ function isServiceAuthorized(request: NextRequest): boolean {
 
 // GET - Monitor all active SL/TP positions
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const { searchParams } = new URL(request.url)
     const action = searchParams.get('action')
     const wallet = searchParams.get('wallet')

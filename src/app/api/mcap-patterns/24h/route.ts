@@ -9,8 +9,8 @@ import { parseDbChain } from '@/utils/app-network-db'
 export const maxDuration = 120
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const chain = parseDbChain(request.nextUrl.searchParams.get('chain'))
     const refresh = request.nextUrl.searchParams.get('refresh') === 'true'
     const result = refresh

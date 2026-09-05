@@ -6,8 +6,8 @@ import { parseDbChain } from '@/utils/app-network-db'
 
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const chain = parseDbChain(request.nextUrl.searchParams.get('chain'))
     // Stage-1 early enter first, then Stage-2 sim-open confirms
     const alerts = [

@@ -102,8 +102,8 @@ function buildMcapListWhere(params: McapListFilterParams): { sql: string; values
 }
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const { searchParams } = new URL(request.url)
     const action = searchParams.get('action')
     const tokenAddress = searchParams.get('token')

@@ -11,8 +11,8 @@ function getPatternArtifactMeta(): Promise<PatternArtifactMetaModule> {
 }
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const chain = parseDbChain(request.nextUrl.searchParams.get('chain'))
     const stats = await getPatternTrainingStats(chain)
     const patternMeta = await getPatternArtifactMeta()

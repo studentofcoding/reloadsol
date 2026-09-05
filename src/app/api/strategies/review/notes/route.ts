@@ -7,8 +7,8 @@ import {
 
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const { searchParams } = new URL(request.url)
     const keysRaw = searchParams.get('periodKeys')
     const periodKeys = keysRaw

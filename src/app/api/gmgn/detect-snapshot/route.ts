@@ -12,8 +12,8 @@ import { isValidMintAddress } from '@/utils/jupiter'
 
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const { searchParams } = new URL(request.url)
     const address = searchParams.get('address')?.trim() ?? ''
     if (!address || !isValidMintAddress(address)) {

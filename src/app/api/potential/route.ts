@@ -19,8 +19,8 @@ const VALID_SOURCES: DlmmPotentialSource[] = [
 ]
 
 export async function GET(req: NextRequest) {
+  await connection()
   try {
-    await connection()
     const chain = parseDbChain(req.nextUrl.searchParams.get('chain'))
     const entries = await getPotentialList(chain)
     return NextResponse.json({ success: true, entries })

@@ -35,8 +35,8 @@ async function enrichSignalsWithPatternShadow(
 
 export async function GET(request: NextRequest) {
   const startedAt = Date.now()
+  await connection()
   try {
-    await connection()
     const { searchParams } = new URL(request.url)
     const limit = Math.min(parseInt(searchParams.get('limit') || '30', 10), 100)
     const recencyMinutes = Math.max(parseInt(searchParams.get('recencyMinutes') || '90', 10), 1)

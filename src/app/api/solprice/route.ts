@@ -5,8 +5,8 @@ import { getSolPriceUSDCore, getCachedPriceInfo, warmSolPriceCacheFromRedis } fr
 let ongoingRequest: Promise<{ price: number; source: string }> | null = null
 
 export async function GET() {
+  await connection()
   try {
-    await connection()
     await warmSolPriceCacheFromRedis()
     const cachedInfo = getCachedPriceInfo();
 

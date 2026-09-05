@@ -7,8 +7,8 @@ import {
 
 
 export async function GET(request: NextRequest) {
+  await connection()
   try {
-    await connection()
     const { searchParams } = new URL(request.url);
     const inputMint = searchParams.get("inputMint");
     const outputMint = searchParams.get("outputMint");

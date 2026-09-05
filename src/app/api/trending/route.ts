@@ -709,8 +709,8 @@ export async function POST(request: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
+  await connection()
   try {
-    await connection()
     const currentTime = Date.now();
 
     // Parse query parameters

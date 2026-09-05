@@ -6,8 +6,8 @@ import {
 } from '@/utils/dlmm/robinhood-screen'
 
 export async function GET(req: NextRequest) {
+  await connection()
   try {
-    await connection()
     const sp = req.nextUrl.searchParams
     const minMcap = Number(sp.get('minMcap') ?? ROBINHOOD_LP_DEFAULTS.minMcap)
     const minVolume = Number(sp.get('minVolume') ?? ROBINHOOD_LP_DEFAULTS.minVolume)
