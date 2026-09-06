@@ -22,9 +22,16 @@ import { RH_WETH } from '@/utils/dlmm/rh-univ2'
 
 // ── Env flags ────────────────────────────────────────────────────────
 
-function envFlag(...names: string[]): string | undefined {
-  for (const n of names) {
-    const v = process.env[n]
+/**
+ * Read public/server env for RH BatchExecutor flags.
+ *
+ * IMPORTANT: Next.js only inlines `NEXT_PUBLIC_*` into the client bundle when
+ * accessed as a *static* property (`process.env.NEXT_PUBLIC_FOO`). Dynamic
+ * `process.env[name]` is always undefined in the browser — which made the UI
+ * report "BatchExecutor is unavailable" even when .env was set correctly.
+ */
+function readEnv(...staticValues: Array<string | undefined>): string | undefined {
+  for (const v of staticValues) {
     if (v != null && v !== '') return v
   }
   return undefined
@@ -32,9 +39,9 @@ function envFlag(...names: string[]): string | undefined {
 
 /** Deployed BatchExecutor on 4663, or null when not configured (= disabled). */
 export function getRhBatchExecutorAddress(): Address | null {
-  const raw = envFlag(
-    'NEXT_PUBLIC_RH_BATCH_EXECUTOR_ADDRESS',
-    'RH_BATCH_EXECUTOR_ADDRESS',
+  const raw = readEnv(
+    process.env.NEXT_PUBLIC_RH_BATCH_EXECUTOR_ADDRESS,
+    process.env.RH_BATCH_EXECUTOR_ADDRESS,
   )
   if (!raw) return null
   const trimmed = raw.trim()
@@ -48,7 +55,10 @@ export function getRhBatchExecutorAddress(): Address | null {
  * (Executor mode implies Permit2 for the executor spender regardless.)
  */
 export function isRhPermit2SwapsEnabled(): boolean {
-  const raw = envFlag('NEXT_PUBLIC_RH_PERMIT2_SWAPS', 'RH_PERMIT2_SWAPS')
+  const raw = readEnv(
+    process.env.NEXT_PUBLIC_RH_PERMIT2_SWAPS,
+    process.env.RH_PERMIT2_SWAPS,
+  )
   if (raw == null) return false
   const v = raw.trim().toLowerCase()
   return v === '1' || v === 'true' || v === 'on' || v === 'yes'
