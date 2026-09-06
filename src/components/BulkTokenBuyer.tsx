@@ -20,6 +20,7 @@ import { usePortfolioWallet } from "@/hooks/usePortfolioWallet";
 import { useGmgnTokenSearch } from "@/hooks/useGmgnTokenSearch";
 import { useGmgnBoundWallets } from "@/hooks/useGmgnBoundWallets";
 import { useRhEvmWallet } from "@/hooks/useRhEvmWallet";
+import { useRhBatchExecutorAddress } from "@/hooks/useRhBatchExecutorAddress";
 import { useTrendingSearch } from "@/hooks/useTrendingSearch";
 import { useQuery } from "@tanstack/react-query";
 import type { Address } from "viem";
@@ -90,7 +91,7 @@ import {
 } from "@/utils/gmgn-bulk-trade";
 import type { RhSwapQuote } from "@/utils/dlmm/rh-univ2-swap";
 import { executeRhParentKyberBuy } from "@/utils/dlmm/rh-kyber-swap";
-import { getRhBatchExecutorAddress, RH_PLATFORM_FEE_LABEL } from "@/utils/dlmm/rh-batch-executor";
+import { RH_PLATFORM_FEE_LABEL } from "@/utils/dlmm/rh-batch-executor";
 import { useSolPrice } from "@/hooks/useSolPrice";
 import {
   MIN_BUY_USD_PER_TOKEN,
@@ -158,7 +159,10 @@ export default function BulkTokenBuyer() {
   const tradeTokenLimit = maxTradeTokens(effectiveChain);
   const { mode: rhMode } = useRhWalletMode();
   const rhWallet = useRhEvmWallet();
-  const rhBatchExecutor = getRhBatchExecutorAddress();
+  const {
+    address: rhBatchExecutor,
+    resolving: rhBatchExecutorResolving,
+  } = useRhBatchExecutorAddress();
   const [permit2SetupOpen, setPermit2SetupOpen] = useState(false);
 
   const getInitialSolAmount = () => {
@@ -1769,10 +1773,10 @@ export default function BulkTokenBuyer() {
         legs={gmgnConfirmLegs}
         busy={gmgnConfirmBusy}
         sequentialSignHint={
-          useRhParentPath && !getRhBatchExecutorAddress()
+          useRhParentPath && !rhBatchExecutor && !rhBatchExecutorResolving
         }
         feeHint={
-          useRhParentPath && getRhBatchExecutorAddress()
+          useRhParentPath && rhBatchExecutor
             ? RH_PLATFORM_FEE_LABEL
             : undefined
         }
@@ -1838,6 +1842,7 @@ export default function BulkTokenBuyer() {
           {useRhParentPath ? (
             <RhPermit2StatusBanner
               executorConfigured={Boolean(rhBatchExecutor)}
+              executorResolving={rhBatchExecutorResolving}
               readiness={permit2Readiness.data}
               loading={permit2Readiness.isLoading || permit2Readiness.isFetching}
               error={permit2Readiness.isError}
@@ -2574,7 +2579,7 @@ export default function BulkTokenBuyer() {
                   <div className="space-y-3 text-xs text-gray-400">
                     {isRhChain
                       ? useRhParentPath
-                        ? `Robinhood Parent: Kyber + Rabby. ${getRhBatchExecutorAddress() ? RH_PLATFORM_FEE_LABEL + ". " : ""}No Solana Raptor/Jupiter.`
+                        ? `Robinhood Parent: Kyber + Rabby. ${rhBatchExecutor ? RH_PLATFORM_FEE_LABEL + ". " : ""}No Solana Raptor/Jupiter.`
                         : "Robinhood Bound: GMGN server-sign. No Solana Raptor/Jupiter."
                       : `Execution via GMGN (${chainNative.nativeSymbol}). Fees set by the router.`}
                   </div>

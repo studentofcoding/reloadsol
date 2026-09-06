@@ -27,6 +27,7 @@ import GmgnTradeConfirmModal, {
 } from "./GmgnTradeConfirmModal";
 import { useGmgnBoundWallets } from "@/hooks/useGmgnBoundWallets";
 import { useRhEvmWallet } from "@/hooks/useRhEvmWallet";
+import { useRhBatchExecutorAddress } from "@/hooks/useRhBatchExecutorAddress";
 import { useRhWalletTokens } from "@/hooks/useRhWalletTokens";
 import { useQuery } from "@tanstack/react-query";
 import type { Address } from "viem";
@@ -44,7 +45,7 @@ import { walletsMatch } from "@/utils/rh-wallet-holdings";
 import { executeGmgnBulkSell } from "@/utils/gmgn-bulk-trade";
 import type { RhSwapQuote } from "@/utils/dlmm/rh-univ2-swap";
 import { executeRhParentKyberSell } from "@/utils/dlmm/rh-kyber-swap";
-import { getRhBatchExecutorAddress, RH_PLATFORM_FEE_LABEL } from "@/utils/dlmm/rh-batch-executor";
+import { RH_PLATFORM_FEE_LABEL } from "@/utils/dlmm/rh-batch-executor";
 import { capTradeTokens, maxTradeTokens } from "@/utils/trade-ui-limits";
 import { prefetchSwapTransaction } from "@/utils/swap-executor";
 import {
@@ -192,7 +193,10 @@ export default function BulkTokenSeller() {
   const tradeTokenLimit = maxTradeTokens(effectiveChain);
   const { mode: rhMode } = useRhWalletMode();
   const rhWallet = useRhEvmWallet();
-  const rhBatchExecutor = getRhBatchExecutorAddress();
+  const {
+    address: rhBatchExecutor,
+    resolving: rhBatchExecutorResolving,
+  } = useRhBatchExecutorAddress();
   const [useGmgnOnSol, setUseGmgnOnSol] = useState(false);
   const [gmgnConfirmOpen, setGmgnConfirmOpen] = useState(false);
   const [permit2SetupOpen, setPermit2SetupOpen] = useState(false);
@@ -2188,10 +2192,10 @@ export default function BulkTokenSeller() {
         legs={gmgnConfirmLegs}
         busy={gmgnConfirmBusy}
         sequentialSignHint={
-          useRhParentPath && !getRhBatchExecutorAddress()
+          useRhParentPath && !rhBatchExecutor && !rhBatchExecutorResolving
         }
         feeHint={
-          useRhParentPath && getRhBatchExecutorAddress()
+          useRhParentPath && rhBatchExecutor
             ? RH_PLATFORM_FEE_LABEL
             : undefined
         }
@@ -2244,6 +2248,7 @@ export default function BulkTokenSeller() {
       {useRhParentPath ? (
         <RhPermit2StatusBanner
           executorConfigured={Boolean(rhBatchExecutor)}
+          executorResolving={rhBatchExecutorResolving}
           readiness={permit2Readiness.data}
           loading={permit2Readiness.isLoading || permit2Readiness.isFetching}
           error={permit2Readiness.isError}
@@ -2963,7 +2968,7 @@ export default function BulkTokenSeller() {
                         Auto uses quote impact + 20 bps, capped at 1.5%. Impact above
                         that must be cut or set manually.
                       </p>
-                      {useRhParentPath && getRhBatchExecutorAddress() ? (
+                      {useRhParentPath && rhBatchExecutor ? (
                         <p className="text-xs text-gray-500">
                           {RH_PLATFORM_FEE_LABEL}
                         </p>

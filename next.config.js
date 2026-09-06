@@ -136,11 +136,14 @@ const nextConfig = {
         ]
       },
       {
-        source: '/favicon.ico',
+        // Documents and RSC payloads must revalidate so deployments never
+        // retain an old client shell at the CDN for a year. API and Next
+        // internals retain their own response-specific cache policies.
+        source: '/((?!api|_next).*)',
         headers: [
           {
             key: 'Cache-Control',
-            value: 'public, max-age=31536000, immutable'
+            value: 'public, max-age=0, s-maxage=60, must-revalidate'
           }
         ]
       },
