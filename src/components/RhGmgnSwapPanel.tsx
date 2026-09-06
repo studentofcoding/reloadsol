@@ -12,6 +12,7 @@ import {
 import { useGmgnBoundWallets } from '@/hooks/useGmgnBoundWallets'
 import { useRhEvmWallet } from '@/hooks/useRhEvmWallet'
 import { useRhWalletTokens } from '@/hooks/useRhWalletTokens'
+import { usePortfolioWallet, RH_WETH_GAS_RESERVE_ETH } from '@/hooks/usePortfolioWallet'
 import {
   executeGmgnBulkBuy,
   executeGmgnBulkSell,
@@ -55,6 +56,8 @@ import {
   writeTradeAutoConfirm,
 } from '@/utils/trade-auto-confirm'
 import HoldingsTokenList from '@/components/HoldingsTokenList'
+import BalanceSliderField from '@/components/BalanceSliderField'
+import TokenAddressSearchField from '@/components/TokenAddressSearchField'
 import { walletsMatch } from '@/utils/rh-wallet-holdings'
 
 type Side = 'buy' | 'sell'
@@ -82,6 +85,7 @@ export default function RhGmgnSwapPanel({
   const from = resolveRhActiveAddress(rhMode, rh.address, bound.evm)
   const isParent = rhMode === 'parent'
   const holdings = useRhWalletTokens()
+  const portfolio = usePortfolioWallet()
 
   const [mode, setMode] = useState<SwapMode>(
     initialFromToken && initialToken ? 'tokenToToken' : 'quote',
@@ -126,6 +130,27 @@ export default function RhGmgnSwapPanel({
     async () => {},
   )
   const runConfirmedRef = useRef<() => Promise<void>>(async () => {})
+
+  // Spendable balance for the active quote currency (mirrors the Buy page:
+  // WETH in Parent mode = WETH balance + wrappable ETH minus the gas reserve).
+  const wrappableEth =
+    portfolio.nativeBalance != null
+      ? Math.max(0, portfolio.nativeBalance - RH_WETH_GAS_RESERVE_ETH)
+      : 0
+  const parentWethSpend =
+    portfolio.wethBalance != null
+      ? portfolio.wethBalance + wrappableEth
+      : null
+  const quoteBalance =
+    quote === 'USDG'
+      ? portfolio.usdgBalance
+      : quote === 'WETH'
+        ? isParent
+          ? parentWethSpend
+          : portfolio.wethBalance
+        : portfolio.nativeBalance
+  const quoteBalanceConnected =
+    portfolio.connected && (quoteBalance ?? 0) > 0
 
   useEffect(() => {
     if (network !== 'robinhood' || !confirmOpen || submitPhase !== 'idle') return
@@ -850,11 +875,13 @@ export default function RhGmgnSwapPanel({
 
           <label className="block text-xs text-gray-400">
             Token address
-            <input
+            <TokenAddressSearchField
+              chain="robinhood"
               value={token}
-              onChange={(e) => setToken(e.target.value)}
-              className="mt-1 w-full rounded-lg bg-gray-800 border border-gray-600 px-3 py-2 text-white font-mono text-sm"
-              placeholder="0x…"
+              onChange={setToken}
+              holdings={holdings.tokens}
+              placeholder="Search or paste 0x…"
+              disabled={busy}
             />
           </label>
 
@@ -873,29 +900,33 @@ export default function RhGmgnSwapPanel({
           ) : null}
 
           {side === 'buy' ? (
-            <label className="block text-xs text-gray-400">
-              {quote} amount
-              <input
-                type="number"
-                min="0"
-                step="any"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                className="mt-1 w-full rounded-lg bg-gray-800 border border-gray-600 px-3 py-2 text-white"
-              />
-            </label>
+            <BalanceSliderField
+              value={amount}
+              onChange={setAmount}
+              balance={quoteBalance}
+              decimals={quote === 'USDG' ? 2 : 4}
+              minPercent={1}
+              maxPercent={96}
+              disabled={busy}
+              sliderDisabled={!quoteBalanceConnected}
+              inputId="swap-buy-amount"
+              label={`${quote} amount`}
+              unit={quote}
+              placeholder="0.01"
+              inputMin={0}
+            />
           ) : (
-            <label className="block text-xs text-gray-400">
-              Sell %
-              <input
-                type="number"
-                min="1"
-                max="100"
-                value={sellPct}
-                onChange={(e) => setSellPct(e.target.value)}
-                className="mt-1 w-full rounded-lg bg-gray-800 border border-gray-600 px-3 py-2 text-white"
-              />
-            </label>
+            <BalanceSliderField
+              mode="percent"
+              value={sellPct}
+              onChange={setSellPct}
+              minPercent={1}
+              maxPercent={100}
+              disabled={busy}
+              inputId="swap-sell-pct"
+              label="Sell %"
+              unit="%"
+            />
           )}
 
           <label className="block text-xs text-gray-400">
@@ -928,21 +959,25 @@ export default function RhGmgnSwapPanel({
         <>
           <label className="block text-xs text-gray-400">
             From token address
-            <input
+            <TokenAddressSearchField
+              chain="robinhood"
               value={fromToken}
-              onChange={(e) => setFromToken(e.target.value)}
-              className="mt-1 w-full rounded-lg bg-gray-800 border border-gray-600 px-3 py-2 text-white font-mono text-sm"
-              placeholder="0x…"
+              onChange={setFromToken}
+              holdings={holdings.tokens}
+              placeholder="Search or paste 0x…"
+              disabled={busy}
             />
           </label>
 
           <label className="block text-xs text-gray-400">
             To token address
-            <input
+            <TokenAddressSearchField
+              chain="robinhood"
               value={token}
-              onChange={(e) => setToken(e.target.value)}
-              className="mt-1 w-full rounded-lg bg-gray-800 border border-gray-600 px-3 py-2 text-white font-mono text-sm"
-              placeholder="0x…"
+              onChange={setToken}
+              holdings={holdings.tokens}
+              placeholder="Search or paste 0x…"
+              disabled={busy}
             />
           </label>
 
@@ -978,17 +1013,17 @@ export default function RhGmgnSwapPanel({
             </div>
           ) : null}
 
-          <label className="block text-xs text-gray-400">
-            Sell %
-            <input
-              type="number"
-              min="1"
-              max="100"
-              value={sellPct}
-              onChange={(e) => setSellPct(e.target.value)}
-              className="mt-1 w-full rounded-lg bg-gray-800 border border-gray-600 px-3 py-2 text-white"
-            />
-          </label>
+          <BalanceSliderField
+            mode="percent"
+            value={sellPct}
+            onChange={setSellPct}
+            minPercent={1}
+            maxPercent={100}
+            disabled={busy}
+            inputId="swap-t2t-sell-pct"
+            label="Sell %"
+            unit="%"
+          />
 
           <label className="block text-xs text-gray-400">
             Slippage (bps)

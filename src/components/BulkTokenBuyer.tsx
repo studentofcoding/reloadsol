@@ -24,6 +24,8 @@ import { useTrendingSearch } from "@/hooks/useTrendingSearch";
 import { useQuery } from "@tanstack/react-query";
 import type { Address } from "viem";
 import UniversalWalletButton from "./UniversalWalletButton";
+import BalanceSliderField from "./BalanceSliderField";
+import TokenSearchBox from "./TokenSearchBox";
 import TrendingTokens from "./TrendingTokens";
 import TradeOutcomeModal, { useTradeOutcome } from "./TradeOutcomeModal";
 import TokenSkeleton from "./TokenSkeleton";
@@ -397,8 +399,6 @@ export default function BulkTokenBuyer() {
     [searchTerm, searchQuery.data],
   );
   const isSearching = searchTerm !== deferredSearchTerm || searchQuery.isFetching;
-  const [showResults, setShowResults] = useState(false);
-  const searchBoxRef = useRef<HTMLDivElement>(null);
 
   // Roster digger recommendations (dev only)
   const rosterRecsQuery = useQuery({
@@ -743,27 +743,9 @@ export default function BulkTokenBuyer() {
     void handleSelectToken(mint);
   }, [handleSelectToken]);
 
-  const effectiveShowResults =
-    showResults || (searchTerm.length > 0 && searchResults.length > 0 && !isSearching);
-
-  // Hide results on outside click
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (
-        searchBoxRef.current &&
-        !searchBoxRef.current.contains(event.target as Node)
-      ) {
-        setShowResults(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
   // Add mint address from search result
   const handleAddFromSearch = (mintAddress: string) => {
     handleAddToken(mintAddress);
-    setShowResults(false);
     setSearchTerm("");
     handleSelectToken(mintAddress);
   };
@@ -1616,29 +1598,6 @@ export default function BulkTokenBuyer() {
     maxPercent,
   );
   const minHuman = minBuyHumanAmount(validMints.length, spendUsdPerUnit);
-  const sliderValue =
-    currentBalance && solAmount
-      ? Math.round((parseFloat(solAmount) / currentBalance) * 100)
-      : minPercent;
-  const clampedSlider =
-    sliderValue > maxPercent
-      ? maxPercent
-      : sliderValue < minPercent
-        ? minPercent
-        : sliderValue;
-  const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!currentBalance) return;
-    const percent = Math.min(
-      maxPercent,
-      Math.max(minPercent, parseInt(e.target.value, 10) || minPercent),
-    );
-    const decimals =
-      spendUnit === "ETH" || spendUnit === "WETH" || spendUnit === "SOL"
-        ? 4
-        : 2;
-    const newAmount = ((currentBalance * percent) / 100).toFixed(decimals);
-    setSolAmount(newAmount);
-  };
 
   // For paste handling
   const handleTokenAreaPaste = (e: React.ClipboardEvent) => {
@@ -2073,67 +2032,36 @@ export default function BulkTokenBuyer() {
                 </div>
               )}
               {/* SOL Amount Input */}
+              <BalanceSliderField
+                value={solAmount}
+                onChange={setSolAmount}
+                balance={currentBalance}
+                decimals={
+                  spendUnit === "ETH" || spendUnit === "WETH" || spendUnit === "SOL"
+                    ? 4
+                    : 2
+                }
+                minPercent={minPercent}
+                maxPercent={maxPercent}
+                disabled={isLoading}
+                sliderDisabled={!portfolioConnected || (currentBalance ?? 0) <= 0}
+                inputId="solAmount"
+                label={`${spendUnit} to spend`}
+                unit={spendUnit}
+                onToggleUnit={toggleCurrency}
+                unitDisabled={!isRhChain && effectiveUseGmgn}
+                placeholder={
+                  isRhChain
+                    ? selectedCurrency === "USDG"
+                      ? "10"
+                      : "0.003"
+                    : "0.1"
+                }
+                inputMin={minHuman > 0 ? minHuman : 0}
+                step="0.001"
+                hint={`Min $${MIN_BUY_USD_PER_TOKEN} per token · max ${MAX_TRADE_TOKENS} tokens`}
+              />
               <div className="space-y-3">
-                <div className="flex items-center justify-between mb-1">
-                  <label
-                    htmlFor="solAmount"
-                    className="block text-sm font-semibold text-gray-200 uppercase tracking-wide"
-                  >
-                    {`${spendUnit} to spend`}
-                  </label>
-                  {currentBalance !== null && (
-                    <div className="flex items-center space-x-3">
-                      <input
-                        type="range"
-                        min={minPercent}
-                        max={maxPercent}
-                        step={1}
-                        value={clampedSlider}
-                        onChange={handleSliderChange}
-                        disabled={
-                          !portfolioConnected || (currentBalance ?? 0) <= 0
-                        }
-                        className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
-                      />
-                      <span className="text-xs text-gray-400 font-mono w-12 text-right">
-                        {clampedSlider}%
-                      </span>
-                    </div>
-                  )}
-                </div>
-                <div className="relative">
-                  <input
-                    id="solAmount"
-                    type="number"
-                    step="0.001"
-                    min={minHuman > 0 ? minHuman : 0}
-                    value={solAmount}
-                    onChange={(e) => setSolAmount(e.target.value)}
-                    placeholder={
-                      isRhChain
-                        ? selectedCurrency === "USDG"
-                          ? "10"
-                        : "0.003"
-                        : "0.1"
-                    }
-                    className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl shadow-inner text-white placeholder-gray-400 focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
-                    disabled={isLoading}
-                  />
-                  <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
-                    <button
-                      type="button"
-                      onClick={toggleCurrency}
-                      className="text-gray-400 hover:text-white font-mono text-sm px-2 py-1 rounded transition-colors duration-200 hover:bg-gray-700"
-                      disabled={isLoading || (!isRhChain && effectiveUseGmgn)}
-                    >
-                      {spendUnit}
-                    </button>
-                  </div>
-                </div>
-                <p className="text-xs text-gray-500">
-                  Min ${MIN_BUY_USD_PER_TOKEN} per token · max {MAX_TRADE_TOKENS}{" "}
-                  tokens
-                </p>
                 {isSolTrade &&
                   connected &&
                   (walletBalance !== null || usdcBalance !== null) && (
@@ -2389,167 +2317,30 @@ export default function BulkTokenBuyer() {
                     </button>
                   )}
                 </div>
-                <div className="relative" ref={searchBoxRef}>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      onFocus={() => {
-                        // Show owned tokens when focused, regardless of search term
-                        if (userTokens.length > 0) {
-                          setShowResults(true);
-                        }
-                      }}
-                      placeholder="Search token by name, symbol, or CA"
-                      className="w-full pl-4 pr-4 py-3 bg-gray-800 border border-gray-600 rounded-xl shadow-inner text-white placeholder-gray-400 focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
-                    />
-                    <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-                      <svg
-                        className="h-5 w-5 text-gray-400"
-                        xmlns="http://www.w3.org/2000/svg"
-                        viewBox="0 0 20 20"
-                        fill="currentColor"
-                      >
-                        <path
-                          fillRule="evenodd"
-                          d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z"
-                          clipRule="evenodd"
-                        />
-                      </svg>
-                    </div>
-                  </div>
-                  {effectiveShowResults &&
-                    (searchResults.length > 0 || userTokens.length > 0) && (
-                      <div className="absolute z-20 mt-2 w-full bg-gray-900/50 border border-gray-700 rounded-xl shadow-lg max-h-72 overflow-y-auto">
-                        {/* Your Tokens Section */}
-                        {userTokens.length > 0 && (
-                          <>
-                            {!searchTerm && (
-                              <div className="px-4 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-700 bg-gray-800">
-                                Add your bag ({userTokens.length})
-                              </div>
-                            )}
-                            {userTokens
-                              .filter(
-                                (token) =>
-                                  !searchTerm ||
-                                  token.name
-                                    ?.toLowerCase()
-                                    .includes(searchTerm.toLowerCase()) ||
-                                  token.symbol
-                                    ?.toLowerCase()
-                                    .includes(searchTerm.toLowerCase()) ||
-                                  token.mintAddress
-                                    .toLowerCase()
-                                    .includes(searchTerm.toLowerCase()),
-                              )
-                              .map((token) => (
-                                <button
-                                  key={`owned-${token.mintAddress}`}
-                                  type="button"
-                                  className={`flex items-center w-full px-4 py-2 text-left transition-all ${
-                                    parsedMints.includes(token.mintAddress)
-                                      ? "bg-gray-700 text-gray-400 cursor-not-allowed"
-                                      : "hover:bg-gray-800 text-white"
-                                  }`}
-                                  onClick={() =>
-                                    parsedMints.includes(token.mintAddress)
-                                      ? null
-                                      : handleAddFromSearch(token.mintAddress)
-                                  }
-                                  disabled={parsedMints.includes(
-                                    token.mintAddress,
-                                  )}
-                                >
-                                  {token.logoURI && (
-                                    <OptimizedImage
-                                      src={token.logoURI}
-                                      alt={token.symbol ?? "Token"}
-                                      className="w-6 h-6 mr-3 rounded-full"
-                                    />
-                                  )}
-                                  <div className="flex-1">
-                                    <div className="font-semibold flex items-center">
-                                      {token.name}
-                                      <span className="text-xs text-gray-400 ml-1">
-                                        ({token.symbol})
-                                      </span>
-                                      {parsedMints.includes(
-                                        token.mintAddress,
-                                      ) && (
-                                        <span className="ml-2 text-xs bg-gray-600 text-gray-300 px-2 py-0.5 rounded">
-                                          Added
-                                        </span>
-                                      )}
-                                    </div>
-                                    <div className="text-xs text-gray-400 font-mono truncate flex justify-between gap-2">
-                                      <span className="truncate">{token.mintAddress}</span>
-                                      <span className="shrink-0 text-gray-300">
-                                        {token.uiAmount.toLocaleString(undefined, {
-                                          maximumFractionDigits: 6,
-                                        })}
-                                        {token.usdValue > 0 && (
-                                          <span className="ml-1 text-green-400">
-                                            (${token.usdValue.toFixed(2)})
-                                          </span>
-                                        )}
-                                      </span>
-                                    </div>
-                                  </div>
-                                </button>
-                              ))}
-                          </>
-                        )}
-
-                        {/* Search Results Section */}
-                        {searchResults.length > 0 && (
-                          <>
-                            {userTokens.length > 0 && (
-                              <div className="px-4 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-700 bg-gray-800">
-                                Search Results
-                              </div>
-                            )}
-                            {searchResults.map((token, idx) => (
-                              <button
-                                key={`search-${token.id}`}
-                                type="button"
-                                className="flex items-center w-full px-4 py-2 hover:bg-gray-800 text-left text-white"
-                                onClick={() => handleAddFromSearch(token.id)}
-                              >
-                                {token.icon && (
-                                  <OptimizedImage
-                                    src={token.icon}
-                                    alt={token.symbol ?? "Token"}
-                                    className="w-6 h-6 mr-3 rounded-full"
-                                  />
-                                )}
-                                <div className="flex-1">
-                                  <div className="font-semibold">
-                                    {token.name}{" "}
-                                    <span className="text-xs text-gray-400">
-                                      ({token.symbol})
-                                    </span>
-                                  </div>
-                                  <div className="text-xs text-gray-400 font-mono truncate">
-                                    {token.id}
-                                  </div>
-                                </div>
-                              </button>
-                            ))}
-                          </>
-                        )}
-                      </div>
-                    )}
-                  {effectiveShowResults &&
-                    !isSearching &&
-                    searchResults.length === 0 &&
-                    userTokens.length === 0 && (
-                      <div className="absolute z-20 mt-2 w-full bg-gray-900/50 border border-gray-700 rounded-xl shadow-lg p-4 text-gray-400 text-sm">
-                        No results found.
-                      </div>
-                    )}
-                </div>
+                <TokenSearchBox
+                  value={searchTerm}
+                  onChange={setSearchTerm}
+                  options={searchResults.map((t) => ({
+                    address: (t.address ?? t.id) as string,
+                    symbol: t.symbol ?? "???",
+                    name: t.name,
+                    icon: t.icon,
+                  }))}
+                  isSearching={isSearching}
+                  holdings={userTokens.map((t) => ({
+                    address: t.mintAddress,
+                    symbol: t.symbol ?? "???",
+                    name: t.name,
+                    icon: t.logoURI,
+                    amount: t.uiAmount,
+                    usdValue: t.usdValue,
+                  }))}
+                  holdingsTitle="Add your bag"
+                  picked={parsedMints}
+                  onPick={(token) => handleAddFromSearch(token.address)}
+                  placeholder="Search token by name, symbol, or CA"
+                  disabled={isLoading}
+                />
 
                 {/* Risk Analysis Section */}
                 {validMints.length > 0 && (
