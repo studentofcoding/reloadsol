@@ -1915,7 +1915,9 @@ export default function BulkTokenBuyer() {
                       <div
                         className={`w-2 h-2 rounded-full ${validMints.length > 0 ? "bg-white" : "bg-gray-500"}`}
                       ></div>
-                      <span>Total tokens you'll buy: {validMints.length}/10</span>
+                      <span>
+                        Total tokens you'll buy: {validMints.length}/{tradeTokenLimit}
+                      </span>
                     </span>
                     <span className="text-gray-400">
                       Total parsed: {parsedMints.length}
