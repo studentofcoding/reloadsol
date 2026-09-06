@@ -23,6 +23,10 @@ import { useRhEvmWallet } from "@/hooks/useRhEvmWallet";
 import { useTrendingSearch } from "@/hooks/useTrendingSearch";
 import { useQuery } from "@tanstack/react-query";
 import type { Address } from "viem";
+import RhPermit2SetupSheet, {
+  RhPermit2StatusBanner,
+} from "@/components/rh/RhPermit2SetupSheet";
+import { useRhPermit2Readiness } from "@/hooks/useRhPermit2Readiness";
 import UniversalWalletButton from "./UniversalWalletButton";
 import BalanceSliderField from "./BalanceSliderField";
 import TokenSearchBox from "./TokenSearchBox";
@@ -113,7 +117,7 @@ import {
 import {
   RH_WETH_GAS_RESERVE_ETH,
 } from "@/hooks/usePortfolioWallet";
-import { RH_WETH } from "@/utils/dlmm/rh-univ2";
+import { RH_USDG, RH_WETH } from "@/utils/dlmm/rh-univ2";
 import { walletsMatch } from "@/utils/rh-wallet-holdings";
 import {
   fetchEthUsdSpot,
@@ -153,6 +157,8 @@ export default function BulkTokenBuyer() {
   const { network, effectiveChain, canUseRh } = useAppNetwork();
   const { mode: rhMode } = useRhWalletMode();
   const rhWallet = useRhEvmWallet();
+  const rhBatchExecutor = getRhBatchExecutorAddress();
+  const [permit2SetupOpen, setPermit2SetupOpen] = useState(false);
 
   const getInitialSolAmount = () => {
     const fromUrl = readBuySpendAmount(searchParams, network);
@@ -227,6 +233,28 @@ export default function BulkTokenBuyer() {
   const selectedCurrency: SpendCurrency = isRhChain ? rhCurrency : solCurrency;
   const rhQuote: RhSwapQuote = rhCurrency;
   const spendUnit: SpendCurrency = selectedCurrency;
+  const permit2SetupTokens = useMemo(
+    () =>
+      useRhParentPath && rhBatchExecutor && rhQuote !== "ETH"
+        ? [
+            {
+              address: (rhQuote === "USDG" ? RH_USDG : RH_WETH) as Address,
+              symbol: rhQuote,
+            },
+          ]
+        : [],
+    [useRhParentPath, rhBatchExecutor, rhQuote],
+  );
+  const permit2Readiness = useRhPermit2Readiness({
+    publicClient: useRhParentPath ? rhWallet.getPublicClient() : null,
+    account:
+      useRhParentPath && tradeFromAddress
+        ? (tradeFromAddress as Address)
+        : null,
+    tokens: permit2SetupTokens.map((token) => token.address),
+    spender: rhBatchExecutor,
+    enabled: useRhParentPath,
+  });
   const { data: solUsd } = useSolPrice();
   const { data: ethUsdSpot } = useQuery({
     queryKey: ["eth-usd-spot"],
@@ -829,6 +857,13 @@ export default function BulkTokenBuyer() {
       );
       return;
     }
+    if (useRhParentPath && rhBatchExecutor) {
+      const latest = permit2Readiness.data ?? (await permit2Readiness.refetch()).data;
+      if (!latest || latest.some((item) => item.status !== "ready")) {
+        setPermit2SetupOpen(true);
+        return;
+      }
+    }
     setIsLoading(true);
     setGmgnConfirmBusy(true);
     setPointsEarned(null);
@@ -980,6 +1015,8 @@ export default function BulkTokenBuyer() {
   }, [
     tradeFromAddress,
     useRhParentPath,
+    rhBatchExecutor,
+    permit2Readiness,
     rhWallet,
     effectiveChain,
     selectedCurrency,
@@ -1753,6 +1790,21 @@ export default function BulkTokenBuyer() {
         }}
         onConfirm={() => void runConfirmedRhBuy()}
       />
+      {tradeFromAddress ? (
+        <RhPermit2SetupSheet
+          open={permit2SetupOpen}
+          onClose={() => setPermit2SetupOpen(false)}
+          publicClient={rhWallet.getPublicClient()}
+          getWalletClient={rhWallet.getWalletClient}
+          account={tradeFromAddress as Address}
+          spender={rhBatchExecutor}
+          tokens={permit2SetupTokens}
+          readiness={permit2Readiness.data}
+          loading={permit2Readiness.isLoading || permit2Readiness.isFetching}
+          error={permit2Readiness.isError}
+          onRefresh={async () => (await permit2Readiness.refetch()).data}
+        />
+      ) : null}
 
       {/* Trending Tokens Column */}
       {showTradeUi && (
@@ -1780,6 +1832,16 @@ export default function BulkTokenBuyer() {
               {effectiveChain === "sol" ? <UniversalWalletButton /> : null}
             </div>
           </div>
+
+          {useRhParentPath ? (
+            <RhPermit2StatusBanner
+              executorConfigured={Boolean(rhBatchExecutor)}
+              readiness={permit2Readiness.data}
+              loading={permit2Readiness.isLoading || permit2Readiness.isFetching}
+              error={permit2Readiness.isError}
+              onSetup={() => setPermit2SetupOpen(true)}
+            />
+          ) : null}
 
           {isDevUser && effectiveChain === "sol" && solGmgnSynced ? (
             <label className="flex items-center gap-2 text-xs text-gray-300">

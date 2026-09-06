@@ -30,6 +30,10 @@ import { useRhEvmWallet } from "@/hooks/useRhEvmWallet";
 import { useRhWalletTokens } from "@/hooks/useRhWalletTokens";
 import { useQuery } from "@tanstack/react-query";
 import type { Address } from "viem";
+import RhPermit2SetupSheet, {
+  RhPermit2StatusBanner,
+} from "@/components/rh/RhPermit2SetupSheet";
+import { useRhPermit2Readiness } from "@/hooks/useRhPermit2Readiness";
 import {
   GMGN_RH_USDG,
   GMGN_RH_WETH,
@@ -187,8 +191,10 @@ export default function BulkTokenSeller() {
   const { effectiveChain, canUseRh } = useAppNetwork();
   const { mode: rhMode } = useRhWalletMode();
   const rhWallet = useRhEvmWallet();
+  const rhBatchExecutor = getRhBatchExecutorAddress();
   const [useGmgnOnSol, setUseGmgnOnSol] = useState(false);
   const [gmgnConfirmOpen, setGmgnConfirmOpen] = useState(false);
+  const [permit2SetupOpen, setPermit2SetupOpen] = useState(false);
   const [gmgnConfirmLegs, setGmgnConfirmLegs] = useState<GmgnConfirmLeg[]>([]);
   const [gmgnConfirmBusy, setGmgnConfirmBusy] = useState(false);
   const [tradeAutoConfirm, setTradeAutoConfirm] = useState(readTradeAutoConfirm);
@@ -217,6 +223,26 @@ export default function BulkTokenSeller() {
       : effectiveUseGmgn
         ? boundWallets.sol
         : null;
+  const permit2SetupTokens = useMemo(
+    () =>
+      useRhParentPath && rhBatchExecutor
+        ? selectedTokens.map((token) => ({
+            address: token.mintAddress as Address,
+            symbol: token.symbol,
+          }))
+        : [],
+    [useRhParentPath, rhBatchExecutor, selectedTokens],
+  );
+  const permit2Readiness = useRhPermit2Readiness({
+    publicClient: useRhParentPath ? rhWallet.getPublicClient() : null,
+    account:
+      useRhParentPath && tradeFromAddress
+        ? (tradeFromAddress as Address)
+        : null,
+    tokens: permit2SetupTokens.map((token) => token.address),
+    spender: rhBatchExecutor,
+    enabled: useRhParentPath,
+  });
   const rhWalletTokens = useRhWalletTokens();
 
   const rosterSellRecsQuery = useQuery({
@@ -917,6 +943,13 @@ export default function BulkTokenSeller() {
 
   const runConfirmedRhSell = useCallback(async () => {
     if (!tradeFromAddress || selectedTokens.length === 0) return;
+    if (useRhParentPath && rhBatchExecutor) {
+      const latest = permit2Readiness.data ?? (await permit2Readiness.refetch()).data;
+      if (!latest || latest.some((item) => item.status !== "ready")) {
+        setPermit2SetupOpen(true);
+        return;
+      }
+    }
     setIsLoading(true);
     setGmgnConfirmBusy(true);
     setError("");
@@ -1066,6 +1099,8 @@ export default function BulkTokenSeller() {
   }, [
     tradeFromAddress,
     useRhParentPath,
+    rhBatchExecutor,
+    permit2Readiness,
     rhWallet,
     selectedTokens,
     effectiveChain,
@@ -2174,6 +2209,21 @@ export default function BulkTokenSeller() {
         }}
         onConfirm={() => void runConfirmedRhSell()}
       />
+      {tradeFromAddress ? (
+        <RhPermit2SetupSheet
+          open={permit2SetupOpen}
+          onClose={() => setPermit2SetupOpen(false)}
+          publicClient={rhWallet.getPublicClient()}
+          getWalletClient={rhWallet.getWalletClient}
+          account={tradeFromAddress as Address}
+          spender={rhBatchExecutor}
+          tokens={permit2SetupTokens}
+          readiness={permit2Readiness.data}
+          loading={permit2Readiness.isLoading || permit2Readiness.isFetching}
+          error={permit2Readiness.isError}
+          onRefresh={async () => (await permit2Readiness.refetch()).data}
+        />
+      ) : null}
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div className="flex justify-between items-center w-full">
@@ -2188,6 +2238,16 @@ export default function BulkTokenSeller() {
           </div>
         </div>
       </div>
+
+      {useRhParentPath ? (
+        <RhPermit2StatusBanner
+          executorConfigured={Boolean(rhBatchExecutor)}
+          readiness={permit2Readiness.data}
+          loading={permit2Readiness.isLoading || permit2Readiness.isFetching}
+          error={permit2Readiness.isError}
+          onSetup={() => setPermit2SetupOpen(true)}
+        />
+      ) : null}
 
       {isDevUser && effectiveChain === "sol" && solGmgnSynced ? (
         <label className="flex items-center gap-2 text-xs text-gray-300">
