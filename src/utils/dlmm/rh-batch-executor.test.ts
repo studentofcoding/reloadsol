@@ -42,6 +42,13 @@ describe('env flags', () => {
     expect(getRhBatchExecutorAddress()).toBe(EXECUTOR)
   })
 
+  it('prefers the statically accessed public executor address', () => {
+    const publicExecutor = '0x61F1eb4cF3a7962d54413769369675be6BEa3907'
+    process.env.NEXT_PUBLIC_RH_BATCH_EXECUTOR_ADDRESS = publicExecutor
+    process.env.RH_BATCH_EXECUTOR_ADDRESS = EXECUTOR
+    expect(getRhBatchExecutorAddress()).toBe(publicExecutor)
+  })
+
   it('permit2 swaps default OFF when env absent, ON with =1, OFF with =0', () => {
     expect(isRhPermit2SwapsEnabled()).toBe(false)
     process.env.RH_PERMIT2_SWAPS = '1'
@@ -50,6 +57,12 @@ describe('env flags', () => {
     expect(isRhPermit2SwapsEnabled()).toBe(false)
     process.env.NEXT_PUBLIC_RH_PERMIT2_SWAPS = 'true'
     expect(isRhPermit2SwapsEnabled()).toBe(true)
+  })
+
+  it('prefers the statically accessed public Permit2 flag', () => {
+    process.env.NEXT_PUBLIC_RH_PERMIT2_SWAPS = '0'
+    process.env.RH_PERMIT2_SWAPS = '1'
+    expect(isRhPermit2SwapsEnabled()).toBe(false)
   })
 })
 

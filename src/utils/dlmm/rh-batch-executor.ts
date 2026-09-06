@@ -22,20 +22,13 @@ import { RH_WETH } from '@/utils/dlmm/rh-univ2'
 
 // ── Env flags ────────────────────────────────────────────────────────
 
-function envFlag(...names: string[]): string | undefined {
-  for (const n of names) {
-    const v = process.env[n]
-    if (v != null && v !== '') return v
-  }
-  return undefined
-}
-
 /** Deployed BatchExecutor on 4663, or null when not configured (= disabled). */
 export function getRhBatchExecutorAddress(): Address | null {
-  const raw = envFlag(
-    'NEXT_PUBLIC_RH_BATCH_EXECUTOR_ADDRESS',
-    'RH_BATCH_EXECUTOR_ADDRESS',
-  )
+  // NEXT_PUBLIC_* must be accessed statically so Next.js inlines it into the
+  // client bundle. Dynamic process.env[key] access is undefined in browsers.
+  const raw =
+    process.env.NEXT_PUBLIC_RH_BATCH_EXECUTOR_ADDRESS ||
+    process.env.RH_BATCH_EXECUTOR_ADDRESS
   if (!raw) return null
   const trimmed = raw.trim()
   return /^0x[a-fA-F0-9]{40}$/.test(trimmed) ? (trimmed as Address) : null
@@ -48,7 +41,9 @@ export function getRhBatchExecutorAddress(): Address | null {
  * (Executor mode implies Permit2 for the executor spender regardless.)
  */
 export function isRhPermit2SwapsEnabled(): boolean {
-  const raw = envFlag('NEXT_PUBLIC_RH_PERMIT2_SWAPS', 'RH_PERMIT2_SWAPS')
+  const raw =
+    process.env.NEXT_PUBLIC_RH_PERMIT2_SWAPS ||
+    process.env.RH_PERMIT2_SWAPS
   if (raw == null) return false
   const v = raw.trim().toLowerCase()
   return v === '1' || v === 'true' || v === 'on' || v === 'yes'
