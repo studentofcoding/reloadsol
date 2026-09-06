@@ -119,12 +119,6 @@ const nextConfig = {
             value: 'geolocation=(), microphone=(), camera=()'
           },
           {
-            // Documents and RSC payloads must revalidate so deployments never
-            // retain an old client shell at the CDN for a year.
-            key: 'Cache-Control',
-            value: 'public, max-age=0, s-maxage=60, must-revalidate'
-          },
-          {
             key: 'Content-Security-Policy',
             value: `
               default-src 'self';
@@ -138,6 +132,18 @@ const nextConfig = {
               base-uri 'self';
               form-action 'self';
             `.replace(/\s+/g, ' ').trim()
+          }
+        ]
+      },
+      {
+        // Documents and RSC payloads must revalidate so deployments never
+        // retain an old client shell at the CDN for a year. API and Next
+        // internals retain their own response-specific cache policies.
+        source: '/((?!api|_next).*)',
+        headers: [
+          {
+            key: 'Cache-Control',
+            value: 'public, max-age=0, s-maxage=60, must-revalidate'
           }
         ]
       },
