@@ -1668,6 +1668,7 @@ export default function BulkTokenSeller() {
     runConfirmedRhSell,
     previewRhSellLegs,
     tradeAutoConfirm,
+    tradeTokenLimit,
   ]);
 
   useEffect(() => {

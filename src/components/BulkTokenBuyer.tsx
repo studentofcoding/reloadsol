@@ -651,7 +651,7 @@ export default function BulkTokenBuyer() {
         : mintAddress;
       setTokenMints(newTokenMints);
     },
-    [tokenMints, parsedMints],
+    [tokenMints, parsedMints, tradeTokenLimit],
   );
 
   // Handle removing a token
@@ -1536,6 +1536,7 @@ export default function BulkTokenBuyer() {
     solUsd,
     previewRhBuyLegs,
     tradeAutoConfirm,
+    tradeTokenLimit,
   ]);
 
   useEffect(() => {

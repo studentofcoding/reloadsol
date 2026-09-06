@@ -46,8 +46,8 @@ function readinessStatus(
   nowSeconds: number,
 ): Permit2ReadinessStatus {
   if (erc20Allowance < maxUint256) return 'needs-erc20'
-  if (permit2Allowance < PERMIT2_MAX_UINT160) return 'needs-permit2'
   if (permit2Expiration <= nowSeconds + EXPIRATION_BUFFER_SECONDS) return 'expired'
+  if (permit2Allowance < PERMIT2_MAX_UINT160) return 'needs-permit2'
   return 'ready'
 }
 
