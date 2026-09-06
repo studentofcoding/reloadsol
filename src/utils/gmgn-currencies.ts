@@ -1,6 +1,6 @@
 /** GMGN chain currency addresses — copy from gmgn-cli swap skill; never invent. */
 
-import { MAX_TRADE_TOKENS } from '@/utils/trade-ui-limits'
+import { maxTradeTokens } from '@/utils/trade-ui-limits'
 
 export type GmgnTradeChain = 'sol' | 'robinhood'
 
@@ -103,7 +103,7 @@ export function isValidAnyChainTokenAddress(address: string): boolean {
 export function parseTradeTokenAddresses(
   chain: GmgnTradeChain,
   input: string,
-  limit = MAX_TRADE_TOKENS,
+  limit = maxTradeTokens(chain),
 ): string[] {
   const out: string[] = []
   const seen = new Set<string>()

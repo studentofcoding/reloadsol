@@ -93,12 +93,12 @@ import { executeRhParentKyberBuy } from "@/utils/dlmm/rh-kyber-swap";
 import { getRhBatchExecutorAddress, RH_PLATFORM_FEE_LABEL } from "@/utils/dlmm/rh-batch-executor";
 import { useSolPrice } from "@/hooks/useSolPrice";
 import {
-  MAX_TRADE_TOKENS,
   MIN_BUY_USD_PER_TOKEN,
   buyMeetsMinUsdPerToken,
   buyMeetsMinUsdPerTokenOrPending,
   minBuyHumanAmount,
   minBuySliderPercent,
+  maxTradeTokens,
 } from "@/utils/trade-ui-limits";
 import { prefetchSwapTransaction, fetchSwapQuote } from "@/utils/swap-executor";
 import {
@@ -155,6 +155,7 @@ export default function BulkTokenBuyer() {
   const { showOutcome, outcomeModalProps } = useTradeOutcome();
   const searchParams = useSearchParams();
   const { network, effectiveChain, canUseRh } = useAppNetwork();
+  const tradeTokenLimit = maxTradeTokens(effectiveChain);
   const { mode: rhMode } = useRhWalletMode();
   const rhWallet = useRhEvmWallet();
   const rhBatchExecutor = getRhBatchExecutorAddress();
@@ -172,7 +173,7 @@ export default function BulkTokenBuyer() {
   const getInitialTokenMints = () => {
     const fromUrl = (searchParams.get("mints") ?? "")
       .split(",")
-      .slice(0, MAX_TRADE_TOKENS)
+      .slice(0, tradeTokenLimit)
       .map((m) => m.trim())
       .filter(Boolean);
     const pending = drainBuyPendingMints();
@@ -183,7 +184,7 @@ export default function BulkTokenBuyer() {
     for (const mint of pending) {
       if (!merged.includes(mint)) merged.push(mint);
     }
-    return merged.slice(0, MAX_TRADE_TOKENS).join("\n");
+    return merged.slice(0, tradeTokenLimit).join("\n");
   };
 
   // Form state
@@ -475,8 +476,8 @@ export default function BulkTokenBuyer() {
   // Parse and validate mint addresses (chain-aware)
   const validMints = useMemo(
     () =>
-      parseTradeTokenAddresses(effectiveChain, tokenMints, MAX_TRADE_TOKENS),
-    [effectiveChain, tokenMints],
+      parseTradeTokenAddresses(effectiveChain, tokenMints, tradeTokenLimit),
+    [effectiveChain, tokenMints, tradeTokenLimit],
   );
   const meetsMinBuyUsd = buyMeetsMinUsdPerTokenOrPending(
     parseFloat(solAmount),
@@ -641,8 +642,8 @@ export default function BulkTokenBuyer() {
   const handleAddToken = useCallback(
     (mintAddress: string) => {
       if (parsedMints.includes(mintAddress)) return;
-      if (parsedMints.length >= MAX_TRADE_TOKENS) {
-        setError(`Maximum ${MAX_TRADE_TOKENS} tokens per buy`);
+      if (parsedMints.length >= tradeTokenLimit) {
+        setError(`Maximum ${tradeTokenLimit} tokens per buy`);
         return;
       }
       const newTokenMints = tokenMints
@@ -1116,8 +1117,8 @@ export default function BulkTokenBuyer() {
       return;
     }
 
-    if (validMints.length > MAX_TRADE_TOKENS) {
-      setError(`Maximum ${MAX_TRADE_TOKENS} tokens per buy`);
+    if (validMints.length > tradeTokenLimit) {
+      setError(`Maximum ${tradeTokenLimit} tokens per buy`);
       return;
     }
 
@@ -1643,15 +1644,15 @@ export default function BulkTokenBuyer() {
     const pastedAddresses = parseTradeTokenAddresses(
       effectiveChain,
       pastedText,
-      MAX_TRADE_TOKENS,
+      tradeTokenLimit,
     );
 
     if (pastedAddresses.length === 0) return;
 
     const currentAddresses = new Set(parsedMints);
-    const slots = Math.max(0, MAX_TRADE_TOKENS - parsedMints.length);
+    const slots = Math.max(0, tradeTokenLimit - parsedMints.length);
     if (slots <= 0) {
-      setError(`Maximum ${MAX_TRADE_TOKENS} tokens per buy`);
+      setError(`Maximum ${tradeTokenLimit} tokens per buy`);
       return;
     }
     let newAddresses = "";
@@ -2121,7 +2122,7 @@ export default function BulkTokenBuyer() {
                 }
                 inputMin={minHuman > 0 ? minHuman : 0}
                 step="0.001"
-                hint={`Min $${MIN_BUY_USD_PER_TOKEN} per token · max ${MAX_TRADE_TOKENS} tokens`}
+                hint={`Min $${MIN_BUY_USD_PER_TOKEN} per token · ${isRhChain ? "RH" : "Solana"} max ${tradeTokenLimit} tokens`}
               />
               <div className="space-y-3">
                 {isSolTrade &&
@@ -2356,7 +2357,7 @@ export default function BulkTokenBuyer() {
                     htmlFor="tokenMints"
                     className="block text-sm font-semibold text-gray-200 uppercase tracking-wide"
                   >
-                    Token to buy (up to {MAX_TRADE_TOKENS})
+                    Token to buy (up to {tradeTokenLimit} on {isRhChain ? "RH" : "Solana"})
                   </label>
                   {validMints.length > 0 && (
                     <button

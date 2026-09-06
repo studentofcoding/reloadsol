@@ -1,7 +1,14 @@
-/** Shared buy/sell UI caps so a batch stays quick (Kyber + one BatchExecutor tx). */
+/** Chain-aware buy/sell UI caps. RH is bounded by the BatchExecutor UX. */
 
-export const MAX_TRADE_TOKENS = 5
+export const MAX_TRADE_TOKENS_RH = 5
+export const MAX_TRADE_TOKENS_SOL = 5
+/** Backward-compatible default for callers that do not yet carry chain context. */
+export const MAX_TRADE_TOKENS = MAX_TRADE_TOKENS_RH
 export const MIN_BUY_USD_PER_TOKEN = 5
+
+export function maxTradeTokens(chain: 'sol' | 'robinhood'): number {
+  return chain === 'robinhood' ? MAX_TRADE_TOKENS_RH : MAX_TRADE_TOKENS_SOL
+}
 
 export function capTradeTokens<T>(items: T[], max = MAX_TRADE_TOKENS): T[] {
   return items.length <= max ? items : items.slice(0, max)

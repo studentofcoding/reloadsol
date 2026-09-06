@@ -1,16 +1,23 @@
 import { describe, expect, it } from 'vitest'
 import {
   MAX_TRADE_TOKENS,
+  MAX_TRADE_TOKENS_RH,
+  MAX_TRADE_TOKENS_SOL,
   buyMeetsMinUsdPerToken,
   buyMeetsMinUsdPerTokenOrPending,
   capTradeTokens,
   minBuyHumanAmount,
   minBuySliderPercent,
+  maxTradeTokens,
 } from '@/utils/trade-ui-limits'
 
 describe('trade UI limits', () => {
   it('caps lists at 5', () => {
     expect(MAX_TRADE_TOKENS).toBe(5)
+    expect(MAX_TRADE_TOKENS_RH).toBe(5)
+    expect(MAX_TRADE_TOKENS_SOL).toBe(5)
+    expect(maxTradeTokens('robinhood')).toBe(MAX_TRADE_TOKENS_RH)
+    expect(maxTradeTokens('sol')).toBe(MAX_TRADE_TOKENS_SOL)
     expect(capTradeTokens([1, 2, 3, 4, 5, 6])).toEqual([1, 2, 3, 4, 5])
     expect(capTradeTokens([1, 2])).toEqual([1, 2])
   })

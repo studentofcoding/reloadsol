@@ -45,7 +45,7 @@ import { executeGmgnBulkSell } from "@/utils/gmgn-bulk-trade";
 import type { RhSwapQuote } from "@/utils/dlmm/rh-univ2-swap";
 import { executeRhParentKyberSell } from "@/utils/dlmm/rh-kyber-swap";
 import { getRhBatchExecutorAddress, RH_PLATFORM_FEE_LABEL } from "@/utils/dlmm/rh-batch-executor";
-import { MAX_TRADE_TOKENS, capTradeTokens } from "@/utils/trade-ui-limits";
+import { capTradeTokens, maxTradeTokens } from "@/utils/trade-ui-limits";
 import { prefetchSwapTransaction } from "@/utils/swap-executor";
 import {
   AUTO_SLIPPAGE_BPS,
@@ -189,6 +189,7 @@ export default function BulkTokenSeller() {
   const [priorityFee, setPriorityFee] = useState<number>(30000); // 0.00003 SOL
   const isDevUser = useDevWalletAccess();
   const { effectiveChain, canUseRh } = useAppNetwork();
+  const tradeTokenLimit = maxTradeTokens(effectiveChain);
   const { mode: rhMode } = useRhWalletMode();
   const rhWallet = useRhEvmWallet();
   const rhBatchExecutor = getRhBatchExecutorAddress();
@@ -633,8 +634,8 @@ export default function BulkTokenSeller() {
         return prev.filter((t) => t.mintAddress !== token.mintAddress);
       } else {
         // Check if already at the limit
-        if (prev.length >= MAX_TRADE_TOKENS) {
-          setError(`Maximum ${MAX_TRADE_TOKENS} tokens per sell`);
+        if (prev.length >= tradeTokenLimit) {
+          setError(`Maximum ${tradeTokenLimit} tokens per sell`);
           return prev;
         }
         // Convert UserToken to TokenToSell with default 100% sell amount
@@ -725,9 +726,9 @@ export default function BulkTokenSeller() {
       sellPercentage: 100,
     }));
 
-    if (tokensToSell.length > MAX_TRADE_TOKENS) {
-      setSelectedTokens(capTradeTokens(tokensToSell));
-      setError(`Selection limited to first ${MAX_TRADE_TOKENS} tokens`);
+    if (tokensToSell.length > tradeTokenLimit) {
+      setSelectedTokens(capTradeTokens(tokensToSell, tradeTokenLimit));
+      setError(`Selection limited to first ${tradeTokenLimit} tokens`);
     } else {
       setSelectedTokens(tokensToSell);
     }
@@ -1195,8 +1196,8 @@ export default function BulkTokenSeller() {
       setError("Please select at least one token");
       return;
     }
-    if (selectedTokens.length > MAX_TRADE_TOKENS) {
-      setError(`Maximum ${MAX_TRADE_TOKENS} tokens per sell`);
+    if (selectedTokens.length > tradeTokenLimit) {
+      setError(`Maximum ${tradeTokenLimit} tokens per sell`);
       return;
     }
 
@@ -2416,7 +2417,7 @@ export default function BulkTokenSeller() {
                 : showDustOnly
                   ? "dust"
                   : "valuable"}{" "}
-              tokens selected (max {MAX_TRADE_TOKENS} to sell)
+              tokens selected ({isRhChain ? "RH" : "Solana"} max {tradeTokenLimit} to sell)
             </p>
           </div>
           <div className="flex items-center space-x-3">
