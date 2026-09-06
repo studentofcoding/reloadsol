@@ -11,6 +11,7 @@ import {
 } from '@/utils/trading-tracker'
 import { useGmgnBoundWallets } from '@/hooks/useGmgnBoundWallets'
 import { useRhEvmWallet } from '@/hooks/useRhEvmWallet'
+import { useRhBatchExecutorAddress } from '@/hooks/useRhBatchExecutorAddress'
 import { useRhPermit2Readiness } from '@/hooks/useRhPermit2Readiness'
 import { useRhWalletTokens } from '@/hooks/useRhWalletTokens'
 import { usePortfolioWallet, RH_WETH_GAS_RESERVE_ETH } from '@/hooks/usePortfolioWallet'
@@ -22,7 +23,7 @@ import {
   executeRhParentKyberBuy,
   executeRhParentKyberSell,
 } from '@/utils/dlmm/rh-kyber-swap'
-import { getRhBatchExecutorAddress, RH_PLATFORM_FEE_LABEL } from '@/utils/dlmm/rh-batch-executor'
+import { RH_PLATFORM_FEE_LABEL } from '@/utils/dlmm/rh-batch-executor'
 import {
   GMGN_RH_USDG,
   GMGN_RH_WETH,
@@ -88,7 +89,10 @@ export default function RhGmgnSwapPanel({
   const bound = useGmgnBoundWallets()
   const from = resolveRhActiveAddress(rhMode, rh.address, bound.evm)
   const isParent = rhMode === 'parent'
-  const rhBatchExecutor = getRhBatchExecutorAddress()
+  const {
+    address: rhBatchExecutor,
+    resolving: rhBatchExecutorResolving,
+  } = useRhBatchExecutorAddress()
   const holdings = useRhWalletTokens()
   const portfolio = usePortfolioWallet()
 
@@ -828,9 +832,11 @@ export default function RhGmgnSwapPanel({
         from={from || ''}
         legs={confirmLegs}
         busy={busy}
-        sequentialSignHint={isParent && !getRhBatchExecutorAddress()}
+        sequentialSignHint={
+          isParent && !rhBatchExecutor && !rhBatchExecutorResolving
+        }
         feeHint={
-          isParent && getRhBatchExecutorAddress()
+          isParent && rhBatchExecutor
             ? RH_PLATFORM_FEE_LABEL
             : undefined
         }
@@ -887,6 +893,7 @@ export default function RhGmgnSwapPanel({
       {isParent ? (
         <RhPermit2StatusBanner
           executorConfigured={Boolean(rhBatchExecutor)}
+          executorResolving={rhBatchExecutorResolving}
           readiness={permit2Readiness.data}
           loading={permit2Readiness.isLoading || permit2Readiness.isFetching}
           error={permit2Readiness.isError}
@@ -1016,7 +1023,7 @@ export default function RhGmgnSwapPanel({
               className="mt-1 w-full rounded-lg bg-gray-800 border border-gray-600 px-3 py-2 text-white"
             />
           </label>
-          {isParent && getRhBatchExecutorAddress() ? (
+          {isParent && rhBatchExecutor ? (
             <p className="text-xs text-gray-500">{RH_PLATFORM_FEE_LABEL}</p>
           ) : null}
 
@@ -1112,7 +1119,7 @@ export default function RhGmgnSwapPanel({
               className="mt-1 w-full rounded-lg bg-gray-800 border border-gray-600 px-3 py-2 text-white"
             />
           </label>
-          {isParent && getRhBatchExecutorAddress() ? (
+          {isParent && rhBatchExecutor ? (
             <p className="text-xs text-gray-500">{RH_PLATFORM_FEE_LABEL}</p>
           ) : null}
 

@@ -20,6 +20,7 @@ import { useTradingData } from '@/components/TradingDataProvider'
 import { useRhWalletMode } from '@/contexts/RhWalletModeContext'
 import { useGmgnBoundWallets } from '@/hooks/useGmgnBoundWallets'
 import { useRhEvmWallet } from '@/hooks/useRhEvmWallet'
+import { useRhBatchExecutorAddress } from '@/hooks/useRhBatchExecutorAddress'
 import { useRhPermit2Readiness } from '@/hooks/useRhPermit2Readiness'
 import { useRhWalletTokens } from '@/hooks/useRhWalletTokens'
 import { useWalletBalances } from '@/hooks/useWalletBalances'
@@ -27,7 +28,7 @@ import {
   executeGmgnBulkBuy,
 } from '@/utils/gmgn-bulk-trade'
 import { executeRhParentKyberBuy } from '@/utils/dlmm/rh-kyber-swap'
-import { getRhBatchExecutorAddress, RH_PLATFORM_FEE_LABEL } from '@/utils/dlmm/rh-batch-executor'
+import { RH_PLATFORM_FEE_LABEL } from '@/utils/dlmm/rh-batch-executor'
 import type { RhSwapQuote } from '@/utils/dlmm/rh-univ2-swap'
 import { RH_USDG, RH_WETH } from '@/utils/dlmm/rh-univ2'
 import {
@@ -108,7 +109,10 @@ function DlmmFastSwapModalBody({
   const rhTokens = useRhWalletTokens()
   const fromRh = resolveRhActiveAddress(rhMode, rh.address, bound.evm)
   const isParent = rhMode === 'parent'
-  const rhBatchExecutor = getRhBatchExecutorAddress()
+  const {
+    address: rhBatchExecutor,
+    resolving: rhBatchExecutorResolving,
+  } = useRhBatchExecutorAddress()
 
   const { connected, publicKey, signAllTransactions } = useWallet()
   const { connection } = useConnection()
@@ -461,10 +465,10 @@ function DlmmFastSwapModalBody({
         legs={confirmLegs}
         busy={busy}
         sequentialSignHint={
-          isRh && isParent && !getRhBatchExecutorAddress()
+          isRh && isParent && !rhBatchExecutor && !rhBatchExecutorResolving
         }
         feeHint={
-          isRh && isParent && getRhBatchExecutorAddress()
+          isRh && isParent && rhBatchExecutor
             ? RH_PLATFORM_FEE_LABEL
             : undefined
         }
@@ -625,12 +629,13 @@ function DlmmFastSwapModalBody({
             {busy ? '…' : 'Review'}
           </button>
         </div>
-        {isRh && isParent && getRhBatchExecutorAddress() ? (
+        {isRh && isParent && rhBatchExecutor ? (
           <p className="text-xs text-gray-500 text-center">{RH_PLATFORM_FEE_LABEL}</p>
         ) : null}
         {isRh && isParent ? (
           <RhPermit2StatusBanner
             executorConfigured={Boolean(rhBatchExecutor)}
+            executorResolving={rhBatchExecutorResolving}
             readiness={permit2Readiness.data}
             loading={permit2Readiness.isLoading || permit2Readiness.isFetching}
             error={permit2Readiness.isError}

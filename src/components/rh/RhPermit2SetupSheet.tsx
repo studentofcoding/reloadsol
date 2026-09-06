@@ -16,11 +16,19 @@ type SetupToken = {
 
 export function RhPermit2StatusBanner(props: {
   executorConfigured: boolean
+  executorResolving?: boolean
   readiness: readonly Permit2TokenReadiness[] | undefined
   loading?: boolean
   error?: boolean
   onSetup: () => void
 }) {
+  if (props.executorResolving) {
+    return (
+      <div className="rounded-lg border border-gray-700 bg-gray-900/40 px-3 py-2 text-xs text-gray-300">
+        Checking one-click trade setup…
+      </div>
+    )
+  }
   if (!props.executorConfigured) {
     return (
       <div className="rounded-lg border border-amber-700/60 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
