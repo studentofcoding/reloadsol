@@ -23,6 +23,10 @@ import { useRhEvmWallet } from "@/hooks/useRhEvmWallet";
 import { useTrendingSearch } from "@/hooks/useTrendingSearch";
 import { useQuery } from "@tanstack/react-query";
 import type { Address } from "viem";
+import RhPermit2SetupSheet, {
+  RhPermit2StatusBanner,
+} from "@/components/rh/RhPermit2SetupSheet";
+import { useRhPermit2Readiness } from "@/hooks/useRhPermit2Readiness";
 import UniversalWalletButton from "./UniversalWalletButton";
 import BalanceSliderField from "./BalanceSliderField";
 import TokenSearchBox from "./TokenSearchBox";
@@ -89,12 +93,12 @@ import { executeRhParentKyberBuy } from "@/utils/dlmm/rh-kyber-swap";
 import { getRhBatchExecutorAddress, RH_PLATFORM_FEE_LABEL } from "@/utils/dlmm/rh-batch-executor";
 import { useSolPrice } from "@/hooks/useSolPrice";
 import {
-  MAX_TRADE_TOKENS,
   MIN_BUY_USD_PER_TOKEN,
   buyMeetsMinUsdPerToken,
   buyMeetsMinUsdPerTokenOrPending,
   minBuyHumanAmount,
   minBuySliderPercent,
+  maxTradeTokens,
 } from "@/utils/trade-ui-limits";
 import { prefetchSwapTransaction, fetchSwapQuote } from "@/utils/swap-executor";
 import {
@@ -113,7 +117,7 @@ import {
 import {
   RH_WETH_GAS_RESERVE_ETH,
 } from "@/hooks/usePortfolioWallet";
-import { RH_WETH } from "@/utils/dlmm/rh-univ2";
+import { RH_USDG, RH_WETH } from "@/utils/dlmm/rh-univ2";
 import { walletsMatch } from "@/utils/rh-wallet-holdings";
 import {
   fetchEthUsdSpot,
@@ -151,8 +155,11 @@ export default function BulkTokenBuyer() {
   const { showOutcome, outcomeModalProps } = useTradeOutcome();
   const searchParams = useSearchParams();
   const { network, effectiveChain, canUseRh } = useAppNetwork();
+  const tradeTokenLimit = maxTradeTokens(effectiveChain);
   const { mode: rhMode } = useRhWalletMode();
   const rhWallet = useRhEvmWallet();
+  const rhBatchExecutor = getRhBatchExecutorAddress();
+  const [permit2SetupOpen, setPermit2SetupOpen] = useState(false);
 
   const getInitialSolAmount = () => {
     const fromUrl = readBuySpendAmount(searchParams, network);
@@ -166,7 +173,7 @@ export default function BulkTokenBuyer() {
   const getInitialTokenMints = () => {
     const fromUrl = (searchParams.get("mints") ?? "")
       .split(",")
-      .slice(0, MAX_TRADE_TOKENS)
+      .slice(0, tradeTokenLimit)
       .map((m) => m.trim())
       .filter(Boolean);
     const pending = drainBuyPendingMints();
@@ -177,7 +184,7 @@ export default function BulkTokenBuyer() {
     for (const mint of pending) {
       if (!merged.includes(mint)) merged.push(mint);
     }
-    return merged.slice(0, MAX_TRADE_TOKENS).join("\n");
+    return merged.slice(0, tradeTokenLimit).join("\n");
   };
 
   // Form state
@@ -227,6 +234,28 @@ export default function BulkTokenBuyer() {
   const selectedCurrency: SpendCurrency = isRhChain ? rhCurrency : solCurrency;
   const rhQuote: RhSwapQuote = rhCurrency;
   const spendUnit: SpendCurrency = selectedCurrency;
+  const permit2SetupTokens = useMemo(
+    () =>
+      useRhParentPath && rhBatchExecutor && rhQuote !== "ETH"
+        ? [
+            {
+              address: (rhQuote === "USDG" ? RH_USDG : RH_WETH) as Address,
+              symbol: rhQuote,
+            },
+          ]
+        : [],
+    [useRhParentPath, rhBatchExecutor, rhQuote],
+  );
+  const permit2Readiness = useRhPermit2Readiness({
+    publicClient: useRhParentPath ? rhWallet.getPublicClient() : null,
+    account:
+      useRhParentPath && tradeFromAddress
+        ? (tradeFromAddress as Address)
+        : null,
+    tokens: permit2SetupTokens.map((token) => token.address),
+    spender: rhBatchExecutor,
+    enabled: useRhParentPath,
+  });
   const { data: solUsd } = useSolPrice();
   const { data: ethUsdSpot } = useQuery({
     queryKey: ["eth-usd-spot"],
@@ -447,8 +476,8 @@ export default function BulkTokenBuyer() {
   // Parse and validate mint addresses (chain-aware)
   const validMints = useMemo(
     () =>
-      parseTradeTokenAddresses(effectiveChain, tokenMints, MAX_TRADE_TOKENS),
-    [effectiveChain, tokenMints],
+      parseTradeTokenAddresses(effectiveChain, tokenMints, tradeTokenLimit),
+    [effectiveChain, tokenMints, tradeTokenLimit],
   );
   const meetsMinBuyUsd = buyMeetsMinUsdPerTokenOrPending(
     parseFloat(solAmount),
@@ -613,8 +642,8 @@ export default function BulkTokenBuyer() {
   const handleAddToken = useCallback(
     (mintAddress: string) => {
       if (parsedMints.includes(mintAddress)) return;
-      if (parsedMints.length >= MAX_TRADE_TOKENS) {
-        setError(`Maximum ${MAX_TRADE_TOKENS} tokens per buy`);
+      if (parsedMints.length >= tradeTokenLimit) {
+        setError(`Maximum ${tradeTokenLimit} tokens per buy`);
         return;
       }
       const newTokenMints = tokenMints
@@ -622,7 +651,7 @@ export default function BulkTokenBuyer() {
         : mintAddress;
       setTokenMints(newTokenMints);
     },
-    [tokenMints, parsedMints],
+    [tokenMints, parsedMints, tradeTokenLimit],
   );
 
   // Handle removing a token
@@ -829,6 +858,13 @@ export default function BulkTokenBuyer() {
       );
       return;
     }
+    if (useRhParentPath && rhBatchExecutor) {
+      const latest = permit2Readiness.data ?? (await permit2Readiness.refetch()).data;
+      if (!latest || latest.some((item) => item.status !== "ready")) {
+        setPermit2SetupOpen(true);
+        return;
+      }
+    }
     setIsLoading(true);
     setGmgnConfirmBusy(true);
     setPointsEarned(null);
@@ -980,6 +1016,8 @@ export default function BulkTokenBuyer() {
   }, [
     tradeFromAddress,
     useRhParentPath,
+    rhBatchExecutor,
+    permit2Readiness,
     rhWallet,
     effectiveChain,
     selectedCurrency,
@@ -1079,8 +1117,8 @@ export default function BulkTokenBuyer() {
       return;
     }
 
-    if (validMints.length > MAX_TRADE_TOKENS) {
-      setError(`Maximum ${MAX_TRADE_TOKENS} tokens per buy`);
+    if (validMints.length > tradeTokenLimit) {
+      setError(`Maximum ${tradeTokenLimit} tokens per buy`);
       return;
     }
 
@@ -1498,6 +1536,7 @@ export default function BulkTokenBuyer() {
     solUsd,
     previewRhBuyLegs,
     tradeAutoConfirm,
+    tradeTokenLimit,
   ]);
 
   useEffect(() => {
@@ -1606,15 +1645,15 @@ export default function BulkTokenBuyer() {
     const pastedAddresses = parseTradeTokenAddresses(
       effectiveChain,
       pastedText,
-      MAX_TRADE_TOKENS,
+      tradeTokenLimit,
     );
 
     if (pastedAddresses.length === 0) return;
 
     const currentAddresses = new Set(parsedMints);
-    const slots = Math.max(0, MAX_TRADE_TOKENS - parsedMints.length);
+    const slots = Math.max(0, tradeTokenLimit - parsedMints.length);
     if (slots <= 0) {
-      setError(`Maximum ${MAX_TRADE_TOKENS} tokens per buy`);
+      setError(`Maximum ${tradeTokenLimit} tokens per buy`);
       return;
     }
     let newAddresses = "";
@@ -1753,6 +1792,21 @@ export default function BulkTokenBuyer() {
         }}
         onConfirm={() => void runConfirmedRhBuy()}
       />
+      {tradeFromAddress ? (
+        <RhPermit2SetupSheet
+          open={permit2SetupOpen}
+          onClose={() => setPermit2SetupOpen(false)}
+          publicClient={rhWallet.getPublicClient()}
+          getWalletClient={rhWallet.getWalletClient}
+          account={tradeFromAddress as Address}
+          spender={rhBatchExecutor}
+          tokens={permit2SetupTokens}
+          readiness={permit2Readiness.data}
+          loading={permit2Readiness.isLoading || permit2Readiness.isFetching}
+          error={permit2Readiness.isError}
+          onRefresh={async () => (await permit2Readiness.refetch()).data}
+        />
+      ) : null}
 
       {/* Trending Tokens Column */}
       {showTradeUi && (
@@ -1780,6 +1834,16 @@ export default function BulkTokenBuyer() {
               {effectiveChain === "sol" ? <UniversalWalletButton /> : null}
             </div>
           </div>
+
+          {useRhParentPath ? (
+            <RhPermit2StatusBanner
+              executorConfigured={Boolean(rhBatchExecutor)}
+              readiness={permit2Readiness.data}
+              loading={permit2Readiness.isLoading || permit2Readiness.isFetching}
+              error={permit2Readiness.isError}
+              onSetup={() => setPermit2SetupOpen(true)}
+            />
+          ) : null}
 
           {isDevUser && effectiveChain === "sol" && solGmgnSynced ? (
             <label className="flex items-center gap-2 text-xs text-gray-300">
@@ -1851,7 +1915,9 @@ export default function BulkTokenBuyer() {
                       <div
                         className={`w-2 h-2 rounded-full ${validMints.length > 0 ? "bg-white" : "bg-gray-500"}`}
                       ></div>
-                      <span>Total tokens you'll buy: {validMints.length}/10</span>
+                      <span>
+                        Total tokens you'll buy: {validMints.length}/{tradeTokenLimit}
+                      </span>
                     </span>
                     <span className="text-gray-400">
                       Total parsed: {parsedMints.length}
@@ -2059,7 +2125,7 @@ export default function BulkTokenBuyer() {
                 }
                 inputMin={minHuman > 0 ? minHuman : 0}
                 step="0.001"
-                hint={`Min $${MIN_BUY_USD_PER_TOKEN} per token · max ${MAX_TRADE_TOKENS} tokens`}
+                hint={`Min $${MIN_BUY_USD_PER_TOKEN} per token · ${isRhChain ? "RH" : "Solana"} max ${tradeTokenLimit} tokens`}
               />
               <div className="space-y-3">
                 {isSolTrade &&
@@ -2294,7 +2360,7 @@ export default function BulkTokenBuyer() {
                     htmlFor="tokenMints"
                     className="block text-sm font-semibold text-gray-200 uppercase tracking-wide"
                   >
-                    Token to buy (up to {MAX_TRADE_TOKENS})
+                    Token to buy (up to {tradeTokenLimit} on {isRhChain ? "RH" : "Solana"})
                   </label>
                   {validMints.length > 0 && (
                     <button

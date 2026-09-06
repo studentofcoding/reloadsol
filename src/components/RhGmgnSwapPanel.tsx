@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Address } from 'viem'
 import { useAppNetwork } from '@/contexts/AppNetworkContext'
 import { useRhWalletMode } from '@/contexts/RhWalletModeContext'
@@ -11,6 +11,7 @@ import {
 } from '@/utils/trading-tracker'
 import { useGmgnBoundWallets } from '@/hooks/useGmgnBoundWallets'
 import { useRhEvmWallet } from '@/hooks/useRhEvmWallet'
+import { useRhPermit2Readiness } from '@/hooks/useRhPermit2Readiness'
 import { useRhWalletTokens } from '@/hooks/useRhWalletTokens'
 import { usePortfolioWallet, RH_WETH_GAS_RESERVE_ETH } from '@/hooks/usePortfolioWallet'
 import {
@@ -36,6 +37,9 @@ import UniversalWalletButton from '@/components/UniversalWalletButton'
 import GmgnTradeConfirmModal, {
   type GmgnConfirmLeg,
 } from '@/components/GmgnTradeConfirmModal'
+import RhPermit2SetupSheet, {
+  RhPermit2StatusBanner,
+} from '@/components/rh/RhPermit2SetupSheet'
 import {
   fetchEthUsdSpot,
   rawAmountToHuman,
@@ -84,6 +88,7 @@ export default function RhGmgnSwapPanel({
   const bound = useGmgnBoundWallets()
   const from = resolveRhActiveAddress(rhMode, rh.address, bound.evm)
   const isParent = rhMode === 'parent'
+  const rhBatchExecutor = getRhBatchExecutorAddress()
   const holdings = useRhWalletTokens()
   const portfolio = usePortfolioWallet()
 
@@ -101,6 +106,7 @@ export default function RhGmgnSwapPanel({
   const [error, setError] = useState('')
   const [okMsg] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [permit2SetupOpen, setPermit2SetupOpen] = useState(false)
   const [confirmLegs, setConfirmLegs] = useState<GmgnConfirmLeg[]>([])
   const [tradeAutoConfirm, setTradeAutoConfirm] = useState(readTradeAutoConfirm)
   const [quoteRefreshing, setQuoteRefreshing] = useState(false)
@@ -151,6 +157,45 @@ export default function RhGmgnSwapPanel({
         : portfolio.nativeBalance
   const quoteBalanceConnected =
     portfolio.connected && (quoteBalance ?? 0) > 0
+  const permit2SetupTokens = useMemo(() => {
+    if (!isParent || !rhBatchExecutor) return []
+    const input =
+      mode === 'tokenToToken'
+        ? fromToken.trim()
+        : side === 'sell'
+          ? token.trim()
+          : quote === 'USDG'
+            ? GMGN_RH_USDG
+            : quote === 'WETH'
+              ? GMGN_RH_WETH
+              : ''
+    if (!/^0x[a-fA-F0-9]{40}$/.test(input)) return []
+    const held = holdings.tokens.find(
+      (item) => item.mintAddress.toLowerCase() === input.toLowerCase(),
+    )
+    return [
+      {
+        address: input as Address,
+        symbol: held?.symbol ?? (side === 'buy' ? quote : undefined),
+      },
+    ]
+  }, [
+    isParent,
+    rhBatchExecutor,
+    mode,
+    fromToken,
+    side,
+    token,
+    quote,
+    holdings.tokens,
+  ])
+  const permit2Readiness = useRhPermit2Readiness({
+    publicClient: isParent ? rh.getPublicClient() : null,
+    account: isParent && from ? (from as Address) : null,
+    tokens: permit2SetupTokens.map((item) => item.address),
+    spender: rhBatchExecutor,
+    enabled: isParent,
+  })
 
   useEffect(() => {
     if (network !== 'robinhood' || !confirmOpen || submitPhase !== 'idle') return
@@ -435,6 +480,14 @@ export default function RhGmgnSwapPanel({
 
   async function runConfirmed() {
     if (!from) return
+    if (isParent && rhBatchExecutor) {
+      const latest =
+        permit2Readiness.data ?? (await permit2Readiness.refetch()).data
+      if (!latest || latest.some((item) => item.status !== 'ready')) {
+        setPermit2SetupOpen(true)
+        return
+      }
+    }
     const addr = token.trim()
     setBusy(true)
     setError('')
@@ -804,6 +857,21 @@ export default function RhGmgnSwapPanel({
           setConfirmOpen(false)
         }}
       />
+      {from ? (
+        <RhPermit2SetupSheet
+          open={permit2SetupOpen}
+          onClose={() => setPermit2SetupOpen(false)}
+          publicClient={rh.getPublicClient()}
+          getWalletClient={rh.getWalletClient}
+          account={from as Address}
+          spender={rhBatchExecutor}
+          tokens={permit2SetupTokens}
+          readiness={permit2Readiness.data}
+          loading={permit2Readiness.isLoading || permit2Readiness.isFetching}
+          error={permit2Readiness.isError}
+          onRefresh={async () => (await permit2Readiness.refetch()).data}
+        />
+      ) : null}
 
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-lg font-semibold text-white">Robinhood Swap</h2>
@@ -816,6 +884,15 @@ export default function RhGmgnSwapPanel({
           {from ? `${from.slice(0, 6)}…${from.slice(-4)}` : 'none'}
         </span>
       </p>
+      {isParent ? (
+        <RhPermit2StatusBanner
+          executorConfigured={Boolean(rhBatchExecutor)}
+          readiness={permit2Readiness.data}
+          loading={permit2Readiness.isLoading || permit2Readiness.isFetching}
+          error={permit2Readiness.isError}
+          onSetup={() => setPermit2SetupOpen(true)}
+        />
+      ) : null}
 
       <div className="flex rounded-lg border border-gray-600 overflow-hidden text-xs">
         {(['quote', 'tokenToToken'] as const).map((m) => (
