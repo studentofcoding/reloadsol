@@ -13,10 +13,14 @@ import UniversalWalletButton from '@/components/UniversalWalletButton'
 import GmgnTradeConfirmModal, {
   type GmgnConfirmLeg,
 } from '@/components/GmgnTradeConfirmModal'
+import RhPermit2SetupSheet, {
+  RhPermit2StatusBanner,
+} from '@/components/rh/RhPermit2SetupSheet'
 import { useTradingData } from '@/components/TradingDataProvider'
 import { useRhWalletMode } from '@/contexts/RhWalletModeContext'
 import { useGmgnBoundWallets } from '@/hooks/useGmgnBoundWallets'
 import { useRhEvmWallet } from '@/hooks/useRhEvmWallet'
+import { useRhPermit2Readiness } from '@/hooks/useRhPermit2Readiness'
 import { useRhWalletTokens } from '@/hooks/useRhWalletTokens'
 import { useWalletBalances } from '@/hooks/useWalletBalances'
 import {
@@ -104,6 +108,7 @@ function DlmmFastSwapModalBody({
   const rhTokens = useRhWalletTokens()
   const fromRh = resolveRhActiveAddress(rhMode, rh.address, bound.evm)
   const isParent = rhMode === 'parent'
+  const rhBatchExecutor = getRhBatchExecutorAddress()
 
   const { connected, publicKey, signAllTransactions } = useWallet()
   const { connection } = useConnection()
@@ -125,7 +130,27 @@ function DlmmFastSwapModalBody({
   const [error, setError] = useState('')
   const [okMsg, setOkMsg] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [permit2SetupOpen, setPermit2SetupOpen] = useState(false)
   const [confirmLegs, setConfirmLegs] = useState<GmgnConfirmLeg[]>([])
+  const permit2SetupTokens = useMemo(
+    () =>
+      isRh && isParent && rhBatchExecutor && rhQuote !== 'ETH'
+        ? [
+            {
+              address: (rhQuote === 'USDG' ? RH_USDG : RH_WETH) as Address,
+              symbol: rhQuote,
+            },
+          ]
+        : [],
+    [isRh, isParent, rhBatchExecutor, rhQuote],
+  )
+  const permit2Readiness = useRhPermit2Readiness({
+    publicClient: isRh && isParent ? rh.getPublicClient() : null,
+    account: isRh && isParent && fromRh ? (fromRh as Address) : null,
+    tokens: permit2SetupTokens.map((token) => token.address),
+    spender: rhBatchExecutor,
+    enabled: isRh && isParent,
+  })
 
   const quoteBalance = useMemo(() => {
     if (isRh) {
@@ -278,7 +303,13 @@ function DlmmFastSwapModalBody({
       setError('Enter a valid amount')
       return
     }
-    if (isRh && isParent && getRhBatchExecutorAddress()) {
+    if (isRh && isParent && rhBatchExecutor) {
+      const latest =
+        permit2Readiness.data ?? (await permit2Readiness.refetch()).data
+      if (!latest || latest.some((item) => item.status !== 'ready')) {
+        setPermit2SetupOpen(true)
+        return
+      }
       await runConfirmed()
       return
     }
@@ -440,6 +471,21 @@ function DlmmFastSwapModalBody({
         onCancel={() => setConfirmOpen(false)}
         onConfirm={() => void runConfirmed()}
       />
+      {fromRh ? (
+        <RhPermit2SetupSheet
+          open={permit2SetupOpen}
+          onClose={() => setPermit2SetupOpen(false)}
+          publicClient={rh.getPublicClient()}
+          getWalletClient={rh.getWalletClient}
+          account={fromRh as Address}
+          spender={rhBatchExecutor}
+          tokens={permit2SetupTokens}
+          readiness={permit2Readiness.data}
+          loading={permit2Readiness.isLoading || permit2Readiness.isFetching}
+          error={permit2Readiness.isError}
+          onRefresh={async () => (await permit2Readiness.refetch()).data}
+        />
+      ) : null}
 
       <div className="w-full max-w-md bg-gray-900 border border-gray-700 rounded-lg p-5 space-y-4 shadow-xl">
         <div className="flex items-start justify-between gap-2">
@@ -581,6 +627,15 @@ function DlmmFastSwapModalBody({
         </div>
         {isRh && isParent && getRhBatchExecutorAddress() ? (
           <p className="text-xs text-gray-500 text-center">{RH_PLATFORM_FEE_LABEL}</p>
+        ) : null}
+        {isRh && isParent ? (
+          <RhPermit2StatusBanner
+            executorConfigured={Boolean(rhBatchExecutor)}
+            readiness={permit2Readiness.data}
+            loading={permit2Readiness.isLoading || permit2Readiness.isFetching}
+            error={permit2Readiness.isError}
+            onSetup={() => setPermit2SetupOpen(true)}
+          />
         ) : null}
       </div>
     </div>

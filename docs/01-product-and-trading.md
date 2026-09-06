@@ -38,7 +38,7 @@ selection back to `sol`.
 
 | Surface | Route | What it does | Key files |
 |---|---|---|---|
-| Bulk buy | `/buy` (`/buy/solana`, `/buy/robinhood`) | Buy up to **10 tokens** at once from one spend amount (SOL on Solana; ETH/USDG/WETH on RH); valid/parsed chips; risk analysis; trending/toast tokens append to the list | `src/components/BulkTokenBuyer.tsx`, `src/components/RiskAnalysis.tsx` |
+| Bulk buy | `/buy` (`/buy/solana`, `/buy/robinhood`) | Buy up to the chain-specific cap (currently **5 RH / 5 Solana**) from one spend amount (SOL on Solana; ETH/USDG/WETH on RH); valid/parsed chips; risk analysis; trending/toast tokens append to the list | `src/components/BulkTokenBuyer.tsx`, `src/components/RiskAnalysis.tsx` |
 | Bulk sell / dust sweep / reload | `/sell` | Sell many tokens at once to reload native; dust categories (sellable / unsellable / zero-balance / frozen / NFT); empty-ATA close + rent reclaim via Jupiter reclaim; post-sell 100% closes | `src/components/BulkTokenSeller.tsx`, `src/utils/jupiter.ts`, `src/utils/swap-executor.ts` |
 | Single swap | `/swap` (+ solana/robinhood subroutes) | Solana: **Jupiter Terminal** widget with SOL/USDC presets; Robinhood: in-house RhSwap panel (quote-pair or token→token) | `src/app/(trade)/swap/SwapPageClient.tsx`, `src/components/RhGmgnSwapPanel.tsx`, `src/components/JupiterTerminal.tsx` |
 | Chart buy modal | modals over charts / signals / trend boards | Quick single-token buy from any chart surface, keyboard navigable | `src/components/ChartBuyModal.tsx` |
@@ -80,10 +80,13 @@ Execution depends on **wallet mode** (`useRhWalletMode`), resolved in
 Parent-wallet modes (precedence **executor → EIP-5792 → sequential**):
 
 - **BatchExecutor contract** — with `RH_BATCH_EXECUTOR_ADDRESS` set, the wallet gives
-  Permit2 approvals and signs **one atomic `executeBatch` tx** (wrap + pulls + N swaps),
-  regardless of wallet EIP-5792 support. Contract: `contracts/src/BatchExecutor.sol`
-  (owner-scoped, immutable, pausable, plain-`call` only); planner in
-  `src/utils/dlmm/rh-batch-executor.ts`.
+  Permit2 approvals in a one-time setup flow. Once readiness is live, each trade
+  signs **one atomic `executeBatch` tx** (wrap + pulls + N swaps), regardless of
+  wallet EIP-5792 support. The setup does not move funds and the user still confirms
+  every trade. Contract: `contracts/src/BatchExecutor.sol` (owner-scoped, immutable,
+  pausable, plain-`call` only); planners in `src/utils/dlmm/rh-batch-executor.ts` and
+  `src/utils/dlmm/rh-permit2-readiness.ts`; UI checklist in
+  `docs/FE_1CLICK_AND_PERMIT2.md`.
 - **EIP-5792** — when `getCapabilities` reports `atomic: supported/ready` for chain
   4663, calls go through `wallet_sendCalls` + `waitForCallsStatus`
   (`executeRhWalletCalls`, `src/utils/dlmm/rh-send-calls.ts`). Any non-success receipt
