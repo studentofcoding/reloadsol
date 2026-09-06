@@ -1,4 +1,10 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('next/server', async (importOriginal) => {
+  const original = await importOriginal<typeof import('next/server')>()
+  return { ...original, connection: vi.fn(async () => {}) }
+})
+
 import { GET } from '@/app/api/rh/config/route'
 
 const EXECUTOR = '0x61F1eb4cF3a7962d54413769369675be6BEa3907'
