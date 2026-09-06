@@ -240,6 +240,8 @@ type Config struct {
     DLMMSimTrackInterval int // seconds
     DLMMManageInterval int    // seconds
     RhClmmManageInterval int  // seconds
+    RhLpScreenInterval int    // seconds (0 = disabled)
+    StrategySearchInterval int // seconds (0 = disabled)
     DLMMSecret         string
     SolArbScanInterval int // seconds (0 = disabled)
     FomoWsEnabled      bool
@@ -391,6 +393,22 @@ func NewCronService() *CronService {
                 }
             }
             return 300 // 5m — alert-only cycle
+        }(),
+        RhLpScreenInterval: func() int {
+            if v := os.Getenv("RH_LP_SCREEN_INTERVAL"); v != "" {
+                if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
+                    return iv
+                }
+            }
+            return 300 // 5m — Pools indexer refreshes 24h aggregates per minute
+        }(),
+        StrategySearchInterval: func() int {
+            if v := os.Getenv("STRATEGY_SEARCH_INTERVAL"); v != "" {
+                if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
+                    return iv
+                }
+            }
+            return 21600 // 6h — offline walk-forward + spawn top-K
         }(),
         DLMMSecret: getEnv("DLMM_MANAGE_SECRET", getEnv("TRENDING_TRACKER_SECRET", "r3l0ads0l-trending")),
         SolArbScanInterval: func() int {
@@ -621,6 +639,27 @@ func (cs *CronService) Start() {
     }
     cs.workers.BindEntry(rhClmmManageEntryID, "rh_clmm_manage")
 
+    // RH LP screen (paper) – every N seconds (default 300; 0 disables)
+    if cs.config.RhLpScreenInterval > 0 {
+        rhLpScreenSpec := fmt.Sprintf("@every %ds", cs.config.RhLpScreenInterval)
+        rhLpScreenEntryID, err := cs.cron.AddFunc(rhLpScreenSpec, cs.runRhLpScreen)
+        if err != nil {
+            cs.logger.Error(fmt.Sprintf("Failed to add RH LP screen cron job: %v", err))
+            log.Fatal("Failed to add RH LP screen cron job:", err)
+        }
+        cs.workers.BindEntry(rhLpScreenEntryID, "rh_lp_screen")
+    }
+
+    if cs.config.StrategySearchInterval > 0 {
+        searchSpec := fmt.Sprintf("@every %ds", cs.config.StrategySearchInterval)
+        searchEntryID, err := cs.cron.AddFunc(searchSpec, cs.runStrategySearch)
+        if err != nil {
+            cs.logger.Error(fmt.Sprintf("Failed to add strategy search cron job: %v", err))
+            log.Fatal("Failed to add strategy search cron job:", err)
+        }
+        cs.workers.BindEntry(searchEntryID, "strategy_search")
+    }
+
     if cs.config.SolArbScanInterval > 0 {
         solArbSpec := fmt.Sprintf("@every %ds", cs.config.SolArbScanInterval)
         solArbEntryID, err := cs.cron.AddFunc(solArbSpec, cs.runSolArbScan)
@@ -674,6 +713,8 @@ func (cs *CronService) Start() {
     http.HandleFunc("/trigger/dlmm-sim-track", cs.requireTriggerSecret(cs.manualDLMMSimTrackTrigger))
     http.HandleFunc("/trigger/dlmm-manage", cs.requireTriggerSecret(cs.manualDLMMManageTrigger))
     http.HandleFunc("/trigger/rh-clmm-manage", cs.requireTriggerSecret(cs.manualRhClmmManageTrigger))
+    http.HandleFunc("/trigger/rh-lp-screen", cs.requireTriggerSecret(cs.manualRhLpScreenTrigger))
+    http.HandleFunc("/trigger/strategy-search", cs.requireTriggerSecret(cs.manualStrategySearchTrigger))
     http.HandleFunc("/trigger/sol-arb-scan", cs.requireTriggerSecret(cs.manualSolArbScanTrigger))
     http.HandleFunc("/trigger/fomo-ws", cs.requireTriggerSecret(cs.manualFomoWsTrigger))
     http.HandleFunc("/logs/test", cs.testDiscordLogs)
@@ -1575,6 +1616,66 @@ func (cs *CronService) manualRhClmmManageTrigger(w http.ResponseWriter, r *http.
     })
 }
 
+func (cs *CronService) runRhLpScreen() {
+    cs.workers.Begin("rh_lp_screen")
+    cs.logger.Info("🌊 Running RH LP screen (paper)...")
+    url := fmt.Sprintf("%s/api/dlmm/rh-lp-screen", cs.config.APIBaseURL)
+    resp, err := cs.makeRequest("POST", url, map[string]string{
+        "key": cs.config.DLMMSecret,
+    })
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("❌ RH LP screen failed: %v", err))
+        cs.workers.Fail("rh_lp_screen", err.Error())
+        return
+    }
+    cs.logger.Success(fmt.Sprintf("✅ RH LP screen completed: %s", resp))
+    cs.workers.Success("rh_lp_screen")
+}
+
+func (cs *CronService) manualRhLpScreenTrigger(w http.ResponseWriter, r *http.Request) {
+    if r.Method != "POST" {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    cs.logger.Info("🔧 Manual RH LP screen trigger")
+    cs.runRhLpScreen()
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]string{
+        "message":   "RH LP screen triggered manually",
+        "timestamp": time.Now().UTC().Format(time.RFC3339),
+    })
+}
+
+func (cs *CronService) runStrategySearch() {
+    cs.workers.Begin("strategy_search")
+    cs.logger.Info("🔎 Running strategy search cycle...")
+    url := fmt.Sprintf("%s/api/strategies/search-cycle", cs.config.APIBaseURL)
+    resp, err := cs.makeRequest("POST", url, map[string]string{
+        "key": cs.config.TrendingSecret,
+    })
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("❌ Strategy search failed: %v", err))
+        cs.workers.Fail("strategy_search", err.Error())
+        return
+    }
+    cs.logger.Success(fmt.Sprintf("✅ Strategy search completed: %s", resp))
+    cs.workers.Success("strategy_search")
+}
+
+func (cs *CronService) manualStrategySearchTrigger(w http.ResponseWriter, r *http.Request) {
+    if r.Method != "POST" {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    cs.logger.Info("🔧 Manual strategy search trigger")
+    cs.runStrategySearch()
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]string{
+        "message":   "Strategy search triggered manually",
+        "timestamp": time.Now().UTC().Format(time.RFC3339),
+    })
+}
+
 func (cs *CronService) runSolArbScan() {
     cs.workers.Begin("sol_arb_scan")
     cs.logger.Info("⚡ Running SOL arb scan...")
@@ -1753,6 +1854,12 @@ func (cs *CronService) makeRequest(method, url string, params map[string]string,
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// 409 = job lock held by an in-flight tick (withJobLock). A skip, not a failure.
+	if resp.StatusCode == http.StatusConflict {
+		cs.logger.Info(fmt.Sprintf("⏭️ %s skipped: previous run still in progress", url))
+		return string(body), nil
 	}
 
 	if resp.StatusCode >= 400 {

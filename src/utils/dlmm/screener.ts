@@ -7,6 +7,19 @@ import {
 } from '@/utils/meteora';
 import { getAgentConfig, saveCandidates } from '@/utils/dlmm/db';
 import { sendDlmmScreenAlert } from '@/utils/telegram';
+import { cacheGet, cacheSet } from '@/utils/redis-cache';
+import {
+  applySolDlmmConfidence,
+  solDlmmConfidence,
+} from '@/utils/dlmm/sol-dlmm-confidence';
+
+const LAST_GOOD_KEY = 'dlmm:screen:sol:last-good';
+const LAST_GOOD_TTL_S = 1800;
+
+type LastGoodSnapshot = {
+  raw: DlmmScreenCandidate[];
+  screenedAt: string;
+};
 
 function scorePool(params: {
   feeTvl: number;
@@ -30,12 +43,12 @@ function scorePool(params: {
   return Math.round((feeScore + organicScore + tvlScore + holderScore) * 10) / 10;
 }
 
-export async function runDlmmScreen(options?: { notify?: boolean }) {
+async function screenFromPools(
+  pools: Awaited<ReturnType<typeof fetchMeteoraPools>>,
+  screenedAt: string,
+): Promise<DlmmScreenCandidate[]> {
   const config = await getAgentConfig();
-  const pools = await fetchMeteoraPools({ limit: 100, sortBy: 'fee_tvl_ratio_24h:desc' });
-  const screenedAt = new Date().toISOString();
-
-  const candidates: DlmmScreenCandidate[] = pools
+  return pools
     .map((pool) => {
       const feeTvl = getFeeTvlRatio24h(pool);
       const organicScore = estimateOrganicScore(pool);
@@ -50,7 +63,6 @@ export async function runDlmmScreen(options?: { notify?: boolean }) {
         minOrganic: config.min_organic_score,
         minHolders: config.min_holders,
       });
-
       return {
         pool_address: pool.address,
         pool_name: pool.name,
@@ -63,15 +75,53 @@ export async function runDlmmScreen(options?: { notify?: boolean }) {
         mcap: getPoolMcap(pool),
         score,
         screened_at: screenedAt,
+        chain: 'sol',
       };
     })
     .filter((c) => c.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, 25);
+}
+
+export async function runDlmmScreen(options?: { notify?: boolean }) {
+  const screenedAt = new Date().toISOString();
+  let raw: DlmmScreenCandidate[] | null = null;
+  let fetchError = false;
+
+  try {
+    const pools = await fetchMeteoraPools({ limit: 100, sortBy: 'fee_tvl_ratio_24h:desc' });
+    raw = await screenFromPools(pools, screenedAt);
+  } catch (error) {
+    fetchError = true;
+    console.warn(
+      '[dlmm/screen] Meteora fetch failed:',
+      error instanceof Error ? error.message : error,
+    );
+  }
+
+  if (raw && raw.length > 0) {
+    await cacheSet(LAST_GOOD_KEY, { raw, screenedAt } satisfies LastGoodSnapshot, LAST_GOOD_TTL_S);
+  } else {
+    const snap = await cacheGet<LastGoodSnapshot>(LAST_GOOD_KEY);
+    raw = snap?.raw ?? [];
+    fetchError = true;
+  }
+
+  const snapAt = raw[0]?.screened_at ?? screenedAt;
+  const confidence = solDlmmConfidence({
+    lastOkAtMs: Date.parse(snapAt),
+    fetchError,
+  });
+  const candidates = applySolDlmmConfidence(raw, confidence.score).map((c) => ({
+    ...c,
+    screened_at: screenedAt,
+    chain: 'sol' as const,
+    features: { reasons: confidence.reasons, lagS: confidence.lagS, noTrade: confidence.noTrade },
+  }));
 
   await saveCandidates(candidates);
 
-  if (options?.notify !== false && candidates.length > 0) {
+  if (options?.notify !== false && candidates.length > 0 && !fetchError) {
     try {
       await sendDlmmScreenAlert(
         candidates.map((c) => ({
@@ -91,5 +141,9 @@ export async function runDlmmScreen(options?: { notify?: boolean }) {
     candidateCount: candidates.length,
     candidates,
     screenedAt,
+    confidence: confidence.score,
+    noTrade: confidence.noTrade,
+    reasons: confidence.reasons,
+    stale: fetchError,
   };
 }

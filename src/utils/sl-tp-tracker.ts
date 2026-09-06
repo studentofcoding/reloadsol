@@ -516,7 +516,7 @@ export async function addSLTPPosition(params: {
 // Function to get current token prices
 async function getCurrentTokenPrices(tokenAddresses: string[]): Promise<Map<string, number>> {
     try {
-        const prices = await getOpenPositionPrices(tokenAddresses)
+        const prices = await getOpenPositionPrices(tokenAddresses, 'sol') // sl_tp_positions is Solana live-only
 
         const priceMap = new Map<string, number>()
         for (const [address, price] of Object.entries(prices)) {

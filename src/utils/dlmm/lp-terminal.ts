@@ -1,5 +1,8 @@
-/** Default public LP Terminal (Robinhood Chain chainId 4663). */
-export const DEFAULT_LP_TERMINAL_BASE_URL = 'https://lp-terminal.xyz'
+/**
+ * Default public LP indexer (Robinhood Pools, chainId 4663). lp-terminal.xyz
+ * retired (HTTP 410 on every path); robinhoodpools.lol serves /api/lp/*.
+ */
+export const DEFAULT_LP_TERMINAL_BASE_URL = 'https://robinhoodpools.lol'
 
 type Env = Record<string, string | undefined>
 

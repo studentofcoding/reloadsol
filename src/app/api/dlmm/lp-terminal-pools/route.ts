@@ -6,8 +6,16 @@ import {
   mergeLpFallbackCatalog,
   type LpFallbackWant,
 } from '@/utils/dlmm/lp-terminal-pools-fallback'
+import {
+  rhIndexerConfidence,
+  rhPoolsToCatalog,
+  rhPoolsUrl,
+  type RhIndexerStatus,
+  type RhPoolsResponse,
+} from '@/utils/dlmm/rh-pools-indexer'
+import { scoreRhPools } from '@/utils/dlmm/rh-lp-screen.server'
 
-const ALLOWED_SORT = new Set(['tvl', 'vol', 'created'])
+const ALLOWED_SORT = new Set(['tvl', 'vol', 'created', 'fees'])
 
 /**
  * Goldsky-hosted Robinhood Chain UniV2 subgraph (same one the LP Terminal SPA
@@ -207,24 +215,8 @@ async function fetchRhUniv2FromSubgraph(opts: {
   return { pools, tokens, count: pairs.length }
 }
 
-function poolProto(p: LpTerminalPoolRaw): string {
-  return String(p.proto).toLowerCase()
-}
-
 function wantFromQuery(proto?: string): LpFallbackWant {
   return proto === 'univ2' || proto === 'univ3' || proto === 'univ4' ? proto : ''
-}
-
-function jsonPools(body: unknown): LpTerminalPoolRaw[] {
-  if (!body || typeof body !== 'object' || !('pools' in body)) return []
-  const pools = (body as { pools?: LpTerminalPoolRaw[] }).pools
-  return Array.isArray(pools) ? pools : []
-}
-
-function jsonTokens(body: unknown): Record<string, LpTerminalTokenMeta> {
-  if (!body || typeof body !== 'object' || !('tokens' in body)) return {}
-  const tokens = (body as { tokens?: Record<string, LpTerminalTokenMeta> }).tokens
-  return tokens && typeof tokens === 'object' ? tokens : {}
 }
 
 export async function GET(req: NextRequest) {
@@ -237,85 +229,75 @@ export async function GET(req: NextRequest) {
   await connection()
   const sp = req.nextUrl.searchParams
   const upstreamBase = getLpTerminalIndexerBase()
-  const params = new URLSearchParams()
 
   const q = sp.get('q')?.trim() || undefined
-  if (q) params.set('q', q)
-
   const proto = sp.get('proto')?.trim() || undefined
-  if (proto) params.set('proto', proto)
-
   const minTvl = sp.get('min_tvl') ?? sp.get('minTvl') ?? undefined
-  if (minTvl != null && minTvl !== '') params.set('min_tvl', minTvl)
 
-  const sortRaw = sp.get('sort')?.trim() || 'vol'
-  const sort = ALLOWED_SORT.has(sortRaw) ? (sortRaw as 'tvl' | 'vol' | 'created') : 'vol'
-  params.set('sort', sort)
+  const sortRaw = sp.get('sort')?.trim() || 'fees'
+  const sort = ALLOWED_SORT.has(sortRaw)
+    ? (sortRaw as 'tvl' | 'vol' | 'created' | 'fees')
+    : 'fees'
 
   const limitRaw = Number(sp.get('limit') ?? 100)
   const limit = Number.isFinite(limitRaw)
     ? Math.min(500, Math.max(1, Math.floor(limitRaw)))
     : 100
-  params.set('limit', String(limit))
 
   const offsetRaw = Number(sp.get('offset') ?? 0)
   const offset = Number.isFinite(offsetRaw)
     ? Math.min(20_000, Math.max(0, Math.floor(offsetRaw)))
     : 0
-  params.set('offset', String(offset))
 
-  const url = `${upstreamBase}/api/pools?${params.toString()}`
+  const url = rhPoolsUrl(upstreamBase, { sort, limit, offset, q, proto })
 
   try {
-    const text = await fetchLpPoolsRaw(url)
-    const body = parseLpIndexerBody(text)
-    const want = wantFromQuery(proto)
-    const pools = jsonPools(body)
-    const missingV3 =
-      (want === '' || want === 'univ3') &&
-      !pools.some((p) => poolProto(p) === 'univ3')
-    const missingV4 =
-      (want === '' || want === 'univ4') &&
-      !pools.some((p) => poolProto(p) === 'univ4')
-    if (missingV3 || missingV4) {
-      try {
-        const clmm = await fetchClmmPoolFallbacks(q)
-        const minTvlNum = minTvl != null && minTvl !== '' ? Number(minTvl) : undefined
-        const merged = mergeLpFallbackCatalog({
-          want,
-          univ2: pools.filter((p) => poolProto(p) === 'univ2'),
-          univ3: missingV3
-            ? clmm.univ3
-            : pools.filter((p) => poolProto(p) === 'univ3'),
-          univ4: missingV4
-            ? clmm.univ4
-            : pools.filter((p) => poolProto(p) === 'univ4'),
-          tokens: { ...jsonTokens(body), ...clmm.tokens },
-          minTvl: Number.isFinite(minTvlNum) ? minTvlNum : undefined,
-        })
-        return NextResponse.json(
-          {
-            success: true,
-            upstream: `${upstreamBase} (+dex v3/v4)`,
-            ready: true,
-            ...(typeof body === 'object' && body ? body : {}),
-            pools: merged.pools,
-            tokens: merged.tokens,
-            count: merged.count,
-            totals: merged.totals,
-          },
-          {
-            headers: {
-              'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=60',
-            },
-          },
-        )
-      } catch {
-        /* indexer body is still usable */
-      }
+    const [text, statusText] = await Promise.all([
+      fetchLpPoolsRaw(url),
+      fetchLpPoolsRaw(`${upstreamBase}/api/lp/status`).catch(() => ''),
+    ])
+    const body = parseLpIndexerBody(text) as RhPoolsResponse | null
+    if (!body || !Array.isArray(body.rows)) {
+      throw new Error('Indexer body missing rows')
     }
+    let status: RhIndexerStatus | null = null
+    try {
+      status = parseLpIndexerBody(statusText) as RhIndexerStatus | null
+    } catch {
+      status = null
+    }
+    const confidence = rhIndexerConfidence(status)
+    const catalog = rhPoolsToCatalog(body)
+    // min_tvl only drops pools whose TVL is *known* — singleton v4 pools report
+    // tvl_usd=null (manager balance ≠ TVL) and must stay visible with a risk chip.
+    const minTvlNum = minTvl != null && minTvl !== '' ? Number(minTvl) : 0
+    const filtered =
+      Number.isFinite(minTvlNum) && minTvlNum > 0
+        ? catalog.pools.filter((p) => p.tvlApprox || (Number(p.tvlUsd) || 0) >= minTvlNum)
+        : catalog.pools
+    const pools = (await scoreRhPools(filtered, confidence.score)).map(({ pool, score }) => ({
+      ...pool,
+      score: score.score,
+      scoreReasons: score.reasons,
+      demandUsd: score.features.demandUsd,
+    }))
     return NextResponse.json(
-      { success: true, upstream: upstreamBase, ...(body as object) },
+      {
+        success: true,
+        upstream: upstreamBase,
+        ready: true,
+        asof: body.as_of,
+        pools,
+        tokens: catalog.tokens,
+        count: catalog.count,
+        totals: catalog.totals,
+        indexer: {
+          lag_s: confidence.lagS,
+          confidence: confidence.score,
+          no_trade: confidence.noTrade,
+          reasons: confidence.reasons,
+        },
+      },
       {
         headers: {
           'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=60',
@@ -332,7 +314,13 @@ export async function GET(req: NextRequest) {
       const [v2, clmm] = await Promise.all([
         want === 'univ3' || want === 'univ4'
           ? Promise.resolve({ pools: [] as LpTerminalPoolRaw[], tokens: {} as Record<string, LpTerminalTokenMeta>, count: 0 })
-          : fetchRhUniv2FromSubgraph({ q, sort, limit, offset, minTvl }),
+          : fetchRhUniv2FromSubgraph({
+              q,
+              sort: sort === 'fees' ? 'vol' : sort,
+              limit,
+              offset,
+              minTvl,
+            }),
         want === 'univ2'
           ? Promise.resolve({ univ3: [] as LpTerminalPoolRaw[], univ4: [] as LpTerminalPoolRaw[], tokens: {} as Record<string, LpTerminalTokenMeta> })
           : fetchClmmPoolFallbacks(q),

@@ -52,6 +52,12 @@ export function computeSocialScoreBoost(
       boost += weights.tier1WalletBonus
       notes.push(`smart_wallet_sol>=1 (+${weights.tier1WalletBonus})`)
     }
+  } else if ((snapshot.fomo_buy_count_1h ?? 0) > 0) {
+    // Trenches buyers: bonus scaled by their realized edge (0..1.5), not a flat +30.
+    const edge = Math.max(0, Math.min(1.5, snapshot.fomo_edge_1h ?? 1))
+    const fomoBoost = Math.round(weights.smartWalletBuyBonus * edge)
+    boost += fomoBoost
+    notes.push(`fomo_buy x${edge.toFixed(2)} edge (+${fomoBoost})`)
   }
 
   return { boost, notes }

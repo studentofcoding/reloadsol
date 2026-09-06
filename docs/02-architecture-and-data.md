@@ -15,7 +15,7 @@ a Go service drives scheduled workers; all app data lives in Postgres `reloadsol
 | Service (container) | Process | Role |
 |---|---|---|
 | `reloadsol-web` | Next.js App Router (`Dockerfile.web`) | SSR UI, ~50 API routes under `src/app/api/**`, server actions under `src/actions/**`, ONNX ML shadow scorers (artifacts bind-mounted ro) |
-| `reloadsol-cron` | Go scheduler (`main.go`, `worker_tracker.go`, `Dockerfile.cron`) | Cron jobs (`/trigger/*` guarded by `X-Trigger-Secret`): trending track/filtered/unfiltered, signals refresh + sim-track, mcap sim open/track, GMGN sim / activity poll / wallet digger / radar digest / roster watch, social sim / rollup / wallet poll / cleanup, DLMM screen / sim-track / manage, **RH CLMM manage (alert-only)**, strategy report, SL/TP monitor, daily summary, PnL update, SOL arb scan |
+| `reloadsol-cron` | Go scheduler (`main.go`, `worker_tracker.go`, `Dockerfile.cron`) | Cron jobs (`/trigger/*` guarded by `X-Trigger-Secret`): trending, signals, mcap, GMGN, social, DLMM, **RH LP screen**, **strategy search**, **fomo_ws**, RH CLMM manage (alert-only), strategy report, SL/TP, PnL, SOL arb |
 | `reloadsol-db` | `postgres:16-alpine`, 768MB cap | Postgres 16; schema auto-applied from `db/init/*.sql` (`/docker-entrypoint-initdb.d`) |
 | `reloadsol-bouncer` | PgBouncer (transaction pool, SCRAM) | App connects `DATABASE_URL` → bouncer → db; `DATABASE_URL_DIRECT` bypasses for psql/pgcopydb |
 | `reloadsol-nginx` | nginx | Public `:80` edge — reverse proxy + cache (`X-Cache-Status: HIT`); prod hides web `:3000` |
@@ -44,8 +44,9 @@ cron. Named volumes: `postgres_data`, `redis_data`, `nginx_cache`.
 ## 2. Persistence (Postgres `reloadsol_db`)
 
 Canonical schema: `db/init/*.sql` — `02-schema.sql` plus numbered migrations
-`04`–`27` (applied on first `docker compose up` on an empty volume, or via
-`bash scripts/deploy-tencent.sh schema`). `supabase/schema.sql` is a legacy mirror.
+`04`–`29` (applied on first `docker compose up` on an empty volume, or via
+`bash scripts/deploy-tencent.sh schema`). `29-rh-lp-candidates.sql` chain-scopes DLMM
+tables and adds FOMO trader/closed snapshots. `supabase/schema.sql` is a legacy mirror.
 
 **`trading_records`** stores history as a **JSONB `data` column** with denormalized
 `wallet_address`, `operation_type`, `timestamp`, and `chain` (default `sol`; index

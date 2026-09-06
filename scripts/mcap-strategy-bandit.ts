@@ -40,8 +40,9 @@ resolveHostDatabaseUrl()
 
 type Args = {
   candidates?: string
-  prune: boolean
-  promote?: string
+    prune: boolean
+    cycle: boolean
+    promote?: string
   target?: string
   domain: 'mcap_tracker' | 'gmgn' | 'signals'
   list: boolean
@@ -50,12 +51,14 @@ type Args = {
 function parseArgs(argv: string[]): Args {
   const args: Args = {
     prune: false,
+    cycle: false,
     domain: 'mcap_tracker',
     list: false,
   }
   for (const arg of argv) {
     if (arg.startsWith('--candidates=')) args.candidates = arg.slice('--candidates='.length)
     else if (arg === '--prune') args.prune = true
+    else if (arg === '--cycle') args.cycle = true
     else if (arg.startsWith('--promote=')) args.promote = arg.slice('--promote='.length)
     else if (arg.startsWith('--target=')) args.target = arg.slice('--target='.length)
     else if (arg.startsWith('--domain=')) {
@@ -64,7 +67,8 @@ function parseArgs(argv: string[]): Args {
     else if (arg === '--help' || arg === '-h') {
       console.log(`Usage: npx tsx scripts/mcap-strategy-bandit.ts [options]
   --candidates=PATH   Spawn from candidates JSON (max 3 concurrent)
-  --prune             Kill search_* with loss streak ≥2 and poor net
+  --prune             Kill search_* that fail fitness
+  --cycle             Offline walk-forward → spawn top-K → maybe replace canonical sim
   --list              List active search strategies
   --promote=ID --target=ID   Copy search config onto target live slot
   --domain=mcap_tracker|gmgn|signals
@@ -99,6 +103,13 @@ async function main(): Promise<void> {
     console.log(`Active search (${args.domain}, max ${MAX_CONCURRENT_SEARCH}):`)
     for (const s of active) console.log(`  ${s.id}  ${s.name}`)
     if (!active.length) console.log('  (none)')
+    return
+  }
+
+  if (args.cycle) {
+    const { runStrategySearchCycle } = await import('../src/strategies/strategy-search-cycle')
+    const result = await runStrategySearchCycle(args.domain)
+    console.log(JSON.stringify(result, null, 2))
     return
   }
 
@@ -146,7 +157,7 @@ async function main(): Promise<void> {
   }
 
   if (!args.candidates) {
-    console.error('Pass --candidates=, --prune, --list, or --promote=')
+    console.error('Pass --candidates=, --prune, --cycle, --list, or --promote=')
     process.exit(1)
   }
 

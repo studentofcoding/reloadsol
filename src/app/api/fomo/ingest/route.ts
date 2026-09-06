@@ -119,6 +119,137 @@ async function loadFomoSkipWallets(): Promise<Set<string>> {
   return set
 }
 
+function asStr(v: unknown): string | null {
+  return typeof v === 'string' && v.trim() ? v.trim() : null
+}
+
+function tsIso(v: unknown): string | null {
+  const n = asFiniteNumber(v)
+  if (n == null || n <= 0) return null
+  return new Date(n > 1e12 ? n : n * 1000).toISOString()
+}
+
+/** `/api/traders` leaderboard rows → fomo_traders upsert (wallet edge input). */
+async function upsertTraders(rows: unknown[]): Promise<number> {
+  const shaped: unknown[][] = []
+  for (const raw of rows) {
+    if (!raw || typeof raw !== 'object') continue
+    const r = raw as Record<string, unknown>
+    const wallet = asStr(r.address) ?? asStr(r.wallet)
+    if (!wallet) continue
+    shaped.push([
+      wallet.toLowerCase(),
+      asStr(r.handle),
+      asStr(r.display_name),
+      asFiniteNumber(r.followers),
+      asFiniteNumber(r.volume),
+      asFiniteNumber(r.fills),
+      asFiniteNumber(r.buys),
+      asFiniteNumber(r.sells),
+      asFiniteNumber(r.realized_pnl),
+      asFiniteNumber(r.unrealized_pnl),
+      asFiniteNumber(r.net_pnl),
+      asFiniteNumber(r.win_rate),
+      asFiniteNumber(r.closed_trades),
+      asFiniteNumber(r.wins),
+      asFiniteNumber(r.open_bags),
+      asStr(r.state),
+      typeof r.active === 'boolean' ? r.active : null,
+      asFiniteNumber(r.last_ts),
+      JSON.stringify(r),
+    ])
+  }
+  if (shaped.length === 0) return 0
+  const cols: Array<{ name: string; type: string }> = [
+    { name: 'wallet_address', type: 'text' },
+    { name: 'handle', type: 'text' },
+    { name: 'display_name', type: 'text' },
+    { name: 'followers', type: 'bigint' },
+    { name: 'volume_usd', type: 'numeric' },
+    { name: 'fills', type: 'bigint' },
+    { name: 'buys', type: 'bigint' },
+    { name: 'sells', type: 'bigint' },
+    { name: 'realized_pnl', type: 'numeric' },
+    { name: 'unrealized_pnl', type: 'numeric' },
+    { name: 'net_pnl', type: 'numeric' },
+    { name: 'win_rate', type: 'numeric' },
+    { name: 'closed_trades', type: 'bigint' },
+    { name: 'wins', type: 'bigint' },
+    { name: 'open_bags', type: 'bigint' },
+    { name: 'state', type: 'text' },
+    { name: 'active', type: 'boolean' },
+    { name: 'last_ts', type: 'bigint' },
+    { name: 'raw', type: 'jsonb' },
+  ]
+  await bulkInsert({
+    table: 'fomo_traders',
+    columns: cols,
+    rows: shaped,
+    conflictTarget: '(wallet_address)',
+    updateColumns: cols.map((c) => c.name).filter((c) => c !== 'wallet_address'),
+    extraSet: ['snapshot_at = NOW()'],
+  })
+  return shaped.length
+}
+
+/** `/api/closed` rows → fomo_closed_positions (realized outcome labels). */
+async function insertClosed(rows: unknown[]): Promise<number> {
+  const shaped: unknown[][] = []
+  for (const raw of rows) {
+    if (!raw || typeof raw !== 'object') continue
+    const r = raw as Record<string, unknown>
+    const wallet = asStr(r.wallet)
+    const token = asStr(r.token)
+    const opened = tsIso(r.opened_ts)
+    const closed = tsIso(r.closed_ts)
+    if (!wallet || !token || !opened || !closed) continue
+    shaped.push([
+      wallet.toLowerCase(),
+      token.toLowerCase(),
+      asStr(r.symbol),
+      asStr(r.handle),
+      asFiniteNumber(r.followers),
+      r.is_stock === true || r.is_stock === 1,
+      opened,
+      closed,
+      asFiniteNumber(r.cost_sold),
+      asFiniteNumber(r.proceeds_usd),
+      asFiniteNumber(r.pnl_usd),
+      asFiniteNumber(r.pnl_pct),
+      asFiniteNumber(r.hold_seconds),
+      asFiniteNumber(r.buys),
+      asFiniteNumber(r.sells),
+      JSON.stringify(r),
+    ])
+  }
+  if (shaped.length === 0) return 0
+  const cols: Array<{ name: string; type: string }> = [
+    { name: 'wallet_address', type: 'text' },
+    { name: 'token_address', type: 'text' },
+    { name: 'symbol', type: 'text' },
+    { name: 'handle', type: 'text' },
+    { name: 'followers', type: 'bigint' },
+    { name: 'is_stock', type: 'boolean' },
+    { name: 'opened_ts', type: 'timestamptz' },
+    { name: 'closed_ts', type: 'timestamptz' },
+    { name: 'cost_sold', type: 'numeric' },
+    { name: 'proceeds_usd', type: 'numeric' },
+    { name: 'pnl_usd', type: 'numeric' },
+    { name: 'pnl_pct', type: 'numeric' },
+    { name: 'hold_seconds', type: 'bigint' },
+    { name: 'buys', type: 'int' },
+    { name: 'sells', type: 'int' },
+    { name: 'raw', type: 'jsonb' },
+  ]
+  await bulkInsert({
+    table: 'fomo_closed_positions',
+    columns: cols,
+    rows: shaped,
+    conflictTarget: '(wallet_address, token_address, opened_ts, closed_ts)',
+  })
+  return shaped.length
+}
+
 async function bumpIngestStatus(maxId: number | null): Promise<void> {
   await query(
     `INSERT INTO fomo_indexer_status (id, last_fill_id, last_ingest_at, updated_at)
@@ -206,7 +337,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
   }
 
-  let body: { fills?: unknown; hello?: HelloPayload }
+  let body: { fills?: unknown; hello?: HelloPayload; traders?: unknown; closed?: unknown }
   try {
     body = (await request.json()) as typeof body
   } catch {
@@ -245,6 +376,16 @@ export async function POST(request: NextRequest) {
       await bumpIngestStatus(maxId)
     }
 
+    let traders = 0
+    let closed = 0
+    try {
+      if (Array.isArray(body.traders)) traders = await upsertTraders(body.traders.slice(0, 500))
+      if (Array.isArray(body.closed)) closed = await insertClosed(body.closed.slice(0, 500))
+    } catch (error) {
+      // Snapshot tables are optional (migration 29); the fill mirror stays healthy.
+      console.warn('[fomo/ingest] snapshot upsert skipped:', error instanceof Error ? error.message : error)
+    }
+
     let social = { inserted: 0, skipped: 0 }
     try {
       const skipWallets = await loadFomoSkipWallets()
@@ -264,6 +405,8 @@ export async function POST(request: NextRequest) {
       ms: stats.ms,
       social_inserted: social.inserted,
       social_skipped: social.skipped,
+      traders_upserted: traders,
+      closed_inserted: closed,
     })
   } catch (error) {
     return NextResponse.json(

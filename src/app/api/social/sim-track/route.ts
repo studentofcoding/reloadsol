@@ -8,7 +8,8 @@ import {
 import { recordSocialOutcome } from '@/strategies/outcomes'
 import { fetchTradingRecordsForWallet } from '@/strategies/db'
 import { computeOpenSimCycle } from '@/utils/simulation-trades'
-import { buildTradingRecord, insertTradingRecord } from '@/utils/trading-records-db'
+import { buildTradingRecord, insertTradingRecord, insertTradingRecords } from '@/utils/trading-records-db'
+import type { TrackingRecord } from '@/utils/trading-tracker'
 import { fetchTokenPricesForTracking } from '@/utils/trading-tracker'
 import { getOpenPositionPrices } from '@/utils/open-position-prices'
 import { getSolPriceUSD } from '@/utils/solana'
@@ -23,6 +24,11 @@ import {
   requiredMentionSources,
 } from '@/strategies/social/social-only-discovery'
 import type { SocialStrategy } from '@/strategies/types'
+import {
+  getOpenStrategySimPositions as getOpenPositionsForStrategy,
+  shouldClosePriceSimPosition as shouldClosePosition,
+  type StrategySimOpenPosition as OpenPosition,
+} from '@/strategies/open-strategy-sim-positions'
 
 export const maxDuration = 120
 
@@ -39,6 +45,9 @@ function getSimTrackSecret(): string {
   )
 }
 
+/** Social strategies are Solana-only today (registry `chain: 'sol'`). */
+const SOCIAL_CHAIN = 'sol' as const
+
 function readFiniteNumber(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) return value
   if (typeof value === 'string' && value.trim() !== '') {
@@ -48,94 +57,6 @@ function readFiniteNumber(value: unknown): number | null {
   return null
 }
 
-type OpenPosition = {
-  mintAddress: string
-  symbol: string
-  entryAt: string | null
-  entryPriceUsd: number
-  entryFeatures: Record<string, unknown>
-}
-
-function getOpenPositionsForStrategy(
-  records: Awaited<ReturnType<typeof fetchTradingRecordsForWallet>>,
-  strategyId: string,
-): OpenPosition[] {
-  const seen = new Set<string>()
-  const open: OpenPosition[] = []
-
-  for (const r of records) {
-    if (!r.is_simulation || r.bot_strategy !== strategyId) continue
-    for (const t of r.tokens ?? []) {
-      if (seen.has(t.mintAddress)) continue
-      const cycle = computeOpenSimCycle(records, t.mintAddress)
-      if (!cycle || cycle.simulationType !== 'strategy') continue
-      seen.add(t.mintAddress)
-
-      const buyRecord = records.find(
-        (rec) =>
-          rec.operationType === 'buy' &&
-          rec.bot_strategy === strategyId &&
-          rec.is_simulation &&
-          rec.tokens?.some((tk) => tk.mintAddress === t.mintAddress),
-      )
-      const sim =
-        buyRecord?.trading_simulation &&
-        typeof buyRecord.trading_simulation === 'object'
-          ? (buyRecord.trading_simulation as Record<string, unknown>)
-          : {}
-      const entryFeatures =
-        sim.entry_features && typeof sim.entry_features === 'object'
-          ? (sim.entry_features as Record<string, unknown>)
-          : {}
-      const entryPriceUsd =
-        readFiniteNumber(sim.entry_price_usd) ??
-        readFiniteNumber(entryFeatures.initial_price_usd) ??
-        cycle.weightedBuyPriceUsd ??
-        0
-
-      open.push({
-        mintAddress: t.mintAddress,
-        symbol: t.symbol || t.mintAddress.slice(0, 8),
-        entryAt: typeof sim.entry_at === 'string' ? sim.entry_at : null,
-        entryPriceUsd,
-        entryFeatures,
-      })
-    }
-  }
-
-  return open
-}
-
-function shouldClosePosition(params: {
-  entryPriceUsd: number
-  currentPriceUsd: number
-  entryAt: string | null
-  exit: SocialStrategy['config']['exit']
-}): { close: boolean; reason: string } {
-  const { entryPriceUsd, currentPriceUsd, entryAt, exit } = params
-  if (entryPriceUsd <= 0 || currentPriceUsd <= 0) {
-    return { close: false, reason: 'missing_price' }
-  }
-
-  const pnlPct = ((currentPriceUsd - entryPriceUsd) / entryPriceUsd) * 100
-
-  if (pnlPct <= exit.stopLossPct) {
-    return { close: true, reason: 'stop_loss' }
-  }
-  if (pnlPct >= exit.takeProfitPct) {
-    return { close: true, reason: 'take_profit' }
-  }
-
-  if (entryAt && exit.maxHoldHours > 0) {
-    const heldMs = Date.now() - new Date(entryAt).getTime()
-    if (heldMs >= exit.maxHoldHours * 60 * 60 * 1000) {
-      return { close: true, reason: 'max_hold' }
-    }
-  }
-
-  return { close: false, reason: 'hold' }
-}
-
 async function closeSimPosition(params: {
   strategyId: string
   mintAddress: string
@@ -143,13 +64,17 @@ async function closeSimPosition(params: {
   entryAt: string | null
   entryFeatures: Record<string, unknown>
   closeReason: string
+  /** Wallet records already loaded by the cycle (avoids one fetch per close). */
+  records: TrackingRecord[]
+  /** Current price already batched by the cycle. */
+  currentPriceUsd: number | undefined
+  /** Close records are collected and bulk-inserted by the route. */
+  collect: (record: TrackingRecord) => void
 }): Promise<number> {
-  const records = await fetchTradingRecordsForWallet(SOCIAL_SIM_WALLET)
-  const cycle = computeOpenSimCycle(records, params.mintAddress)
+  const cycle = computeOpenSimCycle(params.records, params.mintAddress)
   if (!cycle) return 0
 
-  const prices = await getOpenPositionPrices([params.mintAddress])
-  const sellPriceUsd = prices[params.mintAddress] || cycle.weightedBuyPriceUsd
+  const sellPriceUsd = params.currentPriceUsd || cycle.weightedBuyPriceUsd
   const solPrice = await getSolPriceUSD()
   const remaining = cycle.remainingTokenAmount
   const solReceived =
@@ -192,7 +117,7 @@ async function closeSimPosition(params: {
     },
   })
 
-  await insertTradingRecord(record)
+  params.collect(record)
 
   const closeExtras = {
     token_symbol: params.symbol,
@@ -311,6 +236,11 @@ export async function POST(request: NextRequest) {
   if (!isAuthorizedRequest(key, getSimTrackSecret())) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
   }
+  const { withJobLock } = await import('@/utils/bot-job-lock')
+  return withJobLock('social_sim_track', 300, () => runSimTrack(request))
+}
+
+async function runSimTrack(request: NextRequest) {
 
   try {
     const strategies = await getActiveSocialForSim()
@@ -333,9 +263,10 @@ export async function POST(request: NextRequest) {
       const mintsToPrice = openPositions.map((p) => p.mintAddress)
       const prices =
         mintsToPrice.length > 0
-          ? await getOpenPositionPrices(mintsToPrice)
+          ? await getOpenPositionPrices(mintsToPrice, SOCIAL_CHAIN)
           : ({} as Record<string, number>)
 
+      const pendingCloses: TrackingRecord[] = []
       for (const pos of openPositions) {
         const currentPrice = prices[pos.mintAddress] ?? pos.entryPriceUsd
         const { close, reason } = shouldClosePosition({
@@ -352,12 +283,16 @@ export async function POST(request: NextRequest) {
             entryAt: pos.entryAt,
             entryFeatures: pos.entryFeatures,
             closeReason: reason,
+            records,
+            currentPriceUsd: prices[pos.mintAddress],
+            collect: (r) => pendingCloses.push(r),
           })
           closed++
           openMintSet.delete(pos.mintAddress)
           closedMints.add(pos.mintAddress)
         }
       }
+      if (pendingCloses.length > 0) await insertTradingRecords(pendingCloses)
 
       const rollups = await fetchFomoRollupCandidates(strategy.config.entry, 100)
       const candidateMints = rollups.map((r) => r.token_address)

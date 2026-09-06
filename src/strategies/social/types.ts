@@ -45,6 +45,9 @@ export type SocialTokenRollupRow = {
   top_source: string | null
   last_event_at: string | null
   updated_at: string
+  /** Trenches (fomo_family) cash-leg buys in 1h and their mean wallet edge (1 = neutral). */
+  fomo_buy_count_1h?: number
+  fomo_edge_1h?: number | null
 }
 
 export type SocialSnapshot = {
@@ -56,6 +59,9 @@ export type SocialSnapshot = {
   smart_wallet_buy_sol_1h: number
   telegram_top_source: string | null
   has_smart_wallet_buy: boolean
+  /** Optional Trenches buy pressure; edge 1 = neutral, >1 profitable wallets, <1 losing. */
+  fomo_buy_count_1h?: number
+  fomo_edge_1h?: number | null
 }
 
 export type SocialIngestEvent = {

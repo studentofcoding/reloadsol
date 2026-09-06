@@ -664,6 +664,11 @@ export async function POST(request: NextRequest) {
   if (!isAuthorizedRequest(key, getSimTrackSecret())) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
   }
+  const { withJobLock } = await import('@/utils/bot-job-lock')
+  return withJobLock(`mcap_tracker_sim_${request.nextUrl.searchParams.get('phase') ?? 'all'}`, 300, () => runSimTrack(request))
+}
+
+async function runSimTrack(request: NextRequest) {
 
   const phaseParam = request.nextUrl.searchParams.get('phase')
   const phase: 'open' | 'manage' | 'all' =
@@ -984,6 +989,12 @@ export async function POST(request: NextRequest) {
           continue
         }
         const scoredEntryFeatures = ml.features
+        const { softMlSize, stampMlSize } = await import('@/strategies/ml-soft-size')
+        const sized = softMlSize(nativeBuyAmount, { pBad: ml.pBad })
+        const sizedFeatures = stampMlSize(scoredEntryFeatures, sized, {
+          pBad: ml.pBad,
+          pWinner: ml.pWinner,
+        })
 
         if (!execMode.isSimulated) {
           const halted = await isRealTradingHalted()
@@ -1002,13 +1013,13 @@ export async function POST(request: NextRequest) {
               strategyId: strategy.id,
               mintAddress: snapshot.token_address,
               symbol: snapshot.token_symbol,
-              solAmount: nativeBuyAmount,
+              solAmount: sized.sol,
               slippageBps,
               entryMcap: entry.entryMcap,
               entryTemplate: strategy.config.entryTemplate,
               entryAt: entry.entryAt,
               snapshot,
-              scoredEntryFeatures,
+              scoredEntryFeatures: sizedFeatures,
               strategy,
               collect,
             })
@@ -1026,13 +1037,13 @@ export async function POST(request: NextRequest) {
             chain,
             mintAddress: snapshot.token_address,
             symbol: snapshot.token_symbol,
-            solAmount: nativeBuyAmount,
+            solAmount: sized.sol,
             entryMcap: entry.entryMcap,
             entryTemplate: strategy.config.entryTemplate,
             entryAt: entry.entryAt,
             snapshot,
             socialCtx,
-            scoredEntryFeatures,
+            scoredEntryFeatures: sizedFeatures,
             strategy,
             collect,
           })

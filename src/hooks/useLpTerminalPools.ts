@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query'
 import {
   toPoolRows,
+  type LpIndexerHealth,
   type LpTerminalPoolRow,
   type LpTerminalPoolsResponse,
 } from '@/utils/dlmm/lp-terminal-pools'
@@ -11,7 +12,7 @@ export type LpTerminalPoolsQuery = {
   q?: string
   proto?: '' | 'univ3' | 'univ2' | 'univ4'
   hideDust?: boolean
-  sort?: 'tvl' | 'vol' | 'created'
+  sort?: 'tvl' | 'vol' | 'created' | 'fees'
   limit?: number
 }
 
@@ -21,6 +22,7 @@ type ProxyResponse = LpTerminalPoolsResponse & {
   upstream?: string
   count?: number
   totals?: { univ2?: number; univ3?: number; univ4?: number }
+  indexer?: LpIndexerHealth
 }
 
 async function fetchLpTerminalPools(
@@ -31,12 +33,13 @@ async function fetchLpTerminalPools(
   totals: { univ2: number; univ3: number; univ4: number }
   ready: boolean
   upstream: string
+  indexer: LpIndexerHealth | null
 }> {
   const sp = new URLSearchParams()
   if (params.q?.trim()) sp.set('q', params.q.trim())
   if (params.proto) sp.set('proto', params.proto)
   if (params.hideDust !== false) sp.set('min_tvl', '1000')
-  sp.set('sort', params.sort ?? 'vol')
+  sp.set('sort', params.sort ?? 'fees')
   sp.set('limit', String(params.limit ?? 100))
 
   const res = await fetch(`/api/dlmm/lp-terminal-pools?${sp.toString()}`)
@@ -66,6 +69,7 @@ async function fetchLpTerminalPools(
     },
     ready: data.ready !== false,
     upstream: data.upstream ?? '',
+    indexer: data.indexer ?? null,
   }
 }
 
@@ -79,7 +83,7 @@ export function useLpTerminalPools(
       params.q ?? '',
       params.proto ?? '',
       params.hideDust !== false,
-      params.sort ?? 'vol',
+      params.sort ?? 'fees',
       params.limit ?? 100,
     ],
     queryFn: () => fetchLpTerminalPools(params),
@@ -94,6 +98,7 @@ export function useLpTerminalPools(
     totals: query.data?.totals ?? { univ2: 0, univ3: 0, univ4: 0 },
     ready: query.data?.ready ?? true,
     upstream: query.data?.upstream ?? '',
+    indexer: query.data?.indexer ?? null,
     isLoading: query.isLoading,
     isFetching: query.isFetching,
     error: query.error,

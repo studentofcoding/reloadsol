@@ -12,6 +12,7 @@ import {
   MCAP_TRACKER_SIM_WALLET,
   SIGNALS_SIM_WALLET,
   SOCIAL_SIM_WALLET,
+  simWalletForChain,
 } from '@/strategies/sim-wallets'
 import { computeOpenSimCycle, computeOpenTradeCycle } from '@/utils/simulation-trades'
 import {
@@ -19,7 +20,7 @@ import {
   insertTradingRecord,
 } from '@/utils/trading-records-db'
 import { getOpenPositionPrices } from '@/utils/open-position-prices'
-import { getSolPriceUSD } from '@/utils/solana'
+import { getNativeUsd } from '@/utils/native-usd'
 import {
   buildMcapOutcomeFeatures,
   computeMcapSimPnlPct,
@@ -27,16 +28,16 @@ import {
   type McapSimCloseReason,
 } from '@/utils/mcap-tracker'
 import { getOpenMcapSimPositions } from '@/utils/mcap-sim-track'
-import type { StrategyDomain } from '@/strategies/types'
+import type { StrategyChain, StrategyDomain } from '@/strategies/types'
 
 const CLOSE_REASON = 'strategy_deactivated' as const
 
 type PriceDomain = 'signals' | 'gmgn' | 'social'
 
-function walletForDomain(domain: PriceDomain): string {
-  if (domain === 'signals') return SIGNALS_SIM_WALLET
-  if (domain === 'gmgn') return GMGN_SIM_WALLET
-  return SOCIAL_SIM_WALLET
+function walletForDomain(domain: PriceDomain, chain: StrategyChain): string {
+  const base =
+    domain === 'signals' ? SIGNALS_SIM_WALLET : domain === 'gmgn' ? GMGN_SIM_WALLET : SOCIAL_SIM_WALLET
+  return simWalletForChain(base, chain)
 }
 
 async function recordPriceDomainOutcome(params: {
@@ -65,20 +66,21 @@ async function recordPriceDomainOutcome(params: {
 /** Mark-close a price-based strategy sim (signals / gmgn / social). */
 export async function closePriceStrategySimPosition(params: {
   domain: PriceDomain
+  chain: StrategyChain
   strategyId: string
   mintAddress: string
   symbol: string
   entryAt: string | null
   entryFeatures: Record<string, unknown>
 }): Promise<number> {
-  const wallet = walletForDomain(params.domain)
+  const wallet = walletForDomain(params.domain, params.chain)
   const records = await fetchTradingRecordsForWallet(wallet)
   const cycle = computeOpenSimCycle(records, params.mintAddress)
   if (!cycle) return 0
 
-  const prices = await getOpenPositionPrices([params.mintAddress])
+  const prices = await getOpenPositionPrices([params.mintAddress], params.chain)
   const sellPriceUsd = prices[params.mintAddress] || cycle.weightedBuyPriceUsd
-  const solPrice = await getSolPriceUSD()
+  const solPrice = await getNativeUsd(params.chain)
   const remaining = cycle.remainingTokenAmount
   const solReceived =
     sellPriceUsd && solPrice > 0
@@ -155,10 +157,12 @@ export async function closePriceStrategySimPosition(params: {
 /** Mark-close mcap tracker sim opens for a strategy. */
 export async function closeMcapStrategySimPositions(
   strategyId: string,
+  chain: StrategyChain,
 ): Promise<{ closed: number; failed: Array<{ token: string; error: string }> }> {
   const failed: Array<{ token: string; error: string }> = []
   let closed = 0
-  const records = await fetchTradingRecordsForWallet(MCAP_TRACKER_SIM_WALLET)
+  const wallet = simWalletForChain(MCAP_TRACKER_SIM_WALLET, chain)
+  const records = await fetchTradingRecordsForWallet(wallet)
   const open = getOpenMcapSimPositions(records, strategyId)
 
   for (const pos of open) {
@@ -172,7 +176,7 @@ export async function closeMcapStrategySimPositions(
           ? snapshot.current_mcap
           : pos.entryMcap
       const pnlPct = computeMcapSimPnlPct(pos.entryMcap, exitMcap)
-      const solPrice = await getSolPriceUSD()
+      const solPrice = await getNativeUsd(chain)
       const sellPriceUsd = 0.000001
       const remaining = cycle.remainingTokenAmount
       const solReceived =
@@ -182,7 +186,7 @@ export async function closeMcapStrategySimPositions(
 
       await insertTradingRecord(
         buildTradingRecord({
-          walletAddress: MCAP_TRACKER_SIM_WALLET,
+          walletAddress: wallet,
           operationType: 'sell',
           is_simulation: true,
           simulation_type: 'strategy',

@@ -22,8 +22,9 @@ import {
   GMGN_SIM_WALLET,
   SIGNALS_SIM_WALLET,
   SOCIAL_SIM_WALLET,
+  simWalletForChain,
 } from '@/strategies/sim-wallets'
-import type { StrategyDomain } from '@/strategies/types'
+import type { StrategyChain, StrategyDomain } from '@/strategies/types'
 
 export type CloseOnDeactivateResult = {
   closed: number
@@ -158,15 +159,18 @@ async function closeTrendingOpens(
 async function closePriceDomainOpens(
   domain: 'signals' | 'gmgn' | 'social',
   strategyId: string,
+  chain: StrategyChain,
 ): Promise<CloseOnDeactivateResult> {
   const failed: Array<{ token: string; error: string }> = []
   let closed = 0
-  const wallet =
+  const wallet = simWalletForChain(
     domain === 'signals'
       ? SIGNALS_SIM_WALLET
       : domain === 'gmgn'
         ? GMGN_SIM_WALLET
-        : SOCIAL_SIM_WALLET
+        : SOCIAL_SIM_WALLET,
+    chain,
+  )
   const records = await fetchTradingRecordsForWallet(wallet)
   const open = getOpenStrategySimPositions(records, strategyId)
 
@@ -174,6 +178,7 @@ async function closePriceDomainOpens(
     try {
       await closePriceStrategySimPosition({
         domain,
+        chain,
         strategyId,
         mintAddress: pos.mintAddress,
         symbol: pos.symbol,
@@ -224,13 +229,16 @@ async function closeDlmmOpens(): Promise<CloseOnDeactivateResult> {
 export async function closeOpenPositionsForStrategy(params: {
   strategyId: string
   domain: StrategyDomain
+  /** Sim wallets and price sources are chain-scoped; RH paper lives in `*-rh` wallets. */
+  chain?: StrategyChain
 }): Promise<CloseOnDeactivateResult> {
   const { strategyId, domain } = params
+  const chain = params.chain ?? 'sol'
 
   if (domain === 'trending_bot') return closeTrendingOpens(strategyId)
-  if (domain === 'mcap_tracker') return closeMcapStrategySimPositions(strategyId)
+  if (domain === 'mcap_tracker') return closeMcapStrategySimPositions(strategyId, chain)
   if (domain === 'signals' || domain === 'gmgn' || domain === 'social') {
-    return closePriceDomainOpens(domain, strategyId)
+    return closePriceDomainOpens(domain, strategyId, chain)
   }
   if (domain === 'dlmm') return closeDlmmOpens()
 

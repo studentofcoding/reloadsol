@@ -82,7 +82,7 @@ Mcap milestones (tracking truth): `when_reach_80/120/200pct`, `when_drop_40/80pc
 
 | Head | Check (today) | Adjust (today) | Gap |
 |------|---------------|----------------|-----|
-| **ML1 Filter** | Shared [`attachMlEntryShadow`](../src/strategies/ml-entry-shadow.ts) on **mcap / signals / trending** opens (`ml_gate_*` + Pattern `ml_pattern_*`); Stage-1 displays Pattern shadow | Enforce can **skip** mcap sim open when `gate_ready` + `ML_GATE_MODE=enforce` | Enforce not on signals/trending; Pattern `pattern_ready: false`; Stage-1 never blocks; DLMM skips ONNX until mint+core features (`ml_skipped`) |
+| **ML1 Filter** | Shared [`attachMlEntryShadow`](../src/strategies/ml-entry-shadow.ts) on **mcap / signals / trending / gmgn** opens; **soft size** on mcap/signals/gmgn (`ml-soft-size.ts`) | Enforce can **skip** mcap sim open when `gate_ready` + `ML_GATE_MODE=enforce` | Enforce not on signals/trending/gmgn; Pattern `pattern_ready: false`; Stage-1 never blocks; DLMM skips ONNX until mint+core features (`ml_skipped`); social/trending have no soft size |
 | **ML2 Potential** | Same helper stamps `ml_potential_*` on opens; [`applyPotentialToExitParams`](../src/strategies/potential-exit-overlay.ts) + `ML_POTENTIAL_EXIT_MODE` | **shadow** (default): audit `ml_exit_*` + counterfactual log; **apply**: sim mcap/trending freeze `effective_exit` / sim TP-SL | Live TP/SL still registry; signals scoring exits not rewritten |
 | **ML3 DLMM bins** | Rules + [`reasoner.ts`](../src/utils/dlmm/reasoner.ts); fixed `bin_range_interval`; outcomes mint-keyed when resolvable (`token_address=mint`, `features.pool_address`) | Manual / rule bin width | No trained bin model yet |
 

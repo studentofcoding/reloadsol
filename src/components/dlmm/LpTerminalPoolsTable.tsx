@@ -23,14 +23,31 @@ type ProtoFilter = '' | 'univ3' | 'univ2' | 'univ4'
 
 type SortKey =
   | 'pair'
+  | 'score'
   | 'tvl'
   | 'vol'
   | 'fees'
   | 'apr'
-  | 'rewards'
+  | 'lps'
+  | 'churn'
+  | 'demand'
   | 'actions'
 
-const NUMERIC_KEYS = new Set<SortKey>(['tvl', 'vol', 'fees', 'apr'])
+const NUMERIC_KEYS = new Set<SortKey>([
+  'score',
+  'tvl',
+  'vol',
+  'fees',
+  'apr',
+  'lps',
+  'churn',
+  'demand',
+])
+
+function fmtNum(v: number | null, digits = 0): string {
+  if (v == null || !Number.isFinite(v)) return '—'
+  return v.toLocaleString(undefined, { maximumFractionDigits: digits })
+}
 
 type AddTarget =
   | {
@@ -116,7 +133,7 @@ export default function LpTerminalPoolsTable() {
   const deferredQ = useDeferredValue(q)
   const [proto, setProto] = useState<ProtoFilter>('')
   const [hideDust, setHideDust] = useState(true)
-  const [sortKey, setSortKey] = useState<SortKey>('vol')
+  const [sortKey, setSortKey] = useState<SortKey>('score')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
   const [expandedKey, setExpandedKey] = useState<string | null>(null)
   const [addTarget, setAddTarget] = useState<AddTarget | null>(null)
@@ -126,21 +143,36 @@ export default function LpTerminalPoolsTable() {
     pairLabel: string
   } | null>(null)
 
-  const { rows, count, totals, ready, isLoading, isFetching, error, refetch } =
-    useLpTerminalPools(true, {
-      q: deferredQ,
-      proto,
-      hideDust,
-      sort: 'vol',
-      limit: 100,
-    })
+  const {
+    rows,
+    count,
+    totals,
+    ready,
+    indexer,
+    isLoading,
+    isFetching,
+    error,
+    refetch,
+  } = useLpTerminalPools(true, {
+    q: deferredQ,
+    proto,
+    hideDust,
+    sort: 'fees',
+    limit: 100,
+  })
+
+  // Score only exists when the indexer is live; on fallback, score-sort degrades to fees.
+  const effectiveSortKey: SortKey =
+    sortKey === 'score' && !indexer ? 'fees' : sortKey
 
   const sortedRows = useMemo(() => {
     const list = [...rows]
     list.sort((a, b) => {
-      switch (sortKey) {
+      switch (effectiveSortKey) {
         case 'pair':
           return compareStr(a.pair, b.pair, sortDir)
+        case 'score':
+          return compareNum(a.score ?? 0, b.score ?? 0, sortDir)
         case 'tvl':
           return compareNum(a.tvlUsd, b.tvlUsd, sortDir)
         case 'vol':
@@ -149,8 +181,12 @@ export default function LpTerminalPoolsTable() {
           return compareNum(a.fees24hUsd, b.fees24hUsd, sortDir)
         case 'apr':
           return compareNum(a.feeAprPct, b.feeAprPct, sortDir)
-        case 'rewards':
-          return compareStr('—', '—', sortDir)
+        case 'lps':
+          return compareNum(a.lpCount ?? 0, b.lpCount ?? 0, sortDir)
+        case 'churn':
+          return compareNum(a.churn ?? 0, b.churn ?? 0, sortDir)
+        case 'demand':
+          return compareNum(a.demandUsd ?? 0, b.demandUsd ?? 0, sortDir)
         case 'actions':
           return compareStr(actionsLabel(a), actionsLabel(b), sortDir)
         default:
@@ -158,7 +194,22 @@ export default function LpTerminalPoolsTable() {
       }
     })
     return list
-  }, [rows, sortKey, sortDir])
+  }, [rows, effectiveSortKey, sortDir])
+
+  const indexerChip = useMemo(() => {
+    if (!indexer) {
+      return { cls: 'border-gray-700 text-gray-500', text: 'indexer offline · fallback' }
+    }
+    const lag = indexer.lag_s == null ? 'lag ?' : `lag ${Math.round(indexer.lag_s)}s`
+    const conf = `${Math.round(indexer.confidence * 100)}%`
+    if (indexer.no_trade) {
+      return { cls: 'border-red-700 text-red-300 bg-red-950/40', text: `${lag} · conf ${conf} · NO TRADE` }
+    }
+    if (indexer.confidence < 0.7) {
+      return { cls: 'border-amber-700 text-amber-300', text: `${lag} · conf ${conf}` }
+    }
+    return { cls: 'border-emerald-700 text-emerald-300', text: `${lag} · conf ${conf}` }
+  }, [indexer])
 
   const statusLine = useMemo(() => {
     const catalog =
@@ -212,6 +263,12 @@ export default function LpTerminalPoolsTable() {
           {chip('univ3', 'UNI V3', proto === 'univ3')}
           {chip('univ2', 'UNI V2', proto === 'univ2')}
           {chip('dust', hideDust ? 'HIDE <$1K' : 'SHOW DUST', hideDust)}
+          <span
+            title={indexer?.reasons.join(' · ') || 'robinhoodpools.lol /api/lp/status'}
+            className={`shrink-0 px-2 py-1 text-xs font-mono uppercase tracking-wide border ${indexerChip.cls}`}
+          >
+            {indexerChip.text}
+          </span>
         </div>
         <button
           type="button"
@@ -232,7 +289,7 @@ export default function LpTerminalPoolsTable() {
       </p>
 
       {isLoading ? (
-        <p className="text-gray-400 text-sm">Loading pools from LP Terminal indexer…</p>
+        <p className="text-gray-400 text-sm">Loading pools from Robinhood Pools indexer…</p>
       ) : error ? (
         <p className="text-red-400 text-sm">
           {error instanceof Error ? error.message : 'Failed to load pools'}
@@ -249,6 +306,14 @@ export default function LpTerminalPoolsTable() {
                   col="pair"
                   sortKey={sortKey}
                   sortDir={sortDir}
+                  onSort={onSort}
+                />
+                <SortTh
+                  label="Score"
+                  col="score"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  align="right"
                   onSort={onSort}
                 />
                 <SortTh
@@ -284,8 +349,24 @@ export default function LpTerminalPoolsTable() {
                   onSort={onSort}
                 />
                 <SortTh
-                  label="Rewards"
-                  col="rewards"
+                  label="LPs"
+                  col="lps"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  align="right"
+                  onSort={onSort}
+                />
+                <SortTh
+                  label="Churn"
+                  col="churn"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  align="right"
+                  onSort={onSort}
+                />
+                <SortTh
+                  label="Demand"
+                  col="demand"
                   sortKey={sortKey}
                   sortDir={sortDir}
                   align="right"
@@ -324,10 +405,34 @@ export default function LpTerminalPoolsTable() {
                           </div>
                           <div className="text-xs text-gray-600">
                             {row.protoLabel.toLowerCase()} · {row.feeTier}
+                            {row.risks.length > 0 ? (
+                              <span
+                                className="ml-1 text-amber-500/80"
+                                title={row.risks.join('\n')}
+                              >
+                                ⚠ {row.risks.length}
+                              </span>
+                            ) : null}
                           </div>
                         </button>
                       </td>
-                      <td className="px-3 py-2.5 text-right tabular-nums text-gray-200">
+                      <td
+                        className={`px-3 py-2.5 text-right tabular-nums ${
+                          (row.score ?? 0) >= 40
+                            ? 'text-emerald-300'
+                            : (row.score ?? 0) > 0
+                              ? 'text-gray-200'
+                              : 'text-gray-600'
+                        }`}
+                        title={row.scoreReasons.join(' · ') || undefined}
+                      >
+                        {row.score == null ? '—' : fmtNum(row.score, 1)}
+                      </td>
+                      <td
+                        className="px-3 py-2.5 text-right tabular-nums text-gray-200"
+                        title={row.tvlApprox ? 'TVL unverified (indexer null / approx)' : undefined}
+                      >
+                        {row.tvlApprox ? '~' : ''}
                         {formatUsd(row.tvlUsd)}
                       </td>
                       <td className="px-3 py-2.5 text-right tabular-nums">
@@ -339,7 +444,23 @@ export default function LpTerminalPoolsTable() {
                       <td className="px-3 py-2.5 text-right tabular-nums">
                         {formatApr(row.feeAprPct)}
                       </td>
-                      <td className="px-3 py-2.5 text-right text-gray-600">—</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-gray-300">
+                        {fmtNum(row.lpCount)}
+                      </td>
+                      <td
+                        className={`px-3 py-2.5 text-right tabular-nums ${
+                          (row.churn ?? 0) > 10 ? 'text-amber-400' : 'text-gray-300'
+                        }`}
+                        title="(adds + removes) / LPs, 24h"
+                      >
+                        {fmtNum(row.churn, 1)}
+                      </td>
+                      <td
+                        className="px-3 py-2.5 text-right tabular-nums text-sky-300/90"
+                        title="Trenches organic cash-leg buys, 24h"
+                      >
+                        {row.demandUsd == null ? '—' : formatUsd(row.demandUsd)}
+                      </td>
                       <td className="px-3 py-2.5 text-right whitespace-nowrap space-x-1">
                         {tokenAddress ? (
                           <button
@@ -394,7 +515,7 @@ export default function LpTerminalPoolsTable() {
                     </tr>
                     {open && tokenAddress ? (
                       <tr className="border-b border-gray-900 bg-gray-950/40">
-                        <td colSpan={7} className="px-3 py-3">
+                        <td colSpan={10} className="px-3 py-3">
                           <div className="relative h-[280px] w-full">
                             <GmgnChartEmbed
                               tokenAddress={tokenAddress}

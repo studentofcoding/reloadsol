@@ -173,11 +173,14 @@ export async function saveCandidates(candidates: DlmmScreenCandidate[]): Promise
     mcap: c.mcap,
     score: c.score,
     screened_at: c.screened_at,
+    chain: c.chain ?? 'sol',
+    confidence: c.confidence ?? null,
+    features: c.features ? JSON.stringify(c.features) : null,
   }));
   try {
     const values: unknown[] = [];
     const placeholders = rows.map((row, i) => {
-      const base = i * 11;
+      const base = i * 14;
       values.push(
         row.pool_address,
         row.pool_name,
@@ -190,13 +193,17 @@ export async function saveCandidates(candidates: DlmmScreenCandidate[]): Promise
         row.mcap,
         row.score,
         row.screened_at,
+        row.chain,
+        row.confidence,
+        row.features,
       );
-      return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11})`;
+      return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11}, $${base + 12}, $${base + 13}, $${base + 14}::jsonb)`;
     });
     await query(
       `INSERT INTO dlmm_candidates (
          pool_address, pool_name, token_x_symbol, token_y_symbol, tvl,
-         fee_tvl_ratio_24h, organic_score, holders, mcap, score, screened_at
+         fee_tvl_ratio_24h, organic_score, holders, mcap, score, screened_at,
+         chain, confidence, features
        ) VALUES ${placeholders.join(', ')}`,
       values,
     );
@@ -206,15 +213,25 @@ export async function saveCandidates(candidates: DlmmScreenCandidate[]): Promise
   }
 }
 
-export async function getLatestCandidates(limit = 20): Promise<DlmmScreenCandidate[]> {
+export async function getLatestCandidates(
+  limit = 20,
+  chain: string = 'sol',
+): Promise<DlmmScreenCandidate[]> {
   try {
     const { rows } = await query<Record<string, unknown>>(
       `SELECT * FROM dlmm_candidates
+       WHERE chain = $2
        ORDER BY screened_at DESC
        LIMIT $1`,
-      [limit],
+      [limit, chain],
     );
     return rows.map((row) => ({
+      chain: String(row.chain ?? chain),
+      confidence: row.confidence != null ? Number(row.confidence) : null,
+      features:
+        row.features && typeof row.features === 'object'
+          ? (row.features as Record<string, unknown>)
+          : null,
       pool_address: String(row.pool_address),
       pool_name: row.pool_name ? String(row.pool_name) : '',
       token_x_symbol: row.token_x_symbol ? String(row.token_x_symbol) : '',
@@ -337,20 +354,28 @@ function mapPosition(row: Record<string, unknown>): DlmmPosition {
     created_at: String(row.created_at),
     updated_at: String(row.updated_at),
     closed_at: row.closed_at ? String(row.closed_at) : null,
+    chain: String(row.chain ?? 'sol'),
+    entry_price: row.entry_price != null ? Number(row.entry_price) : null,
+    range_pct: row.range_pct != null ? Number(row.range_pct) : null,
   };
 }
 
-export async function getPositions(status?: string): Promise<DlmmPosition[]> {
+/** Defaults to Meteora ('sol') so existing callers never see RH paper rows. */
+export async function getPositions(
+  status?: string,
+  chain: string = 'sol',
+): Promise<DlmmPosition[]> {
   try {
     const { rows } = status
       ? await query<Record<string, unknown>>(
           `SELECT * FROM dlmm_positions
-           WHERE status = $1
+           WHERE status = $1 AND chain = $2
            ORDER BY updated_at DESC`,
-          [status],
+          [status, chain],
         )
       : await query<Record<string, unknown>>(
-          `SELECT * FROM dlmm_positions ORDER BY updated_at DESC`,
+          `SELECT * FROM dlmm_positions WHERE chain = $1 ORDER BY updated_at DESC`,
+          [chain],
         );
     return rows.map(mapPosition);
   } catch (error) {
@@ -381,8 +406,8 @@ export async function insertPosition(
          pool_address, pool_name, position_pubkey, token_x_symbol, token_y_symbol,
          amount_sol, min_bin_id, max_bin_id, entry_value_usd, current_value_usd,
          fees_earned_usd, pnl_pct, status, is_muted, take_profit_pct, stop_loss_pct,
-         oor_timeout_min, tx_signature, updated_at
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+         oor_timeout_min, tx_signature, updated_at, chain, entry_price, range_pct
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
        RETURNING *`,
       [
         row.pool_address,
@@ -404,6 +429,9 @@ export async function insertPosition(
         row.oor_timeout_min,
         row.tx_signature,
         new Date().toISOString(),
+        row.chain ?? 'sol',
+        row.entry_price ?? null,
+        row.range_pct ?? null,
       ],
     );
     if (!inserted) throw new Error('Insert failed');

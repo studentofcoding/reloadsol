@@ -2,7 +2,7 @@
 
 Single-page overview: what the system does, how dual-chain trading + algo + social + ML fit together, and what to do next.
 
-Related deep dives: [architecture.md](./architecture.md), [algo_overview.md](./algo_overview.md), [ML_GATE_PLAN.md](./ML_GATE_PLAN.md), [OPERATOR_STATE.md](./OPERATOR_STATE.md), [recommendations.md](../recommendations.md) (2026-07 infra audit, file:line evidence).
+Related deep dives: [DECISION_MACHINE.md](./DECISION_MACHINE.md) (Solana + RH algo current state), [architecture.md](./architecture.md), [algo_overview.md](./algo_overview.md), [ML_GATE_PLAN.md](./ML_GATE_PLAN.md), [OPERATOR_STATE.md](./OPERATOR_STATE.md), [recommendations.md](../recommendations.md) (2026-07 infra audit, file:line evidence).
 
 ---
 
@@ -21,7 +21,7 @@ Combined with:
 
 **North star:** strict checker over brilliant maker. Primary thesis is **`mcap_enter_at_80`** paper sim at the 80% mcap milestone; **Pattern ML** (24h cohort labels) is the primary ML focus.
 
-**Data layer:** Docker Postgres **`reloadsol_db`** only. Supabase is **cut off**. Schema source: [`db/init/`](../db/init/) (`02-schema.sql` + migrations `04`–`25`; **25** adds RH CLMM `pool_key`/`fee`/`tick_spacing`). [`supabase/schema.sql`](../supabase/schema.sql) is a legacy mirror.
+**Data layer:** Docker Postgres **`reloadsol_db`** only. Supabase is **cut off**. Schema source: [`db/init/`](../db/init/) (`02-schema.sql` + migrations `04`–`29`; **25** adds RH CLMM `pool_key`/`fee`/`tick_spacing`; **29** chain-scopes DLMM candidates/positions + FOMO trader/closed tables). [`supabase/schema.sql`](../supabase/schema.sql) is a legacy mirror.
 
 Related: [GMGN_STRATEGY.md](./GMGN_STRATEGY.md) (Radar live thread + comeback).
 
@@ -56,7 +56,7 @@ flowchart TB
 | Service | Role |
 |---------|------|
 | **web** | Next.js App Router, ~50+ API routes, strategy admin, sim-track, ONNX shadow scorers |
-| **cron** | Go worker scheduler (27 workers: trending, sim-track, social rollup, DLMM, **`rh_clmm_manage`**, etc.) |
+| **cron** | Go worker scheduler (trending, sim-track, social rollup, DLMM, **`rh_lp_screen`**, **`strategy_search`**, **`fomo_ws`**, **`rh_clmm_manage`**, etc.) |
 | **nginx** | Public HTTP :80 → web (prod hides web :3000 from host) |
 | **postgres + pgbouncer** | All app data; init from `db/init/*.sql` |
 | **redis** | Caches (RH CLMM pool-state 15s TTL, live tiers), job locks, alert throttles |

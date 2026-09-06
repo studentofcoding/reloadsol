@@ -51,4 +51,17 @@ describe('fomoFillToSocialEvent', () => {
       fomoFillToSocialEvent(fill, new Set([sample.wallet.toLowerCase()])),
     ).toBeNull()
   })
+
+  it('drops airdropped / "not a real buy" flagged fills', () => {
+    expect(
+      fomoFillToSocialEvent({ ...fill, flags: ['airdropped'] }, new Set()),
+    ).toBeNull()
+    expect(
+      fomoFillToSocialEvent(
+        { ...fill, flags: [{ kind: 'warn', text: 'Not a real buy' }] },
+        new Set(),
+      ),
+    ).toBeNull()
+    expect(fomoFillToSocialEvent({ ...fill, flags: ['new_position'] }, new Set())).not.toBeNull()
+  })
 })

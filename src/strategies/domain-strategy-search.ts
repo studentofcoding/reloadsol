@@ -4,6 +4,7 @@
  */
 
 import { isoWeekKey } from '@/strategies/strategy-review'
+import { computeStrategyFitness } from '@/strategies/strategy-fitness'
 import type { StrategyDomain, StrategyOutcomeRow } from '@/strategies/types'
 import {
   type ConfigScore,
@@ -91,6 +92,7 @@ function scoreHistoricalFiltered(
     totalPnlPct,
     avgPnlPct: trades.length ? totalPnlPct / trades.length : 0,
     maxLossStreakWeeks: maxStreak,
+    fitness: computeStrategyFitness(trades.map((t) => ({ pnl_pct: t.pnlPct, exit_at: t.exitAt }))),
   }
 }
 

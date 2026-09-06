@@ -23,6 +23,7 @@ import { updateAgentConfig } from '@/utils/dlmm/db'
 import { mergeStrategyConfigPatch } from '@/strategies/merge-strategy-config-patch'
 import type {
   ExecutionMode,
+  StrategyChain,
   StrategyDomain,
   TrendingBotStrategyOverride,
   SignalsStrategyOverride,
@@ -67,6 +68,7 @@ function resolveStrategyBase(id: string) {
 async function closeIfDeactivating(params: {
   strategyId: string
   domain: StrategyDomain
+  chain?: StrategyChain
   wasActive: boolean
   nextActive: boolean | undefined
 }): Promise<CloseOnDeactivateResult | undefined> {
@@ -75,6 +77,7 @@ async function closeIfDeactivating(params: {
     return await closeOpenPositionsForStrategy({
       strategyId: params.strategyId,
       domain: params.domain,
+      chain: params.chain,
     })
   } catch (err) {
     console.error('[strategies/patch] close-on-deactivate failed:', err)
@@ -177,6 +180,7 @@ export async function PATCH(
       const closedPositions = await closeIfDeactivating({
         strategyId: id,
         domain: 'signals',
+        chain: merged.chain,
         wasActive,
         nextActive: body.is_active,
       })
@@ -213,6 +217,7 @@ export async function PATCH(
       const closedPositions = await closeIfDeactivating({
         strategyId: id,
         domain: 'mcap_tracker',
+        chain: merged.chain,
         wasActive,
         nextActive: body.is_active,
       })
@@ -249,6 +254,7 @@ export async function PATCH(
       const closedPositions = await closeIfDeactivating({
         strategyId: id,
         domain: 'gmgn',
+        chain: merged.chain,
         wasActive,
         nextActive: body.is_active,
       })
@@ -285,6 +291,7 @@ export async function PATCH(
       const closedPositions = await closeIfDeactivating({
         strategyId: id,
         domain: 'social',
+        chain: merged.chain,
         wasActive,
         nextActive: body.is_active,
       })

@@ -21,13 +21,18 @@ export function rollupToSocialSnapshot(
     smart_wallet_buy_count_1h: number
     smart_wallet_buy_sol_1h: number
     top_source: string | null
+    fomo_buy_count_1h?: number | null
+    fomo_edge_1h?: number | string | null
   } | null,
   atTime: Date = new Date(),
 ): SocialSnapshot {
   if (!rollup) return { ...EMPTY_SOCIAL_SNAPSHOT }
 
   const buyCount = Number(rollup.smart_wallet_buy_count_1h) || 0
+  const fomoEdge = rollup.fomo_edge_1h == null ? null : Number(rollup.fomo_edge_1h)
   return {
+    fomo_buy_count_1h: Number(rollup.fomo_buy_count_1h) || 0,
+    fomo_edge_1h: fomoEdge != null && Number.isFinite(fomoEdge) ? fomoEdge : null,
     telegram_mention_count_5m: Number(rollup.mention_count_5m) || 0,
     telegram_mention_count_30m: Number(rollup.mention_count_30m) || 0,
     telegram_unique_channels_30m: Number(rollup.unique_channel_count_30m) || 0,

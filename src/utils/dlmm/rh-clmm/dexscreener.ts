@@ -31,6 +31,34 @@ export async function fetchTokenPairs(tokenAddress: string): Promise<DexPair[]> 
   return data.pairs ?? [];
 }
 
+/**
+ * Liquidity USD by pool address / v4 poolId (lower-cased keys).
+ * DexScreener `pairs/{chain}/{a,b,...}` takes up to 30 ids per call; one call per chunk.
+ */
+export async function fetchPairLiquidityUsd(
+  chainId: SupportedChainId,
+  pairAddresses: readonly string[],
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const slug = CHAINS[chainId].dexscreenerSlug;
+  const ids = [...new Set(pairAddresses.map((a) => a.toLowerCase()))];
+  for (let i = 0; i < ids.length; i += 30) {
+    const chunk = ids.slice(i, i + 30);
+    try {
+      const res = await fetch(`https://api.dexscreener.com/latest/dex/pairs/${slug}/${chunk.join(',')}`);
+      if (!res.ok) continue;
+      const data = (await res.json()) as { pairs?: DexPair[] | null };
+      for (const p of data.pairs ?? []) {
+        const usd = p.liquidity?.usd;
+        if (p.pairAddress && typeof usd === 'number' && usd > 0) out.set(p.pairAddress.toLowerCase(), usd);
+      }
+    } catch (err) {
+      console.warn('[dexscreener] pair liquidity chunk failed:', err instanceof Error ? err.message : err);
+    }
+  }
+  return out;
+}
+
 /** Uniswap v3 pairs on our chain, sorted by TVL desc */
 export async function fetchUniswapV3PoolsForToken(
   chainId: SupportedChainId,

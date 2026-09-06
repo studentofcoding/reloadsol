@@ -1,5 +1,15 @@
 import type { SocialIngestEvent } from '@/strategies/social/types'
 
+/** Flags that mark a fill as non-organic (site emits e.g. "airdropped" / "not a real buy"). */
+export function isSyntheticFillFlags(flags: unknown): boolean {
+  const list = Array.isArray(flags) ? flags : flags == null ? [] : [flags]
+  return list.some((f) => {
+    const s = typeof f === 'string' ? f : typeof f === 'object' && f ? JSON.stringify(f) : ''
+    const l = s.toLowerCase()
+    return l.includes('airdrop') || l.includes('not a real') || l.includes('synthetic')
+  })
+}
+
 export const FOMO_SOCIAL_SOURCE = 'fomo_family'
 
 export type NormalizedFomoFill = {
@@ -124,12 +134,16 @@ export function maxFillsPerBatch(): number {
   return Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), 500) : 100
 }
 
-/** Cash-leg buys only. Skip wallets already on GMGN/digger/tracked rosters. */
+/**
+ * Cash-leg, unflagged buys only (airdrops are not demand). Skip wallets already
+ * on GMGN/digger/tracked rosters.
+ */
 export function fomoFillToSocialEvent(
   fill: NormalizedFomoFill,
   skipWallets: Set<string>,
 ): SocialIngestEvent | null {
   if (fill.side !== 'buy' || fill.priced !== 'cash_leg') return null
+  if (isSyntheticFillFlags(fill.flags)) return null
   const wallet = fill.wallet_address.toLowerCase()
   if (skipWallets.has(wallet)) return null
   return {

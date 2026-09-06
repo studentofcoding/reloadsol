@@ -24,8 +24,10 @@ type fomoHello struct {
 }
 
 type fomoIngestBody struct {
-	Fills []json.RawMessage `json:"fills"`
-	Hello json.RawMessage   `json:"hello,omitempty"`
+	Fills   []json.RawMessage `json:"fills"`
+	Hello   json.RawMessage   `json:"hello,omitempty"`
+	Traders []json.RawMessage `json:"traders,omitempty"`
+	Closed  []json.RawMessage `json:"closed,omitempty"`
 }
 
 type fomoIngestResp struct {
@@ -181,7 +183,7 @@ func parseTapeFills(body []byte) []json.RawMessage {
 	if err := json.Unmarshal(body, &wrap); err != nil {
 		return nil
 	}
-	for _, key := range []string{"data", "fills", "rows"} {
+	for _, key := range []string{"data", "fills", "rows", "traders", "closed", "items"} {
 		raw, ok := wrap[key]
 		if !ok {
 			continue
@@ -232,6 +234,64 @@ func (cs *CronService) fomoGapFill(lastID int64) (int64, error) {
 		return posted, nil
 	}
 	return maxID, nil
+}
+
+// fomoSnapshotPoll mirrors /api/traders and /api/closed (wallet edge + realized
+// outcome labels) into /api/fomo/ingest every FOMO_SNAPSHOT_POLL_S (default 90s).
+func (cs *CronService) fomoSnapshotPoll(done <-chan struct{}) {
+	every := time.Duration(envInt("FOMO_SNAPSHOT_POLL_S", 90)) * time.Second
+	if every < 15*time.Second {
+		every = 90 * time.Second
+	}
+	post := func() {
+		base := cs.fomoRestBase()
+		body := fomoIngestBody{}
+		if b, err := cs.fomoHTTPGet(base+"/api/traders?window=24h&stocks=false", 20*time.Second); err == nil {
+			body.Traders = parseTapeFills(b)
+		} else {
+			cs.logger.Info(fmt.Sprintf("fomo_ws traders poll: %v", err))
+		}
+		if b, err := cs.fomoHTTPGet(base+"/api/closed?window=24h&stocks=false&limit=80", 20*time.Second); err == nil {
+			body.Closed = parseTapeFills(b)
+		} else {
+			cs.logger.Info(fmt.Sprintf("fomo_ws closed poll: %v", err))
+		}
+		if len(body.Traders) == 0 && len(body.Closed) == 0 {
+			return
+		}
+		payload, err := json.Marshal(body)
+		if err != nil {
+			return
+		}
+		req, err := http.NewRequest("POST", cs.fomoIngestURL(), bytes.NewReader(payload))
+		if err != nil {
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", "reloadsol-cron-service/1.0")
+		if auth := cs.fomoAuthHeader(); auth != "" {
+			req.Header.Set("Authorization", auth)
+		}
+		client := &http.Client{Timeout: 30 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			cs.logger.Info(fmt.Sprintf("fomo_ws snapshot ingest: %v", err))
+			return
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}
+	post()
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			post()
+		}
+	}
 }
 
 func (cs *CronService) fomoHealthLastID() int64 {
@@ -301,6 +361,7 @@ func (cs *CronService) runFomoWsSession() error {
 		}
 	}()
 	defer close(done)
+	go cs.fomoSnapshotPoll(done)
 
 	cs.logger.Info("fomo_ws: connected")
 	cs.workers.Success("fomo_ws")

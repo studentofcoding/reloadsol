@@ -4,6 +4,7 @@
  */
 
 import { isoWeekKey } from '@/strategies/strategy-review'
+import { computeStrategyFitness, DEFAULT_FITNESS, type StrategyFitness } from '@/strategies/strategy-fitness'
 import type { StrategyOutcomeRow } from '@/strategies/types'
 import { computeMcapSimPnlPct } from '@/utils/mcap-tracker'
 
@@ -44,6 +45,8 @@ export type ConfigScore = {
   totalPnlPct: number
   avgPnlPct: number
   maxLossStreakWeeks: number
+  /** Shared winner definition over the replayed trades (window = all replayed trades). */
+  fitness: StrategyFitness
 }
 
 type PathPoint = { at: string; mcap: number }
@@ -235,6 +238,10 @@ export function scoreReplayTrades(
     totalPnlPct: pnls.reduce((a, b) => a + b, 0),
     avgPnlPct: trades.length ? pnls.reduce((a, b) => a + b, 0) / trades.length : 0,
     maxLossStreakWeeks: maxStreak,
+    fitness: computeStrategyFitness(
+      trades.map((t) => ({ pnl_pct: t.pnlPct, exit_at: t.exitAt })),
+      { windowDays: Number.POSITIVE_INFINITY },
+    ),
   }
 }
 
@@ -393,7 +400,7 @@ export function walkForwardSearch(params: {
   minTradesHoldout?: number
 }): WalkForwardResult {
   const holdoutWeekCount = params.holdoutWeeks ?? 4
-  const minTrades = params.minTradesHoldout ?? 5
+  const minTrades = params.minTradesHoldout ?? DEFAULT_FITNESS.minCloses
   const { train, holdout, weeks } = splitByWeeks(params.rows, holdoutWeekCount)
   const holdoutWeeks = weeks.slice(-holdoutWeekCount)
   const trainWeeks = weeks.slice(0, Math.max(0, weeks.length - holdoutWeekCount))
@@ -416,7 +423,12 @@ export function walkForwardSearch(params: {
       holdout: holdoutScore,
     })
   }
-  ranked.sort((a, b) => b.holdout.totalPnlPct - a.holdout.totalPnlPct)
+  // Winners (pass fitness) first, then by holdout expectancy per trade.
+  ranked.sort(
+    (a, b) =>
+      Number(b.holdout.fitness.passes) - Number(a.holdout.fitness.passes) ||
+      b.holdout.avgPnlPct - a.holdout.avgPnlPct,
+  )
 
   // Combined baseline = better of the two named strategies when both exist
   const baselineCandidates = [baselines.mcap_enter_first_seen, baselines.mcap_enter_at_80].filter(
@@ -429,10 +441,12 @@ export function walkForwardSearch(params: {
           a.totalPnlPct >= b.totalPnlPct ? a : b,
         )
 
+  // "Beats baseline" = passes the shared fitness gate AND higher expectancy than the baseline.
   const beatBaseline = ranked.filter((r) => {
+    if (!r.holdout.fitness.passes) return false
     const matched = baselines[baselineIdForConfig(r.config) as keyof typeof baselines]
-    if (matched) return r.holdout.totalPnlPct > matched.totalPnlPct
-    if (baselineHoldout) return r.holdout.totalPnlPct > baselineHoldout.totalPnlPct
+    if (matched) return r.holdout.avgPnlPct > matched.avgPnlPct
+    if (baselineHoldout) return r.holdout.avgPnlPct > baselineHoldout.avgPnlPct
     return true
   })
 

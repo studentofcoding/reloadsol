@@ -58,6 +58,12 @@ export interface DlmmScreenCandidate {
   mcap: number;
   score: number;
   screened_at: string;
+  /** 'sol' (Meteora, default) | 'robinhood' (Pools indexer). */
+  chain?: string;
+  /** RH only: indexer confidence 0..1 that multiplied the score. */
+  confidence?: number | null;
+  /** RH only: scoring features (fee efficiency, churn, demand, …). */
+  features?: Record<string, unknown> | null;
 }
 
 export type DlmmPotentialSource =
@@ -134,6 +140,11 @@ export interface DlmmPosition {
   created_at: string;
   updated_at: string;
   closed_at: string | null;
+  /** 'sol' (Meteora, default) | 'robinhood' (paper LP). */
+  chain?: string;
+  /** RH paper LP: entry mark and symmetric range width (%) for in-range / IL. */
+  entry_price?: number | null;
+  range_pct?: number | null;
 }
 
 export interface DlmmLesson {

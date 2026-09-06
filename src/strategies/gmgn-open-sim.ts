@@ -1,4 +1,6 @@
 import { buildFullEntryFeatureSnapshot } from '@/strategies/resolve-entry-snapshot'
+import { attachMlEntryShadow } from '@/strategies/ml-entry-shadow'
+import { softMlSize, stampMlSize } from '@/strategies/ml-soft-size'
 import type { GmgnStrategy } from '@/strategies/types'
 import { getNativeUsd } from '@/utils/native-usd'
 import { simWalletForChain } from '@/strategies/sim-wallets'
@@ -31,13 +33,11 @@ export async function openGmgnSimPosition(params: {
 }): Promise<void> {
   const chain = params.strategy.chain ?? 'sol'
   // solAmount / solPrice are native-token denominated; that's ETH on robinhood.
-  const solAmount =
+  const baseSol =
     params.strategy.config.execution.simBuyNative ??
     params.strategy.config.execution.simBuySol
   const solPrice = await getNativeUsd(chain)
   const priceUsd = params.entryPriceUsd > 0 ? params.entryPriceUsd : 0.000001
-  const tokenAmount =
-    priceUsd > 0 && solPrice > 0 ? (solAmount * solPrice) / priceUsd : solAmount * 1_000_000
 
   const entryAt = new Date().toISOString()
   const entryMcap = readFiniteNumber(params.entryFeatures.gmgn_market_cap_usd)
@@ -55,6 +55,15 @@ export async function openGmgnSimPosition(params: {
     },
     params.entryFeatures,
   )
+  const ml = await attachMlEntryShadow(fullFeatures, { enforce: false })
+  const sized = softMlSize(baseSol, { pBad: ml.pBad })
+  const solAmount = sized.sol
+  const stampedFeatures = stampMlSize(ml.features, sized, {
+    pBad: ml.pBad,
+    pWinner: ml.pWinner,
+  })
+  const tokenAmount =
+    priceUsd > 0 && solPrice > 0 ? (solAmount * solPrice) / priceUsd : solAmount * 1_000_000
 
   const record = buildTradingRecord({
     walletAddress: simWalletForChain(GMGN_SIM_WALLET, chain),
@@ -85,7 +94,7 @@ export async function openGmgnSimPosition(params: {
       entry_at: entryAt,
       entry_price_usd: priceUsd,
       entry_features: {
-        ...fullFeatures,
+        ...stampedFeatures,
         entry_at: entryAt,
         initial_price_usd: priceUsd,
         token_symbol: params.symbol,
@@ -104,6 +113,6 @@ export async function openGmgnSimPosition(params: {
     marketCap: entryMcap,
     isSimulated: true,
     topHoldersPct,
-    features: fullFeatures,
+    features: stampedFeatures,
   })
 }

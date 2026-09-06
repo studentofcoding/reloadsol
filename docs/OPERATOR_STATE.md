@@ -224,10 +224,19 @@ curl -s "$API_BASE_URL/api/strategies/ml/dataset-stats?domain=mcap_tracker&key=$
 - DLMM pause is separate (Telegram `/pause`) — not unified yet.
 - Sim workers are **not** halted by real-trading circuit breaker.
 
+Keep `ML_GATE_MODE` / `ML_PATTERN_MODE` at **shadow**. Soft size (`SOL_ML_SIZE_FLOOR`) is not enforce. See [DECISION_MACHINE.md](./DECISION_MACHINE.md).
+
+## Decision machine (Sep 2026)
+
+Paper/sim hardening on both chains. **RH has no live strategy cron** (Kyber UI-only).
+
+After deploy: apply `db/init/29-rh-lp-candidates.sql`; rebuild **web + cron** (`rh_lp_screen`, `strategy_search`, `fomo_ws`). Set `STRATEGY_SEARCH_INTERVAL=0` to disable 6h search. Do not promote RH strategies to live expecting an executor.
+
 ## Changelog
 
 | Date | Change |
 |------|--------|
+| 2026-09-07 | RH LP indexer + paper `rh_lp_screen`; Trenches demand; chain-aware prices/deactivate/job locks; Solana DLMM confidence + last-good; soft ML size; 6h `strategy_search` auto-copy onto canonical **sim** |
 | 2026-07-13 | Removed WATCH mcap ≤30k rug rule (false positives on rising microcaps); keep dump ≤-80% + comeback drawdown |
 | 2026-07-13 | Radar live Telegram thread + configurable comeback; `radar_alert_threads`; strategy PATCH preserves/merges config; potential retrain F1 0.33 (not ready) |
 | 2026-07-11 | GMGN strategy domain: smart money/KOL discovery via gmgn-cli, paper sim `gmgn-sim`, cron `gmgn_sim_track`; see [GMGN_STRATEGY.md](./GMGN_STRATEGY.md) |

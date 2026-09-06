@@ -20,6 +20,29 @@ export type LpTerminalPoolRaw = {
   vol24hUsd?: number | null
   txns24h?: number | null
   tvlApprox?: boolean
+  /** Indexer-reported 24h gross fees (USDG basis); preferred over vol × fee. */
+  fees24hUsd?: number | null
+  swaps24h?: number | null
+  adds24h?: number | null
+  removes24h?: number | null
+  lpCount?: number | null
+  priceChangePct?: number | null
+  activeTvlUsd?: number | null
+  /** Indexer spot price (token1 per token0, USDG basis) — paper-LP mark. */
+  priceQuote?: number | null
+  risks?: string[]
+  /** scoreRhPool() output attached by the route when the indexer is live. */
+  score?: number | null
+  scoreReasons?: string[]
+  /** Trenches organic buy USD (24h) for the non-quote leg. */
+  demandUsd?: number | null
+}
+
+export type LpIndexerHealth = {
+  lag_s: number | null
+  confidence: number
+  no_trade: boolean
+  reasons: string[]
 }
 
 export type LpTerminalPoolsResponse = {
@@ -157,6 +180,23 @@ export type LpTerminalPoolRow = {
   feeAprPct: number | null
   token0: string
   token1: string
+  lpCount: number | null
+  /** (adds + removes) / max(lpCount, 1); null when the indexer gave no counts. */
+  churn: number | null
+  priceChangePct: number | null
+  risks: string[]
+  score: number | null
+  scoreReasons: string[]
+  demandUsd: number | null
+  tvlApprox: boolean
+}
+
+export function lpChurn(
+  pool: Pick<LpTerminalPoolRaw, 'adds24h' | 'removes24h' | 'lpCount'>,
+): number | null {
+  if (pool.adds24h == null && pool.removes24h == null) return null
+  const moves = (pool.adds24h ?? 0) + (pool.removes24h ?? 0)
+  return moves / Math.max(pool.lpCount ?? 0, 1)
 }
 
 export function toPoolRows(
@@ -164,7 +204,10 @@ export function toPoolRows(
   tokens: Record<string, LpTerminalTokenMeta> | undefined,
 ): LpTerminalPoolRow[] {
   return pools.map((pool) => {
-    const fees = fees24hUsd(pool.vol24hUsd, pool.feePpm)
+    const fees =
+      typeof pool.fees24hUsd === 'number' && Number.isFinite(pool.fees24hUsd)
+        ? pool.fees24hUsd
+        : fees24hUsd(pool.vol24hUsd, pool.feePpm)
     return {
       address: pool.address,
       proto: pool.proto,
@@ -178,6 +221,14 @@ export function toPoolRows(
       feeAprPct: feeAprPct(fees, pool.tvlUsd),
       token0: pool.token0,
       token1: pool.token1,
+      lpCount: pool.lpCount ?? null,
+      churn: lpChurn(pool),
+      priceChangePct: pool.priceChangePct ?? null,
+      risks: pool.risks ?? [],
+      score: pool.score ?? null,
+      scoreReasons: pool.scoreReasons ?? [],
+      demandUsd: pool.demandUsd ?? null,
+      tvlApprox: pool.tvlApprox === true,
     }
   })
 }

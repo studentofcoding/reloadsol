@@ -15,13 +15,16 @@ import { fetchTradingRecordsForWallet } from '@/strategies/db'
 import { computeOpenSimCycle } from '@/utils/simulation-trades'
 import { buildTradingRecord, insertTradingRecords } from '@/utils/trading-records-db'
 import type { TrackingRecord } from '@/utils/trading-tracker'
-import { fetchTokenPricesForTracking } from '@/utils/trading-tracker'
 import { getOpenPositionPrices } from '@/utils/open-position-prices'
 import { getNativeUsd } from '@/utils/native-usd'
 import { computeMcapSimPnlPct } from '@/utils/mcap-tracker'
 import { log } from '@/utils/unified-logger'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
 import { simWalletForChain } from '@/strategies/sim-wallets'
+import {
+  getOpenStrategySimPositions as getOpenPositionsForStrategy,
+  type StrategySimOpenPosition as OpenPosition,
+} from '@/strategies/open-strategy-sim-positions'
 import { STRATEGY_CHAINS, type StrategyChain } from '@/strategies/types'
 
 export const maxDuration = 120
@@ -34,49 +37,6 @@ function getSimTrackSecret(): string {
     process.env.TRENDING_TRACKER_SECRET ||
     'r3l0ads0l-trending'
   )
-}
-
-type OpenPosition = {
-  mintAddress: string
-  symbol: string
-  entryAt: string | null
-  entryFeatures: Record<string, unknown>
-}
-
-function getOpenPositionsForStrategy(
-  records: Awaited<ReturnType<typeof fetchTradingRecordsForWallet>>,
-  strategyId: string,
-): OpenPosition[] {
-  const seen = new Set<string>()
-  const open: OpenPosition[] = []
-
-  for (const r of records) {
-    if (!r.is_simulation || r.bot_strategy !== strategyId) continue
-    for (const t of r.tokens ?? []) {
-      if (seen.has(t.mintAddress)) continue
-      const cycle = computeOpenSimCycle(records, t.mintAddress)
-      if (!cycle || cycle.simulationType !== 'strategy') continue
-      seen.add(t.mintAddress)
-      const buyRecord = records.find(
-        (rec) =>
-          rec.operationType === 'buy' &&
-          rec.bot_strategy === strategyId &&
-          rec.tokens?.some((tk) => tk.mintAddress === t.mintAddress),
-      )
-      const sim = (buyRecord?.trading_simulation ?? {}) as Record<string, unknown>
-      open.push({
-        mintAddress: t.mintAddress,
-        symbol: t.symbol ?? t.mintAddress.slice(0, 8),
-        entryAt: typeof sim.entry_at === 'string' ? sim.entry_at : null,
-        entryFeatures:
-          sim.entry_features && typeof sim.entry_features === 'object'
-            ? (sim.entry_features as Record<string, unknown>)
-            : {},
-      })
-    }
-  }
-
-  return open
 }
 
 async function closeSimPosition(params: {
@@ -227,6 +187,11 @@ export async function POST(request: NextRequest) {
   if (!isAuthorizedRequest(key, getSimTrackSecret())) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
   }
+  const { withJobLock } = await import('@/utils/bot-job-lock')
+  return withJobLock('signals_sim_track', 300, () => runSimTrack(request))
+}
+
+async function runSimTrack(request: NextRequest) {
 
   try {
     const results: Array<{
@@ -323,16 +288,24 @@ export async function POST(request: NextRequest) {
       const currentOpen = getOpenPositionsForStrategy(refreshedRecords, strategy.id).length
       const maxOpen = strategy.config.execution.maxOpenPositions
 
-      for (const signal of scored) {
-        if (signal.decision !== 'enter') continue
-        if (openMintSet.has(signal.token_address)) continue
+      // Batch prices (chain-aware) + social context once per cycle instead of per candidate.
+      const enterCandidates = scored.filter(
+        (s) => s.decision === 'enter' && !openMintSet.has(s.token_address),
+      )
+      const enterMints = enterCandidates.slice(0, Math.max(0, maxOpen - currentOpen)).map((s) => s.token_address)
+      const [entryPrices, socialCtxList] = await Promise.all([
+        enterMints.length > 0 ? getOpenPositionPrices(enterMints, chain) : ({} as Record<string, number>),
+        Promise.all(enterMints.map((m) => getSocialContext(m))),
+      ])
+      const socialCtxByMint = new Map(enterMints.map((m, i) => [m, socialCtxList[i]]))
+
+      for (const signal of enterCandidates) {
         if (currentOpen + opened >= maxOpen) {
           skipped.push(`${signal.token_symbol}: max positions`)
           break
         }
 
-        const prices = await fetchTokenPricesForTracking([signal.token_address])
-        const priceUsd = prices[signal.token_address] || 0.000001
+        const priceUsd = entryPrices[signal.token_address] || 0.000001
         const liveMetrics = await resolveTokenMonitorSnapshot(
           signal.token_address,
           signal.current_mcap,
@@ -341,7 +314,8 @@ export async function POST(request: NextRequest) {
           liveMetrics.price_usd = priceUsd
         }
 
-        const socialCtx = await getSocialContext(signal.token_address)
+        const socialCtx =
+          socialCtxByMint.get(signal.token_address) ?? (await getSocialContext(signal.token_address))
 
         const symbol =
           signal.token_symbol?.trim() ||
@@ -393,16 +367,22 @@ export async function POST(request: NextRequest) {
           strategyId: strategy.id,
           persistEffectiveExit: false,
         })
+        const { softMlSize, stampMlSize } = await import('@/strategies/ml-soft-size')
+        const baseSol =
+          strategy.config.execution.simBuyNative ?? strategy.config.execution.simBuySol
+        const sized = softMlSize(baseSol, { pBad: ml.pBad })
 
         await openSignalsSimPosition({
           strategyId: strategy.id,
           chain,
           mintAddress: signal.token_address,
           symbol,
-          solAmount:
-            strategy.config.execution.simBuyNative ?? strategy.config.execution.simBuySol,
+          solAmount: sized.sol,
           priceUsd,
-          entryFeatures: overlayResult.features,
+          entryFeatures: stampMlSize(overlayResult.features, sized, {
+            pBad: ml.pBad,
+            pWinner: ml.pWinner,
+          }),
           collect,
         })
         opened++

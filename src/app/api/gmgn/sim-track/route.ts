@@ -10,14 +10,19 @@ import {
   openGmgnSimPosition,
 } from '@/strategies/gmgn-open-sim'
 import { computeOpenSimCycle } from '@/utils/simulation-trades'
-import { buildTradingRecord, insertTradingRecord } from '@/utils/trading-records-db'
-import { fetchTokenPricesForTracking } from '@/utils/trading-tracker'
+import { buildTradingRecord, insertTradingRecords } from '@/utils/trading-records-db'
+import type { TrackingRecord } from '@/utils/trading-tracker'
 import { getOpenPositionPrices } from '@/utils/open-position-prices'
 import { getNativeUsd } from '@/utils/native-usd'
 import { log } from '@/utils/unified-logger'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
 import { checkGmgnLiveBoostForOpenPosition } from '@/strategies/gmgn-live-boost'
 import { simWalletForChain } from '@/strategies/sim-wallets'
+import {
+  getOpenStrategySimPositions as getOpenPositionsForStrategy,
+  shouldClosePriceSimPosition as shouldClosePosition,
+  type StrategySimOpenPosition as OpenPosition,
+} from '@/strategies/open-strategy-sim-positions'
 import { STRATEGY_CHAINS, type GmgnStrategy, type StrategyChain } from '@/strategies/types'
 
 export const maxDuration = 120
@@ -49,58 +54,6 @@ function gmgnTopHoldersToPct(rate: number | null): number | null {
   return rate
 }
 
-type OpenPosition = {
-  mintAddress: string
-  symbol: string
-  entryAt: string | null
-  entryPriceUsd: number
-  entryFeatures: Record<string, unknown>
-}
-
-function getOpenPositionsForStrategy(
-  records: Awaited<ReturnType<typeof fetchTradingRecordsForWallet>>,
-  strategyId: string,
-): OpenPosition[] {
-  const seen = new Set<string>()
-  const open: OpenPosition[] = []
-
-  for (const r of records) {
-    if (!r.is_simulation || r.bot_strategy !== strategyId) continue
-    for (const t of r.tokens ?? []) {
-      if (seen.has(t.mintAddress)) continue
-      const cycle = computeOpenSimCycle(records, t.mintAddress)
-      if (!cycle || cycle.simulationType !== 'strategy') continue
-      seen.add(t.mintAddress)
-
-      const buyRecord = records.find(
-        (rec) =>
-          rec.operationType === 'buy' &&
-          rec.bot_strategy === strategyId &&
-          rec.is_simulation &&
-          rec.tokens?.some((tk) => tk.mintAddress === t.mintAddress),
-      )
-      const sim = (buyRecord?.trading_simulation ?? {}) as Record<string, unknown>
-      const entryPriceUsd =
-        typeof sim.entry_price_usd === 'number'
-          ? sim.entry_price_usd
-          : cycle.weightedBuyPriceUsd
-
-      open.push({
-        mintAddress: t.mintAddress,
-        symbol: t.symbol ?? t.mintAddress.slice(0, 8),
-        entryAt: typeof sim.entry_at === 'string' ? sim.entry_at : null,
-        entryPriceUsd,
-        entryFeatures:
-          sim.entry_features && typeof sim.entry_features === 'object'
-            ? (sim.entry_features as Record<string, unknown>)
-            : {},
-      })
-    }
-  }
-
-  return open
-}
-
 function collectRecentMints(
   records: Awaited<ReturnType<typeof fetchTradingRecordsForWallet>>,
   strategyId: string,
@@ -121,36 +74,6 @@ function collectRecentMints(
   return recent
 }
 
-function shouldClosePosition(params: {
-  entryPriceUsd: number
-  currentPriceUsd: number
-  entryAt: string | null
-  exit: GmgnStrategy['config']['exit']
-}): { close: boolean; reason: string } {
-  const { entryPriceUsd, currentPriceUsd, entryAt, exit } = params
-  if (entryPriceUsd <= 0 || currentPriceUsd <= 0) {
-    return { close: false, reason: 'missing_price' }
-  }
-
-  const pnlPct = ((currentPriceUsd - entryPriceUsd) / entryPriceUsd) * 100
-
-  if (pnlPct <= exit.stopLossPct) {
-    return { close: true, reason: 'stop_loss' }
-  }
-  if (pnlPct >= exit.takeProfitPct) {
-    return { close: true, reason: 'take_profit' }
-  }
-
-  if (entryAt && exit.maxHoldHours > 0) {
-    const heldMs = Date.now() - new Date(entryAt).getTime()
-    if (heldMs >= exit.maxHoldHours * 60 * 60 * 1000) {
-      return { close: true, reason: 'max_hold' }
-    }
-  }
-
-  return { close: false, reason: 'hold' }
-}
-
 async function closeSimPosition(params: {
   strategyId: string
   chain: StrategyChain
@@ -159,14 +82,18 @@ async function closeSimPosition(params: {
   entryAt: string | null
   entryFeatures: Record<string, unknown>
   closeReason: string
+  /** Wallet records already loaded by the cycle (avoids one fetch per close). */
+  records: TrackingRecord[]
+  /** Current price already batched by the cycle. */
+  currentPriceUsd: number | undefined
+  /** Close records are collected and bulk-inserted by the route. */
+  collect: (record: TrackingRecord) => void
 }): Promise<number> {
   const simWallet = simWalletForChain(GMGN_SIM_WALLET, params.chain)
-  const records = await fetchTradingRecordsForWallet(simWallet)
-  const cycle = computeOpenSimCycle(records, params.mintAddress)
+  const cycle = computeOpenSimCycle(params.records, params.mintAddress)
   if (!cycle) return 0
 
-  const prices = await getOpenPositionPrices([params.mintAddress], params.chain)
-  const sellPriceUsd = prices[params.mintAddress] || cycle.weightedBuyPriceUsd
+  const sellPriceUsd = params.currentPriceUsd || cycle.weightedBuyPriceUsd
   const solPrice = await getNativeUsd(params.chain)
   const remaining = cycle.remainingTokenAmount
   const solReceived =
@@ -210,7 +137,7 @@ async function closeSimPosition(params: {
     },
   })
 
-  await insertTradingRecord(record)
+  params.collect(record)
 
   const closeExtras = {
     token_symbol: params.symbol,
@@ -269,6 +196,11 @@ export async function POST(request: NextRequest) {
   if (!isAuthorizedRequest(key, getSimTrackSecret())) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
   }
+  const { withJobLock } = await import('@/utils/bot-job-lock')
+  return withJobLock('gmgn_sim_track', 300, () => runSimTrack(request))
+}
+
+async function runSimTrack(request: NextRequest) {
 
   try {
     const results: Array<{
@@ -300,6 +232,7 @@ export async function POST(request: NextRequest) {
           ? await getOpenPositionPrices(mintsToPrice, chain)
           : ({} as Record<string, number>)
 
+      const pendingCloses: TrackingRecord[] = []
       for (const pos of openPositions) {
         await checkGmgnLiveBoostForOpenPosition({
           walletAddress: simWallet,
@@ -325,11 +258,15 @@ export async function POST(request: NextRequest) {
             entryAt: pos.entryAt,
             entryFeatures: pos.entryFeatures,
             closeReason: reason,
+            records,
+            currentPriceUsd: prices[pos.mintAddress],
+            collect: (r) => pendingCloses.push(r),
           })
           closed++
           openMintSet.delete(pos.mintAddress)
         }
       }
+      if (pendingCloses.length > 0) await insertTradingRecords(pendingCloses)
 
       const { discovered, eligible, skipped } = await discoverAndGateGmgnCandidates({
         strategy,

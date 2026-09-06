@@ -1,5 +1,6 @@
 import { query, queryOne } from '@/utils/db'
 import { isDbCircuitOpen, formatDbConnectionError } from '@/utils/db-health'
+import { fomoWalletEdge } from '@/utils/fomo-demand'
 import type {
   SocialIngestEvent,
   SocialTokenEventRow,
@@ -37,8 +38,45 @@ function isUniqueViolation(error: unknown): boolean {
 
 type RollupEventRow = Pick<
   SocialTokenEventRow,
-  'token_address' | 'event_type' | 'source' | 'channel_id' | 'channel_label' | 'occurred_at'
+  | 'token_address'
+  | 'event_type'
+  | 'source'
+  | 'channel_id'
+  | 'channel_label'
+  | 'occurred_at'
+  | 'wallet_address'
 >
+
+/** wallet (lowercase) → edge from fomo_traders; missing table/rows → empty (edge 1). */
+async function loadFomoWalletEdges(wallets: string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>()
+  if (wallets.length === 0) return out
+  try {
+    const { rows } = await query<{
+      wallet_address: string
+      realized_pnl: string | null
+      win_rate: string | null
+      closed_trades: string | null
+    }>(
+      `SELECT wallet_address, realized_pnl, win_rate, closed_trades
+       FROM fomo_traders WHERE wallet_address = ANY($1::text[])`,
+      [wallets],
+    )
+    for (const r of rows) {
+      out.set(
+        r.wallet_address,
+        fomoWalletEdge({
+          realized_pnl: r.realized_pnl == null ? null : Number(r.realized_pnl),
+          win_rate: r.win_rate == null ? null : Number(r.win_rate),
+          closed_trades: r.closed_trades == null ? null : Number(r.closed_trades),
+        }),
+      )
+    }
+  } catch {
+    // fomo_traders optional (migration 29) → neutral edge.
+  }
+  return out
+}
 
 function buildDedupeKey(e: SocialIngestEvent): string {
   return [
@@ -333,7 +371,7 @@ export async function refreshSocialRollups(now = new Date()): Promise<{
   let recentEvents: RollupEventRow[]
   try {
     const { rows } = await query<RollupEventRow>(
-      `SELECT token_address, event_type, source, channel_id, channel_label, occurred_at
+      `SELECT token_address, event_type, source, channel_id, channel_label, occurred_at, wallet_address
        FROM social_token_events
        WHERE occurred_at >= $1
        ORDER BY occurred_at ASC`,
@@ -346,6 +384,19 @@ export async function refreshSocialRollups(now = new Date()): Promise<{
     }
     return { tokensUpdated: 0, error: formatDbConnectionError(fetchError) }
   }
+
+  const isFomoBuy1h = (e: RollupEventRow) =>
+    e.event_type === 'wallet_buy' && e.source === 'fomo_family' && e.occurred_at >= t60
+  const fomoEdges = await loadFomoWalletEdges(
+    Array.from(
+      new Set(
+        recentEvents
+          .filter(isFomoBuy1h)
+          .map((e) => e.wallet_address?.toLowerCase())
+          .filter((w): w is string => Boolean(w)),
+      ),
+    ),
+  )
 
   const byToken = new Map<string, RollupEventRow[]>()
   for (const row of recentEvents) {
@@ -389,9 +440,20 @@ export async function refreshSocialRollups(now = new Date()): Promise<{
     const first = events[0]
     const solSum = 0
 
+    const fomoBuys = events.filter(isFomoBuy1h)
+    const fomoEdge =
+      fomoBuys.length === 0
+        ? null
+        : fomoBuys.reduce(
+            (sum, e) => sum + (fomoEdges.get(e.wallet_address?.toLowerCase() ?? '') ?? 1),
+            0,
+          ) / fomoBuys.length
+
     const lastEvent = events[events.length - 1]
 
     return {
+      fomo_buy_count_1h: fomoBuys.length,
+      fomo_edge_1h: fomoEdge == null ? null : Math.round(fomoEdge * 100) / 100,
       token_address: tokenAddress,
       first_seen_at: first?.occurred_at ?? null,
       first_source: first?.source ?? null,
@@ -423,7 +485,7 @@ export async function refreshSocialRollups(now = new Date()): Promise<{
 
       for (const r of batch) {
         placeholders.push(
-          `($${param}, $${param + 1}, $${param + 2}, $${param + 3}, $${param + 4}, $${param + 5}, $${param + 6}, $${param + 7}, $${param + 8}, $${param + 9}, $${param + 10}, $${param + 11}, $${param + 12})`,
+          `($${param}, $${param + 1}, $${param + 2}, $${param + 3}, $${param + 4}, $${param + 5}, $${param + 6}, $${param + 7}, $${param + 8}, $${param + 9}, $${param + 10}, $${param + 11}, $${param + 12}, $${param + 13}, $${param + 14})`,
         )
         values.push(
           r.token_address,
@@ -439,8 +501,10 @@ export async function refreshSocialRollups(now = new Date()): Promise<{
           r.top_source,
           r.last_event_at,
           r.updated_at,
+          r.fomo_buy_count_1h,
+          r.fomo_edge_1h,
         )
-        param += 13
+        param += 15
       }
 
       await query(
@@ -448,7 +512,7 @@ export async function refreshSocialRollups(now = new Date()): Promise<{
            token_address, first_seen_at, first_source, first_channel,
            mention_count_5m, mention_count_30m, mention_count_24h,
            unique_channel_count_30m, smart_wallet_buy_count_1h, smart_wallet_buy_sol_1h,
-           top_source, last_event_at, updated_at
+           top_source, last_event_at, updated_at, fomo_buy_count_1h, fomo_edge_1h
          ) VALUES ${placeholders.join(', ')}
          ON CONFLICT (token_address) DO UPDATE SET
            first_seen_at = EXCLUDED.first_seen_at,
@@ -462,7 +526,9 @@ export async function refreshSocialRollups(now = new Date()): Promise<{
            smart_wallet_buy_sol_1h = EXCLUDED.smart_wallet_buy_sol_1h,
            top_source = EXCLUDED.top_source,
            last_event_at = EXCLUDED.last_event_at,
-           updated_at = EXCLUDED.updated_at`,
+           updated_at = EXCLUDED.updated_at,
+           fomo_buy_count_1h = EXCLUDED.fomo_buy_count_1h,
+           fomo_edge_1h = EXCLUDED.fomo_edge_1h`,
         values,
       )
     }

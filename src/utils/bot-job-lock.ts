@@ -66,3 +66,23 @@ export async function releaseJobLock(jobName: string): Promise<void> {
   if (isDbCircuitOpen()) return
   await query(`DELETE FROM bot_job_locks WHERE job_name = $1`, [jobName])
 }
+
+/** Run a cron route body under a job lock; overlapping ticks get 409 `skipped`. */
+export async function withJobLock(
+  jobName: string,
+  ttlSeconds: number,
+  run: () => Promise<Response>,
+): Promise<Response> {
+  const lock = await acquireJobLock(jobName, ttlSeconds)
+  if (!lock.acquired) {
+    return Response.json(
+      { success: false, skipped: true, reason: lock.reason },
+      { status: 409 },
+    )
+  }
+  try {
+    return await run()
+  } finally {
+    await releaseJobLock(jobName)
+  }
+}

@@ -3,7 +3,11 @@
  * Cap concurrent search_* clones; kill on Review loss streaks.
  */
 
-import { buildStrategyReview } from '@/strategies/strategy-review'
+import {
+  computeFitnessByStrategy,
+  DEFAULT_FITNESS,
+  type FitnessConfig,
+} from '@/strategies/strategy-fitness'
 import {
   listStrategyOutcomes,
   loadStrategyDefinitionRows,
@@ -200,31 +204,29 @@ export async function killSearchStrategy(params: {
   return result
 }
 
-/** Kill search strategies with active loss: streaks ≥2 and poor net PnL. */
+/**
+ * Kill search strategies that have had a fair trial (≥ minCloses in the window)
+ * and still fail the shared fitness definition (expectancy ≤ 0 or a drawdown week).
+ */
 export async function pruneLosingSearchStrategies(params: {
   domain: StrategyDomain
-  minLossStreak?: number
-  maxNetPnlPct?: number
+  fitness?: Partial<FitnessConfig>
 }): Promise<Array<{ id: string; reason: string }>> {
-  const minStreak = params.minLossStreak ?? 2
-  const maxNet = params.maxNetPnlPct ?? 0
   const { rows } = await listStrategyOutcomes({
     domain: params.domain,
     limit: 5000,
     offset: 0,
   })
-  const review = buildStrategyReview(rows, { weeks: 8 })
+  const byStrategy = computeFitnessByStrategy(rows, params.fitness)
+  const minCloses = params.fitness?.minCloses ?? DEFAULT_FITNESS.minCloses
   const killed: Array<{ id: string; reason: string }> = []
   const active = await listActiveSearchStrategies(params.domain)
 
   for (const s of active) {
-    const tag = `loss:${params.domain}/${s.id}`
-    const streak = review.streaks.find((st) => st.tag === tag && st.length >= minStreak)
-    if (!streak) continue
-    const stratRows = rows.filter((r) => r.strategy_id === s.id && r.pnl_pct != null)
-    const net = stratRows.reduce((a, r) => a + (r.pnl_pct ?? 0), 0)
-    if (net > maxNet) continue
-    const reason = `${tag} streak=${streak.length} net=${net.toFixed(1)}%`
+    const fit = byStrategy.get(s.id)
+    // Not enough closes yet → keep exploring.
+    if (!fit || fit.closes < minCloses || fit.passes) continue
+    const reason = `fitness: ${fit.reasons.join('; ')} (exp=${fit.expectancyPct}%, n=${fit.closes})`
     const res = await killSearchStrategy({ domain: params.domain, id: s.id, reason })
     if (res.ok) killed.push({ id: s.id, reason })
   }

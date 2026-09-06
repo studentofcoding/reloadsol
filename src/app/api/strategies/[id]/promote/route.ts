@@ -12,7 +12,12 @@ import { invalidateSignalsCache } from '@/strategies/load-signals'
 import { invalidateDlmmStrategyCache } from '@/strategies/load-dlmm'
 import { invalidateMcapTrackerCache } from '@/strategies/load-mcap-tracker'
 import { invalidateGmgnCache } from '@/strategies/load-gmgn'
-import { upsertStrategyDefinition, loadStrategyDefinitionById } from '@/strategies/db'
+import {
+  upsertStrategyDefinition,
+  loadStrategyDefinitionById,
+  listStrategyOutcomes,
+} from '@/strategies/db'
+import { computeStrategyFitness } from '@/strategies/strategy-fitness'
 import { updateAgentConfig } from '@/utils/dlmm/db'
 import { isSearchStrategyId } from '@/strategies/strategy-search-bandit'
 import type { ExecutionMode, StrategyDomain } from '@/strategies/types'
@@ -21,6 +26,8 @@ import type { ExecutionMode, StrategyDomain } from '@/strategies/types'
 type PromoteBody = {
   target_id: string
   confirm_live?: boolean
+  /** Skip the fitness gate (operator override; recorded in the description). */
+  force?: boolean
 }
 
 function resolveRegistryBase(id: string): { domain: StrategyDomain; id: string } | null {
@@ -76,6 +83,23 @@ export async function POST(
       )
     }
 
+    // Fitness gate: the source's sim record must pass the shared winner definition.
+    // DLMM has no strategy_outcomes rows; it keeps its own confirm_live flow.
+    let fitnessNote = ''
+    if (sourceResolved.domain !== 'dlmm') {
+      const { rows } = await listStrategyOutcomes({ strategyId: sourceId, limit: 5000, offset: 0 })
+      const fitness = computeStrategyFitness(rows)
+      if (!fitness.passes && !body.force) {
+        return NextResponse.json(
+          { success: false, error: 'Source strategy fails the fitness gate', fitness },
+          { status: 409 },
+        )
+      }
+      fitnessNote = fitness.passes
+        ? ` (fitness exp=${fitness.expectancyPct}% n=${fitness.closes})`
+        : ` (FORCED past fitness gate: ${fitness.reasons.join('; ')})`
+    }
+
     const sourceRow = await loadStrategyDefinitionById(sourceId)
     const sourceConfig = sourceRow?.config ?? {}
 
@@ -100,7 +124,7 @@ export async function POST(
       id: targetId,
       domain: targetResolved.domain,
       name: targetName,
-      description: `Promoted from ${sourceId} at ${new Date().toISOString()}`,
+      description: `Promoted from ${sourceId} at ${new Date().toISOString()}${fitnessNote}`,
       config: sourceConfig as Record<string, unknown>,
       is_active: true,
       execution_mode: 'live_only' as ExecutionMode,

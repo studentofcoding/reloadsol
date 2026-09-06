@@ -1414,7 +1414,10 @@ export const trackCloseOperation = (
   })
 }
 
-// Fetch token prices for tracking
+/**
+ * Solana-only (Jupiter) price lookup for UI / Solana cycles.
+ * Server sim-track paths must use `getOpenPositionPrices(mints, chain)` so robinhood mints resolve.
+ */
 export const fetchTokenPricesForTracking = async (mintAddresses: string[]): Promise<Record<string, number>> => {
   try {
     if (mintAddresses.length === 0) return {}
