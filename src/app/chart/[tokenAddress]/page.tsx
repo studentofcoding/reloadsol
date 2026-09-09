@@ -119,7 +119,8 @@ export default function ChartPage() {
     walletAddress,
     activeRpcUrl,
     enabled: connected && !!publicKey && !!validTokenAddress,
-    includeZeroBalance: false,
+    // Default includeZeroBalance so sell/buy/chart share one portfolio cache
+    // per wallet instead of a second cold key that re-blanks the list.
     refetchInterval: connected && publicKey ? 30_000 : false,
   });
 

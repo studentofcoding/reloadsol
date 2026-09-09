@@ -764,9 +764,13 @@ export default function BulkTokenSeller() {
   const refreshAllPrices = useCallback(async () => {
     if (!publicKey || !walletAddress || !connection || swappableTokens.length === 0) return;
 
+    // Only flag rows that have no value yet — rows with a cached price keep it
+    // visible while the portfolio refresh runs (atomic patch below swaps values).
     patchTokens((data) =>
       patchWalletTokenLists(data, (tokens) =>
-        tokens.map((token) => ({ ...token, isLoadingPrice: true })),
+        tokens.map((token) =>
+          token.usdValue > 0 ? token : { ...token, isLoadingPrice: true },
+        ),
       ),
     );
 
@@ -822,7 +826,7 @@ export default function BulkTokenSeller() {
       patchTokens((data) =>
         patchWalletTokenLists(data, (tokens) =>
           tokens.map((t) =>
-            t.mintAddress === token.mintAddress
+            t.mintAddress === token.mintAddress && t.usdValue <= 0
               ? { ...t, isLoadingPrice: true }
               : t,
           ),

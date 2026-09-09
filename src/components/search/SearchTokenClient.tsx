@@ -499,7 +499,9 @@ function SolHoldingsList({
         })),
     [allTokens],
   )
-  if (isLoading) return <Section title="Your holdings" loading />
+  // Keep the visible holdings list during a background refetch — only show the
+  // loading skeleton when there is no list yet.
+  if (isLoading && top.length === 0) return <Section title="Your holdings" loading />
   if (top.length === 0) return null
   return (
     <ResultsList
@@ -533,7 +535,7 @@ function RhHoldingsList({
         })),
     [tokens],
   )
-  if (isLoading) return <Section title="Your holdings" loading />
+  if (isLoading && top.length === 0) return <Section title="Your holdings" loading />
   if (top.length === 0) return null
   return (
     <ResultsList

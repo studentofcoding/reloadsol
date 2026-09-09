@@ -129,8 +129,9 @@ const ProgressiveTokenItem: React.FC<ProgressiveTokenItemProps> = ({
                   {(Number(token.uiAmount) || 0).toFixed(6)}
                 </span>
                 {/* <span className="sm:hidden">{token.uiAmount.toFixed(0)}</span> */}
-                {/* Price with progressive loading */}
-                {token.isLoadingPrice ? (
+                {/* Price with progressive loading: only spin when there is no
+                    value yet — a cached price stays visible while refreshing. */}
+                {token.isLoadingPrice && !hasPrice ? (
                   <div className="flex items-center space-x-1 mt-1">
                     <div className="w-3 h-3 border border-gray-400 border-t-white rounded-full animate-spin"></div>
                   </div>
