@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   UnifiedWalletButton,
   useUnifiedWallet,
@@ -10,6 +10,31 @@ import {
 import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import { useRhEvmWallet } from "@/hooks/useRhEvmWallet";
 import { useDisconnectWallet } from "@/components/WalletProvider";
+import type { AppNetwork } from "@/utils/app-network";
+
+function chainSegment(chain: AppNetwork): string {
+  return chain === "robinhood" ? "robinhood" : "solana";
+}
+
+/**
+ * When switching networks, stay on the SAME page section instead of always
+ * jumping to /sell: /buy/solana -> /buy/robinhood, /swap -> /swap/robinhood,
+ * dev search-token -> its chain page. Non-trade routes keep the old default
+ * (/sell/{chain}).
+ */
+function chainSwitchTarget(pathname: string, next: AppNetwork): string {
+  const seg = chainSegment(next);
+  const tradeMatch = pathname.match(/^\/(buy|sell|swap)(?:\/(solana|robinhood))?\/?$/) ?? null;
+  if (tradeMatch) {
+    return `/${tradeMatch[1]}/${seg}`;
+  }
+  const devMatch =
+    pathname.match(/^\/dev\/search-token(?:\/(solana|robinhood))?\/?$/) ?? null;
+  if (devMatch) {
+    return `/dev/search-token/${seg}`;
+  }
+  return `/sell/${seg}`;
+}
 
 interface UniversalWalletButtonProps {
   variant?: "default" | "jupiter";
@@ -29,6 +54,7 @@ export default function UniversalWalletButton({
   const rh = useRhEvmWallet();
   const { network, setNetwork, canUseRh } = useAppNetwork();
   const router = useRouter();
+  const pathname = usePathname();
   // EVM-only whitelist: show toggle when Rabby is present so they can connect.
   const showRhToggle = canUseRh || rh.hasProvider;
   const [rhHint, setRhHint] = useState<string | null>(null);
@@ -61,7 +87,7 @@ export default function UniversalWalletButton({
             type="button"
             onClick={() => {
               setNetwork("sol");
-              router.push("/sell/solana");
+              router.push(chainSwitchTarget(pathname ?? "", "sol"));
             }}
             className={`px-2.5 py-1 font-medium ${
               network === "sol"
@@ -78,7 +104,7 @@ export default function UniversalWalletButton({
               void rh.connect().catch(() => {
                 /* rh.error surfaces below */
               });
-              router.push("/sell/robinhood");
+              router.push(chainSwitchTarget(pathname ?? "", "robinhood"));
             }}
             className={`px-2.5 py-1 font-medium border-l border-gray-600 ${
               network === "robinhood"
