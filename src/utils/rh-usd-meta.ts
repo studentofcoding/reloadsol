@@ -232,6 +232,12 @@ export async function fillMissingRhUsd(
     .slice(0, cap)
 
   if (missing.length === 0) return out
+
+  // Bulk DexScreener leg first (free, 300 req/min, 30 tokens per request) —
+  // covers Uniswap v3/v4 pools the UniV2 subgraph misses. Prices land in the
+  // Redis cache so the per-token loop below is mostly cache hits.
+  await cacheDexScreenerPrices(missing.map(({ t }) => t.mintAddress))
+
   for (let i = 0; i < missing.length; i += concurrency) {
     const chunk = missing.slice(i, i + concurrency)
     const prices = await Promise.all(
@@ -243,6 +249,66 @@ export async function fillMissingRhUsd(
     })
   }
   return out
+}
+
+const DEX_SCREENER_TOKENS =
+  'https://api.dexscreener.com/tokens/v1/robinhood'
+
+/** Batch DexScreener price lookup (≤30 addresses) → USD per token. */
+async function fetchDexScreenerPrices(
+  addresses: string[],
+): Promise<Map<string, number>> {
+  if (addresses.length === 0) return new Map()
+  const out = new Map<string, number>()
+  try {
+    const url = `${DEX_SCREENER_TOKENS}/${addresses.join(',')}`
+    const res = await fetch(url, {
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(8000),
+    })
+    if (!res.ok) return out
+    const pairs = (await res.json()) as Array<{
+      chainId?: string
+      baseToken?: { address?: string }
+      priceUsd?: string | null
+      liquidity?: { usd?: number }
+    }>
+    const best = new Map<string, { px: number; liq: number }>()
+    for (const p of pairs ?? []) {
+      if (String(p.chainId ?? '').toLowerCase() !== 'robinhood') continue
+      const addr = String(p.baseToken?.address ?? '').toLowerCase()
+      const px = Number(p.priceUsd)
+      if (!isEvmAddress(addr) || !Number.isFinite(px) || px <= 0) continue
+      const liq = Number(p.liquidity?.usd ?? 0)
+      const prev = best.get(addr)
+      if (!prev || liq > prev.liq) best.set(addr, { px, liq })
+    }
+    for (const [addr, v] of best) out.set(addr, v.px)
+  } catch {
+    // transient — individual legs still run
+  }
+  return out
+}
+
+/** Fill the Redis price cache from DexScreener in batches of 30. */
+async function cacheDexScreenerPrices(addresses: string[]): Promise<void> {
+  const unique = Array.from(
+    new Set(
+      addresses
+        .map((a) => String(a ?? '').trim().toLowerCase())
+        .filter(isEvmAddress),
+    ),
+  )
+  if (unique.length === 0) return
+  for (let i = 0; i < unique.length; i += 30) {
+    const chunk = unique.slice(i, i + 30)
+    const prices = await fetchDexScreenerPrices(chunk).catch(
+      () => new Map<string, number>(),
+    )
+    for (const [addr, px] of prices) {
+      void cacheSet(`rh:token-usd:${addr}`, px, RH_TOKEN_USD_TTL_S)
+    }
+  }
 }
 
 /**
