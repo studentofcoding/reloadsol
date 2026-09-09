@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse, connection } from 'next/server'
-import { tokenInfo, walletHoldings, GmgnApiError } from '@/utils/gmgn-api'
+import { walletHoldings, GmgnApiError } from '@/utils/gmgn-api'
 import type { UserToken } from '@/utils/jupiter'
 import {
-  extractGmgnTokenUsdPrice,
   fetchBlockscoutErc20Tokens,
   fetchRpcErc20Tokens,
+  fillMissingRhUsd,
   isEvmAddress,
   isRhHeldToken,
   normalizeGmgnHolding,
@@ -13,22 +13,20 @@ import {
   sortRhTokensByUsd,
   type RhTokenMeta,
 } from '@/utils/rh-wallet-holdings'
+import { fetchRhLedgerHoldings } from '@/utils/rh-ledger'
 import { RH_USDG, RH_USDG_DECIMALS, RH_WETH } from '@/utils/dlmm/rh-univ2'
 import { cacheGet, cacheSet } from '@/utils/redis-cache'
 import { portfolioKey } from '@/utils/portfolio-cache'
 import { query } from '@/utils/db'
 
 
-const PRICE_FILL_CAP = 15
-const PRICE_FILL_CONCURRENCY = 2
 const RESPONSE_TTL_S = 20
 const RESPONSE_STALE_TTL_S = 120
-const TOKEN_USD_TTL_S = 60
 const SEEN_TOKENS_TTL_S = 30 * 24 * 60 * 60 // 30 days
 
 export const maxDuration = 60
 
-type RhTokensSource = 'gmgn' | 'blockscout' | 'rpc'
+type RhTokensSource = 'ledger' | 'gmgn' | 'blockscout' | 'rpc'
 
 type CachedResponse = { tokens: UserToken[]; source: RhTokensSource }
 
@@ -123,54 +121,6 @@ async function persistSeenTokens(
   }
 }
 
-async function fetchTokenUsdCached(address: string): Promise<number> {
-  const key = `rh:token-usd:${address.toLowerCase()}`
-  const cached = await cacheGet<number>(key)
-  if (cached != null && cached > 0) return cached
-  try {
-    const info = await tokenInfo({ chain: 'robinhood', address })
-    const px = extractGmgnTokenUsdPrice(info)
-    if (px > 0) void cacheSet(key, px, TOKEN_USD_TTL_S)
-    return px
-  } catch (error) {
-    if (error instanceof GmgnApiError && error.code === 'RATE_LIMIT') {
-      throw error
-    }
-    return 0
-  }
-}
-
-/** Fill missing USD values in parallel (small pool) with a per-token price cache. */
-async function fillMissingUsd(tokens: UserToken[]): Promise<UserToken[]> {
-  const out = [...tokens]
-  const missing = out
-    .map((t, i) => ({ t, i }))
-    .filter(({ t }) => !(t.usdValue > 0))
-    .slice(0, PRICE_FILL_CAP)
-
-  try {
-    for (let i = 0; i < missing.length; i += PRICE_FILL_CONCURRENCY) {
-      const chunk = missing.slice(i, i + PRICE_FILL_CONCURRENCY)
-      const prices = await Promise.all(
-        chunk.map(({ t }) => fetchTokenUsdCached(t.mintAddress)),
-      )
-      chunk.forEach(({ t, i: idx }, j) => {
-        const px = prices[j]
-        if (px > 0) out[idx] = { ...t, usdValue: t.uiAmount * px }
-      })
-    }
-  } catch (error) {
-    // Rate limited: keep what's priced so far instead of burning the rest of
-    // the window (and the request budget) on guaranteed 429s.
-    if (error instanceof GmgnApiError && error.code === 'RATE_LIMIT') {
-      console.warn('[rh/wallet-tokens] price fill rate limited, returning partial')
-    } else {
-      throw error
-    }
-  }
-  return out
-}
-
 export async function GET(request: NextRequest) {
   await connection()
   try {
@@ -206,10 +156,21 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    let source: RhTokensSource = 'gmgn'
+    let source: RhTokensSource = 'ledger'
     let tokens: UserToken[] = []
 
-    // 1) GMGN wallet_holdings (primary)
+    // 0) Goldsky ledger (chain truth): every ERC-20 transfer of the tracked
+    //    wallets, streamed by the Turbo pipeline into rh_ledger_transfers. No
+    //    indexer to 429 and no candidate probing — only what the wallet holds.
+    try {
+      tokens = await fetchRhLedgerHoldings(walletNorm)
+    } catch (err) {
+      // DB/backfill not ready yet: fall through to the indexer ladder.
+      console.warn('[rh/wallet-tokens] ledger holdings failed:', err)
+      tokens = []
+    }
+
+    // 1) GMGN wallet_holdings (primary indexer fallback)
     try {
       if (process.env.GMGN_API_KEY?.trim() && process.env.GMGN_PRIVATE_KEY?.trim()) {
         const rows = await walletHoldings({
@@ -235,7 +196,7 @@ export async function GET(request: NextRequest) {
       source = 'blockscout'
       try {
         tokens = await fetchBlockscoutErc20Tokens(walletNorm)
-        tokens = await fillMissingUsd(tokens)
+        tokens = await fillMissingRhUsd(tokens)
       } catch (err) {
         console.warn('[rh/wallet-tokens] Blockscout holdings failed:', err)
         tokens = []
@@ -261,7 +222,7 @@ export async function GET(request: NextRequest) {
         tokens = rpc.tokens.filter(isRhHeldToken)
         rpcZeros = rpcZeroAddresses(rpc.probed, tokens)
         if (rpcZeros.length > 0) void pruneSeenZeros(walletNorm, rpcZeros)
-        tokens = await fillMissingUsd(tokens)
+        tokens = await fillMissingRhUsd(tokens)
       } catch (err) {
         console.warn('[rh/wallet-tokens] RPC holdings failed:', err)
         tokens = []

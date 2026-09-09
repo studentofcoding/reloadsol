@@ -1,0 +1,38 @@
+# reloadsol RH wallet ledger — one-time history backfill (JOB)
+#
+# Replays every ERC-20 Transfer touching the tracked wallets from genesis up to
+# <TIP_BLOCK> (set to the chain tip at deploy time). The source-level filter
+# bounds the scan so the job terminates; the transform keeps only wallet events
+# and the webhook sink delivers them to the same ingest route (idempotent upsert).
+#
+#   goldsky dataset get robinhood_mainnet.erc20_transfers --outputFormat json   # pin version
+#   goldsky turbo validate goldsky/jobs/rh-wallet-ledger-backfill.yaml
+#   goldsky turbo apply goldsky/jobs/rh-wallet-ledger-backfill.yaml
+#
+# Jobs auto-delete ~1h after finishing. Re-running is safe (ON CONFLICT DO NOTHING).
+name: reloadsol-rh-wallet-ledger-backfill
+resource_size: s
+job: true
+sources:
+  rh_erc20:
+    type: dataset
+    dataset_name: robinhood_mainnet.erc20_transfers
+    version: 1.1.0
+    start_at: earliest
+    filter: block_number <= <TIP_BLOCK>
+transforms:
+  watched_wallet_transfers:
+    type: sql
+    primary_key: id
+    sql: |
+      SELECT id, address, sender, recipient, amount,
+             block_number, block_timestamp, transaction_hash, log_index
+      FROM rh_erc20
+      WHERE <WALLET_WHERE>
+        AND amount > 0
+sinks:
+  ledger_webhook:
+    type: webhook
+    from: watched_wallet_transfers
+    url: https://<APP_HOST>/api/rh/ledger/ingest
+    secret_name: <WEBHOOK_SECRET_NAME>

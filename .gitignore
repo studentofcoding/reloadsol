@@ -32,6 +32,8 @@ graphify-out/cache/
 graphify-out/
 .agents
 contracts/out/
+# Rendered Goldsky configs (secrets-free but machine-specific)
+goldsky/.rendered/
 
 # macOS
 .DS_Store

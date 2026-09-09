@@ -1,0 +1,44 @@
+# reloadsol RH wallet ledger — live tail
+#
+# Streams every ERC-20 Transfer touching the tracked Robinhood wallets from
+# Goldsky's curated `robinhood_mainnet.erc20_transfers` dataset into the app's
+# Postgres via the secret-gated webhook route /api/rh/ledger/ingest.
+#
+# Deploy (after filling placeholders):
+#   goldsky secret create RH_LEDGER_WEBHOOK_SECRET   # httpauth: Authorization: Bearer <RH_LEDGER_WEBHOOK_SECRET>
+#   goldsky turbo validate goldsky/pipelines/rh-wallet-ledger.yaml
+#   goldsky turbo apply goldsky/pipelines/rh-wallet-ledger.yaml
+#
+# Verify dataset name/version first:
+#   goldsky dataset get robinhood_mainnet.erc20_transfers --outputFormat json
+#
+# Placeholders (no secrets, just addresses):
+#   <WALLET_1> / <WALLET_2>  lowercased 0x wallets to track (bound EVM wallet,
+#                           parent Rabby wallet, ...). Add more = re-apply; then
+#                           run the backfill job once per new wallet.
+#   <APP_HOST>              public host the ingest route lives on.
+name: reloadsol-rh-wallet-ledger
+resource_size: s
+sources:
+  rh_erc20:
+    type: dataset
+    dataset_name: robinhood_mainnet.erc20_transfers
+    version: 1.1.0
+    start_at: latest
+transforms:
+  watched_wallet_transfers:
+    type: sql
+    primary_key: id
+    sql: |
+      SELECT id, address, sender, recipient, amount,
+             block_number, block_timestamp, transaction_hash, log_index
+      FROM rh_erc20
+      WHERE <WALLET_WHERE>
+        AND amount > 0
+sinks:
+  ledger_webhook:
+    type: webhook
+    from: watched_wallet_transfers
+    url: https://<APP_HOST>/api/rh/ledger/ingest
+    secret_name: <WEBHOOK_SECRET_NAME>
+    batch_flush_interval: 1s

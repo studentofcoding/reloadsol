@@ -53,7 +53,12 @@ async function updateAllUsersPnL(): Promise<PnLResult[]> {
   try {
     console.log('🔄 Starting PnL calculation for all users...')
     
-    // Get all trading records from the last 30 days for better performance
+    // Get all trading records from the last 30 days for better performance.
+    // Chain is deliberately NOT filtered: RH (chain='robinhood', 0x wallets)
+    // and Sol records both carry per-token priceUsd/tokenAmount (see
+    // src/utils/rh-trade-record.ts), so the same average-cost engine below
+    // realizes gains on both networks. Wallet addresses never collide across
+    // chains (base58 vs 0x).
     const thirtyDaysAgo = new Date()
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
     
