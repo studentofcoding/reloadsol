@@ -14,6 +14,7 @@ import {
 import type { GmgnBulkBuyItem, GmgnBulkLegResult } from '@/utils/gmgn-bulk-trade'
 import {
   executeRhWalletCalls,
+  isRhInfiniteApprovalLive,
   RhSequentialWriteError,
   type RhTxCall,
 } from '@/utils/dlmm/rh-send-calls'
@@ -167,6 +168,18 @@ function resolveBuildSlippageBps(
 
 type KyberBuilt = Awaited<ReturnType<typeof quoteAndBuild>>
 
+/** Retry a view read once — Goldsky's RH gateway can hang on first attempt. */
+async function withReadRetry<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn()
+  } catch (err) {
+    // One retry, then surface the original failure to the caller.
+    return await fn().catch(() => {
+      throw err
+    })
+  }
+}
+
 /**
  * Approval strategy for prepared legs:
  *  - `router`  — legacy: per-leg approve(kyberRouter, maxUint256).
@@ -277,28 +290,34 @@ export async function prepareKyberSwapLegsParallel(params: {
       const token = leg.tokenIn as Address
       try {
         if (approval.mode === 'router') {
-          const routerAllowance = await publicClient.readContract({
-            address: token,
-            abi: erc20Abi,
-            functionName: 'allowance',
-            args: [account, built.routerAddress],
-          })
+          const routerAllowance = await withReadRetry(() =>
+            publicClient.readContract({
+              address: token,
+              abi: erc20Abi,
+              functionName: 'allowance',
+              args: [account, built.routerAddress],
+            }),
+          )
           return { mode: 'router', routerAllowance }
         }
         const spender = approval.spender ?? built.routerAddress
         const [permit2Erc20Allowance, p2] = await Promise.all([
-          publicClient.readContract({
-            address: token,
-            abi: erc20Abi,
-            functionName: 'allowance',
-            args: [account, PERMIT2],
-          }),
-          publicClient.readContract({
-            address: PERMIT2,
-            abi: permit2Abi,
-            functionName: 'allowance',
-            args: [account, token, spender],
-          }),
+          withReadRetry(() =>
+            publicClient.readContract({
+              address: token,
+              abi: erc20Abi,
+              functionName: 'allowance',
+              args: [account, PERMIT2],
+            }),
+          ),
+          withReadRetry(() =>
+            publicClient.readContract({
+              address: PERMIT2,
+              abi: permit2Abi,
+              functionName: 'allowance',
+              args: [account, token, spender],
+            }),
+          ),
         ])
         return {
           mode: 'permit2',
@@ -330,7 +349,10 @@ export async function prepareKyberSwapLegsParallel(params: {
       const token = leg.tokenIn as Address
       const amountIn = swap.amountIn
       if (state.mode === 'router') {
-        if (state.routerAllowance < amountIn) {
+        if (
+          state.routerAllowance < amountIn &&
+          !isRhInfiniteApprovalLive(account, token, built.routerAddress)
+        ) {
           calls.push({
             to: token,
             data: encodeFunctionData({
@@ -347,7 +369,9 @@ export async function prepareKyberSwapLegsParallel(params: {
           (approval as { mode: 'permit2'; spender?: Address }).spender,
         )
         const walletDebit = executorSpender ? platformFeeCover(amountIn) : amountIn
-        if (state.permit2Erc20Allowance < walletDebit) {
+        const erc20Live = isRhInfiniteApprovalLive(account, token, PERMIT2)
+        const p2Live = isRhInfiniteApprovalLive(account, token, spender)
+        if (state.permit2Erc20Allowance < walletDebit && !erc20Live) {
           calls.push({
             to: token,
             data: encodeFunctionData({
@@ -362,7 +386,10 @@ export async function prepareKyberSwapLegsParallel(params: {
           : amountIn > PERMIT2_MAX_UINT160
             ? PERMIT2_MAX_UINT160
             : amountIn
-        if (state.allowedAmount < need || state.expiration <= now + 60) {
+        if (
+          !p2Live &&
+          (state.allowedAmount < need || state.expiration <= now + 60)
+        ) {
           calls.push({
             to: PERMIT2,
             data: encodeFunctionData({
@@ -501,13 +528,18 @@ export async function prepareKyberSwapCalls(params: {
   if (!isKyberNative(params.tokenIn)) {
     const token = params.tokenIn as Address
     const amountIn = BigInt(built.amountIn)
-    const allowance = await params.publicClient.readContract({
-      address: token,
-      abi: erc20Abi,
-      functionName: 'allowance',
-      args: [params.account, built.routerAddress],
-    })
-    if (allowance < amountIn) {
+    const allowance = await withReadRetry(() =>
+      params.publicClient.readContract({
+        address: token,
+        abi: erc20Abi,
+        functionName: 'allowance',
+        args: [params.account, built.routerAddress],
+      }),
+    )
+    if (
+      allowance < amountIn &&
+      !isRhInfiniteApprovalLive(params.account, token, built.routerAddress)
+    ) {
       calls.push({
         to: token,
         data: encodeFunctionData({

@@ -3,10 +3,105 @@
  * msg.sender stays the user (unlike Multicall3).
  */
 
-import type { Address, Hex, PublicClient, WalletClient } from 'viem'
+import { decodeFunctionData, type Address, type Hex, type PublicClient, type WalletClient } from 'viem'
 import { getCapabilities, sendCalls, waitForCallsStatus } from 'viem/actions'
 import { RH_CHAIN_ID } from '@/utils/dlmm/rh-univ2'
 import { isWalletUserRejection } from '@/utils/wallet-rejection'
+
+// ---------------------------------------------------------------------------
+// Session infinite-approval memo. Once an infinite ERC20 approve (or a max
+// Permit2 allowance) CONFIRMS, remember owner|token|spender for this page
+// session so later runs never re-prompt/re-sign the same approval — even when
+// the on-chain allowance read races behind the just-mined approval.
+// ---------------------------------------------------------------------------
+
+const MAX_UINT256 = (1n << 256n) - 1n
+const MAX_UINT160 = (1n << 160n) - 1n
+const ERC20_APPROVE_SIG = '0x095ea7b3'
+const infiniteApprovals = new Set<string>()
+
+const ERC20_APPROVE_ABI = [
+  {
+    type: 'function',
+    name: 'approve',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'spender', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
+    outputs: [{ name: '', type: 'bool' }],
+  },
+] as const
+
+const PERMIT2_APPROVE_ABI = [
+  {
+    type: 'function',
+    name: 'approve',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'token', type: 'address' },
+      { name: 'spender', type: 'address' },
+      { name: 'amount', type: 'uint160' },
+      { name: 'expiration', type: 'uint48' },
+    ],
+    outputs: [],
+  },
+] as const
+
+/** True when this page session already confirmed an infinite approval. */
+export function isRhInfiniteApprovalLive(
+  owner: string,
+  token: string,
+  spender: string,
+): boolean {
+  return infiniteApprovals.has(
+    `${owner.toLowerCase()}|${token.toLowerCase()}|${spender.toLowerCase()}`,
+  )
+}
+
+/** After a confirmed tx, remember any infinite approval it carried. */
+function recordConfirmedApprovals(account: Address, calls: RhTxCall[]): void {
+  const owner = account.toLowerCase()
+  for (const call of calls) {
+    try {
+      if (call.data.toLowerCase().startsWith(ERC20_APPROVE_SIG)) {
+        const decoded = decodeFunctionData({
+          abi: ERC20_APPROVE_ABI,
+          data: call.data,
+        })
+        const [spender, amount] = decoded.args as [Address, bigint]
+        if (amount === MAX_UINT256) {
+          infiniteApprovals.add(
+            `${owner}|${call.to.toLowerCase()}|${spender.toLowerCase()}`,
+          )
+        }
+        continue
+      }
+    } catch {
+      // not an ERC20 approve
+    }
+    try {
+      const decoded = decodeFunctionData({
+        abi: PERMIT2_APPROVE_ABI,
+        data: call.data,
+      })
+      const args = decoded.args as readonly [
+        Address,
+        Address,
+        bigint,
+        number,
+      ]
+      const [token, spender, amount] = args
+      if (amount >= MAX_UINT160) {
+        infiniteApprovals.add(
+          `${owner}|${token.toLowerCase()}|${spender.toLowerCase()}`,
+        )
+      }
+    } catch {
+      // not a Permit2 approve
+    }
+  }
+}
 
 export type RhTxCall = {
   to: Address
@@ -105,6 +200,7 @@ async function writeCallsSequential(params: {
         )
       }
       onProgress?.(i, lastHash)
+      recordConfirmedApprovals(account, [call])
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error)
       throw new RhSequentialWriteError(msg, i, lastHash)
@@ -164,6 +260,7 @@ export async function executeRhWalletCalls(params: {
     if (receipts.some((r) => r.status != null && r.status !== 'success')) {
       throw new Error('sendCalls batch contained a reverted transaction')
     }
+    recordConfirmedApprovals(account, calls)
     const txHashes = receipts
       .map((r) => r.transactionHash)
       .filter((h): h is Hex => typeof h === 'string' && h.startsWith('0x'))
