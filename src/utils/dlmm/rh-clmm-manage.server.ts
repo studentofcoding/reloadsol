@@ -10,7 +10,12 @@
 
 import { createPublicClient, http, pad, toHex, type Address, type Hex } from 'viem'
 import { cacheGet, cacheSet } from '@/utils/redis-cache'
-import { listRhClmmPositions } from '@/utils/dlmm/rh-clmm-db'
+import {
+  listRhClmmPositions,
+  updateRhClmmPosition,
+  upsertRhClmmLiveSnapshots,
+} from '@/utils/dlmm/rh-clmm-db'
+import { crawlRhClmmLive } from '@/utils/dlmm/rh-clmm-live'
 import { RH_CHAIN, getRhRpcUrl } from '@/utils/dlmm/rh-univ2'
 import { CHAINS, RH_CHAIN_ID } from '@/utils/dlmm/rh-clmm/config'
 import { stateViewAbi, v4PositionManagerAbi } from '@/utils/dlmm/rh-clmm/abis'
@@ -29,13 +34,38 @@ import {
   shouldAlertFees,
   type RhClmmManageAlertKind,
 } from '@/utils/dlmm/rh-clmm-manage-alerts'
-import type { RhClmmPosition, RhV4PoolKeyJson } from '@/types/dlmm'
+import type {
+  RhClmmLiveRow,
+  RhClmmPosition,
+  RhV4PoolKeyJson,
+} from '@/types/dlmm'
 
 /** Canonical Multicall3 — deployed on Robinhood Chain 4663. */
 const MULTICALL3 = '0xca11bde06177c9f5c1b90fd73a40a41c9d3cCA11' as Address
 
 const ALERT_TTL_SEC = 3600 // throttle: at most one alert per position+kind per hour
 const MULTICALL_CHUNK = 100
+/** Budget for the per-owner on-chain v3 verification pass. */
+const V3_VERIFY_TIMEOUT_MS = 45_000
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`timed out after ${ms / 1000}s`)),
+      ms,
+    )
+    promise.then(
+      (v) => {
+        clearTimeout(timer)
+        resolve(v)
+      },
+      (e) => {
+        clearTimeout(timer)
+        reject(e)
+      },
+    )
+  })
+}
 
 function feeAlertThresholdUsd(): number {
   const raw = process.env.RH_CLMM_FEE_ALERT_USD
@@ -290,20 +320,75 @@ export async function runRhClmmManageCycle(): Promise<RhClmmManageCycleResult> {
     }
   }
 
-  // v3 positions: alert from the last live-synced ledger snapshot (no v3 RPC reads here)
-  for (const mark of marks.filter((m) => m.protocol === 'v3')) {
-    out.checked += 1
-    if (mark.in_range === false) {
-      out.oorCount += 1
-      await maybeAlert({
-        mark,
-        kind: 'oor',
-        tickLower: mark.tick_lower,
-        tickUpper: mark.tick_upper,
+  // v3 positions: verify against the chain before alerting. A ledger snapshot
+  // alone is never trusted — positions closed/claimed/transferred outside the
+  // app would otherwise keep alerting forever and stay invisible in the UI.
+  const v3ByOwner = new Map<string, RhClmmPosition[]>()
+  for (const m of marks) {
+    if (m.protocol !== 'v3') continue
+    const owner = (m.owner_address ?? '').trim().toLowerCase()
+    if (!owner) continue
+    const list = v3ByOwner.get(owner)
+    if (list) list.push(m)
+    else v3ByOwner.set(owner, [m])
+  }
+
+  for (const [owner, v3Marks] of v3ByOwner) {
+    out.checked += v3Marks.length
+    let liveRows: RhClmmLiveRow[] = []
+    try {
+      liveRows = await withTimeout(crawlRhClmmLive(owner), V3_VERIFY_TIMEOUT_MS)
+    } catch (error) {
+      console.warn(
+        `[rh-clmm-manage] v3 verify failed for ${owner} — skipping alerts this cycle:`,
+        error instanceof Error ? error.message : error,
+      )
+      continue
+    }
+
+    // Persist the verified snapshot so UI/DB fallbacks show fresh values.
+    if (liveRows.length > 0) {
+      await upsertRhClmmLiveSnapshots(owner, liveRows).catch((error) => {
+        console.warn(
+          '[rh-clmm-manage] live snapshot upsert failed:',
+          error instanceof Error ? error.message : error,
+        )
       })
     }
-    if (shouldAlertFees(mark.unclaimed_fees_usd ?? 0, thresholdUsd)) {
-      await maybeAlert({ mark, kind: 'fees', unclaimedFeesUsd: mark.unclaimed_fees_usd ?? 0 })
+
+    const rowByKey = new Map(
+      liveRows.map((r) => [`${r.protocol}:${r.tokenId}`, r]),
+    )
+    for (const mark of v3Marks) {
+      const row = rowByKey.get(`v3:${mark.token_id}`)
+      if (!row) {
+        // NFT no longer owned on-chain — close the ledger mark so the alert
+        // and the app agree (no more ghost "fees ready to claim").
+        if (mark.id) {
+          await updateRhClmmPosition(mark.id, { status: 'closed' }).catch(
+            (error) => {
+              console.warn(
+                `[rh-clmm-manage] failed to close stale mark #${mark.token_id}:`,
+                error instanceof Error ? error.message : error,
+              )
+            },
+          )
+        }
+        continue
+      }
+      if (row.inRange === false) {
+        out.oorCount += 1
+        await maybeAlert({
+          mark,
+          kind: 'oor',
+          tickLower: row.tickLower ?? mark.tick_lower,
+          tickUpper: row.tickUpper ?? mark.tick_upper,
+        })
+      }
+      const feesUsd = row.unclaimedFeesUsd ?? 0
+      if (shouldAlertFees(feesUsd, thresholdUsd)) {
+        await maybeAlert({ mark, kind: 'fees', unclaimedFeesUsd: feesUsd })
+      }
     }
   }
 
