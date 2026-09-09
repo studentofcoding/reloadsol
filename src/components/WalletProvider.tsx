@@ -38,6 +38,14 @@ interface WalletProviderProps {
 const WALLET_APP_URL =
   process.env.NEXT_PUBLIC_SITE_URL ?? "https://reloadsol.app";
 
+// Phantom registers itself as a Wallet Standard and its jup hardcoded twin
+// carries a deepLink that auto-opens the Phantom app on mobile during
+// auto-connect. Keep the other fallback wallets, drop Phantom's hardcoded
+// registration (real Phantom installs still register via Wallet Standard).
+const HARDCODED_WALLETS = HARDCODED_WALLET_STANDARDS.filter(
+  (w) => w.id !== "Phantom",
+);
+
 /**
  * Whether the Robinhood network is usable at all.
  *
@@ -144,9 +152,11 @@ export function WalletProvider({ children }: WalletProviderProps) {
       autoConnect,
       env: "mainnet-beta" as const,
       metadata,
-      // Show Phantom / popular wallets even when Wallet Standard is empty
-      // (otherwise the modal only shows the "New here?" onboarding screen).
-      hardcodedWallets: HARDCODED_WALLET_STANDARDS,
+      // Show popular wallets even when Wallet Standard is empty (otherwise
+      // the modal only shows the "New here?" onboarding screen). Phantom is
+      // excluded — it registers via Wallet Standard and its hardcoded twin
+      // auto-opens the Phantom app on mobile.
+      hardcodedWallets: HARDCODED_WALLETS,
       notificationCallback: WalletNotification,
       walletlistExplanation: {
         href: "https://developers.jup.ag/docs/tool-kits/wallet-kit",
