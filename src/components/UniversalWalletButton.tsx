@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import {
   UnifiedWalletButton,
   useUnifiedWallet,
@@ -21,6 +21,10 @@ function chainSegment(chain: AppNetwork): string {
  * jumping to /sell: /buy/solana -> /buy/robinhood, /swap -> /swap/robinhood,
  * dev search-token -> its chain page. Non-trade routes keep the old default
  * (/sell/{chain}).
+ *
+ * Reads the path at click time (window.location) — a usePathname hook would
+ * make the shared header client-hook-dynamic and break static prerendering of
+ * routes like /chart/[tokenAddress].
  */
 function chainSwitchTarget(pathname: string, next: AppNetwork): string {
   const seg = chainSegment(next);
@@ -34,6 +38,10 @@ function chainSwitchTarget(pathname: string, next: AppNetwork): string {
     return `/dev/search-token/${seg}`;
   }
   return `/sell/${seg}`;
+}
+
+function currentPath(): string {
+  return typeof window === "undefined" ? "" : window.location.pathname;
 }
 
 interface UniversalWalletButtonProps {
@@ -54,7 +62,6 @@ export default function UniversalWalletButton({
   const rh = useRhEvmWallet();
   const { network, setNetwork, canUseRh } = useAppNetwork();
   const router = useRouter();
-  const pathname = usePathname();
   // EVM-only whitelist: show toggle when Rabby is present so they can connect.
   const showRhToggle = canUseRh || rh.hasProvider;
   const [rhHint, setRhHint] = useState<string | null>(null);
@@ -87,7 +94,7 @@ export default function UniversalWalletButton({
             type="button"
             onClick={() => {
               setNetwork("sol");
-              router.push(chainSwitchTarget(pathname ?? "", "sol"));
+              router.push(chainSwitchTarget(currentPath(), "sol"));
             }}
             className={`px-2.5 py-1 font-medium ${
               network === "sol"
@@ -104,7 +111,7 @@ export default function UniversalWalletButton({
               void rh.connect().catch(() => {
                 /* rh.error surfaces below */
               });
-              router.push(chainSwitchTarget(pathname ?? "", "robinhood"));
+              router.push(chainSwitchTarget(currentPath(), "robinhood"));
             }}
             className={`px-2.5 py-1 font-medium border-l border-gray-600 ${
               network === "robinhood"
