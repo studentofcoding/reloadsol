@@ -18,6 +18,7 @@ import {
   fetchRhLedgerHoldings,
   listRhDustBlacklist,
   markRhTokenDust,
+  refreshRhHoldings,
 } from '@/utils/rh-ledger'
 import { RH_USDG, RH_USDG_DECIMALS, RH_WETH } from '@/utils/dlmm/rh-univ2'
 import { cacheGet, cacheSet } from '@/utils/redis-cache'
@@ -261,6 +262,32 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // On-chain freshness pass: the Goldsky balances dataset lags the chain by
+    // minutes-to-hours, so once we have the (dataset-derived) token set we probe
+    // it directly — one balanceOf multicall — and persist the fresh values.
+    let probedEmpty = false
+    if (source === 'balances' && tokens.length > 0) {
+      try {
+        const [seen, trade] = await Promise.all([
+          cacheGet<RhTokenMeta[]>(seenKey(walletNorm)).catch(() => null),
+          getRhTradeCandidates(walletNorm),
+        ])
+        const extra = [
+          ...(seen ?? []).map((m) => m.address),
+          ...trade.map((t) => t.address),
+        ]
+        const refreshed = await refreshRhHoldings(walletNorm, [
+          ...tokens.map((t) => t.mintAddress),
+          ...extra,
+        ])
+        tokens = refreshed
+        probedEmpty = refreshed.length === 0
+      } catch (err) {
+        // RPC hiccup — keep the stored snapshot rather than erroring out.
+        console.warn('[rh/wallet-tokens] on-chain refresh failed:', err)
+      }
+    }
+
     // Dust policy: drop confirmed sub-floor holdings (usdValue is a real price
     // × balance here, not a fallback guess) and remember them so later requests
     // skip probing/pricing them. Unknown-price tokens (usdValue === 0) are
@@ -300,8 +327,9 @@ export async function GET(request: NextRequest) {
     }
 
     // All sources empty/failed: serve the last-known-good snapshot so a
-    // transient indexer/RPC blip never surfaces an empty portfolio.
-    if (!skipCache && tokens.length === 0) {
+    // transient indexer/RPC blip never surfaces an empty portfolio. Unless the
+    // on-chain probe just proved the wallet is genuinely empty (sold out).
+    if (!skipCache && tokens.length === 0 && !probedEmpty) {
       const stale = await cacheGet<CachedResponse>(staleKey)
       if (stale) {
         return NextResponse.json({

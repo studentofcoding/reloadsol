@@ -712,6 +712,79 @@ export async function fetchRhBalanceHoldings(
   )
 }
 
+const BALANCE_OF_ABI = [
+  {
+    type: 'function',
+    name: 'balanceOf',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+] as const
+
+/**
+ * Freshen holdings straight from the chain (one multicall) and persist the
+ * results into rh_wallet_balances. The Goldsky balances dataset can lag the
+ * chain by minutes-to-hours, so we probe the tokens we know about on read
+ * instead of trusting dataset latency. Returns refreshed UserToken rows ([]
+ * when everything was sold); throws on RPC failure so callers can keep the
+ * stored snapshot.
+ */
+export async function refreshRhHoldings(
+  wallet: string,
+  addresses: string[],
+  opts?: { maxUsdFill?: number },
+): Promise<UserToken[]> {
+  const unique = Array.from(
+    new Set(
+      addresses
+        .map((a) => String(a ?? '').trim().toLowerCase())
+        .filter(isEvmAddress),
+    ),
+  )
+  if (unique.length === 0) return []
+  const walletNorm = wallet.toLowerCase()
+
+  const client = createPublicClient({
+    chain: RH_CHAIN,
+    transport: http(getRhRpcUrl(), { timeout: 10_000 }),
+  })
+  const [tip, results] = await Promise.all([
+    client.getBlockNumber(),
+    client
+      .multicall({
+        contracts: unique.map((a) => ({
+          address: a as `0x${string}`,
+          abi: BALANCE_OF_ABI,
+          functionName: 'balanceOf',
+          args: [walletNorm as `0x${string}`],
+        })),
+      })
+      .catch(() => null),
+  ])
+  if (!results) throw new Error('balanceOf multicall failed')
+
+  const rows: RhBalanceRow[] = []
+  const entries: HoldingEntry[] = []
+  unique.forEach((addr, i) => {
+    const res = results[i]
+    if (!res || res.status !== 'success') return
+    const bal = res.result as bigint
+    rows.push({
+      owner_address: walletNorm,
+      token_address: addr,
+      balance_raw: bal.toString(),
+      block_number: Number(tip),
+      block_timestamp: new Date(),
+    })
+    if (bal > BigInt(0)) {
+      entries.push({ token_address: addr, raw: bal.toString() })
+    }
+  })
+  if (rows.length > 0) await upsertRhWalletBalances(rows)
+  return entriesToRhUserTokens(entries, opts)
+}
+
 /** Env-seeded list of tracked RH wallets (informational). */
 export async function syncTrackedRhWallets(): Promise<string[]> {
   const candidates: Array<{ address: string; label: string }> = []
