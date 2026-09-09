@@ -1,6 +1,6 @@
 # ReloadSOL
 
-Next.js + Go-cron Solana trading platform: bulk token buys, trending tracker, mcap analytics, SL/TP monitoring, and an autonomous Meteora DLMM agent. Bulk buy/sell uses Solana Tracker Raptor; Jupiter Portfolio for wallet tokens; Shyft RPC via `/api/rpc`; Docker Postgres + PgBouncer for persistence; and Jupiter [Wallet Kit](https://developers.jup.ag/docs/tool-kits/wallet-kit) for universal wallet connectivity.
+Next.js + Go-cron Solana trading platform: bulk token buys, trending tracker, mcap analytics, SL/TP monitoring, and an autonomous Meteora DLMM agent. Bulk buy/sell uses Solana Tracker Raptor for quotes/swaps; Shyft `all_tokens` (cached) for wallet holdings with Jupiter Portfolio fallback; Shyft `send_many_txns` for multi-tx sends; Docker Postgres + PgBouncer for persistence; and Jupiter [Wallet Kit](https://developers.jup.ag/docs/tool-kits/wallet-kit) for universal wallet connectivity.
 
 ## Features
 
@@ -96,7 +96,7 @@ POSTGRES_PASSWORD=change-me
 DATABASE_URL=postgresql://postgres:change-me@reloadsol-bouncer:5432/reloadsol_db
 
 # Shyft — https://shyft.to dashboard (server-side RPC via /api/rpc proxy)
-# Wallet tokens: Jupiter Portfolio via /api/jupiter/portfolio (both /buy and /sell)
+# Wallet tokens: Shyft all_tokens via /api/shyft/wallet/all_tokens (cached; Jupiter Portfolio fallback)
 # Swaps: Solana Tracker Raptor (bulk /sell and /buy); GMGN charts only (no GMGN swap execution)
 # Browser RPC is proxied through /api/rpc — NEXT_PUBLIC_RPC_URL is optional
 SHYFT_API_KEY=your-shyft-api-key
@@ -206,7 +206,7 @@ Copy from [`.env.docker.example`](.env.docker.example). Key groups:
 | `POSTGRES_PASSWORD` | Postgres superuser password |
 | `DATABASE_URL` | App connection via PgBouncer (`reloadsol-bouncer:5432` in compose) |
 | `DATABASE_URL_DIRECT` | Direct Postgres URL for pgcopydb/psql (`reloadsol-db:5432`) |
-| `SHYFT_API_KEY` | Shyft dashboard API key — powers server-side RPC via `/api/rpc` proxy |
+| `SHYFT_API_KEY` | Shyft dashboard API key — `all_tokens` holdings, `send_many_txns` batch sends, and `/api/rpc` fallback |
 | `RPC_URL` | Comma-separated RPC URLs (max 5). Server `/api/rpc` proxy with failover. |
 | `NEXT_PUBLIC_RPC_URL` | Optional — browser uses `/api/rpc` proxy by default; set only for legacy direct-RPC paths. |
 | `RAPTOR_API_BASE` | Optional override for Solana Tracker Raptor swap API (default `https://raptor-beta.solanatracker.io`) |

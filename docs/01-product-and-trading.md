@@ -61,7 +61,7 @@ selection back to `sol`.
   Jupiter Terminal widget, and account close/reclaim — not the main swap executor.
 - **GMGN** on Solana is charts (embedded `gmgn.cc` iframes) plus a dev-only GMGN
   bound-wallet path in the bulk buyer (`useGmgnOnSol`); swaps otherwise stay Raptor.
-- Tokens: Jupiter Portfolio (`useWalletTokens.ts`); prices from the shared
+- Tokens: cached Shyft `all_tokens` (`useWalletTokens.ts`, Jupiter Portfolio fallback); prices from the shared
   GMGN + Redis + SSE feed with Jupiter fallback; RPC via the same-origin `/api/rpc`
   proxy (Shyft). Quote comparison across Jupiter / SolanaTracker / GMGN exists at
   `/api/trade/compare`.

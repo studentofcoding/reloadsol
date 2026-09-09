@@ -1,7 +1,7 @@
 import { query, queryOne } from '@/utils/db'
 import { log } from '@/utils/unified-logger'
 import { Connection, PublicKey, Keypair, VersionedTransaction } from '@solana/web3.js'
-import { getSwapQuote } from '@/utils/jupiter'
+import { getSwapQuote, fetchUserTokens, type UserToken } from '@/utils/jupiter'
 import {
   prepareSwapTransaction,
   submitSignedSwap,
@@ -9,8 +9,43 @@ import {
 } from '@/utils/swap-executor'
 import { notifySlTpTrigger } from './trading-notifications'
 import { getConnection } from '@/utils/solana'
-import { fetchUserTokens } from '@/utils/jupiter'
+import { fetchShyftAllTokensCached } from '@/utils/shyft-wallet-cache'
+import { mapShyftTokensToUserTokens } from '@/utils/shyft-wallet'
+import { fetchJupiterPortfolioDirect, mapPortfolioToUserTokens } from '@/utils/jupiter-portfolio'
 import { getOpenPositionPrices } from '@/utils/open-position-prices'
+
+/** Cached Shyft all_tokens, then Jupiter, then RPC token accounts. */
+async function fetchSlTpWalletTokens(
+  walletAddress: string,
+  fresh = false,
+): Promise<UserToken[]> {
+  try {
+    const shyft = await fetchShyftAllTokensCached(walletAddress, 'mainnet-beta', {
+      fresh,
+    })
+    return mapShyftTokensToUserTokens(shyft.tokens)
+  } catch (shyftErr) {
+    log.warn(
+      'error_handling',
+      'Shyft all_tokens unavailable for SL/TP holdings, trying Jupiter',
+      { walletAddress, error: shyftErr instanceof Error ? shyftErr.message : String(shyftErr) },
+    )
+  }
+
+  try {
+    const portfolio = await fetchJupiterPortfolioDirect(walletAddress)
+    return mapPortfolioToUserTokens(portfolio)
+  } catch (jupErr) {
+    log.warn(
+      'error_handling',
+      'Jupiter portfolio unavailable for SL/TP holdings, falling back to RPC',
+      { walletAddress, error: jupErr instanceof Error ? jupErr.message : String(jupErr) },
+    )
+  }
+
+  const pubkey = new PublicKey(walletAddress)
+  return fetchUserTokens(getConnection(), pubkey, false, false)
+}
 
 export interface SLTPPosition {
     id: string
@@ -242,8 +277,7 @@ async function getExistingOpenPositions(walletAddress: string): Promise<OpenPosi
         const openPositions: OpenPositionCycle[] = []
         if (openCycles.size > 0) {
             try {
-                const publicKey = new PublicKey(walletAddress)
-                const walletTokens = await fetchUserTokens(getConnection(), publicKey, false, false)
+                const walletTokens = await fetchSlTpWalletTokens(walletAddress)
 
                 openCycles.forEach((cycle) => {
                     const walletTok = walletTokens.find((wt) => wt.mintAddress === cycle.mintAddress)
@@ -618,8 +652,7 @@ function checkSLTPTriggers(position: SLTPPosition, currentPrice: number): SLTPTr
 // ✅ NEW: Build wallet token map for quick lookups
 async function getWalletTokenMap(walletAddress: string): Promise<Map<string, { uiAmount: number; decimals: number }>> {
     try {
-        const pubkey = new PublicKey(walletAddress)
-        const tokens = await fetchUserTokens(getConnection(), pubkey, false, false)
+        const tokens = await fetchSlTpWalletTokens(walletAddress)
         const map = new Map<string, { uiAmount: number; decimals: number }>()
         for (const t of tokens) {
             map.set(t.mintAddress, { uiAmount: t.uiAmount, decimals: t.decimals })
@@ -722,8 +755,7 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
         let decimals = 6
         let walletUiAmount = 0
         try {
-            const pubkey = new PublicKey(position.wallet_address)
-            const walletTokens = await fetchUserTokens(getConnection(), pubkey, false, false)
+            const walletTokens = await fetchSlTpWalletTokens(position.wallet_address, true)
             const t = walletTokens.find(tok => tok.mintAddress === position.token_address)
             if (t) {
                 decimals = t.decimals

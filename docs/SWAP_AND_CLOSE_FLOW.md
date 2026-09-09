@@ -6,7 +6,8 @@ This document summarizes how bulk swaps and token account closures work across t
 
 | Layer | Service | Files |
 |-------|---------|-------|
-| Wallet tokens | Jupiter Portfolio | `useWalletTokens.ts`, `jupiter-portfolio.ts` |
+| Wallet tokens | Shyft `all_tokens` (cached), Jupiter Portfolio fallback | `useWalletTokens.ts`, `sol-wallet-holdings.ts`, `shyft-wallet.ts` |
+| Multi-tx send | Shyft `send_many_txns` (RPC fallback per tx) | `swap-executor.ts`, `shyft-transaction.ts` |
 | Swaps | **Solana Tracker Raptor** (quote-and-swap + send-transaction) | `solanatracker-raptor.ts`, `swap-executor.ts`, `/api/solanatracker/*` |
 | RPC | Same-origin `/api/rpc` proxy (fallback send only) | `RpcContext.tsx`, `/api/rpc/route.ts` |
 | Prices/metadata | Jupiter APIs (UI support, not swap execution) | `/api/tokens/prices`, `/api/jupiter/metadata` |

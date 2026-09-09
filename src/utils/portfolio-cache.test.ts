@@ -1,5 +1,10 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { fetchWithCache } from '@/utils/portfolio-cache'
+import {
+  fetchWithCache,
+  portfolioKey,
+  portfolioWalletPrefix,
+  shyftAllTokensKey,
+} from '@/utils/portfolio-cache'
 
 const cacheGet = vi.hoisted(() => vi.fn())
 const cacheSet = vi.hoisted(() => vi.fn())
@@ -87,5 +92,35 @@ describe('fetchWithCache', () => {
 
     expect(result).toEqual({ data: { totalValue: 7 }, origin: 'miss' })
     expect(upstream).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('portfolio cache keys', () => {
+  it('normalizes wallet case for Jupiter holdings and Shyft all_tokens', () => {
+    const wallet = 'BQ72nSv9f3PRyRKCBnHLVrerrv37CYTHm5h3s9VSGQDV'
+    expect(portfolioWalletPrefix('sol', wallet)).toBe(
+      `pf:sol:${wallet.toLowerCase()}:`,
+    )
+    expect(portfolioKey('sol', wallet, 'holdings')).toBe(
+      `pf:sol:${wallet.toLowerCase()}:holdings`,
+    )
+    expect(shyftAllTokensKey(wallet)).toBe(
+      `pf:sol:${wallet.toLowerCase()}:all_tokens:mainnet-beta`,
+    )
+    expect(shyftAllTokensKey(` ${wallet} `, 'Devnet')).toBe(
+      `pf:sol:${wallet.toLowerCase()}:all_tokens:devnet`,
+    )
+  })
+
+  it('keeps Shyft all_tokens keys under the wallet invalidate prefix', () => {
+    const wallet = 'So11111111111111111111111111111111111111112'
+    const prefix = portfolioWalletPrefix('sol', wallet)
+    expect(shyftAllTokensKey(wallet, 'mainnet-beta').startsWith(prefix)).toBe(
+      true,
+    )
+    expect(portfolioKey('sol', wallet, 'holdings').startsWith(prefix)).toBe(true)
+    expect(shyftAllTokensKey(wallet)).not.toBe(
+      portfolioKey('sol', wallet, 'holdings'),
+    )
   })
 })

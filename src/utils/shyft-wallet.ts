@@ -4,6 +4,8 @@ import { shyftFetch } from "@/utils/shyft-api";
 export const SOL_MINT = "So11111111111111111111111111111111111111112";
 export const SHYFT_ALL_TOKENS_PATH = "/sol/v1/wallet/all_tokens";
 export const SHYFT_FETCH_TIMEOUT_MS = 15_000;
+export const SHYFT_ALL_TOKENS_TTL_SECONDS = 15;
+export const SHYFT_ALL_TOKENS_STALE_TTL_SECONDS = 120;
 export const PRICE_BATCH_SIZE = 100;
 
 export type ShyftWalletTokenInfo = {
@@ -154,10 +156,16 @@ async function fetchAllTokensFromUrl(
     }
 
     const data = (await response.json()) as {
+      status?: string;
+      error?: string;
       tokens: ShyftWalletToken[];
       tokenCount?: number;
       latencyMs?: number;
     };
+
+    if (data.status === "error") {
+      throw new Error(data.error ?? "Shyft all_tokens fetch failed");
+    }
 
     return {
       tokens: data.tokens ?? [],
@@ -169,19 +177,35 @@ async function fetchAllTokensFromUrl(
   }
 }
 
-/** Client-side fetch via Next.js proxy. */
+const allTokensInflight = new Map<string, Promise<ShyftAllTokensResponse>>();
+
+export type FetchShyftAllTokensOptions = {
+  network?: string;
+  /** Bypass the proxy's 15s response cache (post-trade refresh). */
+  fresh?: boolean;
+};
+
+/** Client-side fetch via Next.js proxy. `fresh` bypasses the proxy response cache. */
 export async function fetchShyftAllTokens(
   walletAddress: string,
-  network = "mainnet-beta",
+  options?: FetchShyftAllTokensOptions,
 ): Promise<ShyftAllTokensResponse> {
+  const network = options?.network ?? "mainnet-beta";
   const query = new URLSearchParams({
     wallet: walletAddress,
     network,
   });
-  return fetchAllTokensFromUrl(
-    `/api/shyft/wallet/all_tokens?${query.toString()}`,
-    SHYFT_FETCH_TIMEOUT_MS,
+  if (options?.fresh) query.set("fresh", "1");
+  const url = `/api/shyft/wallet/all_tokens?${query.toString()}`;
+
+  const inflight = allTokensInflight.get(url);
+  if (inflight) return inflight;
+
+  const promise = fetchAllTokensFromUrl(url, SHYFT_FETCH_TIMEOUT_MS).finally(
+    () => allTokensInflight.delete(url),
   );
+  allTokensInflight.set(url, promise);
+  return promise;
 }
 
 /** Server-side fetch directly from Shyft. */
