@@ -19,17 +19,11 @@ export function getPool(): Pool {
     if (!url) {
       throw new Error('DATABASE_URL must be set');
     }
-    const statementTimeoutMs = Number(
-      process.env.DATABASE_STATEMENT_TIMEOUT_MS || '15000',
-    );
     pool = new Pool({
       connectionString: url,
       max: POOL_MAX,
       // ponytail: PgBouncer transaction pool rejects prepared statements
       prepare: false,
-      // Abort runaway scans instead of pinning one of the few connections.
-      // (Startup `-c` option; applies to every pooled connection.)
-      options: `-c statement_timeout=${Number.isFinite(statementTimeoutMs) && statementTimeoutMs > 0 ? statementTimeoutMs : 15000}`,
     } as ConstructorParameters<typeof Pool>[0]);
   }
   return pool;
