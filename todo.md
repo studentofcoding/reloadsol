@@ -1,49 +1,38 @@
 # Goldsky RH Ledger — rollout checklist
 
-End-to-end build for RH token **holdings + history + PnL** backed by a Goldsky
-Turbo ledger (see `GOLDSKY_RH_LEDGER.md` for architecture). Code is done and
-tested; the open items are the deploy steps that need **your** VPS / Goldsky
-credentials.
-
 ## ✅ Done (agent) — code, configs, tests
+- [x] `db/init/30-rh-ledger.sql` — ledger tables (applied to VPS `reloadsol_db`)
+- [x] `goldsky/pipelines/rh-wallet-ledger.yaml` + `goldsky/jobs/rh-wallet-ledger-backfill.yaml`
+- [x] `scripts/goldsky-rh-ledger-deploy.sh` — render + validate + apply
+- [x] Ingest route `/api/rh/ledger/ingest` (Bearer, idempotent) + history API + ledger utils/tests
+- [x] `/api/rh/wallet-tokens` ledger tier 0 (indexer ladder = fallback)
+- [x] RH PnL pinned by tests; docs; env example
+- [x] Verified: tsc/lint clean, 842/844 tests (2 pre-existing env/network), `next build` passes
 
-- [x] `db/init/30-rh-ledger.sql` — `rh_ledger_transfers`, `rh_token_meta`, `tracked_rh_wallets`
-- [x] `goldsky/pipelines/rh-wallet-ledger.yaml` + `goldsky/jobs/rh-wallet-ledger-backfill.yaml` (validated against real dataset `robinhood_mainnet.erc20_transfers` v1.1.0)
-- [x] `scripts/goldsky-rh-ledger-deploy.sh` — render + validate + `--apply` (fills wallets/host/tip from env)
-- [x] `src/app/api/rh/ledger/ingest/route.ts` — webhook ingest (Bearer-secret, idempotent upsert, batch-tolerant)
-- [x] `src/app/api/rh/ledger/history/route.ts` — ledger history API
-- [x] `src/utils/rh-ledger.ts` + tests — event expansion, chunked upsert, holdings netting, metadata, history
-- [x] `/api/rh/wallet-tokens` — **ledger is now tier 0** (old GMGN→Blockscout→RPC ladder = fallback only); `source:"ledger"` in response
-- [x] PnL — RH fills confirmed price-marked; daily cron already covers all chains; RH PnL pinned by tests (`pnl-wallet-rh.test.ts`)
-- [x] Docs — `GOLDSKY_RH_LEDGER.md`, `goldsky/README.md`, `.env.docker.example` (+ `.gitignore` for rendered configs)
-- [x] Verified: `tsc --noEmit` clean · eslint clean · 844 tests / 842 pass (2 pre-existing env/network failures: live Blockscout test — Blockscout CF-403s servers — and an env-dependent executor test)
-- [x] Goldsky toolchain on this machine: CLI v13.10.2 logged in (project `reloadsol`), turbo extension installed
+## ✅ Done (agent) — deployment
+- [x] Committed + pushed (73e8cd7, 41a4350) — incl. fix moving price/meta helpers to server-only module after VPS build caught a client-bundle break
+- [x] VPS env: `RH_LEDGER_WEBHOOK_SECRET` + `RH_TRACKED_PARENT_ADDRESS=0x795b…603d` (the wallet found from real RH fills)
+- [x] VPS DB migration applied; app deployed & healthy (`reloadsol-web` Up)
+- [x] Goldsky `httpauth` secret `HTTPAUTH_SECRET_CMTU6VNUZ0` created (Bearer …)
+- [x] Ingest live: 401 without secret / 200 with (https://reloadsol.app/api/rh/ledger/ingest)
+- [x] Backfill job applied (bounded genesis-skip → tip 58,623,740); E2E proven: **74 ledger rows already inserted** via webhook
+- [ ] Tail pipeline `reloadsol-rh-wallet-ledger` — **auto-applies when the backfill finishes** (background watcher; Starter plan = 1 pipeline at a time)
 
-## ☐ YOU — pre-deploy (one-time)
+## ⏳ In flight (no action needed)
+- [ ] Backfill `reloadsol-rh-wallet-ledger-backfill` Running (~2.8k blocks/s, at ~17.5M of 58.6M; ETA ~4 h on the Starter s-size worker). On completion the watcher applies the tail; rows keep streaming.
 
-- [ ] **1. Bound wallet confirmed** — `GMGN_BOUND_EVM_ADDRESS` set in your VPS `.env` (already used by RH swaps). Decide if you also track the **Rabby parent** wallet: if yes, set `RH_TRACKED_PARENT_ADDRESS=<0x…>` in the VPS `.env`. No parent = bound-wallet mode only (list will be correct there; parent-mode holdings need parent added).
-- [ ] **2. Webhook secret** — add to the VPS `.env` (both must match):
-      `RH_LEDGER_WEBHOOK_SECRET=<long-random-token>` (web container reads `.env` via `env_file`).
-- [ ] **3. Create the Goldsky `httpauth` secret** (on this machine or the VPS):
-      `goldsky secret create RH_LEDGER_WEBHOOK_SECRET` → type `httpauth`, header `Authorization`, value `Bearer <same-token>`.
-- [ ] **4. Apply the DB migration** on the VPS (existing DB; fresh deploys auto-run `db/init/*`):
-      `docker exec -i reloadsol-db psql -U reloadsol -d reloadsol_db < db/init/30-rh-ledger.sql`
-- [ ] **5. Deploy the app code** to the VPS (push → `flowey-vps` `git pull` → docker rebuild) so the ingest/history routes and env land.
+If the watcher dies (session closed) and the job is gone, finish manually:
+```bash
+export PATH="$PATH:$HOME/.goldsky/bin"
+GMGN_BOUND_EVM_ADDRESS=0x795b5c0c89fc5d3b0de6c04141c3f1b6c340603d \
+RH_LEDGER_WEBHOOK_SECRET=<token> \
+RH_LEDGER_WEBHOOK_SECRET_NAME=HTTPAUTH_SECRET_CMTU6VNUZ0 \
+APP_HOST=https://reloadsol.app \
+bash scripts/goldsky-rh-ledger-deploy.sh --apply
+```
 
-## ☐ YOU — deploy Goldsky pipelines
-
-- [ ] **6. Render + validate:** `bash scripts/goldsky-rh-ledger-deploy.sh` (env: `GMGN_BOUND_EVM_ADDRESS`, optional `RH_TRACKED_PARENT_ADDRESS`, `APP_HOST` = your public host, `RH_LEDGER_WEBHOOK_SECRET`).
-- [ ] **7. Apply (backfill first, then tail):** `bash scripts/goldsky-rh-ledger-deploy.sh --apply`
-- [ ] **8. Watch it run:** `goldsky turbo list` — backfill job completes and self-deletes; tail stays ACTIVE.
-
-## ☐ YOU — acceptance checks (live)
-
-- [ ] **9. Holdings from the ledger:** `curl "https://<host>/api/rh/wallet-tokens?wallet=<bound>&fresh=1"` → `"source":"ledger"`, tokens match real wallet, **no stale/old tokens**, USD > 0.
-- [ ] **10. Live update:** do a real RH buy/sell → within seconds `fresh=1` reflects it (no 20 s cache wait). Rows also visible at `/api/rh/ledger/history?wallet=<wallet>&limit=10`.
-- [ ] **11. PnL includes RH:** `curl -X POST "https://<host>/api/pnl/update?key=$PNL_UPDATE_SECRET"` → RH wallet's `token_operations.trade_pnl` moves.
-- [ ] **12. Failover sanity:** (optional) stop/break GMGN keys → list still served from ledger; truncate `rh_ledger_transfers` → old ladder still answers (no regression).
-
-## Optional / backlog
-
-- [ ] Track an additional wallet later: add address to the tail YAML `IN (...)` + run the backfill job once (see `goldsky/README.md`).
-- [ ] If your holdings include RH "stock tokens" that aren't plain ERC-20, add Goldsky's stock-token transfer dataset as a second source (verify with `goldsky dataset list --output json | grep robinhood`).
+## ☐ YOU / acceptance (after backfill completes)
+- [ ] `/api/rh/wallet-tokens?wallet=0x795b…603d&fresh=1` → `"source":"ledger"`, tokens match the wallet, no stale tokens, USD > 0
+- [ ] `/api/rh/ledger/history?wallet=0x795b…603d&limit=10` returns recent transfers
+- [ ] Next real RH trade appears in the list immediately (fresh=1) and in history
+- [ ] Optional: `POST /api/pnl/update?key=…` → RH wallet `trade_pnl` moves

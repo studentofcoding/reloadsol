@@ -9,6 +9,51 @@ import {
   isRhHeldToken,
   sortRhTokensByUsd,
 } from '@/utils/rh-wallet-holdings'
+import { createPublicClient, http } from 'viem'
+import { RH_CHAIN, getRhRpcUrl } from '@/utils/dlmm/rh-univ2'
+
+// ---------------------------------------------------------------------------
+// Ledger readiness: holdings derived from the transfer ledger are only correct
+// once the pipeline has caught up to the chain tip (backfill done, tail
+// streaming). While it is mid-backfill the net would be partial/wrong, so the
+// route falls back to the indexer/RPC ladder instead.
+// ---------------------------------------------------------------------------
+
+/** Blocks of slack allowed before we call the ledger "caught up". */
+const LEDGER_CATCHUP_SLACK = 3000
+
+let cachedTip: { at: number; tip: number } | null = null
+
+async function getChainTip(): Promise<number> {
+  const now = Date.now()
+  if (cachedTip && now - cachedTip.at < 30_000) return cachedTip.tip
+  const client = createPublicClient({
+    chain: RH_CHAIN,
+    transport: http(getRhRpcUrl(), { timeout: 8000 }),
+  })
+  const tip = Number(await client.getBlockNumber())
+  cachedTip = { at: now, tip }
+  return tip
+}
+
+/**
+ * True when the ledger's newest row (any tracked wallet) is within a few
+ * minutes of the chain tip — i.e. the backfill completed and the tail is live.
+ * False during the one-time genesis→tip backfill or when the DB is empty.
+ */
+export async function isRhLedgerCaughtUp(): Promise<boolean> {
+  try {
+    const row = await query<{ last: string | null }>(
+      'SELECT MAX(block_number)::text AS last FROM rh_ledger_transfers',
+    )
+    const last = row.rows[0]?.last
+    if (!last || Number(last) <= 0) return false
+    const tip = await getChainTip()
+    return tip - Number(last) <= LEDGER_CATCHUP_SLACK
+  } catch {
+    return false
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Goldsky RH wallet ledger. Rows are ERC-20 Transfer events touching a tracked
@@ -269,7 +314,7 @@ export async function ensureRhTokenMeta(
       params.push(m.token_address, m.symbol, m.name, m.decimals, m.logo_url, m.source)
     }
     await query(
-      `INSERT INTO rh_token_meta (token_address, symbol, name, decimals, logo_url, source, updated_at)
+      `INSERT INTO rh_token_meta (token_address, symbol, name, decimals, logo_url, source)
        VALUES ${valuesSql.join(', ')}
        ON CONFLICT (token_address) DO UPDATE SET
          symbol = COALESCE(EXCLUDED.symbol, rh_token_meta.symbol),
@@ -345,6 +390,9 @@ export async function fetchRhLedgerHoldings(
   wallet: string,
   opts?: { maxUsdFill?: number },
 ): Promise<UserToken[]> {
+  // Partial backfill nets are wrong — only serve ledger truth once the
+  // pipeline rows are near the chain tip (backfill done + tail live).
+  if (!(await isRhLedgerCaughtUp())) return []
   const holdings = await listRhLedgerHoldings(wallet)
   if (holdings.length === 0) return []
 

@@ -19,6 +19,8 @@ import {
 export const RH_TOKEN_USD_TTL_S = 60
 export const RH_PRICE_FILL_CAP = 15
 export const RH_PRICE_FILL_CONCURRENCY = 2
+/** How long a zero/unknown price is remembered (avoids refetch storms). */
+const RH_PRICE_ZERO_TTL_S = 30
 
 function num(v: unknown): number {
   const n = typeof v === 'number' ? v : Number(v)
@@ -29,8 +31,13 @@ function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === 'object' ? (v as Record<string, unknown>) : null
 }
 
+// Per-process: right after a 429, short-circuit price lookups for ~1.5 s so a
+// batch/request loop can't immediately hammer GMGN again.
+let rateLimitedUntil = 0
+
 /** Cached GMGN USD price for a RH token (0 when unknown, throws on RATE_LIMIT). */
 export async function fetchRhTokenUsdCached(address: string): Promise<number> {
+  if (Date.now() < rateLimitedUntil) return 0
   const addr = String(address ?? '').trim().toLowerCase()
   const key = `rh:token-usd:${addr}`
   const cached = await cacheGet<number>(key)
@@ -39,9 +46,11 @@ export async function fetchRhTokenUsdCached(address: string): Promise<number> {
     const info = await tokenInfo({ chain: 'robinhood', address: addr })
     const px = extractGmgnTokenUsdPrice(info)
     if (px > 0) void cacheSet(key, px, RH_TOKEN_USD_TTL_S)
+    else void cacheSet(key, 0, RH_PRICE_ZERO_TTL_S)
     return px
   } catch (error) {
     if (error instanceof GmgnApiError && error.code === 'RATE_LIMIT') {
+      rateLimitedUntil = Date.now() + 1500
       throw error
     }
     return 0
@@ -59,9 +68,12 @@ export async function fillMissingRhUsd(
   const cap = opts?.cap ?? RH_PRICE_FILL_CAP
   const concurrency = opts?.concurrency ?? RH_PRICE_FILL_CONCURRENCY
   const out = [...tokens]
+  // Price the largest holdings first so the cap spends its budget on what the
+  // user actually sees at the top of the list.
   const missing = out
     .map((t, i) => ({ t, i }))
     .filter(({ t }) => !(t.usdValue > 0))
+    .sort((a, b) => b.t.uiAmount - a.t.uiAmount)
     .slice(0, cap)
 
   if (missing.length === 0) return out
