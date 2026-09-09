@@ -227,10 +227,21 @@ export async function upsertRhWalletBalances(
   rows: RhBalanceRow[],
   opts?: { chunkSize?: number },
 ): Promise<{ upserted: number }> {
+  // The balances dataset can deliver multiple updates for the same
+  // wallet+token inside one webhook batch — dedupe keeping the newest block
+  // (a single statement can't ON CONFLICT-update the same key twice).
+  const latest = new Map<string, RhBalanceRow>()
+  for (const r of rows) {
+    const key = `${r.owner_address}|${r.token_address}`
+    const prev = latest.get(key)
+    if (!prev || r.block_number >= prev.block_number) latest.set(key, r)
+  }
+  const deduped = Array.from(latest.values())
+
   const chunkSize = opts?.chunkSize ?? 200
   let upserted = 0
-  for (let i = 0; i < rows.length; i += chunkSize) {
-    const chunk = rows.slice(i, i + chunkSize)
+  for (let i = 0; i < deduped.length; i += chunkSize) {
+    const chunk = deduped.slice(i, i + chunkSize)
     if (chunk.length === 0) continue
     const params: unknown[] = []
     const valuesSql: string[] = []
@@ -542,8 +553,10 @@ export async function ensureRhTokenMeta(
       const valuesSql: string[] = []
       for (const m of onchain) {
         const base = params.length
-        valuesSql.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4})`)
-        params.push(m.token_address, m.symbol, m.name, m.decimals)
+        valuesSql.push(
+          `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5})`,
+        )
+        params.push(m.token_address, m.symbol, m.name, m.decimals, m.source)
       }
       await query(
         `INSERT INTO rh_token_meta (token_address, symbol, name, decimals, source)
