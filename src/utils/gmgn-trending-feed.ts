@@ -11,10 +11,17 @@ import { attachFirstDetections } from '@/utils/first-detection'
 import { fetchWithCache } from '@/utils/portfolio-cache'
 
 // The server owns the upstream call: one GMGN fetch per chain per window
-// (2 min), and every client just reads this cached snapshot. Long stale TTL
-// means a GMGN 429/outage serves the last-good list instead of erroring.
-const CACHE_TTL_SECONDS = 120
+// (default 5 min, env-tunable), and every client just reads this cached
+// snapshot. Long stale TTL means a GMGN 429/outage serves the last-good list
+// instead of erroring, so lowering the cadence stays robust.
+const CACHE_TTL_SECONDS_DEFAULT = 300
 const STALE_TTL_SECONDS = 3600
+
+function trendingTtlSeconds(): number {
+  const raw = process.env.GMGN_TRENDING_TTL_SECONDS
+  const n = raw ? Number(raw) : NaN
+  return Number.isFinite(n) && n >= 60 ? Math.floor(n) : CACHE_TTL_SECONDS_DEFAULT
+}
 
 // Collapse concurrent expiries (several clients polling at once must not each
 // trigger an upstream GMGN call).
@@ -53,7 +60,7 @@ export async function getFilteredGmgnTrending(
     run = fetchWithCache<GmgnFilteredTrendingPayload>({
       key: cacheKey,
       staleKey: `${cacheKey}:stale`,
-      ttlSeconds: CACHE_TTL_SECONDS,
+      ttlSeconds: trendingTtlSeconds(),
       staleTtlSeconds: STALE_TTL_SECONDS,
       fetch: async () => {
         const criteria = criteriaForChain(chain)

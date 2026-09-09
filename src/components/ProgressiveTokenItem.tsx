@@ -140,10 +140,7 @@ const ProgressiveTokenItem: React.FC<ProgressiveTokenItemProps> = ({
                     <span className="ml-1 text-sm text-white">≈ ${token.usdValue.toFixed(2)}</span>
                   </>
                 ) : (
-                  <div className="text-xs text-gray-500 mt-1 flex items-center">
-                    <div className="w-2 h-2 border border-gray-500 border-t-gray-300 rounded-full animate-spin mr-1"></div>
-                    Getting price...
-                  </div>
+                  <div className="text-xs text-gray-600 mt-1">—</div>
                 )}
               </>
             )}

@@ -17,8 +17,14 @@ import {
 // ---------------------------------------------------------------------------
 
 export const RH_TOKEN_USD_TTL_S = 60
-export const RH_PRICE_FILL_CAP = 15
-export const RH_PRICE_FILL_CONCURRENCY = 2
+export const RH_PRICE_FILL_CAP = Math.max(
+  1,
+  Number(process.env.RH_PRICE_FILL_CAP ?? 40),
+)
+export const RH_PRICE_FILL_CONCURRENCY = Math.max(
+  1,
+  Number(process.env.RH_PRICE_FILL_CONCURRENCY ?? 2),
+)
 /** How long a zero/unknown price is remembered (avoids refetch storms). */
 const RH_PRICE_ZERO_TTL_S = 30
 
