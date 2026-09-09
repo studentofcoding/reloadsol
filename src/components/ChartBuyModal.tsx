@@ -125,7 +125,11 @@ export default function ChartBuyModal({
       ? tokenQueryError.message
       : "";
 
-  const { allTokens, refetchFresh } = useWalletTokens({
+  const {
+    allTokens,
+    refetchFresh,
+    isPending: tokensIsPending,
+  } = useWalletTokens({
     connection,
     publicKey,
     walletAddress,
@@ -148,7 +152,11 @@ export default function ChartBuyModal({
     );
   }, [allTokens, rhHoldings.tokens, isRhToken, validTokenAddress]);
 
-  const isLoadingPositions = false;
+  // Loading only while the wallet query is pending with no data yet — a
+  // background refresh must never flip the card back to "No position found".
+  const isLoadingPositions = isRhToken
+    ? rhHoldings.isLoading && rhHoldings.tokens.length === 0
+    : tokensIsPending && allTokens.length === 0;
 
   const { walletBalance, refreshBalances } = useWalletBalances({
     connection,

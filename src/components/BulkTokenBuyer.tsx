@@ -1007,7 +1007,7 @@ export default function BulkTokenBuyer() {
         setTokenMints("");
         triggerPostBuyRefresh({
           refreshWalletTokens: () => refetchTokensFresh(),
-          refreshBalances: () => refreshBalancesRef.current(),
+          refreshBalances: (fresh) => refreshBalancesRef.current(fresh),
         });
       }
     } catch (err) {
@@ -1493,7 +1493,7 @@ export default function BulkTokenBuyer() {
         setTokenMints("");
         triggerPostBuyRefresh({
           refreshWalletTokens: () => refetchTokensFresh(),
-          refreshBalances: () => refreshBalancesRef.current(),
+          refreshBalances: (fresh) => refreshBalancesRef.current(fresh),
         });
       }
     } catch (err) {

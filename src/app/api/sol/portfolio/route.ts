@@ -1,46 +1,23 @@
 import { NextRequest, NextResponse, connection } from "next/server";
-import { Connection, PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
-import { getAssociatedTokenAddress, getAccount } from "@solana/spl-token";
-import { TOKENS } from "@/utils/solana";
+import { PublicKey } from "@solana/web3.js";
+import { fetchSolBalanceWithFailover } from "@/utils/sol-rpc-balance";
 import { fetchWithCache, portfolioKey } from "@/utils/portfolio-cache";
 
 const BALANCE_TTL_SECONDS = 12;
-const BALANCE_STALE_TTL_SECONDS = 120;
+// Long stale window so a provider outage serves last-known-good balances
+// instead of a wall of 502s while the failover list is exhausted.
+const BALANCE_STALE_TTL_SECONDS = 300;
 
-const DEFAULT_RPC =
-  process.env.NEXT_PUBLIC_RPC_URL ??
-  process.env.RPC_URL ??
-  "https://api.mainnet-beta.solana.com";
+/** Snapshot shape persisted in cache (endpoint URL stays server-internal). */
+type BalanceSnapshot = {
+  balance: number;
+  usdc: number;
+  latencyMs: number;
+};
 
-type SolBalance = { balance: number; usdc: number; latencyMs: number };
-
-async function fetchSolBalance(wallet: string): Promise<SolBalance> {
-  const start = Date.now();
-  const connection = new Connection(DEFAULT_RPC, { commitment: "confirmed" });
-  const publicKey = new PublicKey(wallet);
-
-  const lamports = await connection.getBalance(publicKey);
-
-  let usdc = 0;
-  try {
-    const usdcMint = new PublicKey(TOKENS.USDC);
-    const ata = await getAssociatedTokenAddress(usdcMint, publicKey);
-    const account = await getAccount(connection, ata);
-    usdc = Number(account.amount) / 1e6;
-  } catch {
-    usdc = 0;
-  }
-
-  return {
-    balance: lamports / LAMPORTS_PER_SOL,
-    usdc,
-    latencyMs: Date.now() - start,
-  };
-}
-
-/** Cached Solana native + USDC balance. `fresh=1` bypasses + purges the key. */
+/** Cached Solana native + USDC balance with multi-RPC failover. `fresh=1` bypasses + purges the key. */
 export async function GET(request: NextRequest) {
-  await connection();
+  await connection(); // Next.js dynamic-API opt-in (forces dynamic render)
   try {
     const wallet = request.nextUrl.searchParams.get("wallet")?.trim() ?? "";
     if (!wallet) {
@@ -61,13 +38,18 @@ export async function GET(request: NextRequest) {
     const skipCache = request.nextUrl.searchParams.get("fresh") === "1";
     const freshKey = portfolioKey("sol", wallet, "balance");
 
-    const { data, origin } = await fetchWithCache<SolBalance>({
+    const { data, origin } = await fetchWithCache<BalanceSnapshot>({
       key: freshKey,
       staleKey: `${freshKey}:stale`,
       ttlSeconds: BALANCE_TTL_SECONDS,
       staleTtlSeconds: BALANCE_STALE_TTL_SECONDS,
       skipCache,
-      fetch: () => fetchSolBalance(wallet),
+      fetch: async () => {
+        // `endpoint` carries an API key — strip it before the snapshot is cached.
+        const { balance, usdc, latencyMs } =
+          await fetchSolBalanceWithFailover(wallet);
+        return { balance, usdc, latencyMs };
+      },
     });
 
     return NextResponse.json({

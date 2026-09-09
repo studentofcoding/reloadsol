@@ -842,6 +842,31 @@ export type ExecuteClientSwapResult = {
   outAmount?: string;
 };
 
+const WALLET_SIGN_TIMEOUT_MS = 60_000; // a stale wallet popup must not hang the swap forever
+
+/** Bound a wallet sign (popup) so a stale/ignored request settles with an error. */
+function withWalletSignTimeout<T>(promise: Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(
+        new Error(
+          "Timed out waiting for wallet signature — approve the transaction in your wallet and try again",
+        ),
+      );
+    }, WALLET_SIGN_TIMEOUT_MS);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 /** Single client-side swap: Raptor prepare → sign → submit → confirm. */
 export async function executeClientSwap(
   params: ExecuteClientSwapParams,
@@ -850,7 +875,7 @@ export async function executeClientSwap(
   const tx = VersionedTransaction.deserialize(
     Buffer.from(prepared.swapTransaction, "base64"),
   );
-  const signedTx = await params.signTransaction(tx);
+  const signedTx = await withWalletSignTimeout(params.signTransaction(tx));
   const sendResult = await submitSignedSwap({
     signedTx,
     prepared,

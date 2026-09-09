@@ -1766,6 +1766,8 @@ async function closeTokenAccounts(
 }
 
 // Execute bulk token purchase
+const WALLET_SIGN_TIMEOUT_MS = 60_000; // a stale wallet popup must not hold the buy open forever
+
 export async function executeBulkBuy(
   request: BulkBuyRequest,
   userPublicKey: string,
@@ -1830,6 +1832,14 @@ export async function executeBulkBuy(
             const inputDecimals = request.inputCurrency === 'USDC' ? 6 : 9
             const divisor = Math.pow(10, inputDecimals)
 
+            if (mint === inputMint) {
+              return {
+                success: false as const,
+                mint,
+                error: 'Input and output are the same asset — nothing to buy',
+              }
+            }
+
             console.log(`🔍 Raptor swap for ${mint}:`, {
               inputMint,
               outputMint: mint,
@@ -1891,13 +1901,17 @@ export async function executeBulkBuy(
 
     console.log(`Signing ${transactions.length} transactions...`)
 
-    const signedTransactions = await signTransactionsWithFallback(
-      transactions,
-      signAllTransactions,
-      async (tx) => {
-        const [signed] = await signAllTransactions([tx])
-        return signed
-      },
+    const signedTransactions = await withTimeout(
+      signTransactionsWithFallback(
+        transactions,
+        signAllTransactions,
+        async (tx) => {
+          const [signed] = await signAllTransactions([tx])
+          return signed
+        },
+      ),
+      WALLET_SIGN_TIMEOUT_MS,
+      'Wallet signature',
     )
 
     // Send and confirm transactions using rate-limited batches

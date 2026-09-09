@@ -65,12 +65,6 @@ interface RiskIndicators {
   overallRisk: 'LOW' | 'MEDIUM' | 'HIGH'
 }
 
-interface TokenPrice {
-  token_address: string
-  price: number
-  change_5m: number
-}
-
 function socialUrl(raw: string | undefined, kind: 'twitter' | 'telegram' | 'website'): string | null {
   const v = raw?.trim()
   if (!v) return null
@@ -98,7 +92,6 @@ export default function TrendingTokens({
   tokensRef.current = trendingTokens
   const [isLoading, setIsLoading] = useState<boolean>(true)
   const [error, setError] = useState<string | null>(null)
-  const [isPriceUpdating, setIsPriceUpdating] = useState<boolean>(false)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const [isHovering, setIsHovering] = useState<boolean>(false)
   const scrollAnimationRef = useRef<number | null>(null)
@@ -119,11 +112,12 @@ export default function TrendingTokens({
 
       try {
         let uniqueTokens: TrendingToken[] = []
-        // Sol (no chain / sol): Jupiter filtered. RH: GMGN filtered twin.
-        const url =
-          chain === 'robinhood'
-            ? '/api/gmgn/trending/filtered?chain=robinhood'
-            : '/api/trending/filtered'
+        // Both chains now use the GMGN market-rank feed, which carries the full
+        // parity fields (liquidity, holders, launchpad, SM/KOL counts,
+        // hot/visits, socials, komun/fomo cues). The old Jupiter datapi feed
+        // has none of those columns.
+        const feedChain = chain === 'robinhood' ? 'robinhood' : 'sol'
+        const url = `/api/gmgn/trending/filtered?chain=${feedChain}`
         const response = await fetch(url)
         if (!response.ok) {
           if (response.status === 429 && tokensRef.current.length > 0) {
@@ -152,9 +146,9 @@ export default function TrendingTokens({
     
     fetchTrendingTokens({ initial: true })
 
-    // Sol has a separate 10s price poll below; RH refreshes the whole list instead
-    // (server caches the GMGN call for 30s, so this costs one upstream call per window).
-    const refreshMs = chain === 'robinhood' ? 60 * 1000 : 5 * 60 * 1000
+    // The GMGN feed is server-cached for 30s, so a 60s client refresh costs
+    // about one upstream call per window for both chains.
+    const refreshMs = 60 * 1000
     const intervalId = setInterval(() => {
       // Skip a tick if the previous fetch is still running (slow upstream /
       // rate-limit backoff) so polls never stack.
@@ -168,68 +162,6 @@ export default function TrendingTokens({
     return () => clearInterval(intervalId)
   }, [chain])
 
-  // Fetch price updates every 10 seconds (Jupiter filtered feed only)
-  useEffect(() => {
-    // Only start price updates after initial token data is loaded
-    if (chain || isLoading || error || trendingTokens.length === 0) return
-
-    const updatePrices = async () => {
-      setIsPriceUpdating(true)
-      
-      try {
-        const response = await fetch('/api/trending/prices')
-        
-        if (!response.ok) {
-          console.error(`Price update failed: ${response.status}`)
-          return
-        }
-        
-        const data = await response.json()
-        const prices = data.prices || []
-        
-        if (prices.length === 0) return
-        
-        // Update prices and 5m changes in the existing tokens
-        setTrendingTokens(currentTokens => {
-          // First update all tokens with new prices
-          const updatedTokens = currentTokens.map(token => {
-            // Find matching price update
-            const priceUpdate = prices.find(
-              (p: TokenPrice) => p.token_address === token.token_address
-            )
-            
-            if (priceUpdate) {
-              // Return updated token with new price and 5m change
-              return {
-                ...token,
-                price: priceUpdate.price,
-                change_5m: priceUpdate.change_5m
-              }
-            }
-            
-            // Return original token if no update found
-            return token
-          })
-          
-          // Then filter out tokens with extreme negative price movement
-          return updatedTokens.filter(token => token.change_5m > -0.4)
-        })
-      } catch (err) {
-        console.error('Error updating token prices:', err)
-        // Don't set error state for price updates to avoid disrupting the UI
-      } finally {
-        setIsPriceUpdating(false)
-      }
-    }
-
-    // Run immediately for the first time
-    updatePrices()
-    
-    // Update prices every 10 seconds
-    const priceIntervalId = setInterval(updatePrices, 10 * 1000)
-    
-    return () => clearInterval(priceIntervalId)
-  }, [chain, isLoading, error, trendingTokens.length])
 
   // Check if scrolling is needed
   useEffect(() => {
@@ -459,9 +391,6 @@ export default function TrendingTokens({
             <option value="mcap_high">Top mcap</option>
             <option value="mcap_low">Low mcap</option>
           </select>
-          {isPriceUpdating && (
-            <div className="w-3 h-3 mr-2 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
-          )}
           <div className="text-sm text-gray-400">in last hour</div>
         </div>
       </div>

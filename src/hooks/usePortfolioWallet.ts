@@ -52,7 +52,7 @@ export function usePortfolioWallet(): {
   usdcBalance: number | null
   usdgBalance: number | null
   wethBalance: number | null
-  refreshBalances: () => Promise<void>
+  refreshBalances: (fresh?: boolean) => Promise<void>
   isLoadingBalances: boolean
 } {
   const { network } = useAppNetwork()
@@ -130,7 +130,7 @@ export function usePortfolioWallet(): {
     },
   })
 
-  const refreshBalances = async () => {
+  const refreshBalances = async (fresh = false) => {
     if (isRh) {
       if (!rhAddress) return
       await Promise.all([
@@ -146,7 +146,7 @@ export function usePortfolioWallet(): {
       ])
       return
     }
-    await solBalances.refreshBalances()
+    await solBalances.refreshBalances(fresh)
   }
 
   const nativeBalance = isRh

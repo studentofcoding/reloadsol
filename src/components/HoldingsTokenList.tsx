@@ -45,7 +45,9 @@ export default function HoldingsTokenList({
     return <TokenSkeleton count={3} variant="progressive" />
   }
 
-  if (error) {
+  // Keep the populated list on screen when a background refresh errors — only
+  // fall through to the error box when there is nothing to show.
+  if (error && tokens.length === 0) {
     return (
       <div className="text-center py-8 border border-gray-600 rounded-xl">
         <p className="text-gray-400 mb-3">{error}</p>

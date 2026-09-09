@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Connection, PublicKey } from "@solana/web3.js";
 import { categorizeUserTokens, type UserToken } from "@/utils/jupiter";
 import {
@@ -109,6 +109,7 @@ export function useWalletTokens({
     },
     enabled: isEnabled,
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
     refetchInterval,
     refetchOnWindowFocus: false,
     retry: 1,

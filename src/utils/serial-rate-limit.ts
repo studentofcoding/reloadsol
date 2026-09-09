@@ -18,13 +18,18 @@ export function createSerialRateLimiter(
 
   return {
     wait() {
-      chain = chain.then(async () => {
-        const gap = minIntervalMs()
-        const now = Date.now()
-        const wait = Math.max(0, lastAt + gap - now)
-        if (wait > 0) await new Promise((r) => setTimeout(r, wait))
-        lastAt = Date.now()
-      })
+      // Swallow rejections from the previous link so a failed RPC op can never
+      // poison the chain for every later caller (they would otherwise get an
+      // already-rejected promise forever).
+      chain = chain
+        .catch(() => {})
+        .then(async () => {
+          const gap = minIntervalMs()
+          const now = Date.now()
+          const wait = Math.max(0, lastAt + gap - now)
+          if (wait > 0) await new Promise((r) => setTimeout(r, wait))
+          lastAt = Date.now()
+        })
       return chain
     },
     delayMs(attempt: number) {

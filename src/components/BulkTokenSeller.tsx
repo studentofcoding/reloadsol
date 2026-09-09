@@ -2129,6 +2129,16 @@ export default function BulkTokenSeller() {
 
   const filteredUserTokens = displayUserTokens;
 
+  // True once any token data is on screen. Skeleton/error branches below are
+  // gated on this so a background refetch (or a transient fetch error) never
+  // blanks an already-populated list.
+  const hasAnyTokens = isRhChain
+    ? rhWalletTokens.tokens.length > 0
+    : allTokensCount > 0 ||
+      allBalancedTokens.length > 0 ||
+      zeroBalanceTokens.length > 0 ||
+      emptyAccountTokens.length > 0;
+
   /** RH: sum of holdings USD for header (no Sol fee/rent math). */
   const rhHoldingsUsdTotal = useMemo(() => {
     if (!isRhChain) return 0;
@@ -2550,11 +2560,11 @@ export default function BulkTokenSeller() {
             </h3>
             <TokenSkeleton count={3} variant="progressive" />
           </div>
-        ) : isLoadingTokensList ? (
+        ) : isLoadingTokensList && !hasAnyTokens ? (
           <>
             <TokenSkeleton count={3} variant="progressive" />
           </>
-        ) : fetchError ? (
+        ) : fetchError && !hasAnyTokens ? (
           <div className="text-center py-12">
             <h3 className="text-lg font-semibold text-gray-300 mb-2">
               Failed to load tokens

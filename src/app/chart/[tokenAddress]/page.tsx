@@ -109,7 +109,11 @@ export default function ChartPage() {
       ? tokenQueryError.message
       : "";
 
-  const { allTokens, refetchTokens } = useWalletTokens({
+  const {
+    allTokens,
+    refetchFresh,
+    isPending: tokensIsPending,
+  } = useWalletTokens({
     connection,
     publicKey,
     walletAddress,
@@ -135,7 +139,10 @@ export default function ChartPage() {
     );
   }, [userTokens, validTokenAddress]);
 
-  const isLoadingPositions = false;
+  // Show a loading state only while the wallet-token query is pending with no
+  // data yet — once data exists, keep the last-known card instead of flashing
+  // "No position found" on every background refresh.
+  const isLoadingPositions = allTokens.length === 0 && tokensIsPending;
 
   const { walletBalance, refreshBalances } = useWalletBalances({
     connection,
@@ -362,11 +369,13 @@ export default function ChartPage() {
         // Reset form on success
         setBuyAmount("0.1");
 
-        // Immediately refresh positions after successful buy
+        // Immediately refresh positions after successful buy. Single delayed
+        // pass with server-cache bypass (fresh) — repeated non-fresh retries
+        // would just read the pre-trade snapshot and add load.
         console.log("✅ Buy successful, refreshing positions...");
         setTimeout(() => {
-          void refetchTokens(false);
-          void refreshBalances();
+          void refetchFresh();
+          void refreshBalances(true);
         }, 2000);
       }
     } catch (err) {
@@ -386,7 +395,7 @@ export default function ChartPage() {
     slippage,
     priorityFee,
     tokenInfo,
-    refetchTokens,
+    refetchFresh,
     refreshBalances,
   ]);
 

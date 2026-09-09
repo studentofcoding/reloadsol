@@ -1,15 +1,15 @@
 "use client";
 
 import { useCallback } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import type { Connection, PublicKey } from "@solana/web3.js";
 
-export function walletBalanceQueryKey(walletAddress: string | null) {
-  return ["wallet-balance", walletAddress] as const;
-}
-
-export function walletUsdcBalanceQueryKey(walletAddress: string | null) {
-  return ["wallet-usdc-balance", walletAddress] as const;
+export function walletBalancesQueryKey(walletAddress: string | null) {
+  return ["wallet-balances", walletAddress] as const;
 }
 
 type SolPortfolioResponse = { balance: number; usdc: number };
@@ -36,6 +36,12 @@ type UseWalletBalancesOptions = {
   refetchInterval?: number;
 };
 
+/**
+ * SOL + USDC wallet balances from one `/api/sol/portfolio` request per poll
+ * tick (they used to be two queries against the same URL). `placeholderData`
+ * keeps the last known values on screen while a background refetch runs or
+ * fails, so the balance pill never blips to 0.
+ */
 export function useWalletBalances({
   walletAddress,
   enabled = true,
@@ -44,48 +50,32 @@ export function useWalletBalances({
   const queryClient = useQueryClient();
   const isEnabled = enabled && Boolean(walletAddress);
 
-  const solQuery = useQuery({
-    queryKey: walletBalanceQueryKey(walletAddress),
-    queryFn: () => fetchSolPortfolio(walletAddress!).then((d) => d.balance),
+  const query = useQuery({
+    queryKey: walletBalancesQueryKey(walletAddress),
+    queryFn: () => fetchSolPortfolio(walletAddress!),
     enabled: isEnabled,
     staleTime: 60_000,
     refetchInterval: isEnabled ? refetchInterval : false,
+    placeholderData: keepPreviousData,
   });
 
-  const usdcQuery = useQuery({
-    queryKey: walletUsdcBalanceQueryKey(walletAddress),
-    queryFn: () => fetchSolPortfolio(walletAddress!).then((d) => d.usdc),
-    enabled: isEnabled,
-    staleTime: 60_000,
-    refetchInterval: isEnabled ? refetchInterval : false,
-  });
-
-  /** Invalidate and refetch; `fresh=true` bypasses the server cache (post-trade). */
+  /** Refetch; `fresh=true` bypasses the server cache (post-trade). */
   const refreshBalances = useCallback(
     async (fresh = false): Promise<void> => {
       if (!walletAddress) return;
-      await Promise.all([
-        queryClient.fetchQuery({
-          queryKey: walletBalanceQueryKey(walletAddress),
-          queryFn: () =>
-            fetchSolPortfolio(walletAddress, fresh).then((d) => d.balance),
-          staleTime: 0,
-        }),
-        queryClient.fetchQuery({
-          queryKey: walletUsdcBalanceQueryKey(walletAddress),
-          queryFn: () =>
-            fetchSolPortfolio(walletAddress, fresh).then((d) => d.usdc),
-          staleTime: 0,
-        }),
-      ]);
+      await queryClient.fetchQuery({
+        queryKey: walletBalancesQueryKey(walletAddress),
+        queryFn: () => fetchSolPortfolio(walletAddress, fresh),
+        staleTime: 0,
+      });
     },
     [walletAddress, queryClient],
   );
 
   return {
-    walletBalance: isEnabled ? (solQuery.data ?? null) : null,
-    usdcBalance: isEnabled ? (usdcQuery.data ?? null) : null,
-    isLoadingBalances: solQuery.isPending || usdcQuery.isPending,
+    walletBalance: isEnabled ? (query.data?.balance ?? null) : null,
+    usdcBalance: isEnabled ? (query.data?.usdc ?? null) : null,
+    isLoadingBalances: query.isPending,
     refreshBalances,
   };
 }
