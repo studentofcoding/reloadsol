@@ -1,6 +1,7 @@
 /**
  * Trade stack toggle:
- * - 'raptor': Solana Tracker RPC + Raptor quote/send/confirm
+ * - 'raptor' (default): Solana Tracker RPC (rpc-mainnet.solanatracker.io) for
+ *   send/confirm + Raptor quote/send/confirm from raptor-beta.solanatracker.io
  * - 'shyft': Shyft RPC + Shyft send_txn; Raptor quote build with Jupiter Lite fallback
  */
 export type TradeProvider = "raptor" | "shyft";
@@ -11,16 +12,16 @@ const listeners = new Set<(provider: TradeProvider) => void>();
 
 function envTradeProvider(): TradeProvider {
   const value = process.env.TRADE_PROVIDER?.trim();
-  return value === "raptor" ? "raptor" : "shyft";
+  return value === "shyft" ? "shyft" : "raptor";
 }
 
 function readStoredProvider(): TradeProvider {
   try {
-    return window.localStorage.getItem(STORAGE_KEY) === "raptor"
-      ? "raptor"
-      : "shyft";
+    return window.localStorage.getItem(STORAGE_KEY) === "shyft"
+      ? "shyft"
+      : "raptor";
   } catch {
-    return "shyft";
+    return "raptor";
   }
 }
 
