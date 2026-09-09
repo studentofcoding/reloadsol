@@ -17,6 +17,25 @@ function cleanName(name: unknown): string | null {
   return name === 'Unknown Token' ? null : name
 }
 
+/**
+ * True when a token row carries only the fabricated placeholder identity
+ * ('Unknown' / 'TOKEN' / 'Unknown Token'). Such rows must never overwrite a
+ * good symbol/name from the Jupiter portfolio feed.
+ */
+export function isPlaceholderTokenIdentity(input: {
+  symbol?: string | null
+  name?: string | null
+} | null | undefined): boolean {
+  if (!input) return true
+  const symbol = (input.symbol ?? '').trim().toLowerCase()
+  const name = (input.name ?? '').trim().toLowerCase()
+  const symbolUsable =
+    symbol !== '' && symbol !== 'unknown' && symbol !== 'token'
+  const nameUsable =
+    name !== '' && name !== 'unknown' && name !== 'unknown token'
+  return !symbolUsable && !nameUsable
+}
+
 export async function fetchTokenMetadataBatch(
   mints: string[],
 ): Promise<Map<string, TokenDisplayMeta>> {

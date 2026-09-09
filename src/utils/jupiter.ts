@@ -1215,10 +1215,13 @@ async function getTokenInfo(mintAddress: string): Promise<{ decimals: number; sy
       return commonTokens[mintAddress]
     }
 
-    // Default for unknown tokens
-    return { decimals: 6, symbol: 'TOKEN', name: 'Unknown Token' }
+    // No real metadata known — return null. Never fabricate 'TOKEN' /
+    // 'Unknown Token' identities here: enrichment broadcasts them through the
+    // global callback, and they would clobber the correct Jupiter-portfolio
+    // symbols in the wallet lists.
+    return null
   } catch {
-    return { decimals: 6, symbol: 'TOKEN', name: 'Unknown Token' }
+    return null
   }
 }
 

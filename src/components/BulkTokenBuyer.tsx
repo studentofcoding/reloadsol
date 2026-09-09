@@ -1599,19 +1599,24 @@ export default function BulkTokenBuyer() {
   // Handle metadata updates from background enrichment
   const handleMetadataUpdate = useCallback(
     (updatedTokens: UserToken[]) => {
-      console.log(
-        `Updating UI with enriched metadata for ${updatedTokens.length} tokens`,
-      );
+      // A refreshed row only replaces the current one when it carries a REAL
+      // identity — placeholder rows ('TOKEN'/'Unknown Token') must never
+      // clobber the correct Jupiter-portfolio symbols.
+      const apply = (token: UserToken): UserToken => {
+        const updated = updatedTokens.find(
+          (u) => u.mintAddress === token.mintAddress,
+        );
+        if (!updated) return token;
+        const sym = (updated.symbol ?? "").trim().toLowerCase();
+        const name = (updated.name ?? "").trim().toLowerCase();
+        const usable =
+          (sym !== "" && sym !== "unknown" && sym !== "token") ||
+          (name !== "" && name !== "unknown" && name !== "unknown token");
+        return usable ? updated : token;
+      };
 
       patchTokens((prev) => {
-        const patchList = (tokens: UserToken[]) =>
-          tokens.map((token) => {
-            const updated = updatedTokens.find(
-              (u) => u.mintAddress === token.mintAddress,
-            );
-            return updated || token;
-          });
-
+        const patchList = (tokens: UserToken[]) => tokens.map(apply);
         return {
           ...prev,
           allTokens: patchList(prev.allTokens),
