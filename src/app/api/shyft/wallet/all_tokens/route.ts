@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse, connection } from "next/server";
 import { PublicKey } from "@solana/web3.js";
 import { getShyftApiKey, ShyftAPIError } from "@/utils/shyft-api";
-import { fetchShyftAllTokensDirect } from "@/utils/shyft-wallet";
+import { fetchShyftAllTokensCached } from "@/utils/shyft-wallet-cache";
 
 export async function GET(request: NextRequest) {
-  await connection()
+  await connection();
   try {
     const apiKey = getShyftApiKey();
     if (!apiKey) {
@@ -35,7 +35,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Invalid wallet address" }, { status: 400 });
     }
 
-    const result = await fetchShyftAllTokensDirect(wallet, network);
+    // Post-trade refresh: bypass the response cache so the just-bought/sold
+    // token shows up immediately instead of waiting out the TTL.
+    const skipCache = searchParams.get("fresh") === "1";
+    const result = await fetchShyftAllTokensCached(wallet, network, {
+      fresh: skipCache,
+    });
 
     return NextResponse.json(
       {
@@ -43,10 +48,17 @@ export async function GET(request: NextRequest) {
         tokens: result.tokens,
         tokenCount: result.tokenCount,
         latencyMs: result.latencyMs,
+        source: "shyft",
       },
       {
         headers: {
           "Cache-Control": "private, max-age=15",
+          "X-Cache-Status":
+            result.origin === "hit"
+              ? "HIT"
+              : result.origin === "stale"
+                ? "STALE"
+                : "MISS",
         },
       },
     );

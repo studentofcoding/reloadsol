@@ -34,7 +34,7 @@
 
 - **Functionality**: Tracks **Open Positions** (current holdings) and **Completed Trades** (historical).
 - **Filters**: **All / Real / Sim** on open + completed (same pills on Trading History).
-- **Fast Sell**: Real → Jupiter Portfolio balance resolve then Raptor sell; SIM → mark-close only; disabled when not in wallet.
+- **Fast Sell**: Real → cached Shyft `all_tokens` (Jupiter fallback) then Raptor sell; SIM → mark-close only; disabled when not in wallet.
 - **Refresh list**: Re-fetches holdings and drops real opens missing from portfolio (`pruneOpenPositionsByHoldings`).
 - **Open prices**: Shared GMGN + Redis + SSE feed (Jupiter fallback) for open-card marks.
 - **Metrics**: Calculates Realized/Unrealized PnL in SOL and USD.

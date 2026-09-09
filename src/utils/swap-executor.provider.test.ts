@@ -211,6 +211,40 @@ describe("swap-executor raptor provider", () => {
     expect(sendRaptorTransactionDirect).not.toHaveBeenCalled();
   });
 
+  it("submitSignedSwapBatch uses send_many_txns on raptor stack when batch size > 1", async () => {
+    vi.mocked(sendShyftManyTransactionsDirect).mockResolvedValue({
+      success: true,
+      results: [
+        { id: 1, signature: "sig-a", status: "confirmed" },
+        { id: 2, signature: "sig-b", status: "confirmed" },
+      ],
+    });
+
+    const makeTx = () =>
+      ({
+        serialize: () => Buffer.from("signed-bytes"),
+      }) as unknown as VersionedTransaction;
+
+    const sendTransaction = vi.fn();
+    const connection = { sendTransaction } as unknown as Connection;
+
+    const results = await submitSignedSwapBatch(
+      [
+        { signedTx: makeTx(), prepared: { provider: "raptor", swapTransaction: "a" }, index: 0 },
+        { signedTx: makeTx(), prepared: { provider: "raptor", swapTransaction: "b" }, index: 1 },
+      ],
+      connection,
+      true,
+    );
+
+    expect(sendShyftManyTransactionsDirect).toHaveBeenCalledTimes(1);
+    expect(sendTransaction).not.toHaveBeenCalled();
+    expect(results).toEqual([
+      { index: 0, success: true, signature: "sig-a", via: "shyft" },
+      { index: 1, success: true, signature: "sig-b", via: "shyft" },
+    ]);
+  });
+
   it("confirmSwapSignaturesBatch polls Raptor when checkViaRaptor even if via is rpc", async () => {
     vi.mocked(getRaptorTransactionStatusSafe).mockResolvedValue({
       status: "confirmed",

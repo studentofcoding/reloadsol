@@ -67,14 +67,30 @@ export async function fetchWithCache<T>(
   }
 }
 
+/** Prefix shared by every portfolio cache key for a chain+wallet. */
+export function portfolioWalletPrefix(
+  chain: 'sol' | 'robinhood',
+  wallet: string,
+): string {
+  return `pf:${chain}:${wallet.trim().toLowerCase()}:`
+}
+
 /** Canonical portfolio cache key per chain/wallet/kind. */
 export function portfolioKey(
   chain: 'sol' | 'robinhood',
   wallet: string,
   kind: 'holdings' | 'balance',
 ): string {
-  const w = wallet.trim().toLowerCase()
-  return `pf:${chain}:${w}:${kind}`
+  return `${portfolioWalletPrefix(chain, wallet)}${kind}`
+}
+
+/** Cached Shyft `all_tokens` key — distinct from Jupiter `holdings`. */
+export function shyftAllTokensKey(
+  wallet: string,
+  network = 'mainnet-beta',
+): string {
+  const n = network.trim().toLowerCase() || 'mainnet-beta'
+  return `${portfolioWalletPrefix('sol', wallet)}all_tokens:${n}`
 }
 
 /** Expire a wallet's portfolio cache (call after a buy/sell to force refresh). */
@@ -82,6 +98,5 @@ export async function invalidatePortfolio(
   chain: 'sol' | 'robinhood',
   wallet: string,
 ): Promise<void> {
-  const w = wallet.trim().toLowerCase()
-  await cacheDelByPrefix(`pf:${chain}:${w}:`)
+  await cacheDelByPrefix(portfolioWalletPrefix(chain, wallet))
 }

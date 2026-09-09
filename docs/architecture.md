@@ -300,7 +300,8 @@ Default `npm run docker:deploy` uses `--auto` from git diff.
 |---------|----------|
 | **Solana Tracker Raptor** | Bulk buy/sell, chart buy, PnL fast sell |
 | **Jupiter Lite** | Single buy/sell in signals, SL/TP monitor |
-| **Jupiter Portfolio** | Wallet token list |
+| **Shyft all_tokens** | Wallet token list (cached; Jupiter Portfolio fallback) |
+| **Shyft send_many_txns** | Batch broadcast of already-signed Solana txs |
 | **Jupiter Ultra Reclaim** | Close empty ATAs after sell |
 | **Jupiter trending API** | `datapi.jup.ag` + `api.jup.ag` fallback |
 | **Shyft RPC** | On-chain reads/writes via `/api/rpc` |

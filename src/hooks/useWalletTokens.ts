@@ -4,10 +4,7 @@ import { useCallback } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Connection, PublicKey } from "@solana/web3.js";
 import { categorizeUserTokens, type UserToken } from "@/utils/jupiter";
-import {
-  fetchJupiterPortfolio,
-  mapPortfolioToUserTokens,
-} from "@/utils/jupiter-portfolio";
+import { fetchSolWalletHoldings } from "@/utils/sol-wallet-holdings";
 import type { TokenFetchMeta } from "@/contexts/RpcContext";
 
 export type WalletTokensData = {
@@ -20,7 +17,7 @@ export type WalletTokensData = {
   meta: TokenFetchMeta;
 };
 
-export const WALLET_TOKENS_SOURCE = "jupiter-portfolio" as const;
+export const WALLET_TOKENS_SOURCE = "shyft-all-tokens" as const;
 
 export function walletTokensQueryKey(
   walletAddress: string | null,
@@ -34,6 +31,10 @@ export function walletTokensQueryKey(
   ] as const;
 }
 
+function sourceLabel(source: "shyft" | "jupiter"): string {
+  return source === "shyft" ? "Shyft all_tokens" : "Jupiter Portfolio";
+}
+
 async function fetchWalletTokens(
   _connection: Connection,
   _publicKey: PublicKey,
@@ -41,12 +42,12 @@ async function fetchWalletTokens(
   _forceRefresh: boolean,
   fresh = false,
 ): Promise<WalletTokensData> {
-  const start = Date.now();
-
-  const portfolio = await fetchJupiterPortfolio(walletAddress, fresh);
-  const tokens = mapPortfolioToUserTokens(portfolio);
-  const totalPortfolioUsd = portfolio.totalValue;
-  const sourceLabel = "Jupiter Portfolio";
+  const holdings = await fetchSolWalletHoldings(walletAddress, {
+    fresh,
+    enrichPrices: true,
+  });
+  const tokens = holdings.tokens;
+  const totalPortfolioUsd = holdings.totalPortfolioUsd;
 
   const { valuable, dust, zeroValue, sellable, zeroBalance, frozen } =
     categorizeUserTokens(tokens);
@@ -61,8 +62,8 @@ async function fetchWalletTokens(
     closeOnly,
     meta: {
       rawAccountCount: tokens.length,
-      latencyMs: Date.now() - start,
-      rpcLabel: sourceLabel,
+      latencyMs: holdings.latencyMs,
+      rpcLabel: sourceLabel(holdings.source),
       totalPortfolioUsd,
     },
   };

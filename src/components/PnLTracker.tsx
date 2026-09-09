@@ -24,10 +24,9 @@ import {
   TokenToSell,
 } from "@/utils/jupiter";
 import {
-  fetchJupiterPortfolio,
-  mapPortfolioToUserTokens,
+  fetchSolWalletHoldings,
   resolveWalletTokenToSell,
-} from "@/utils/jupiter-portfolio";
+} from "@/utils/sol-wallet-holdings";
 import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { SwapQuote } from "@/types";
 import { trackSell, trackClose } from "@/utils/operations-api";
@@ -1022,17 +1021,17 @@ export default function PnLTracker() {
                   ? rhWalletTokens.tokens
                   : (await rhWalletTokens.refetch()).data?.tokens ?? [];
             } else {
-              // Prefer Jupiter Portfolio (same as /sell) so Token-2022 / portfolio
-              // holdings attach for Fast Sell; RPC fetchUserTokens as fallback.
+              // Prefer cached Shyft all_tokens (same as /sell); Jupiter then RPC.
               try {
-                const portfolio = await fetchJupiterPortfolio(
+                const holdings = await fetchSolWalletHoldings(
                   publicKey!.toString(),
+                  { enrichPrices: false },
                 );
-                walletTokens = mapPortfolioToUserTokens(portfolio);
-              } catch (portfolioErr) {
+                walletTokens = holdings.tokens;
+              } catch (holdingsErr) {
                 console.warn(
-                  "Jupiter portfolio unavailable for open positions, falling back to RPC",
-                  portfolioErr,
+                  "Sol holdings unavailable for open positions, falling back to RPC",
+                  holdingsErr,
                 );
                 walletTokens = await fetchUserTokens(
                   connection!,
@@ -2157,8 +2156,8 @@ export default function PnLTracker() {
         const balanceBeforeOp = await connection.getBalance(publicKey);
         const balanceBeforeSOL = balanceBeforeOp / LAMPORTS_PER_SOL;
 
-        // Resolve via Jupiter Portfolio first (same source as /sell), then
-        // cached position data / RPC — Token-2022 often missing from RPC-only.
+        // Resolve via cached Shyft all_tokens first (same source as /sell), then
+        // Jupiter / cached position data / RPC — Token-2022 often missing from RPC-only.
         const tokenToSell = await resolveWalletTokenToSell(
           publicKey.toString(),
           position.mintAddress,

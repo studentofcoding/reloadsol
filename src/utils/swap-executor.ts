@@ -429,7 +429,13 @@ async function submitShyftManyBatch(
     }
     try {
       const signature = await rpcSendFallback(item.signedTx, connection);
-      return { index: item.index, success: true, signature, via: "rpc" };
+      return {
+        index: item.index,
+        success: true,
+        signature,
+        via: "rpc",
+        checkViaRaptor: getTradeProvider() === "raptor",
+      };
     } catch (error) {
       return {
         index: item.index,
@@ -459,7 +465,7 @@ async function submitShyftManyBatch(
   }
 }
 
-/** Batch submit — Shyft uses send_many_txns when count > 1; Raptor uses parallel single sends. */
+/** Batch submit — send_many_txns when count > 1; single tx stays provider-aware (Tracker RPC on raptor). */
 export async function submitSignedSwapBatch(
   items: SubmitSignedSwapBatchItem[],
   connection: Connection,
@@ -469,54 +475,31 @@ export async function submitSignedSwapBatch(
 
   const useDirect = direct ?? typeof window === "undefined";
 
-  if (getTradeProvider() === "shyft") {
-    if (items.length === 1) {
-      try {
-        const sendResult = await submitSignedSwap({
-          signedTx: items[0].signedTx,
-          prepared: items[0].prepared,
-          connection,
-          direct,
-        });
-        return [
-          {
-            index: items[0].index,
-            success: true,
-            signature: sendResult.signature,
-            via: sendResult.via,
-            checkViaRaptor: sendResult.checkViaRaptor,
-          },
-        ];
-      } catch (error) {
-        return [{ index: items[0].index, success: false, error }];
-      }
-    }
-    return submitShyftManyBatch(items, connection, useDirect);
-  }
-
-  return runWithConcurrency(
-    items,
-    getTradeSendConcurrency(),
-    async (item) => {
-      try {
-        const sendResult = await submitSignedSwap({
-          signedTx: item.signedTx,
-          prepared: item.prepared,
-          connection,
-          direct,
-        });
-        return {
-          index: item.index,
-          success: true as const,
+  if (items.length === 1) {
+    try {
+      const sendResult = await submitSignedSwap({
+        signedTx: items[0].signedTx,
+        prepared: items[0].prepared,
+        connection,
+        direct,
+      });
+      return [
+        {
+          index: items[0].index,
+          success: true,
           signature: sendResult.signature,
           via: sendResult.via,
           checkViaRaptor: sendResult.checkViaRaptor,
-        };
-      } catch (error) {
-        return { index: item.index, success: false as const, error };
-      }
-    },
-  );
+        },
+      ];
+    } catch (error) {
+      return [{ index: items[0].index, success: false, error }];
+    }
+  }
+
+  // Multi-tx: one Shyft send_many_txns call, then per-tx RPC fallback.
+  // Quotes/swap build stay on Tracker; only the signed broadcast is batched.
+  return submitShyftManyBatch(items, connection, useDirect);
 }
 
 const CONFIRM_POLL_INTERVAL_MS = 3000;
