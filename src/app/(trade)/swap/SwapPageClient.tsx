@@ -119,12 +119,18 @@ export default function SwapPageClient() {
   });
 
   if (network === 'robinhood') {
+    // Only hand the RH panel a token that is actually valid on robinhood (0x) —
+    // a leftover sol mint from an in-place chain flip must not become its form.
+    const rhToken = /^0x[a-fA-F0-9]{40}$/i.test(requestedTokenMint)
+      ? requestedTokenMint
+      : ''
     return (
       <div
+        key="rh"
         className="flex flex-col items-center justify-center gap-4 py-8"
         style={{ minHeight: '550px' }}
       >
-        <RhGmgnSwapPanel initialToken={requestedTokenMint} />
+        <RhGmgnSwapPanel key={network} initialToken={rhToken} />
       </div>
     )
   }

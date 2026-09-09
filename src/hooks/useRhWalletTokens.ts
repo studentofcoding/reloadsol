@@ -1,11 +1,7 @@
 'use client'
 
 import { useCallback, useRef } from 'react'
-import {
-  keepPreviousData,
-  useQuery,
-  useQueryClient,
-} from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { usePortfolioWallet } from '@/hooks/usePortfolioWallet'
 import type { UserToken } from '@/utils/jupiter'
 import { isRhHeldToken, sortRhTokensByUsd } from '@/utils/rh-wallet-holdings'
@@ -77,10 +73,16 @@ export function useRhWalletTokens() {
     queryFn: () => fetchRhWalletTokens(walletAddress!),
     enabled,
     staleTime: 30_000,
-    // Mirror useWalletTokens: keep the last holdings on screen across key
-    // changes (Parent↔Bound toggle, reconnect, Sol↔RH switch) and background
-    // refetches instead of blanking to a skeleton until the fetch lands.
-    placeholderData: keepPreviousData,
+    // Keep the last holdings visible across Parent↔Bound toggles / reconnects,
+    // but never leak a DIFFERENT wallet's rows (or sol rows) under this key.
+    placeholderData: (prev, prevQuery) => {
+      const prevWallet = Array.isArray(prevQuery?.queryKey)
+        ? prevQuery.queryKey[1]
+        : undefined
+      return prevWallet != null && prevWallet === walletAddress
+        ? prev
+        : undefined
+    },
     refetchOnWindowFocus: false,
   })
 

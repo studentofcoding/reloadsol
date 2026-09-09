@@ -361,6 +361,9 @@ export default function BulkTokenSeller() {
   if (tradeScopeKey !== nextTradeScopeKey) {
     setTradeScopeKey(nextTradeScopeKey);
     setSelectedTokens([]);
+    setSelectedZeroBalanceTokens([]);
+    setSelectedToken("");
+    setPendingCloseableTokens([]);
     setQuotes({});
     setError("");
   }

@@ -36,7 +36,8 @@ export function useGmgnTokenSearch(
     queryFn: () => searchGmgnTokens(chain, query),
     enabled: (options?.enabled ?? true) && query.trim().length > 0,
     staleTime: 30_000,
-    placeholderData: (prev) => prev,
+    // No placeholder: when the network/chain changes, the previous chain's
+    // rows must not flash under the new chain while the fetch is in flight.
   })
 }
 

@@ -497,6 +497,23 @@ export default function BulkTokenBuyer() {
     [tokenMints],
   );
 
+  // Re-seed the form and clear chain-local state whenever the network flips
+  // (header toggle, or NetworkPreface settling the stored network to the URL).
+  // Initializers below read `network` on mount, which can lag the URL.
+  const prevScopeChainRef = useRef(effectiveChain);
+  useEffect(() => {
+    if (prevScopeChainRef.current === effectiveChain) return;
+    prevScopeChainRef.current = effectiveChain;
+    setError("");
+    setSelectedToken("");
+    setSelectedTokenInfo(null);
+    setSearchTerm("");
+    setTokenList([]);
+    setShowRiskAnalysis(false);
+    setSolAmount(getInitialSolAmount());
+    setTokenMints(getInitialTokenMints());
+  }, [effectiveChain]);
+
   // Solana: prefetch Raptor/Jupiter quote+tx while the user is still filling
   // the form so Buy does not wait on that waterfall.
   useEffect(() => {

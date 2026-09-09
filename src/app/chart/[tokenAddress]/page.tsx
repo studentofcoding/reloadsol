@@ -60,6 +60,16 @@ export default function ChartPage() {
   const { network } = useAppNetwork();
   const tokenAddress = params.tokenAddress as string;
   const chainParam = searchParams.get("chain");
+  // Infer chain from the address itself first so a sol mint opened while the
+  // app network is robinhood is not mislabeled invalid (and vice versa). The
+  // network is only a fallback for ambiguous cases.
+  const chainFromAddress: GmgnChain | null = tokenAddress
+    ? /^0x[a-fA-F0-9]{40}$/i.test(tokenAddress)
+      ? "robinhood"
+      : isValidMintAddress(tokenAddress)
+        ? "sol"
+        : null
+    : null;
   const chartChain: GmgnChain =
     chainParam === "sol" ||
     chainParam === "robinhood" ||
@@ -67,9 +77,10 @@ export default function ChartPage() {
     chainParam === "base" ||
     chainParam === "eth"
       ? chainParam
-      : network === "robinhood" || network === "sol"
-        ? network
-        : inferGmgnChain(tokenAddress);
+      : chainFromAddress ??
+        (network === "robinhood" || network === "sol"
+          ? network
+          : inferGmgnChain(tokenAddress));
   const validTokenAddress =
     tokenAddress &&
     (chartChain === "robinhood"

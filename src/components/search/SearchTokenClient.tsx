@@ -1,6 +1,6 @@
 'use client'
 
-import { useDeferredValue, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
 import { useRouter, useSearchParams } from 'next/navigation'
@@ -65,6 +65,17 @@ export default function SearchTokenClient(props: SearchTokenClientProps) {
   // Defer the keystroke → the DB/GMGN search fires at most once per frame
   // instead of once per character while typing.
   const deferredQuery = useDeferredValue(query)
+
+  // On the bare /dev/search-token route the chain follows the network; clear
+  // the typed query when the chain actually flips so the old chain's term
+  // doesn't re-run against the new chain.
+  const prevChainRef = useRef(chain)
+  useEffect(() => {
+    if (prevChainRef.current !== chain) {
+      prevChainRef.current = chain
+      setQuery('')
+    }
+  }, [chain])
 
   // Allow ?chain= override on the bare /dev/search-token route.
   useEffect(() => {
