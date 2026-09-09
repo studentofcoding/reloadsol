@@ -135,5 +135,6 @@ export async function searchTokensUniversal(params: {
     return gmgn
   }
   const local = await searchTrackedTokens(q, limit, params.chain)
-  return mergeSearchResults(local, gmgn, limit)
+  // GMGN index hits first (broad search), tracked-DB rows enrich after them.
+  return mergeSearchResults(gmgn, local, limit)
 }

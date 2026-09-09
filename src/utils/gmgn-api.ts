@@ -751,7 +751,8 @@ export function normalizeGmgnSearchToken(
         : typeof row.icon === 'string'
           ? row.icon
           : undefined
-  const mcapRaw = row.market_cap ?? row.mcap ?? row.usd_market_cap
+  const mcapRaw =
+    row.market_cap ?? row.mcp ?? row.usd_market_cap ?? row.usd_mcap
   const mcap =
     typeof mcapRaw === 'number'
       ? mcapRaw
@@ -766,6 +767,33 @@ export function normalizeGmgnSearchToken(
     icon,
     mcap: Number.isFinite(mcap) ? mcap : undefined,
   }
+}
+
+export type GmgnMarketSearchCoin = Record<string, unknown> & {
+  chain?: string
+  address?: string
+  name?: string
+  symbol?: string
+  logo?: string
+  mcp?: unknown
+}
+
+/** Real GMGN index search by name/symbol/address (`/v1/market/search`). */
+export async function searchGmgnMarket(params: {
+  chain: string
+  query: string
+  limit?: number
+}): Promise<GmgnMarketSearchCoin[]> {
+  const q = params.query.trim()
+  if (!q) return []
+  const data = unwrapApiData<{ coins?: GmgnMarketSearchCoin[] }>(
+    await gmgnFetch('/v1/market/search', {
+      chain: params.chain,
+      q,
+    }),
+  )
+  const coins = Array.isArray(data?.coins) ? data.coins : []
+  return coins.slice(0, params.limit ?? 20)
 }
 
 export async function searchTokensForChain(params: {
@@ -799,6 +827,23 @@ export async function searchTokensForChain(params: {
     } catch {
       return []
     }
+  }
+
+  // Real index-wide search (name/symbol/CA), not just today's trending 100.
+  try {
+    const coins = await searchGmgnMarket({
+      chain: params.chain,
+      query: q,
+      limit: Math.max(limit, 40),
+    })
+    if (coins.length > 0) {
+      return coins
+        .map((r) => normalizeGmgnSearchToken(r))
+        .filter((t): t is NonNullable<typeof t> => t != null)
+        .slice(0, limit)
+    }
+  } catch {
+    // fall through to the trending-substring fallback below
   }
 
   const rank = await marketTrending({

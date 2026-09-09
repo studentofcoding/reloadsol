@@ -229,6 +229,42 @@ function SearchTokenResults({
     staleTime: 15_000,
   })
 
+  // Held addresses on the active chain — search results that the wallet
+  // already holds are listed first (both wallets share the same cache as the
+  // "Your holdings" section, so this adds no extra RPC calls).
+  const resolvedWallet = useResolvedWalletPublicKey()
+  const { connection } = useConnection()
+  const { activeRpcUrl } = useRpc()
+  const { allTokens: heldSolTokens } = useWalletTokens({
+    connection,
+    publicKey: resolvedWallet.publicKey,
+    walletAddress: resolvedWallet.walletAddress,
+    activeRpcUrl,
+    enabled: chain === 'sol' && resolvedWallet.isWalletReady,
+  })
+  const rhHoldings = useRhWalletTokens()
+  const heldAddresses = useMemo(() => {
+    const set = new Set<string>()
+    const rows =
+      chain === 'sol' ? heldSolTokens : (rhHoldings.tokens ?? [])
+    for (const t of rows) {
+      const a = (t.mintAddress ?? '').toLowerCase()
+      if (a) set.add(a)
+    }
+    return set
+  }, [chain, heldSolTokens, rhHoldings.tokens])
+  const rankedResults = useMemo(() => {
+    const rows = search.data ?? []
+    const held: GmgnSearchToken[] = []
+    const rest: GmgnSearchToken[] = []
+    for (const t of rows) {
+      const key = (t.address ?? t.id ?? '').toLowerCase()
+      if (heldAddresses.has(key)) held.push(t)
+      else rest.push(t)
+    }
+    return [...held, ...rest]
+  }, [search.data, heldAddresses])
+
   return (
     <div className="space-y-2">
       {trimmed.length > 0 ? (
@@ -241,9 +277,9 @@ function SearchTokenResults({
             />
           ) : null}
           <ResultsList
-            title={search.isFetching ? 'Searching…' : `Search Results (${search.data?.length ?? 0})`}
-            tokens={search.data ?? []}
-            empty={!search.isFetching && (search.data?.length ?? 0) === 0}
+            title={search.isFetching ? 'Searching…' : `Search Results (${rankedResults.length})`}
+            tokens={rankedResults}
+            empty={!search.isFetching && rankedResults.length === 0}
             chain={chain}
             onPickAction={onPickAction}
           />
