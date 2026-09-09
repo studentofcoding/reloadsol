@@ -244,6 +244,49 @@ export type RhTokenMetaRow = {
   decimals: number | null
   logo_url: string | null
   source: string
+  dust_blacklisted: boolean
+  blacklisted_at: Date | null
+}
+
+/** Dust blacklist validity window — re-evaluate entries after this long. */
+export const RH_DUST_BLACKLIST_TTL_HOURS = 24
+
+/** Tokens currently blacklisted as confirmed dust (sub-cent holdings). */
+export async function listRhDustBlacklist(): Promise<Set<string>> {
+  const { rows } = await query<{ token_address: string }>(
+    `SELECT token_address FROM rh_token_meta
+     WHERE dust_blacklisted = true
+       AND (blacklisted_at IS NULL OR blacklisted_at > NOW() - INTERVAL '${RH_DUST_BLACKLIST_TTL_HOURS} hours')`,
+  )
+  return new Set(rows.map((r) => r.token_address.toLowerCase()))
+}
+
+/** Persist "confirmed dust" so future requests skip these tokens cheaply. */
+export async function markRhTokenDust(addresses: string[]): Promise<void> {
+  const unique = Array.from(
+    new Set(
+      addresses.map((a) => a.toLowerCase()).filter((a) => isEvmAddress(a)),
+    ),
+  )
+  if (unique.length === 0) return
+  for (let i = 0; i < unique.length; i += 50) {
+    const chunk = unique.slice(i, i + 50)
+    const params: unknown[] = []
+    const valuesSql: string[] = []
+    for (const a of chunk) {
+      const base = params.length
+      valuesSql.push(`($${base + 1})`)
+      params.push(a)
+    }
+    await query(
+      `INSERT INTO rh_token_meta (token_address, dust_blacklisted, blacklisted_at)
+       VALUES ${valuesSql.join(', ')}
+       ON CONFLICT (token_address) DO UPDATE SET
+         dust_blacklisted = true,
+         blacklisted_at = NOW()`,
+      params,
+    )
+  }
 }
 
 async function selectTokenMeta(
@@ -251,7 +294,8 @@ async function selectTokenMeta(
 ): Promise<Map<string, RhTokenMetaRow>> {
   if (addresses.length === 0) return new Map()
   const { rows } = await query<RhTokenMetaRow>(
-    `SELECT token_address, symbol, name, decimals, logo_url, source
+    `SELECT token_address, symbol, name, decimals, logo_url, source,
+            dust_blacklisted, blacklisted_at
      FROM rh_token_meta
      WHERE token_address = ANY($1::text[])`,
     [addresses],
@@ -292,6 +336,8 @@ export async function ensureRhTokenMeta(
             decimals: m.decimals ?? null,
             logo_url: m.logoURI ?? null,
             source: 'blockscout',
+            dust_blacklisted: false,
+            blacklisted_at: null,
           } satisfies RhTokenMetaRow
         } catch (err) {
           console.warn('[rh-ledger] token meta fetch failed:', addr, err)

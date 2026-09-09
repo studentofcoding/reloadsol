@@ -46,6 +46,14 @@ CREATE TABLE IF NOT EXISTS rh_token_meta (
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Confirmed-dust blacklist: a token lands here only when a real price lookup
+-- succeeded AND total holding value was below the display floor, so it can be
+-- skipped cheaply on later requests. Re-evaluated after 24h so a re-bought
+-- token is not hidden forever.
+ALTER TABLE rh_token_meta
+  ADD COLUMN IF NOT EXISTS dust_blacklisted BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS blacklisted_at   TIMESTAMPTZ;
+
 -- =============================================================================
 -- Tracked wallets (informational; env-seeded at runtime by syncTrackedRhWallets)
 -- =============================================================================

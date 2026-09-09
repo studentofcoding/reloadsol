@@ -13,7 +13,11 @@ import {
   type RhTokenMeta,
 } from '@/utils/rh-wallet-holdings'
 import { fillMissingRhUsd } from '@/utils/rh-usd-meta'
-import { fetchRhLedgerHoldings } from '@/utils/rh-ledger'
+import {
+  fetchRhLedgerHoldings,
+  listRhDustBlacklist,
+  markRhTokenDust,
+} from '@/utils/rh-ledger'
 import { RH_USDG, RH_USDG_DECIMALS, RH_WETH } from '@/utils/dlmm/rh-univ2'
 import { cacheGet, cacheSet } from '@/utils/redis-cache'
 import { portfolioKey } from '@/utils/portfolio-cache'
@@ -159,6 +163,18 @@ export async function GET(request: NextRequest) {
     let source: RhTokensSource = 'ledger'
     let tokens: UserToken[] = []
 
+    // Confirmed-dust tokens are skipped everywhere (probing + display) and are
+    // re-evaluated after RH_DUST_BLACKLIST_TTL_HOURS so re-bought dust is seen
+    // again. Only tokens with a *confirmed* sub-floor value land here — never
+    // tokens whose price is simply unknown (they stay listed as "—").
+    const MIN_HOLDING_USD = Math.max(
+      0,
+      Number(process.env.RH_MIN_HOLDING_USD ?? 0.01),
+    )
+    const dustBlacklist = await listRhDustBlacklist().catch(
+      () => new Set<string>(),
+    )
+
     // 0) Goldsky ledger (chain truth): every ERC-20 transfer of the tracked
     //    wallets, streamed by the Turbo pipeline into rh_ledger_transfers. No
     //    indexer to 429 and no candidate probing — only what the wallet holds.
@@ -214,11 +230,13 @@ export async function GET(request: NextRequest) {
           cacheGet<RhTokenMeta[]>(seenKey(walletNorm)).catch(() => null),
           getRhTradeCandidates(walletNorm),
         ])
-        const rpc = await fetchRpcErc20Tokens(
-          walletNorm,
-          [...QUOTE_CANDIDATES, ...(seen ?? []), ...trade],
-          { skip },
-        )
+        // Skip tokens already confirmed as dust — no point probing them.
+        const candidates = [
+          ...QUOTE_CANDIDATES,
+          ...(seen ?? []),
+          ...trade,
+        ].filter((c) => !dustBlacklist.has(c.address.toLowerCase()))
+        const rpc = await fetchRpcErc20Tokens(walletNorm, candidates, { skip })
         tokens = rpc.tokens.filter(isRhHeldToken)
         rpcZeros = rpcZeroAddresses(rpc.probed, tokens)
         if (rpcZeros.length > 0) void pruneSeenZeros(walletNorm, rpcZeros)
@@ -228,6 +246,21 @@ export async function GET(request: NextRequest) {
         tokens = []
       }
     }
+
+    // Dust policy: drop confirmed sub-floor holdings (usdValue is a real price
+    // × balance here, not a fallback guess) and remember them so later requests
+    // skip probing/pricing them. Unknown-price tokens (usdValue === 0) are
+    // NEVER dropped — we can't confirm they're dust.
+    const newlyDust: string[] = []
+    tokens = tokens.filter((t) => {
+      if (dustBlacklist.has(t.mintAddress.toLowerCase())) return false
+      if (t.usdValue > 0 && t.usdValue < MIN_HOLDING_USD) {
+        newlyDust.push(t.mintAddress)
+        return false
+      }
+      return true
+    })
+    if (newlyDust.length > 0) void markRhTokenDust(newlyDust)
 
     tokens = sortRhTokensByUsd(tokens.filter(isRhHeldToken))
 
