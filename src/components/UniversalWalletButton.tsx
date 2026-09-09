@@ -10,36 +10,9 @@ import {
 import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import { useRhEvmWallet } from "@/hooks/useRhEvmWallet";
 import { useDisconnectWallet } from "@/components/WalletProvider";
-import type { AppNetwork } from "@/utils/app-network";
+import { chainSwitchTarget } from "@/utils/network-switch";
 
-function chainSegment(chain: AppNetwork): string {
-  return chain === "robinhood" ? "robinhood" : "solana";
-}
-
-/**
- * When switching networks, stay on the SAME page section instead of always
- * jumping to /sell: /buy/solana -> /buy/robinhood, /swap -> /swap/robinhood,
- * dev search-token -> its chain page. Non-trade routes keep the old default
- * (/sell/{chain}).
- *
- * Reads the path at click time (window.location) — a usePathname hook would
- * make the shared header client-hook-dynamic and break static prerendering of
- * routes like /chart/[tokenAddress].
- */
-function chainSwitchTarget(pathname: string, next: AppNetwork): string {
-  const seg = chainSegment(next);
-  const tradeMatch = pathname.match(/^\/(buy|sell|swap)(?:\/(solana|robinhood))?\/?$/) ?? null;
-  if (tradeMatch) {
-    return `/${tradeMatch[1]}/${seg}`;
-  }
-  const devMatch =
-    pathname.match(/^\/dev\/search-token(?:\/(solana|robinhood))?\/?$/) ?? null;
-  if (devMatch) {
-    return `/dev/search-token/${seg}`;
-  }
-  return `/sell/${seg}`;
-}
-
+/** Path at click time — usePathname here would break static prerender of /chart/[token]. */
 function currentPath(): string {
   return typeof window === "undefined" ? "" : window.location.pathname;
 }
