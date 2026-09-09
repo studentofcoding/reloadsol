@@ -10,8 +10,15 @@ import { bulkTrackTokenMcaps, isInTrackingRange } from '@/utils/mcap-tracker'
 import { attachFirstDetections } from '@/utils/first-detection'
 import { fetchWithCache } from '@/utils/portfolio-cache'
 
-const CACHE_TTL_SECONDS = 30
-const STALE_TTL_SECONDS = 600
+// The server owns the upstream call: one GMGN fetch per chain per window
+// (5 min), and every client just reads this cached snapshot. Long stale TTL
+// means a GMGN 429/outage serves the last-good list instead of erroring.
+const CACHE_TTL_SECONDS = 300
+const STALE_TTL_SECONDS = 3600
+
+// Collapse concurrent expiries (several clients polling at once must not each
+// trigger an upstream GMGN call).
+const inflight = new Map<string, Promise<unknown>>()
 
 export type GmgnFilteredTrendingPayload = {
   tokens: GmgnFilteredTrendingToken[]
@@ -38,38 +45,46 @@ function ingestMcap(tokens: GmgnFilteredTrendingToken[], chain: GmgnTradeChain) 
 export async function getFilteredGmgnTrending(
   chain: GmgnTradeChain,
 ): Promise<GmgnFilteredTrendingPayload & { cached: boolean }> {
-  const { data, origin } = await fetchWithCache<GmgnFilteredTrendingPayload>({
-    key: `gmgn:trending:filtered:${chain}`,
-    staleKey: `gmgn:trending:filtered:${chain}:stale`,
-    ttlSeconds: CACHE_TTL_SECONDS,
-    staleTtlSeconds: STALE_TTL_SECONDS,
-    fetch: async () => {
-      const criteria = criteriaForChain(chain)
-      const rank = await marketTrending({
-        chain,
-        interval: '1h',
-        limit: 100,
-        // Robinhood is too young for the Solana-tuned floor — let the local filter
-        // decide what we expose instead of pre-filtering at the GMGN layer.
-        ...(chain === 'robinhood'
-          ? {}
-          : { minMarketcap: criteria.min_mcap }),
-        orderBy: 'volume',
-        direction: 'desc',
-      })
+  const cacheKey = `gmgn:trending:filtered:${chain}`
+  let run = inflight.get(cacheKey) as
+    | Promise<{ data: GmgnFilteredTrendingPayload; origin: 'hit' | 'miss' | 'stale' }>
+    | undefined
+  if (!run) {
+    run = fetchWithCache<GmgnFilteredTrendingPayload>({
+      key: cacheKey,
+      staleKey: `${cacheKey}:stale`,
+      ttlSeconds: CACHE_TTL_SECONDS,
+      staleTtlSeconds: STALE_TTL_SECONDS,
+      fetch: async () => {
+        const criteria = criteriaForChain(chain)
+        const rank = await marketTrending({
+          chain,
+          interval: '1h',
+          limit: 100,
+          // Robinhood is too young for the Solana-tuned floor — let the local filter
+          // decide what we expose instead of pre-filtering at the GMGN layer.
+          ...(chain === 'robinhood'
+            ? {}
+            : { minMarketcap: criteria.min_mcap }),
+          orderBy: 'volume',
+          direction: 'desc',
+        })
 
-      const filtered = filterAndSortGmgnTrending(rank, chain)
-      const payload: GmgnFilteredTrendingPayload = {
-        tokens: filtered.tokens,
-        total_before_filter: filtered.total_before_filter,
-        total_after_filter: filtered.total_after_filter,
-        filter_criteria: criteria,
-      }
-      ingestMcap(payload.tokens, chain)
-      return payload
-    },
-  })
+        const filtered = filterAndSortGmgnTrending(rank, chain)
+        const payload: GmgnFilteredTrendingPayload = {
+          tokens: filtered.tokens,
+          total_before_filter: filtered.total_before_filter,
+          total_after_filter: filtered.total_after_filter,
+          filter_criteria: criteria,
+        }
+        ingestMcap(payload.tokens, chain)
+        return payload
+      },
+    }).finally(() => inflight.delete(cacheKey))
+    inflight.set(cacheKey, run)
+  }
 
+  const { data, origin } = await run
   return {
     ...data,
     tokens: await attachFirstDetections(data.tokens, chain),
