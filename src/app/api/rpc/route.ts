@@ -111,7 +111,10 @@ const getHealthyEndpoints = async (provider: TradeProvider): Promise<string[]> =
       ...(result as PromiseFulfilledResult<any>).value,
       originalIndex: index
     }))
-    .sort((a, b) => a.responseTime - b.responseTime) // Sort by response time
+    // Keep configured provider priority (primary RPC first) among healthy
+    // endpoints — do NOT re-sort by latency, or a faster fallback like Helius
+    // would silently displace the Solana Tracker RPC every poll window.
+    .sort((a, b) => a.originalIndex - b.originalIndex)
     .forEach((result) => {
       nextCache.push({
         url: result.url,
