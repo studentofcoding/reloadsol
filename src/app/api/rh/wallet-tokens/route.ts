@@ -4,7 +4,6 @@ import type { UserToken } from '@/utils/jupiter'
 import {
   fetchBlockscoutErc20Tokens,
   fetchRpcErc20Tokens,
-  fillMissingRhUsd,
   isEvmAddress,
   isRhHeldToken,
   normalizeGmgnHolding,
@@ -13,6 +12,7 @@ import {
   sortRhTokensByUsd,
   type RhTokenMeta,
 } from '@/utils/rh-wallet-holdings'
+import { fillMissingRhUsd } from '@/utils/rh-usd-meta'
 import { fetchRhLedgerHoldings } from '@/utils/rh-ledger'
 import { RH_USDG, RH_USDG_DECIMALS, RH_WETH } from '@/utils/dlmm/rh-univ2'
 import { cacheGet, cacheSet } from '@/utils/redis-cache'

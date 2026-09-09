@@ -3,6 +3,8 @@ import type { UserToken } from '@/utils/jupiter'
 import {
   fetchRhTokenMeta,
   fillMissingRhUsd,
+} from '@/utils/rh-usd-meta'
+import {
   isEvmAddress,
   isRhHeldToken,
   sortRhTokensByUsd,
