@@ -468,6 +468,97 @@ export async function ensureRhTokenMeta(
   }
 
   for (const m of fetched) known.set(m.token_address, m)
+
+  // Last-resort metadata: ERC-20 `decimals()` straight from the chain for
+  // tokens the explorers/GMGN don't know (e.g. obscure RH holdings). Without
+  // decimals the balance rows can't be displayed at all.
+  const stillMissing = unique.filter((a) => !known.has(a))
+  if (stillMissing.length > 0) {
+    const client = createPublicClient({
+      chain: RH_CHAIN,
+      transport: http(getRhRpcUrl(), { timeout: 8000 }),
+    })
+    const DECIMALS_ABI = [
+      {
+        type: 'function',
+        name: 'decimals',
+        stateMutability: 'view',
+        inputs: [],
+        outputs: [{ name: '', type: 'uint8' }],
+      },
+    ] as const
+    const SYMBOL_ABI = [
+      {
+        type: 'function',
+        name: 'symbol',
+        stateMutability: 'view',
+        inputs: [],
+        outputs: [{ name: '', type: 'string' }],
+      },
+    ] as const
+    const onchain: RhTokenMetaRow[] = []
+    for (let i = 0; i < stillMissing.length; i += 3) {
+      const chunk = stillMissing.slice(i, i + 3)
+      const res = await Promise.all(
+        chunk.map(async (addr) => {
+          try {
+            const dec = await client.readContract({
+              address: addr as `0x${string}`,
+              abi: DECIMALS_ABI,
+              functionName: 'decimals',
+            })
+            let symbol: string | null = null
+            try {
+              const sym = await client.readContract({
+                address: addr as `0x${string}`,
+                abi: SYMBOL_ABI,
+                functionName: 'symbol',
+              })
+              if (typeof sym === 'string' && sym.trim()) {
+                symbol = sym.trim().slice(0, 24)
+              }
+            } catch {
+              // non-standard token without symbol() — decimals alone suffice
+            }
+            return {
+              token_address: addr,
+              symbol,
+              name: symbol,
+              decimals: Number(dec),
+              logo_url: null,
+              source: 'rpc',
+              dust_blacklisted: false,
+              blacklisted_at: null,
+            } satisfies RhTokenMetaRow
+          } catch {
+            return null
+          }
+        }),
+      )
+      for (const m of res) if (m) onchain.push(m)
+    }
+    if (onchain.length > 0) {
+      const params: unknown[] = []
+      const valuesSql: string[] = []
+      for (const m of onchain) {
+        const base = params.length
+        valuesSql.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4})`)
+        params.push(m.token_address, m.symbol, m.name, m.decimals)
+      }
+      await query(
+        `INSERT INTO rh_token_meta (token_address, symbol, name, decimals, source)
+         VALUES ${valuesSql.join(', ')}
+         ON CONFLICT (token_address) DO UPDATE SET
+           symbol = COALESCE(EXCLUDED.symbol, rh_token_meta.symbol),
+           name = COALESCE(EXCLUDED.name, rh_token_meta.name),
+           decimals = COALESCE(EXCLUDED.decimals, rh_token_meta.decimals),
+           updated_at = NOW()`,
+        params,
+      )
+      for (const m of onchain) known.set(m.token_address, m)
+    }
+  }
+
   return known
 }
 
