@@ -146,10 +146,10 @@ export default function TrendingTokens({
     
     fetchTrendingTokens({ initial: true })
 
-    // The GMGN feed is fetched by the SERVER once per 5 min (cached + stale-
+    // The GMGN feed is fetched by the SERVER once per 2 min (cached + stale-
     // on-error); clients are just receivers that poll the cached snapshot, so
     // no per-client upstream GMGN calls and no 429 cascades.
-    const refreshMs = 5 * 60 * 1000
+    const refreshMs = 2 * 60 * 1000
     const intervalId = setInterval(() => {
       // Skip a tick if the previous fetch is still running (slow upstream /
       // rate-limit backoff) so polls never stack.

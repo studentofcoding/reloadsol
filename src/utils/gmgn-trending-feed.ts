@@ -11,9 +11,9 @@ import { attachFirstDetections } from '@/utils/first-detection'
 import { fetchWithCache } from '@/utils/portfolio-cache'
 
 // The server owns the upstream call: one GMGN fetch per chain per window
-// (5 min), and every client just reads this cached snapshot. Long stale TTL
+// (2 min), and every client just reads this cached snapshot. Long stale TTL
 // means a GMGN 429/outage serves the last-good list instead of erroring.
-const CACHE_TTL_SECONDS = 300
+const CACHE_TTL_SECONDS = 120
 const STALE_TTL_SECONDS = 3600
 
 // Collapse concurrent expiries (several clients polling at once must not each
