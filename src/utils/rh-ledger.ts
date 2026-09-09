@@ -749,27 +749,36 @@ export async function refreshRhHoldings(
     chain: RH_CHAIN,
     transport: http(getRhRpcUrl(), { timeout: 10_000 }),
   })
-  const [tip, results] = await Promise.all([
-    client.getBlockNumber(),
-    client
-      .multicall({
-        contracts: unique.map((a) => ({
-          address: a as `0x${string}`,
-          abi: BALANCE_OF_ABI,
-          functionName: 'balanceOf',
-          args: [walletNorm as `0x${string}`],
-        })),
-      })
-      .catch(() => null),
-  ])
-  if (!results) throw new Error('balanceOf multicall failed')
+  const tip = await client.getBlockNumber()
+
+  // RH RPC has no Multicall3, so multicall() fails — probe in small chunks of
+  // individual balanceOf calls instead.
+  const CONCURRENCY = 12
+  const balances = new Map<string, bigint>()
+  for (let i = 0; i < unique.length; i += CONCURRENCY) {
+    const chunk = unique.slice(i, i + CONCURRENCY)
+    const res = await Promise.all(
+      chunk.map(async (addr) => {
+        try {
+          const bal = await client.readContract({
+            address: addr as `0x${string}`,
+            abi: BALANCE_OF_ABI,
+            functionName: 'balanceOf',
+            args: [walletNorm as `0x${string}`],
+          })
+          return { addr, bal: bal as bigint }
+        } catch {
+          return { addr, bal: BigInt(0) }
+        }
+      }),
+    )
+    for (const r of res) balances.set(r.addr, r.bal)
+  }
 
   const rows: RhBalanceRow[] = []
   const entries: HoldingEntry[] = []
-  unique.forEach((addr, i) => {
-    const res = results[i]
-    if (!res || res.status !== 'success') return
-    const bal = res.result as bigint
+  for (const addr of unique) {
+    const bal = balances.get(addr) ?? BigInt(0)
     rows.push({
       owner_address: walletNorm,
       token_address: addr,
@@ -780,7 +789,7 @@ export async function refreshRhHoldings(
     if (bal > BigInt(0)) {
       entries.push({ token_address: addr, raw: bal.toString() })
     }
-  })
+  }
   if (rows.length > 0) await upsertRhWalletBalances(rows)
   return entriesToRhUserTokens(entries, opts)
 }
