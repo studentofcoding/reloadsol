@@ -1,5 +1,8 @@
 import { listStrategyOutcomes } from '@/strategies/db'
-import { fetchTrackerTokenMetrics } from '@/strategies/sim-monitor-snapshots'
+import {
+  fetchOutcomeMonitorPriceHistory,
+  fetchTrackerTokenMetrics,
+} from '@/strategies/sim-monitor-snapshots'
 import { parsePriceHistory } from '@/strategies/trade-window-chart-data'
 import type { TokenMapDomain } from '@/strategies/token-map-types'
 import type { OhlcRugBar } from '@/strategies/ohlc-rug-rules'
@@ -239,12 +242,13 @@ export async function fetchTokenOhlc(params: {
     (/^0x[a-fA-F0-9]{40}$/i.test(params.tokenAddress) ? 'robinhood' : 'sol')
   if (wantsGmgnOhlc(gmgnChain, params.tokenAddress)) {
     try {
+      // GMGN token_kline expects from/to in milliseconds (candle `time` is ms).
       const raw = await tokenKline({
         chain: gmgnChain,
         address: params.tokenAddress,
         resolution: type,
-        from: timeFrom,
-        to: timeTo,
+        from: timeFrom * 1000,
+        to: timeTo * 1000,
       })
       const candles = mapGmgnKlineBars(raw)
       if (candles.length === 0) return { candles: [], source: 'none' }
@@ -255,26 +259,46 @@ export async function fetchTokenOhlc(params: {
   }
 
   const apiKey = process.env.SOLANATRACKER_DATA_API_KEY?.trim()
-  if (!apiKey) return { candles: [], source: 'none' }
 
-  const url = new URL(
-    `${ST_CHART_BASE}/${encodeURIComponent(params.tokenAddress)}`,
-  )
-  url.searchParams.set('type', type)
-  url.searchParams.set('time_from', String(timeFrom))
-  url.searchParams.set('time_to', String(timeTo))
-  url.searchParams.set('currency', 'usd')
+  // Sol: prefer SolanaTracker candles when the data API key is configured.
+  if (apiKey) {
+    const url = new URL(
+      `${ST_CHART_BASE}/${encodeURIComponent(params.tokenAddress)}`,
+    )
+    url.searchParams.set('type', type)
+    url.searchParams.set('time_from', String(timeFrom))
+    url.searchParams.set('time_to', String(timeTo))
+    url.searchParams.set('currency', 'usd')
 
+    try {
+      const res = await fetch(url.toString(), {
+        headers: { 'x-api-key': apiKey },
+        signal: AbortSignal.timeout(15_000),
+      })
+      if (res.ok) {
+        const body = (await res.json()) as Record<string, unknown>
+        const candles = mapStBars(body.oclhv ?? body.ohlcv)
+        if (candles.length > 0) return { candles, source: 'solanatracker' }
+      }
+    } catch {
+      // fall through to GMGN kline below
+    }
+  }
+
+  // GMGN kline fallback — the same source robinhood uses; needs only the
+  // already-configured GMGN_API_KEY, so searched sol tokens get a real axis
+  // even without SOLANATRACKER_DATA_API_KEY.
   try {
-    const res = await fetch(url.toString(), {
-      headers: { 'x-api-key': apiKey },
-      signal: AbortSignal.timeout(15_000),
+    const raw = await tokenKline({
+      chain: 'sol',
+      address: params.tokenAddress,
+      resolution: type,
+      from: timeFrom * 1000,
+      to: timeTo * 1000,
     })
-    if (!res.ok) return { candles: [], source: 'none' }
-    const body = (await res.json()) as Record<string, unknown>
-    const candles = mapStBars(body.oclhv ?? body.ohlcv)
+    const candles = mapGmgnKlineBars(raw)
     if (candles.length === 0) return { candles: [], source: 'none' }
-    return { candles, source: 'solanatracker' }
+    return { candles, source: 'gmgn' }
   } catch {
     return { candles: [], source: 'none' }
   }
@@ -328,6 +352,23 @@ export async function getCachedTokenOhlc24h1m(
   return result
 }
 
+/**
+ * "Tracker" price series for the chart, chain-aware:
+ * 1. `trending_token_tracker.price_history` (sol-only trending-token tracker).
+ * 2. Per-position `monitor_snapshots` from `strategy_outcomes.features`
+ *    (sol + robinhood) — so tokens that were never on the sol trending tracker
+ *    still get a real price axis when strategies traded them.
+ */
+async function loadTrackerHistory(
+  tokenAddress: string,
+  chain: GmgnTradeChain,
+): Promise<ReturnType<typeof parsePriceHistory>> {
+  const metrics = await fetchTrackerTokenMetrics(tokenAddress)
+  const direct = parsePriceHistory(metrics?.price_history)
+  if (direct.length > 0) return direct
+  return fetchOutcomeMonitorPriceHistory(tokenAddress, chain)
+}
+
 export async function loadTokenMapChart(params: {
   tokenAddress: string
   hours?: number
@@ -340,8 +381,8 @@ export async function loadTokenMapChart(params: {
     params.chain ??
     (/^0x[a-fA-F0-9]{40}$/i.test(params.tokenAddress) ? 'robinhood' : 'sol')
 
-  const [metrics, outcomesResult, ohlc] = await Promise.all([
-    fetchTrackerTokenMetrics(params.tokenAddress),
+  const [history, outcomesResult, ohlc] = await Promise.all([
+    loadTrackerHistory(params.tokenAddress, chain),
     listStrategyOutcomes({
       tokenAddress: params.tokenAddress,
       chain,
@@ -351,7 +392,6 @@ export async function loadTokenMapChart(params: {
     fetchTokenOhlc({ tokenAddress: params.tokenAddress, hours, chain }),
   ])
 
-  const history = parsePriceHistory(metrics?.price_history)
   const points: TokenChartPoint[] = []
   for (const p of history) {
     const t = toUnixSec(p.timestamp)

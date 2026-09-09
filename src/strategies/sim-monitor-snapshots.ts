@@ -1,4 +1,4 @@
-import { queryOne } from '@/utils/db'
+import { query, queryOne } from '@/utils/db'
 import { fetchJupiterMarketHints } from '@/utils/jupiter-metadata'
 import type { TrackingRecord } from '@/utils/trading-tracker'
 import {
@@ -61,6 +61,84 @@ async function fetchMcapVolume5m(tokenAddress: string): Promise<number | null> {
     return finiteOrNull(data?.volume_5m)
   } catch {
     return null
+  }
+}
+
+export type MonitorPricePoint = {
+  timestamp: string
+  price_usd: number
+  volume_5m: number | null
+}
+
+function parseOutcomeFeatures(
+  raw: unknown,
+): Record<string, unknown> | null {
+  if (raw && typeof raw === 'object') {
+    return raw as Record<string, unknown>
+  }
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw) as unknown
+      if (parsed && typeof parsed === 'object') {
+        return parsed as Record<string, unknown>
+      }
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+/**
+ * Chain-aware fallback "tracker" series for the correlation chart: reads the
+ * per-position `monitor_snapshots` persisted in `strategy_outcomes.features`
+ * (mcap/signals sims sample every ~2 min on both sol and robinhood). Used when
+ * the sol-only `trending_token_tracker` has no row for the token, so arbitrary
+ * searched tokens — on either chain — still get a real price axis.
+ */
+export async function fetchOutcomeMonitorPriceHistory(
+  tokenAddress: string,
+  chain: 'sol' | 'robinhood',
+): Promise<MonitorPricePoint[]> {
+  try {
+    const chainClause =
+      chain === 'robinhood'
+        ? `chain = 'robinhood'`
+        : `(chain = 'sol' OR chain IS NULL)` // legacy sol rows predate the chain column
+    const result = await query<{ features: unknown }>(
+      `SELECT features
+       FROM strategy_outcomes
+       WHERE token_address = $1 AND ${chainClause}
+       ORDER BY created_at DESC
+       LIMIT 100`,
+      [tokenAddress],
+    )
+
+    const byTs = new Map<string, MonitorPricePoint>()
+    for (const row of result.rows) {
+      const features = parseOutcomeFeatures(row.features)
+      if (!features) continue
+      for (const snap of readMonitorSnapshotsFromFeatures(features)) {
+        if (!snap.timestamp) continue
+        if (typeof snap.price_usd !== 'number' || !Number.isFinite(snap.price_usd)) {
+          continue
+        }
+        byTs.set(snap.timestamp, {
+          timestamp: snap.timestamp,
+          price_usd: snap.price_usd,
+          volume_5m:
+            typeof snap.volume_5m === 'number' && Number.isFinite(snap.volume_5m)
+              ? snap.volume_5m
+              : null,
+        })
+      }
+    }
+
+    return Array.from(byTs.values()).sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+    )
+  } catch {
+    return []
   }
 }
 
