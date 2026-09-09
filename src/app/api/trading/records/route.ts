@@ -83,9 +83,12 @@ async function fetchTradingRecordsFromDB(
 ): Promise<any[]> {
   const { rows } = await query<DatabaseRecord>(
     `SELECT * FROM trading_records
-     WHERE lower(wallet_address) = lower($1) AND chain = $2
+     WHERE wallet_address = $1 AND chain = $2
      ORDER BY timestamp DESC
      LIMIT $3`,
+    // wallet is normalized to lowercase before insert, so the plain equality
+    // lets the (wallet_address, chain, timestamp DESC) index serve the query
+    // (a lower() wrapper forced a seq scan).
     [normalizeRecordWallet(walletAddress, chain), chain, limit],
   )
 

@@ -42,7 +42,10 @@ async function searchTrackedTokens(
   const q = likeSafe(needle).toLowerCase()
   if (q.length < 2) return []
   const like = `%${q}%`
-  const mcap = query<{
+  // token_mcap_tracking is the symbol/CA source of truth for tracked tokens.
+  // (strategy_outcomes used to be scanned via features->>'token_symbol', which
+  // forced a wide-row seq scan per keystroke; symbols resolve here instead.)
+  const mcap = await query<{
     token_address: string
     token_symbol: string | null
     current_mcap: unknown
@@ -56,48 +59,17 @@ async function searchTrackedTokens(
               last_updated_at DESC NULLS LAST
      LIMIT $3`,
     [like, preferChain, limit],
-  ).catch(() => ({ rows: [] as Array<{
-    token_address: string
-    token_symbol: string | null
-    current_mcap: unknown
-    chain: string
-  }> }))
-  const outcomes = query<{
-    token_address: string
-    token_symbol: string | null
-    chain: string
-  }>(
-    `SELECT DISTINCT ON (lower(token_address))
-       token_address,
-       features->>'token_symbol' AS token_symbol,
-       chain
-     FROM strategy_outcomes
-     WHERE lower(coalesce(features->>'token_symbol', '')) LIKE $1
-        OR lower(token_address) LIKE $1
-     ORDER BY lower(token_address), created_at DESC NULLS LAST
-     LIMIT $2`,
-    [like, limit],
-  ).catch(() => ({ rows: [] as Array<{
-    token_address: string
-    token_symbol: string | null
-    chain: string
-  }> }))
-  const [mcapRes, outRes] = await Promise.all([mcap, outcomes])
-  const preferred = preferChain
-  const rest: UniversalSearchToken[] = []
-  const first: UniversalSearchToken[] = []
-  for (const r of [...mcapRes.rows, ...outRes.rows]) {
-    const t = toSearchToken({
-      token_address: r.token_address,
-      token_symbol: r.token_symbol,
-      current_mcap: 'current_mcap' in r ? r.current_mcap : undefined,
-      chain: r.chain,
-    })
-    if (!t) continue
-    if (t.chain === preferred) first.push(t)
-    else rest.push(t)
-  }
-  return mergeSearchResults(first, rest, limit)
+  ).catch(() => ({
+    rows: [] as Array<{
+      token_address: string
+      token_symbol: string | null
+      current_mcap: unknown
+      chain: string
+    }>,
+  }))
+  return mcap.rows
+    .map((r) => toSearchToken(r))
+    .filter((t): t is UniversalSearchToken => t != null)
 }
 
 export function mergeSearchResults(

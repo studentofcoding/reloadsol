@@ -65,11 +65,7 @@ async function fetchSimActivityForMint(
        FROM trading_records
        WHERE wallet_address = ANY($1::text[])
          AND timestamp >= $2::timestamptz
-         AND EXISTS (
-           SELECT 1
-           FROM jsonb_array_elements(COALESCE(data->'tokens', '[]'::jsonb)) t
-           WHERE t->>'mintAddress' = $3
-         )
+         AND data->'tokens' @> jsonb_build_array(jsonb_build_object('mintAddress', $3))
        ORDER BY timestamp DESC
        LIMIT $4`,
       [wallets, sinceIso, tokenAddress, limit],

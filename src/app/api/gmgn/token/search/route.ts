@@ -20,14 +20,17 @@ export async function GET(request: NextRequest) {
       )
     }
     const cacheKey = `gmgn:search:${chain}:${query.toLowerCase()}`
-    const cached = await cacheGet<{ address?: string }[]>(cacheKey)
+    // Cache the enriched rows so cache hits don't re-run the first-detection
+    // DB probe (Q3) on every keystroke.
+    const cached = await cacheGet<unknown[]>(cacheKey)
     if (cached) {
-      return NextResponse.json(await attachFirstDetections(cached))
+      return NextResponse.json(cached)
     }
     const tokens = await searchTokensUniversal({ chain, query, limit: 20 })
-    void cacheSet(cacheKey, tokens, SEARCH_TTL_S)
+    const enriched = await attachFirstDetections(tokens)
+    void cacheSet(cacheKey, enriched, SEARCH_TTL_S)
     // Array shape matches BulkTokenBuyer expectations (Jupiter search used `id`).
-    return NextResponse.json(await attachFirstDetections(tokens))
+    return NextResponse.json(enriched)
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     const status = error instanceof GmgnApiError && error.code === 'RATE_LIMIT' ? 429 : 500

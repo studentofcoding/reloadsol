@@ -6,7 +6,9 @@ import {
 } from '@/strategies/best-trade-windows'
 import { parseStrategyChain } from '@/strategies/types'
 import type { StrategyDomain } from '@/strategies/types'
+import { cacheGet, cacheSet } from '@/utils/redis-cache'
 
+const REPORTS_CACHE_TTL_S = 30
 
 export async function GET(request: NextRequest) {
   await connection()
@@ -22,6 +24,23 @@ export async function GET(request: NextRequest) {
     const timeZone = resolveReportTimeZone(
       searchParams.get('tz') ?? DEFAULT_REPORT_TIMEZONE,
     )
+    const chain = parseStrategyChain(searchParams.get('chain'))
+
+    const cacheKey = [
+      'strategies:reports:v1',
+      chain ?? 'all',
+      domain ?? 'all',
+      strategyId ?? 'all',
+      String(isSimulated ?? 'all'),
+      from ?? 'all',
+      to ?? 'all',
+      timeZone,
+    ].join(':')
+
+    const cached = await cacheGet<Record<string, unknown>>(cacheKey)
+    if (cached) {
+      return NextResponse.json(cached)
+    }
 
     const {
       breakdown,
@@ -35,7 +54,7 @@ export async function GET(request: NextRequest) {
       timezone,
     } = await aggregateStrategyReports({
       domain: domain ?? undefined,
-      chain: parseStrategyChain(searchParams.get('chain')),
+      chain,
       strategyId,
       isSimulated,
       from,
@@ -59,7 +78,7 @@ export async function GET(request: NextRequest) {
           b.avg_pnl_pct - a.avg_pnl_pct || b.win_rate - a.win_rate,
       )
 
-    return NextResponse.json({
+    const body = {
       success: true,
       summary: {
         total_trades: totalTrades,
@@ -84,7 +103,10 @@ export async function GET(request: NextRequest) {
         to,
         tz: timezone,
       },
-    })
+    }
+
+    void cacheSet(cacheKey, body, REPORTS_CACHE_TTL_S)
+    return NextResponse.json(body)
   } catch (error) {
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : String(error) },

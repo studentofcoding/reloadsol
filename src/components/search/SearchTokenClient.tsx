@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useDeferredValue, useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
 import { useRouter, useSearchParams } from 'next/navigation'
@@ -62,6 +62,9 @@ export default function SearchTokenClient(props: SearchTokenClientProps) {
   const { effectiveChain: ctxChain } = useAppNetwork()
   const chain: GmgnTradeChain = chainProp ?? ctxChain
   const [query, setQuery] = useState(initialQuery ?? '')
+  // Defer the keystroke → the DB/GMGN search fires at most once per frame
+  // instead of once per character while typing.
+  const deferredQuery = useDeferredValue(query)
 
   // Allow ?chain= override on the bare /dev/search-token route.
   useEffect(() => {
@@ -82,7 +85,7 @@ export default function SearchTokenClient(props: SearchTokenClientProps) {
         onChange={setQuery}
         placeholder={`Search ${CHAIN_LABEL[chain]} tokens by name, symbol, or CA`}
       />
-      <SearchTokenResults chain={chain} query={query} onPickAction={(action, token) => {
+      <SearchTokenResults chain={chain} query={deferredQuery} onPickAction={(action, token) => {
         const back = returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : ''
         if (action === 'add-to-buy') {
           router.push(`/buy/${chain}?mints=${encodeURIComponent(token.address)}${back}`)

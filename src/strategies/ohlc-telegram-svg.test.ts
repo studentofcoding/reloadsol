@@ -35,8 +35,9 @@ describe('renderOhlcCandlesSvg', () => {
     expect(svg!).toContain('<line')
     expect(svg!).toContain('TEST')
     expect(svg!).toContain('24h OHLC')
-    expect(svg!).toContain('#34d399')
-    expect(svg!).toContain('#f87171')
+    // lightweight-charts palette
+    expect(svg!).toContain('#26a69a')
+    expect(svg!).toContain('#ef5350')
   })
 
   it('renders full series beyond 10 bars', () => {
@@ -45,8 +46,12 @@ describe('renderOhlcCandlesSvg', () => {
     )
     const svg = renderOhlcCandlesSvg(bars, { symbol: 'LONG' })
     expect(svg).toBeTruthy()
+    // One wick line per candle (plus gridlines, which only add more).
     const lineCount = (svg!.match(/<line /g) ?? []).length
-    expect(lineCount).toBe(36)
+    expect(lineCount).toBeGreaterThanOrEqual(36)
+    // One body rect per candle.
+    const rectCount = (svg!.match(/<rect /g) ?? []).length
+    expect(rectCount).toBeGreaterThanOrEqual(36)
   })
 
   it('rasterizes PNG via sharp', async () => {

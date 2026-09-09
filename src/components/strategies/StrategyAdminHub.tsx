@@ -306,7 +306,7 @@ function formatRelativeTime(date: Date | null, nowMs: number): string {
   return `${Math.floor(mins / 60)}h ago`;
 }
 
-const REPORTS_POLL_INTERVAL_MS = 15_000;
+const REPORTS_POLL_INTERVAL_MS = 30_000;
 
 function heartbeatSourceLabel(
   source?: WorkersStatusResponse["domain_heartbeat"][number]["heartbeat_source"],

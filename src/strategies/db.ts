@@ -219,11 +219,24 @@ function buildOutcomeWhereClause(params: OutcomeFilterParams): {
   if (params.tokenAddress) {
     const needle = params.tokenAddress.replace(/[%_\\]/g, '').trim()
     if (needle) {
-      values.push(needle)
-      const n = values.length
-      conditions.push(
-        `(token_address ILIKE '%' || $${n} || '%' OR COALESCE(features->>'token_symbol','') ILIKE '%' || $${n} || '%' OR COALESCE(features->>'symbol','') ILIKE '%' || $${n} || '%')`,
-      )
+      const looksFullCa =
+        /^0x[a-fA-F0-9]{40}$/i.test(needle) ||
+        (needle.length >= 32 &&
+          needle.length <= 44 &&
+          /^[1-9A-HJ-NP-Za-km-z]+$/.test(needle))
+      if (looksFullCa) {
+        // Full contract address → equality so the (chain, lower(address),
+        // created_at) index serves the probe instead of an ILIKE seq scan.
+        values.push(needle)
+        const n = values.length
+        conditions.push(`lower(token_address) = lower($${n})`)
+      } else {
+        values.push(`%${needle}%`)
+        const n = values.length
+        conditions.push(
+          `(token_address ILIKE $${n} OR COALESCE(features->>'token_symbol','') ILIKE $${n} OR COALESCE(features->>'symbol','') ILIKE $${n})`,
+        )
+      }
     }
   }
 
@@ -606,15 +619,31 @@ export async function listStrategyOutcomes(params: {
 
   const { sql: whereSql, values } = buildOutcomeWhereClause(params)
 
+  // Bound the rows pulled into Node: fetch just the page window plus a little
+  // headroom for dedupe, never the whole chain. (Was: SELECT * of every match
+  // then JS slice — full wide-row pulls every 15s from the map/admin polls.)
+  const fetchCap = 2_000
+  const fetchLimit = Math.min(Math.max(offset + limit, 1), fetchCap) + 25
+
   let rows: StrategyOutcomeRow[]
+  let total = 0
   try {
-    const result = await query<Record<string, unknown>>(
-      `SELECT * FROM strategy_outcomes
-       ${whereSql}
-       ORDER BY created_at DESC`,
-      values,
-    )
+    const [result, count] = await Promise.all([
+      query<Record<string, unknown>>(
+        `SELECT * FROM strategy_outcomes
+         ${whereSql}
+         ORDER BY created_at DESC
+         LIMIT $${values.length + 1}`,
+        [...values, fetchLimit],
+      ),
+      query<{ n: string }>(
+        `SELECT COUNT(*) AS n FROM strategy_outcomes
+         ${whereSql}`,
+        values,
+      ).catch(() => null),
+    ])
     rows = result.rows.map(mapStrategyOutcomeRow)
+    total = Number(count?.rows?.[0]?.n ?? 0)
   } catch (error) {
     if (isMissingSchemaError(error)) {
       return { rows: [], total: 0 }
@@ -635,7 +664,6 @@ export async function listStrategyOutcomes(params: {
   deduped.sort((a, b) =>
     (b.created_at ?? '').localeCompare(a.created_at ?? ''),
   )
-  const total = deduped.length
   const page = deduped.slice(offset, offset + limit)
   const enriched = await enrichOutcomeSymbols(page)
   return { rows: enriched, total }
