@@ -33,6 +33,25 @@ CREATE INDEX IF NOT EXISTS idx_rh_ledger_wallet_token
   ON rh_ledger_transfers (wallet_address, token_address);
 
 -- =============================================================================
+-- Current-balance snapshots (Goldsky robinhood_mainnet.balances stream).
+-- One row per wallet+token, last-write-wins by block — exact holdings without
+-- depending on transfer history, so tokens never seen by the app still appear.
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS rh_wallet_balances (
+  owner_address    TEXT NOT NULL,
+  token_address    TEXT NOT NULL,
+  balance_raw      NUMERIC(78, 0) NOT NULL,
+  block_number     BIGINT NOT NULL,
+  block_timestamp  TIMESTAMPTZ NOT NULL,
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (owner_address, token_address)
+);
+
+CREATE INDEX IF NOT EXISTS idx_rh_balances_owner
+  ON rh_wallet_balances (owner_address);
+
+-- =============================================================================
 -- Token metadata cache
 -- =============================================================================
 

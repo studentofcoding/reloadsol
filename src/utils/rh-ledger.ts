@@ -106,6 +106,13 @@ function parseAmountRaw(v: unknown): string | null {
   return clean
 }
 
+/** Like parseAmountRaw but keeps "0" — balance snapshots need zero rows. */
+function parseBalanceRaw(v: unknown): string | null {
+  const s = String(v ?? '').trim()
+  if (!s || !/^\d+(\.\d+)?$/.test(s)) return null
+  return s.split('.')[0]
+}
+
 function parseBlockTs(v: unknown): Date | null {
   const n = typeof v === 'number' ? v : Number(v)
   if (!Number.isFinite(n) || n <= 0) return null
@@ -168,6 +175,93 @@ export function expandRhLedgerEvent(event: RhLedgerEvent): RhLedgerRow[] {
 const LEDGER_COLUMNS =
   'id, wallet_address, direction, token_address, counterparty, ' +
   'amount_raw, block_number, block_timestamp, tx_hash, log_index'
+
+/** A robinhood_mainnet.balances dataset row (current ERC-20 balance). */
+export type RhBalanceEvent = {
+  id?: string
+  owner_address?: string
+  contract_address?: string
+  token_id?: string | null
+  token_type?: string
+  balance?: string | number
+  block_number?: number | string
+  block_timestamp?: number | string
+}
+
+export type RhBalanceRow = {
+  owner_address: string
+  token_address: string
+  balance_raw: string
+  block_number: number
+  block_timestamp: Date
+}
+
+/**
+ * Pure: normalize one balances row into a snapshot row. Only plain ERC-20
+ * (no token_id) balances are tracked; malformed/empty balances are dropped.
+ */
+export function expandRhBalanceEvent(event: RhBalanceEvent): RhBalanceRow | null {
+  const owner = String(event.owner_address ?? '').trim().toLowerCase()
+  const token = String(event.contract_address ?? '').trim().toLowerCase()
+  const type = String(event.token_type ?? '').toUpperCase()
+  const tokenId = event.token_id == null ? '' : String(event.token_id).trim()
+  const amount = parseBalanceRaw(event.balance)
+  const ts = parseBlockTs(event.block_timestamp)
+  const blockNumber = Number(event.block_number)
+
+  if (!isEvmAddress(owner) || !isEvmAddress(token)) return null
+  if (type !== 'ERC_20' || (tokenId && tokenId !== 'null' && tokenId !== '')) return null
+  if (!amount || !ts) return null
+  if (!Number.isInteger(blockNumber) || blockNumber <= 0) return null
+  return {
+    owner_address: owner,
+    token_address: token,
+    balance_raw: amount,
+    block_number: blockNumber,
+    block_timestamp: ts,
+  }
+}
+
+/** Upsert current balances (last-write-wins, newest block). */
+export async function upsertRhWalletBalances(
+  rows: RhBalanceRow[],
+  opts?: { chunkSize?: number },
+): Promise<{ upserted: number }> {
+  const chunkSize = opts?.chunkSize ?? 200
+  let upserted = 0
+  for (let i = 0; i < rows.length; i += chunkSize) {
+    const chunk = rows.slice(i, i + chunkSize)
+    if (chunk.length === 0) continue
+    const params: unknown[] = []
+    const valuesSql: string[] = []
+    for (const r of chunk) {
+      const base = params.length
+      valuesSql.push(
+        `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5})`,
+      )
+      params.push(
+        r.owner_address,
+        r.token_address,
+        r.balance_raw,
+        r.block_number,
+        r.block_timestamp.toISOString(),
+      )
+    }
+    const { rowCount } = await query(
+      `INSERT INTO rh_wallet_balances
+         (owner_address, token_address, balance_raw, block_number, block_timestamp)
+       VALUES ${valuesSql.join(', ')}
+       ON CONFLICT (owner_address, token_address) DO UPDATE SET
+         balance_raw = EXCLUDED.balance_raw,
+         block_number = EXCLUDED.block_number,
+         block_timestamp = EXCLUDED.block_timestamp,
+         updated_at = NOW()`,
+      params,
+    )
+    upserted += rowCount
+  }
+  return { upserted }
+}
 
 /** Chunked idempotent insert (Goldsky webhook replays just no-op). */
 export async function insertRhLedgerRows(
@@ -427,32 +521,31 @@ export async function listRhLedgerHistory(
   })
 }
 
+type HoldingEntry = { token_address: string; raw: string }
+
 /**
- * Ledger-backed current holdings as UserToken rows (decimals applied, USD
- * filled via the shared cached GMGN price path). Throws on DB errors so the
- * caller can fall back to the indexer ladder.
+ * Shared: entries (token + raw balance) → UserToken rows with decimals from
+ * rh_token_meta, USD via the cached GMGN fill, dust/`???` rules applied.
  */
-export async function fetchRhLedgerHoldings(
-  wallet: string,
+async function entriesToRhUserTokens(
+  entries: HoldingEntry[],
   opts?: { maxUsdFill?: number },
 ): Promise<UserToken[]> {
-  // Partial backfill nets are wrong — only serve ledger truth once the
-  // pipeline rows are near the chain tip (backfill done + tail live).
-  if (!(await isRhLedgerCaughtUp())) return []
-  const holdings = await listRhLedgerHoldings(wallet)
-  if (holdings.length === 0) return []
-
-  const meta = await ensureRhTokenMeta(holdings.map((h) => h.token_address))
+  if (entries.length === 0) return []
+  const meta = await ensureRhTokenMeta(entries.map((e) => e.token_address))
 
   const tokens: UserToken[] = []
-  for (const h of holdings) {
+  for (const h of entries) {
     const m = meta.get(h.token_address)
     if (!m || m.decimals == null) {
-      console.warn('[rh-ledger] holding without decimals, skipping:', h.token_address)
+      console.warn(
+        '[rh-ledger] holding without decimals, skipping:',
+        h.token_address,
+      )
       continue
     }
     const decimals = m.decimals
-    const raw = Number(h.net_raw)
+    const raw = Number(h.raw)
     const uiAmount = decimals > 0 && Number.isFinite(raw) ? raw / 10 ** decimals : raw
     if (!isRhHeldToken({ uiAmount })) continue
     tokens.push({
@@ -473,6 +566,46 @@ export async function fetchRhLedgerHoldings(
     return sortRhTokensByUsd(priced)
   }
   return []
+}
+
+/**
+ * Ledger-backed current holdings as UserToken rows (decimals applied, USD
+ * filled via the shared cached GMGN price path). Throws on DB errors so the
+ * caller can fall back to the indexer ladder.
+ */
+export async function fetchRhLedgerHoldings(
+  wallet: string,
+  opts?: { maxUsdFill?: number },
+): Promise<UserToken[]> {
+  // Partial backfill nets are wrong — only serve ledger truth once the
+  // pipeline rows are near the chain tip (backfill done + tail live).
+  if (!(await isRhLedgerCaughtUp())) return []
+  const holdings = await listRhLedgerHoldings(wallet)
+  return entriesToRhUserTokens(
+    holdings.map((h) => ({ token_address: h.token_address, raw: h.net_raw })),
+    opts,
+  )
+}
+
+/**
+ * Exact current holdings from the Goldsky balances snapshot table — no history
+ * required, so tokens the app never saw (manual Rabby buys etc.) still show.
+ * Returns [] when the wallet has no rows yet (stream not started).
+ */
+export async function fetchRhBalanceHoldings(
+  wallet: string,
+  opts?: { maxUsdFill?: number },
+): Promise<UserToken[]> {
+  const { rows } = await query<{ token_address: string; balance_raw: string }>(
+    `SELECT token_address, balance_raw::text AS balance_raw
+     FROM rh_wallet_balances
+     WHERE owner_address = $1 AND balance_raw > 0`,
+    [wallet.toLowerCase()],
+  )
+  return entriesToRhUserTokens(
+    rows.map((r) => ({ token_address: r.token_address, raw: r.balance_raw })),
+    opts,
+  )
 }
 
 /** Env-seeded list of tracked RH wallets (informational). */

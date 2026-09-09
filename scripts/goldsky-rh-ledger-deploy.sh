@@ -24,6 +24,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="$ROOT/goldsky/.rendered"
 PIPELINE_TMPL="$ROOT/goldsky/pipelines/rh-wallet-ledger.yaml"
 JOB_TMPL="$ROOT/goldsky/jobs/rh-wallet-ledger-backfill.yaml"
+BAL_JOB_TMPL="$ROOT/goldsky/jobs/rh-wallet-balances-backfill.yaml"
 RPC_URL="${RPC_URL_4663:-${RPC_4663:-https://edge.goldsky.com/standard/evm/4663?key=gs_edge_cmti61jetiu4h01u9hwq1huk7}}"
 
 fail() { echo "✗ $*" >&2; exit 1; }
@@ -63,18 +64,21 @@ mkdir -p "$OUT_DIR"
 render() {
   local tmpl="$1" out="$2" tip="${3:-}"
   sed -e "s|<WALLET_WHERE>|$WALLET_WHERE|g" \
+      -e "s|<WALLET_BAL>|$BOUND|g" \
       -e "s|<APP_HOST>|${APP_HOST#https://}|g" \
       -e "s|<WEBHOOK_SECRET_NAME>|$GS_SECRET_NAME|g" \
       -e "s|<TIP_BLOCK>|$tip|g" "$tmpl" > "$out"
 }
 render "$PIPELINE_TMPL" "$OUT_DIR/rh-wallet-ledger.yaml"
 render "$JOB_TMPL" "$OUT_DIR/rh-wallet-ledger-backfill.yaml" "$TIP"
+render "$BAL_JOB_TMPL" "$OUT_DIR/rh-wallet-balances-backfill.yaml" "$TIP"
 
 echo "ℹ rendered to $OUT_DIR"
 
 # --- validate -------------------------------------------------------------
 goldsky turbo validate "$OUT_DIR/rh-wallet-ledger.yaml"
 goldsky turbo validate "$OUT_DIR/rh-wallet-ledger-backfill.yaml"
+goldsky turbo validate "$OUT_DIR/rh-wallet-balances-backfill.yaml"
 
 if [[ "${1:-}" != "--apply" ]]; then
   echo ""

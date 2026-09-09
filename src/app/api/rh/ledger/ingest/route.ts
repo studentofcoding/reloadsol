@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse, connection } from 'next/server'
 import {
+  expandRhBalanceEvent,
   expandRhLedgerEvent,
   insertRhLedgerRows,
   syncTrackedRhWallets,
+  upsertRhWalletBalances,
+  type RhBalanceEvent,
   type RhLedgerEvent,
 } from '@/utils/rh-ledger'
 
@@ -21,22 +24,39 @@ function isAuthorized(request: NextRequest): boolean {
   return key === expected
 }
 
-function toEventArray(body: unknown): RhLedgerEvent[] {
-  if (Array.isArray(body)) return body as RhLedgerEvent[]
+type LedgerEvent = RhLedgerEvent & { kind?: string }
+
+/** Balances snapshot row when it carries balance-dataset fields/kind. */
+function isBalanceEvent(e: LedgerEvent): boolean {
+  if (e.kind === 'balance') return true
+  const rec = e as RhLedgerEvent & {
+    owner_address?: unknown
+    contract_address?: unknown
+    token_type?: unknown
+  }
+  return (
+    rec.owner_address != null ||
+    rec.contract_address != null ||
+    rec.token_type != null
+  )
+}
+
+function toEventArray(body: unknown): LedgerEvent[] {
+  if (Array.isArray(body)) return body as LedgerEvent[]
   if (body && typeof body === 'object') {
     const rec = body as Record<string, unknown>
-    if (Array.isArray(rec.events)) return rec.events as RhLedgerEvent[]
-    if (Array.isArray(rec.records)) return rec.records as RhLedgerEvent[]
+    if (Array.isArray(rec.events)) return rec.events as LedgerEvent[]
+    if (Array.isArray(rec.records)) return rec.records as LedgerEvent[]
     // A single webhook delivery is typically one event object.
-    return [body as RhLedgerEvent]
+    return [body as LedgerEvent]
   }
   return []
 }
 
 /**
- * Goldsky Turbo webhook sink target. Idempotent upsert of wallet ERC-20
- * transfer rows into rh_ledger_transfers. Duplicate/replayed deliveries are
- * no-ops (ON CONFLICT DO NOTHING), so at-least-once delivery is safe.
+ * Goldsky Turbo webhook sink target. Idempotent upserts: transfer events land
+ * in rh_ledger_transfers, balances-dataset rows in rh_wallet_balances.
+ * Duplicate/replayed deliveries are no-ops, so at-least-once delivery is safe.
  */
 export async function POST(request: NextRequest) {
   await connection()
@@ -52,8 +72,29 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, events: 0, inserted: 0, skipped: 0 })
     }
 
-    const rows = events.flatMap((e) => expandRhLedgerEvent(e))
-    const { inserted, skipped } = await insertRhLedgerRows(rows)
+    const balanceEvents: RhBalanceEvent[] = []
+    const transferEvents: RhLedgerEvent[] = []
+    for (const e of events) {
+      if (isBalanceEvent(e)) balanceEvents.push(e)
+      else transferEvents.push(e)
+    }
+
+    let inserted = 0
+    let skipped = 0
+    if (balanceEvents.length > 0) {
+      const balRows = balanceEvents
+        .map((e) => expandRhBalanceEvent(e))
+        .filter((r): r is NonNullable<typeof r> => r != null)
+      const { upserted } = await upsertRhWalletBalances(balRows)
+      inserted += upserted
+      skipped += balanceEvents.length - upserted
+    }
+    if (transferEvents.length > 0) {
+      const rows = transferEvents.flatMap((e) => expandRhLedgerEvent(e))
+      const res = await insertRhLedgerRows(rows)
+      inserted += res.inserted
+      skipped += res.skipped
+    }
 
     // Keep the tracked-wallet roster in sync with env (bound + optional parent)
     // whenever real deliveries arrive — best-effort, never fails the batch.

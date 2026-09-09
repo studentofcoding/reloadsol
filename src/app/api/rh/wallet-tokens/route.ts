@@ -14,6 +14,7 @@ import {
 } from '@/utils/rh-wallet-holdings'
 import { fillMissingRhUsd } from '@/utils/rh-usd-meta'
 import {
+  fetchRhBalanceHoldings,
   fetchRhLedgerHoldings,
   listRhDustBlacklist,
   markRhTokenDust,
@@ -30,7 +31,7 @@ const SEEN_TOKENS_TTL_S = 30 * 24 * 60 * 60 // 30 days
 
 export const maxDuration = 60
 
-type RhTokensSource = 'ledger' | 'gmgn' | 'blockscout' | 'rpc'
+type RhTokensSource = 'balances' | 'ledger' | 'gmgn' | 'blockscout' | 'rpc'
 
 type CachedResponse = { tokens: UserToken[]; source: RhTokensSource }
 
@@ -160,7 +161,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    let source: RhTokensSource = 'ledger'
+    let source: RhTokensSource = 'balances'
     let tokens: UserToken[] = []
 
     // Confirmed-dust tokens are skipped everywhere (probing + display) and are
@@ -175,39 +176,55 @@ export async function GET(request: NextRequest) {
       () => new Set<string>(),
     )
 
-    // 0) Goldsky ledger (chain truth): every ERC-20 transfer of the tracked
-    //    wallets, streamed by the Turbo pipeline into rh_ledger_transfers. No
-    //    indexer to 429 and no candidate probing — only what the wallet holds.
-    try {
-      tokens = await fetchRhLedgerHoldings(walletNorm)
-    } catch (err) {
-      // DB/backfill not ready yet: fall through to the indexer ladder.
-      console.warn('[rh/wallet-tokens] ledger holdings failed:', err)
-      tokens = []
+    // 0) Balances snapshot (Goldsky robinhood_mainnet.balances stream): exact
+    //    current ERC-20 holdings per wallet+token — no history, no candidates,
+    //    so tokens the app never saw (manual Rabby buys, airdrops) still show.
+    if (tokens.length === 0) {
+      try {
+        tokens = await fetchRhBalanceHoldings(walletNorm)
+      } catch (err) {
+        console.warn('[rh/wallet-tokens] balances holdings failed:', err)
+        tokens = []
+      }
     }
 
-    // 1) GMGN wallet_holdings (primary indexer fallback)
-    try {
-      if (process.env.GMGN_API_KEY?.trim() && process.env.GMGN_PRIVATE_KEY?.trim()) {
-        const rows = await walletHoldings({
-          chain: 'robinhood',
-          wallet: walletNorm,
-          limit: 100,
-        })
-        tokens = rows
-          .map((r) => normalizeGmgnHolding(r))
-          .filter((t): t is UserToken => t != null)
+    // 1) Goldsky ledger (chain truth): net of the transfer stream, served only
+    //    once the pipeline has caught up to the tip (see isRhLedgerCaughtUp).
+    if (tokens.length === 0) {
+      source = 'ledger'
+      try {
+        tokens = await fetchRhLedgerHoldings(walletNorm)
+      } catch (err) {
+        console.warn('[rh/wallet-tokens] ledger holdings failed:', err)
+        tokens = []
       }
-    } catch (err) {
-      // Rate limited (or any GMGN failure): fall through to Blockscout/RPC
-      // instead of failing the request.
-      if (!(err instanceof GmgnApiError && err.code === 'RATE_LIMIT')) {
-        console.warn('[rh/wallet-tokens] GMGN holdings failed:', err)
-      }
-      tokens = []
     }
 
-    // 2) Blockscout explorer API (fallback)
+    // 2) GMGN wallet_holdings (primary indexer fallback)
+    if (tokens.length === 0) {
+      source = 'gmgn'
+      try {
+        if (process.env.GMGN_API_KEY?.trim() && process.env.GMGN_PRIVATE_KEY?.trim()) {
+          const rows = await walletHoldings({
+            chain: 'robinhood',
+            wallet: walletNorm,
+            limit: 100,
+          })
+          tokens = rows
+            .map((r) => normalizeGmgnHolding(r))
+            .filter((t): t is UserToken => t != null)
+        }
+      } catch (err) {
+        // Rate limited (or any GMGN failure): fall through to Blockscout/RPC
+        // instead of failing the request.
+        if (!(err instanceof GmgnApiError && err.code === 'RATE_LIMIT')) {
+          console.warn('[rh/wallet-tokens] GMGN holdings failed:', err)
+        }
+        tokens = []
+      }
+    }
+
+    // 3) Blockscout explorer API (fallback)
     if (tokens.length === 0) {
       source = 'blockscout'
       try {
@@ -219,10 +236,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Remember holdings from indexer sources for the RPC fallback.
-    if (tokens.length > 0) void persistSeenTokens(walletNorm, tokens)
-
-    // 3) Direct RPC ethereum calls (last resort — no indexer available)
+    // 4) Direct RPC ethereum calls (last resort — no indexer available)
     if (tokens.length === 0) {
       source = 'rpc'
       try {
@@ -261,6 +275,12 @@ export async function GET(request: NextRequest) {
       return true
     })
     if (newlyDust.length > 0) void markRhTokenDust(newlyDust)
+
+    // Keep the RPC-fallback candidate list warm with whatever tier served real
+    // holdings (balances/ledger included) so post-trade fresh=1 probing works.
+    if (tokens.length > 0 && source !== 'rpc') {
+      void persistSeenTokens(walletNorm, tokens)
+    }
 
     tokens = sortRhTokensByUsd(tokens.filter(isRhHeldToken))
 

@@ -1,28 +1,24 @@
-# reloadsol RH wallet ledger — live tail
+# reloadsol RH wallet ledger — live tail (transfers + balances)
 #
-# Streams every ERC-20 Transfer touching the tracked Robinhood wallets from
-# Goldsky's curated `robinhood_mainnet.erc20_transfers` dataset into the app's
-# Postgres via the secret-gated webhook route /api/rh/ledger/ingest.
+# Two dataset sources in ONE pipeline (Starter plan = 1 pipeline):
+#   1. robinhood_mainnet.erc20_transfers  → rh_ledger_transfers  (history/PnL)
+#   2. robinhood_mainnet.balances         → rh_wallet_balances    (exact holdings)
+# Both deliver through the same secret-gated webhook; the ingest route
+# dispatches by row shape (balance rows carry owner_address/contract_address).
 #
-# Deploy (after filling placeholders):
-#   goldsky secret create RH_LEDGER_WEBHOOK_SECRET   # httpauth: Authorization: Bearer <RH_LEDGER_WEBHOOK_SECRET>
-#   goldsky turbo validate goldsky/pipelines/rh-wallet-ledger.yaml
-#   goldsky turbo apply goldsky/pipelines/rh-wallet-ledger.yaml
-#
-# Verify dataset name/version first:
-#   goldsky dataset get robinhood_mainnet.erc20_transfers --outputFormat json
-#
-# Placeholders (no secrets, just addresses):
-#   <WALLET_1> / <WALLET_2>  lowercased 0x wallets to track (bound EVM wallet,
-#                           parent Rabby wallet, ...). Add more = re-apply; then
-#                           run the backfill job once per new wallet.
-#   <APP_HOST>              public host the ingest route lives on.
+# Deploy: see scripts/goldsky-rh-ledger-deploy.sh and goldsky/README.md.
+# Placeholders: <WALLET_WHERE>, <WALLET_BAL>, <APP_HOST>, <WEBHOOK_SECRET_NAME>.
 name: reloadsol-rh-wallet-ledger
 resource_size: s
 sources:
   rh_erc20:
     type: dataset
     dataset_name: robinhood_mainnet.erc20_transfers
+    version: 1.1.0
+    start_at: latest
+  rh_balances:
+    type: dataset
+    dataset_name: robinhood_mainnet.balances
     version: 1.1.0
     start_at: latest
 transforms:
@@ -35,10 +31,25 @@ transforms:
       FROM rh_erc20
       WHERE <WALLET_WHERE>
         AND amount > 0
+  watched_balances:
+    type: sql
+    primary_key: id
+    sql: |
+      SELECT id, owner_address, contract_address, token_id, token_type,
+             balance, block_number, block_timestamp
+      FROM rh_balances
+      WHERE owner_address = '<WALLET_BAL>'
+        AND token_type = 'ERC_20'
 sinks:
   ledger_webhook:
     type: webhook
     from: watched_wallet_transfers
+    url: https://<APP_HOST>/api/rh/ledger/ingest
+    secret_name: <WEBHOOK_SECRET_NAME>
+    batch_flush_interval: 1s
+  balances_webhook:
+    type: webhook
+    from: watched_balances
     url: https://<APP_HOST>/api/rh/ledger/ingest
     secret_name: <WEBHOOK_SECRET_NAME>
     batch_flush_interval: 1s

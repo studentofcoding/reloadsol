@@ -1,0 +1,35 @@
+# reloadsol RH balances snapshot — one-time job (fast owner-filtered)
+#
+# Pulls the full balance-change history for the tracked wallet from
+# robinhood_mainnet.balances (source-level owner filter = fast scan) and
+# upserts rh_wallet_balances to exact current holdings. Run once after deploy
+# or when adding a wallet; the live tail keeps it current afterwards.
+#
+#   goldsky turbo validate goldsky/jobs/rh-wallet-balances-backfill.yaml
+#   goldsky turbo apply goldsky/jobs/rh-wallet-balances-backfill.yaml
+#
+# Placeholders: <WALLET_BAL>, <APP_HOST>, <WEBHOOK_SECRET_NAME>, <TIP_BLOCK>.
+name: reloadsol-rh-balances-backfill
+resource_size: s
+job: true
+sources:
+  rh_balances:
+    type: dataset
+    dataset_name: robinhood_mainnet.balances
+    version: 1.1.0
+    start_at: earliest
+    filter: owner_address = '<WALLET_BAL>' AND token_type = 'ERC_20' AND block_number <= <TIP_BLOCK>
+transforms:
+  keep_balances:
+    type: sql
+    primary_key: id
+    sql: |
+      SELECT id, owner_address, contract_address, token_id, token_type,
+             balance, block_number, block_timestamp
+      FROM rh_balances
+sinks:
+  balances_webhook:
+    type: webhook
+    from: keep_balances
+    url: https://<APP_HOST>/api/rh/ledger/ingest
+    secret_name: <WEBHOOK_SECRET_NAME>

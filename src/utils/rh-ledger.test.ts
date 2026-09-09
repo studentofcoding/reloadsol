@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { expandRhLedgerEvent, type RhLedgerEvent } from './rh-ledger'
+import {
+  expandRhBalanceEvent,
+  expandRhLedgerEvent,
+  type RhLedgerEvent,
+} from './rh-ledger'
 
 const EVENT: RhLedgerEvent = {
   id: 'some-goldsky-id',
@@ -77,5 +81,42 @@ describe('expandRhLedgerEvent', () => {
   it('requires a valid block number and log index', () => {
     expect(expandRhLedgerEvent({ ...EVENT, block_number: -1 })).toHaveLength(0)
     expect(expandRhLedgerEvent({ ...EVENT, log_index: undefined })).toHaveLength(0)
+  })
+})
+
+describe('expandRhBalanceEvent', () => {
+  const BAL = {
+    id: 'x',
+    owner_address: '0x795B5C0c89fC5D3b0De6c04141C3F1b6C340603D',
+    contract_address: '0xCA9c78Dd337A67F6e0077F65F5E9218719d30eDf',
+    token_id: 'null',
+    token_type: 'ERC_20',
+    balance: '86648465000000000000',
+    block_number: 42000000,
+    block_timestamp: 1700000000,
+  }
+
+  it('normalizes an ERC-20 balance row', () => {
+    const row = expandRhBalanceEvent(BAL)
+    expect(row).not.toBeNull()
+    expect(row!.owner_address).toBe(BAL.owner_address.toLowerCase())
+    expect(row!.token_address).toBe(BAL.contract_address.toLowerCase())
+    expect(row!.balance_raw).toBe(BAL.balance)
+    expect(row!.block_number).toBe(42000000)
+  })
+
+  it('keeps zero balances (clears a sold-out token)', () => {
+    const row = expandRhBalanceEvent({ ...BAL, balance: '0' })
+    expect(row).not.toBeNull()
+    expect(row!.balance_raw).toBe('0')
+  })
+
+  it('rejects NFTs, malformed addresses and empty balances', () => {
+    expect(expandRhBalanceEvent({ ...BAL, token_type: 'ERC_721' })).toBeNull()
+    expect(
+      expandRhBalanceEvent({ ...BAL, token_id: '123' }),
+    ).toBeNull()
+    expect(expandRhBalanceEvent({ ...BAL, owner_address: 'nope' })).toBeNull()
+    expect(expandRhBalanceEvent({ ...BAL, balance: '' })).toBeNull()
   })
 })
