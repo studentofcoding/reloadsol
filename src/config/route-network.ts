@@ -69,5 +69,5 @@ export function routeSupportsNetwork(
 }
 
 export function defaultPathForNetwork(_network: AppNetwork): string {
-  return '/buy'
+  return '/'
 }

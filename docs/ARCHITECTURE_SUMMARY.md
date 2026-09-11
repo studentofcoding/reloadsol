@@ -8,7 +8,7 @@ Related deep dives: [DECISION_MACHINE.md](./DECISION_MACHINE.md) (Solana + RH al
 
 ## 1. Main function
 
-**ReloadSOL** is a **dual-chain** memecoin trading platform:
+**ReloadSOL** is a **dual-chain** app. The **public home** reloads dust/many tokens into native SOL or ETH (`/`). Buy, strategies, DLMM, and research stay URL-only (`/buy`, `/dev/*`).
 
 - **Solana mainnet** — bulk buys via Raptor/Jupiter, trending + mcap strategies, Meteora DLMM agent, server keypair execution
 - **Robinhood Chain (EVM id 4663)** — bulk buys via Kyber + **BatchExecutor contract** (1 signature = wrap + Permit2 + N swaps, atomic), Uni v3/v4-fork CLMM positions, browser (Rabby) or bound-GMGN wallet modes

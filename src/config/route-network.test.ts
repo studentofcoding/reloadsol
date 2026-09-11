@@ -50,8 +50,8 @@ describe('routeSupportsNetwork', () => {
 })
 
 describe('defaultPathForNetwork', () => {
-  it('sends both networks to buy', () => {
-    expect(defaultPathForNetwork('sol')).toBe('/buy')
-    expect(defaultPathForNetwork('robinhood')).toBe('/buy')
+  it('sends both networks home (Reload)', () => {
+    expect(defaultPathForNetwork('sol')).toBe('/')
+    expect(defaultPathForNetwork('robinhood')).toBe('/')
   })
 })

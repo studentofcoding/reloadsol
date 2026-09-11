@@ -16,7 +16,7 @@ import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import { useRhWalletMode } from "@/contexts/RhWalletModeContext";
 import { useResolvedWalletPublicKey } from "@/hooks/useResolvedWalletPublicKey";
 import { useWalletTokens, refreshWalletTokensData, type WalletTokensData } from "@/hooks/useWalletTokens";
-import { useSolPrice } from "@/hooks/useSolPrice";
+import { compactDustOnlyDefault } from "@/utils/reload-home";
 import UniversalWalletButton from "./UniversalWalletButton";
 import TradeOutcomeModal, { useTradeOutcome } from "./TradeOutcomeModal";
 import TokenSkeleton from "./TokenSkeleton";
@@ -145,7 +145,12 @@ interface QuoteData {
   route?: any; // Provider-specific route data
 }
 
-export default function BulkTokenSeller() {
+export default function BulkTokenSeller({
+  variant = "full",
+}: {
+  variant?: "full" | "compact";
+} = {}) {
+  const compact = variant === "compact";
   const { signAllTransactions, connected } = useWallet();
   const { publicKey, walletAddress, isWalletReady } =
     useResolvedWalletPublicKey();
@@ -335,7 +340,9 @@ export default function BulkTokenSeller() {
   );
   const [error, setError] = useState<string>("");
   const [selectedToken, setSelectedToken] = useState<string>("");
-  const [showDustOnly, setShowDustOnly] = useState<boolean>(false);
+  const [showDustOnly, setShowDustOnly] = useState<boolean>(
+    () => compact && compactDustOnlyDefault(effectiveChain),
+  );
   const [showZeroBalance, setShowZeroBalance] = useState<boolean>(false);
   const [showRpcPanel, setShowRpcPanel] = useState<boolean>(false);
 
@@ -366,6 +373,10 @@ export default function BulkTokenSeller() {
     setPendingCloseableTokens([]);
     setQuotes({});
     setError("");
+    if (compact) {
+      setShowDustOnly(compactDustOnlyDefault(effectiveChain));
+      if (effectiveChain === "robinhood") setRhQuoteCurrency("ETH");
+    }
   }
 
   const feeRates = getAllFeeRates();
@@ -2131,6 +2142,32 @@ export default function BulkTokenSeller() {
 
   const filteredUserTokens = displayUserTokens;
 
+  const compactSelectKey = `${compact}:${effectiveChain}:${isRhChain ? tradeFromAddress : walletAddress}:${showDustOnly}`;
+  const compactSelectKeyRef = useRef("");
+  useEffect(() => {
+    if (!compact) return;
+    if (isLoadingTokensList || isInitialLoadTokens) return;
+    if (compactSelectKeyRef.current === compactSelectKey) return;
+    const tokensToSelect = filteredUserTokens.filter(
+      (token) => !zeroBalanceMintSet.has(token.mintAddress),
+    );
+    compactSelectKeyRef.current = compactSelectKey;
+    const tokensToSell = tokensToSelect.map((token) => ({
+      ...token,
+      sellAmount: token.balance,
+      sellPercentage: 100,
+    }));
+    setSelectedTokens(capTradeTokens(tokensToSell, tradeTokenLimit));
+  }, [
+    compact,
+    compactSelectKey,
+    isLoadingTokensList,
+    isInitialLoadTokens,
+    filteredUserTokens,
+    zeroBalanceMintSet,
+    tradeTokenLimit,
+  ]);
+
   // True once any token data is on screen. Skeleton/error branches below are
   // gated on this so a background refetch (or a transient fetch error) never
   // blanks an already-populated list.
@@ -2196,7 +2233,7 @@ export default function BulkTokenSeller() {
   };
 
   return (
-    <div className="bg-gray-900 rounded-2xl shadow-lg border border-gray-700 p-8 space-y-8 max-w-6xl mx-auto">
+    <div className={`bg-gray-900 rounded-2xl shadow-lg border border-gray-700 ${compact ? "p-5 space-y-5" : "p-8 space-y-8"} max-w-6xl mx-auto`}>
       <GmgnTradeConfirmModal
         open={gmgnConfirmOpen && (isDevUser || isRhChain)}
         chain={effectiveChain}
@@ -2246,14 +2283,19 @@ export default function BulkTokenSeller() {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div className="flex justify-between items-center w-full">
           <h2 className="text-3xl font-bold text-white">
-            Sell Bulk & Reload{" "}
-            {effectiveChain === "robinhood"
-              ? rhQuoteCurrency
-              : "your solana"}
+            {compact
+              ? effectiveChain === "robinhood"
+                ? "Reload to ETH"
+                : "Reload to SOL"
+              : effectiveChain === "robinhood"
+                ? `Sell Bulk & Reload ${rhQuoteCurrency}`
+                : "Sell Bulk & Reload your solana"}
           </h2>
+          {!compact && (
           <div className="shrink-0">
             {effectiveChain === "sol" ? <UniversalWalletButton /> : null}
           </div>
+          )}
         </div>
       </div>
 
@@ -2268,7 +2310,7 @@ export default function BulkTokenSeller() {
         />
       ) : null}
 
-      {isDevUser && effectiveChain === "sol" && solGmgnSynced ? (
+      {!compact && isDevUser && effectiveChain === "sol" && solGmgnSynced ? (
         <label className="flex items-center gap-2 text-xs text-gray-300">
           <input
             type="checkbox"
@@ -2280,7 +2322,7 @@ export default function BulkTokenSeller() {
         </label>
       ) : null}
 
-      {isRhChain ? (
+      {!compact && isRhChain ? (
         <div className="rounded-xl border border-gray-700 bg-gray-800/50 px-4 py-3 text-sm text-gray-300 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <span>Sell to:</span>
@@ -2319,7 +2361,7 @@ export default function BulkTokenSeller() {
         </div>
       ) : null}
 
-      {isDevUser && (rosterSellRecsQuery.data?.length ?? 0) > 0 ? (
+      {!compact && isDevUser && (rosterSellRecsQuery.data?.length ?? 0) > 0 ? (
         <div className="space-y-2">
           <div className="text-xs uppercase tracking-wide text-gray-400">
             Roster digger ({effectiveChain})
@@ -2356,7 +2398,7 @@ export default function BulkTokenSeller() {
 
       <div className="space-y-8">
         {/* Token Chart Section */}
-        {selectedToken && (
+        {!compact && selectedToken && (
             <div className="space-y-3">
               <div className="flex justify-between items-center">
                 <label className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
@@ -2377,7 +2419,7 @@ export default function BulkTokenSeller() {
             </div>
         )}
 
-        {isSolTrade && connected ? (
+        {!compact && isSolTrade && connected ? (
           <RpcPanel
             expanded={showRpcPanel}
             onToggle={() => setShowRpcPanel((prev) => !prev)}
@@ -2471,6 +2513,14 @@ export default function BulkTokenSeller() {
               </svg>
             </button>
             {!isRhChain ? (
+              compact ? (
+                <button
+                  onClick={toggleDustFilter}
+                  className="px-4 py-2 rounded-lg transition-colors text-sm bg-gray-600 hover:bg-gray-500 text-white"
+                >
+                  {showDustOnly ? "Include non-dust" : "Dust only"}
+                </button>
+              ) : (
               <>
                 <button
                   onClick={() => setShowZeroBalance((prev) => !prev)}
@@ -2493,7 +2543,10 @@ export default function BulkTokenSeller() {
                   <span>{showDustOnly ? "Show all" : "Dust only"}</span>
                 </button>
               </>
+              )
             ) : null}
+            {!compact ? (
+              <>
             <button
               onClick={selectAllTokens}
               disabled={filteredUserTokens.length === 0}
@@ -2508,8 +2561,25 @@ export default function BulkTokenSeller() {
             >
               Clear
             </button>
+              </>
+            ) : null}
           </div>
         </div>
+
+        <details
+          className={
+            compact
+              ? "rounded-xl border border-gray-700 bg-gray-800/40 p-3"
+              : "contents"
+          }
+          {...(!compact ? { open: true } : {})}
+        >
+          {compact ? (
+            <summary className="cursor-pointer text-sm text-gray-300">
+              Edit list
+            </summary>
+          ) : null}
+          <div className={compact ? "mt-4 space-y-4" : undefined}>
 
         <div className="flex justify-between items-center">
           <h3 className="text-md font-semibold text-white mb-1">
@@ -2914,12 +2984,15 @@ export default function BulkTokenSeller() {
             </div>
           </>
         )}
+          </div>
+        </details>
 
         {/* Settings and Summary */}
         {(selectedTokens.length > 0 ||
           selectedZeroBalanceTokens.length > 0) && (
           <>
             {/* Collapsible Settings Section */}
+            {!compact && (
             <div className="bg-gray-800 border border-gray-600 rounded-xl">
               <button
                 onClick={() => setShowSettings(!showSettings)}
@@ -3172,6 +3245,7 @@ export default function BulkTokenSeller() {
                 </div>
               )}
             </div>
+            )}
 
             {/* Action Buttons */}
             <div className="flex flex-col md:flex-row gap-4">
@@ -3208,6 +3282,11 @@ export default function BulkTokenSeller() {
                               0,
                             );
                             const n = selectedTokens.length;
+                            if (compact) {
+                              return usd > 0
+                                ? `Reload ${n} ${n === 1 ? "token" : "tokens"} to ETH (~$${usd.toLocaleString(undefined, { maximumFractionDigits: 2 })})`
+                                : `Reload ${n} ${n === 1 ? "token" : "tokens"} to ETH`;
+                            }
                             const label =
                               n === 1
                                 ? selectedTokens[0].symbol || "token"
@@ -3233,6 +3312,13 @@ export default function BulkTokenSeller() {
                             },
                             0,
                           );
+
+                          if (compact) {
+                            const n = selectedTokens.length;
+                            return totalSolOutput > 0
+                              ? `Reload ${n} ${n === 1 ? "token" : "tokens"} to SOL (${totalSolOutput.toFixed(4)})`
+                              : `Reload ${n} ${n === 1 ? "token" : "tokens"} to SOL`;
+                          }
 
                           // Close only runs for selected zero-balance accounts (not after 100% sells).
                           const willCloseZeroBalance =
