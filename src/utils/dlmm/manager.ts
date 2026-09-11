@@ -207,9 +207,11 @@ async function processPosition(
     let executed = false;
 
     if (reasoned.decision === 'CLOSE') {
+      // Climate does not gate reduce-risk: CLOSE always proceeds.
       const result = await removePosition(position.id);
       executed = result.success;
     } else if (reasoned.decision === 'REDEPLOY') {
+      // Existing size is re-centered; new risk is gated at deployPosition, not here.
       executed = await redeployPosition(position, config, executor, reasoned.reason, activeBinId);
     } else {
       await updatePosition(position.id, {

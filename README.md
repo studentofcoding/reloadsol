@@ -63,6 +63,7 @@ Condensed entry points (5 categories + diagrams hub):
 | [docs/03-strategies-and-automation.md](docs/03-strategies-and-automation.md) | Strategies/workers, sim vs live, kill switches |
 | [docs/04-machine-learning.md](docs/04-machine-learning.md) | ML pipeline, artifacts, shadow-vs-enforce |
 | [docs/05-operations-and-deployment.md](docs/05-operations-and-deployment.md) | Env keys, Docker stack, deploy runbook, ops |
+| [docs/CLIMATE_GATE.md](docs/CLIMATE_GATE.md) | Optional S5 DLMM paper climate gate (default off; ask before live) |
 | [handoff.md](handoff.md) | Session handoff — Pattern ML focus, ops checklist |
 
 Diagrams: [`docs/diagrams/`](docs/diagrams/) (trading surfaces, confirmation lifecycle,
@@ -228,6 +229,8 @@ Copy from [`.env.docker.example`](.env.docker.example). Key groups:
 | `DLMM_AGENT_ENABLED` | `false` | Master switch for autonomous agent |
 | `DLMM_DRY_RUN` | `true` | Simulate LP actions without on-chain txs |
 | `DLMM_API_PASSWORD` | — | Password for dashboard config changes |
+| `CLIMATE_GATE` | off | `1` enables paper/dry-run climate sizing on DLMM opens ([docs/CLIMATE_GATE.md](docs/CLIMATE_GATE.md)) |
+| `CLIMATE_GATE_LIVE` | off | `1` also gates live (`dry_run=false`) — **ask before enabling** |
 | `TRADING_KEYPAIR_JSON` | — | `[1,2,3,...]` array for live trading |
 
 ### Telegram (optional)
@@ -287,7 +290,11 @@ Start in safe mode:
 ```bash
 DLMM_AGENT_ENABLED=false
 DLMM_DRY_RUN=true
+# Optional paper climate gate (default off). Live force needs CLIMATE_GATE_LIVE=1 after an ask.
+# CLIMATE_GATE=1
 ```
+
+Regime climate (`GET https://terminal.reloadsol.app/api/regime/climate`) can scale or block **new** DLMM risk when `CLIMATE_GATE=1`. Kill switch / capital caps still win. Details: [docs/CLIMATE_GATE.md](docs/CLIMATE_GATE.md).
 
 Check status: `GET /api/dlmm/health` · Config: `GET /api/dlmm/config`
 

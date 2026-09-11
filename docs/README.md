@@ -13,6 +13,7 @@ this folder remain authoritative references.
 | 03 | [03-strategies-and-automation.md](./03-strategies-and-automation.md) | What a "strategy" is (definition + worker + outcome); worker inventory; sim vs real; kill switch / circuit breaker / re-entry guards; where the code lives. Current algo snapshot: [DECISION_MACHINE.md](./DECISION_MACHINE.md) |
 | 04 | [04-machine-learning.md](./04-machine-learning.md) | ML purpose & consumers; `ml/` layout; export→train→evaluate→ship→runtime ONNX; labels & coverage; baselines; shadow-vs-enforce |
 | 05 | [05-operations-and-deployment.md](./05-operations-and-deployment.md) | Env / preflight (73 keys); Docker stack table; deploy runbook (`docker-deploy.sh`); ops runbook (migrations, backup, circuit breaker, PnL automation, common failures) |
+| — | [CLIMATE_GATE.md](./CLIMATE_GATE.md) | Optional S5 DLMM paper climate gate (`CLIMATE_GATE=1`); live requires `CLIMATE_GATE_LIVE=1` after an ask |
 
 ## Diagrams
 
@@ -29,6 +30,6 @@ this folder remain authoritative references.
 
 - Product/flows: `whole_process.md`, `SWAP_AND_CLOSE_FLOW.md`, `Overview.md`, `trending_tracker.md`, `mcap-tracker.md`
 - Architecture: `ARCHITECTURE_SUMMARY.md`, `architecture.md`, `API_ARCHITECTURE_SUMMARY.md`
-- Strategies: `DECISION_MACHINE.md` (Solana + RH algo current state), `algo_overview.md`, `STRATEGY_ARCHITECTURE.md`, `reloadsol_engine_strategies_and_ml.md`, `GMGN_STRATEGY.md`, `sol_arbitrations.md`, `MCAP_RANGE_RISK_REWARD.md`, `HOW_WE_GET_THE_SIGNALS.md`, `FIX_STATUS_CONSTRAINT_README.md`
+- Strategies: `DECISION_MACHINE.md` (Solana + RH algo current state), `algo_overview.md`, `STRATEGY_ARCHITECTURE.md`, `reloadsol_engine_strategies_and_ml.md`, `GMGN_STRATEGY.md`, `sol_arbitrations.md`, `MCAP_RANGE_RISK_REWARD.md`, `HOW_WE_GET_THE_SIGNALS.md`, `FIX_STATUS_CONSTRAINT_README.md`, [CLIMATE_GATE.md](./CLIMATE_GATE.md) (optional DLMM paper climate)
 - ML: `deep_dive_ml.md`, `ML_GATE_PLAN.md`, `OPERATOR_STATE.md`
 - Deprecated/superseded docs moved to [`_archive/`](./_archive/) — kept for history only.
