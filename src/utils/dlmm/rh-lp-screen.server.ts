@@ -4,6 +4,7 @@
  * rows in dlmm_positions (chain='robinhood') through the shared DLMM reasoner.
  */
 import type { DlmmScreenCandidate } from '@/types/dlmm'
+import { applyClimateToNewRisk } from '@/utils/climateGate'
 import { getLpTerminalIndexerBase } from '@/utils/dlmm/lp-terminal'
 import type { LpTerminalPoolRaw, LpTerminalTokenMeta } from '@/utils/dlmm/lp-terminal-pools'
 import { pairLabel, tokenSymbol } from '@/utils/dlmm/lp-terminal-pools'
@@ -78,6 +79,7 @@ export type RhLpScreenResult = {
   candidates: number
   opened: number
   decisions: { id: string; pool: string; decision: string; reason: string }[]
+  climate?: { applied: boolean; allowed: boolean; scale: number; reason: string }
 }
 
 /** Join Trenches demand and score every pool (unsorted, zeros kept). */
@@ -129,17 +131,41 @@ export async function runRhLpScreen(): Promise<RhLpScreenResult> {
   await saveCandidates(candidates)
 
   const decisions = await managePaperPositions(pools, tokens)
-  const opened = confidence.noTrade ? 0 : await openPaperPositions(scored, tokens)
+  const climate = confidence.noTrade
+    ? null
+    : await applyClimateToNewRisk({
+        amount: PAPER.amountUsd(),
+        paper: true,
+        source: 'rh_lp_paper',
+      })
+  const climateBlocked = climate != null && !climate.allowed
+  const opened =
+    confidence.noTrade || climateBlocked
+      ? 0
+      : await openPaperPositions(scored, tokens, climate?.amount ?? PAPER.amountUsd())
 
   return {
     success: true,
     confidence: confidence.score,
     noTrade: confidence.noTrade,
-    reasons: confidence.reasons,
+    reasons:
+      climate && !climate.allowed
+        ? [...confidence.reasons, climate.reason]
+        : confidence.reasons,
     scored: scored.length,
     candidates: candidates.length,
     opened,
     decisions,
+    ...(climate
+      ? {
+          climate: {
+            applied: climate.applied,
+            allowed: climate.allowed,
+            scale: climate.scale,
+            reason: climate.reason,
+          },
+        }
+      : {}),
   }
 }
 
@@ -152,6 +178,7 @@ async function livePaperPositions() {
 async function openPaperPositions(
   scored: { pool: LpTerminalPoolRaw; score: RhLpScore }[],
   tokens: Record<string, LpTerminalTokenMeta>,
+  amountUsd = PAPER.amountUsd(),
 ): Promise<number> {
   const open = await livePaperPositions()
   const held = new Set(open.map((p) => p.pool_address.toLowerCase()))
@@ -168,8 +195,8 @@ async function openPaperPositions(
       token_x_symbol: tokenSymbol(tokens, pool.token0),
       token_y_symbol: tokenSymbol(tokens, pool.token1),
       amount_sol: 0,
-      entry_value_usd: PAPER.amountUsd(),
-      current_value_usd: PAPER.amountUsd(),
+      entry_value_usd: amountUsd,
+      current_value_usd: amountUsd,
       entry_price: pool.priceQuote,
       range_pct: PAPER.rangePct(),
       take_profit_pct: PAPER.takeProfitPct(),
