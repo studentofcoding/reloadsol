@@ -32,7 +32,7 @@ selection back to `sol`.
 |---|---|---|---|
 | **Reload (home)** | `/` | After connect: compact many→native (SOL dust pre-checked; RH all sellable). No `/sell` bounce. | `HomePageClient.tsx`, `ReloadHome.tsx`, `BulkTokenSeller` `variant="compact"` |
 | Bulk buy | `/buy` (`/buy/solana`, `/buy/robinhood`) | Buy up to the chain-specific cap (currently **5 RH / 5 Solana**) from one spend amount (SOL on Solana; ETH/USDG/WETH on RH); valid/parsed chips; risk analysis; trending/toast tokens append to the list | `src/components/BulkTokenBuyer.tsx`, `src/components/RiskAnalysis.tsx` |
-| Bulk sell / dust sweep / reload | `/sell` | Full seller UI (URL-only). Compact Reload lives on `/`. Dust categories (sellable / unsellable / zero-balance / frozen / NFT); empty-ATA close + rent reclaim | `src/components/BulkTokenSeller.tsx`, `src/utils/jupiter.ts`, `src/utils/swap-executor.ts` |
+| Bulk sell / dust sweep / reload | `/sell` | Full seller UI (URL-only). Compact Reload lives on `/`. Dust categories (sellable / unsellable / zero-balance / frozen / NFT); empty-ATA close + rent reclaim. Full `/sell` can swap the batch into one custom mint (default native SOL/ETH); compact home stays native. | `src/components/BulkTokenSeller.tsx`, `src/utils/jupiter.ts`, `src/utils/swap-executor.ts` |
 | Single swap | `/swap` (+ solana/robinhood subroutes) | Solana: **Jupiter Terminal** widget with SOL/USDC presets; Robinhood: in-house RhSwap panel (quote-pair or token→token) | `src/app/(trade)/swap/SwapPageClient.tsx`, `src/components/RhGmgnSwapPanel.tsx`, `src/components/JupiterTerminal.tsx` |
 | Chart buy modal | modals over charts / signals / trend boards | Quick single-token buy from any chart surface, keyboard navigable | `src/components/ChartBuyModal.tsx` |
 | Token search (dev) | `/dev/search-token` (`/solana`, `/robinhood`); map at `/dev/search-token/detail?address=&view=` | Name/symbol/CA search; Open map / View chart go to TokenLocateHub (Freeview / List). `/search-token*` and `/dev/token-search` redirect here | `src/components/search/SearchTokenClient.tsx`, `src/components/token-locate/TokenLocateHub.tsx`, `src/components/signals/shared/token-search-href.ts` |
@@ -50,6 +50,10 @@ selection back to `sol`.
   `submitSignedSwap` (Raptor send, RPC fallback only) → poll `confirmed|failed|expired`
   (`src/utils/swap-executor.ts`, `src/utils/jupiter.ts` `executeBulkBuy`,
   `executeBulkSellAlt`, `executeClientSwap`; server proxy `/api/solanatracker/*`).
+  Full `/sell` defaults `outputMint` to wrapped SOL; a custom mint is resolved by
+  `sellOutputMint` (`src/utils/sell-output-mint.ts`) and threaded into quotes,
+  prefetch, and `executeBulkSellAlt`. Compact Reload on `/` always sells to SOL.
+  PnL Fast Sell stays native SOL.
 - **Jupiter** handles pricing/metadata, the wallet token list (Portfolio), the `/swap`
   Jupiter Terminal widget, and account close/reclaim — not the main swap executor.
 - **GMGN** on Solana is charts (embedded `gmgn.cc` iframes) plus a dev-only GMGN
@@ -66,7 +70,7 @@ Execution depends on **wallet mode** (`useRhWalletMode`), resolved in
 
 | Wallet | Execution | Details |
 |---|---|---|
-| **Bound wallet** (GMGN server-sign) | **GMGN** quote → swap → order poll, per leg | Sequential legs; requires a configured bound EVM wallet for the chain; `/api/gmgn/trade/*` enforces `from` = bound address (`src/utils/gmgn-bulk-trade.ts`, `src/app/api/gmgn/trade/swap/route.ts`) |
+| **Bound wallet** (GMGN server-sign) | **GMGN** quote → swap → order poll, per leg | Sequential legs; requires a configured bound EVM wallet for the chain; `/api/gmgn/trade/*` enforces `from` = bound address (`src/utils/gmgn-bulk-trade.ts`, `src/app/api/gmgn/trade/swap/route.ts`). Full `/sell` passes `outputToken` (ETH / USDG / WETH / custom CA); same-token legs are skipped. |
 | **Parent wallet** (Rabby, browser) | **Kyber aggregator** (`src/utils/dlmm/rh-kyber-swap.ts`) | Parallel Kyber `/routes`, then `/builds`, then allowance reads; optional WETH wrap. Modes below |
 | Server / bot | GMGN-bound or keypair paths | Bot cycles run server-side against bound wallets / `TRADING_KEYPAIR_JSON` (Solana) |
 
@@ -79,7 +83,10 @@ Parent-wallet modes (precedence **executor → EIP-5792 → sequential**):
   every trade. Contract: `contracts/src/BatchExecutor.sol` (owner-scoped, immutable,
   pausable, plain-`call` only); planners in `src/utils/dlmm/rh-batch-executor.ts` and
   `src/utils/dlmm/rh-permit2-readiness.ts`; UI checklist in
-  `docs/FE_1CLICK_AND_PERMIT2.md`.
+  `docs/FE_1CLICK_AND_PERMIT2.md`. `executeRhParentKyberSell` already accepts
+  `outputToken` for token-to-token; `/sell` now passes a custom CA when picked.
+  No BatchExecutor redeploy — `executeBatch(calls[])` is mint-agnostic. Compact
+  Reload on `/` always sells to ETH.
 - **EIP-5792** — when `getCapabilities` reports `atomic: supported/ready` for chain
   4663, calls go through `wallet_sendCalls` + `waitForCallsStatus`
   (`executeRhWalletCalls`, `src/utils/dlmm/rh-send-calls.ts`). Any non-success receipt

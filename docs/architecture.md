@@ -71,7 +71,7 @@ The app has three layers that share Postgres and wallet infrastructure but diffe
 flowchart LR
   subgraph manual [Manual trading]
     Buy["/buy bulk buy"]
-    Sell["/sell bulk sell + close"]
+    Sell["/sell bulk sell + close\n(custom out optional)"]
     Swap["/swap Jupiter Terminal"]
     PnL["/pnl Fast Sell"]
   end

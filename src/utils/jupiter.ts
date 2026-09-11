@@ -440,6 +440,10 @@ export interface BulkSellRequest {
   unsellableTokens?: UserToken[] // Optional unsellable tokens to close
   slippage: number
   priorityFee: number
+  /** Destination mint (default wrapped SOL). */
+  outputMint?: string
+  /** Decimals of outputMint for amountOut → human (default 9). */
+  outputDecimals?: number
 }
 
 export interface BulkSellResult {
@@ -2591,6 +2595,10 @@ export async function executeBulkSellAlt(
         });
       });
 
+      const outputMint = request.outputMint ?? NATIVE_MINT.toBase58()
+      const outputDecimals = request.outputDecimals ?? 9
+      const outDivisor = 10 ** outputDecimals
+
       if (nonFrozenTokens.length > 0) {
         const transactions: VersionedTransaction[] = [];
         const transactionTokens: TokenToSell[] = [];
@@ -2613,11 +2621,14 @@ export async function executeBulkSellAlt(
                 if (token.sellAmount <= 0) {
                   throw new Error(`Invalid sell amount for token ${token.mintAddress}`);
                 }
+                if (token.mintAddress === outputMint) {
+                  throw new Error('Cannot sell into the same token')
+                }
 
                 const { tx, meta, outAmount } = await prepareBulkSwapTransaction({
                   userPublicKey,
                   inputMint: token.mintAddress,
-                  outputMint: NATIVE_MINT.toBase58(),
+                  outputMint,
                   amount: token.sellAmount,
                   slippageBps: request.slippage,
                   priorityFeeLamports: request.priorityFee,
@@ -2723,12 +2734,12 @@ export async function executeBulkSellAlt(
 
               let solReceived = 0;
               if (sendResult.via === 'raptor') {
-                const amountOutLamports = Number.parseInt(
+                const amountOutRaw = Number.parseInt(
                   transactionAmountOut[sendResult.index] ?? '0',
                   10,
                 );
-                solReceived = Number.isFinite(amountOutLamports)
-                  ? amountOutLamports / LAMPORTS_PER_SOL
+                solReceived = Number.isFinite(amountOutRaw)
+                  ? amountOutRaw / outDivisor
                   : 0;
               } else {
                 await waitForRpcRateLimit();

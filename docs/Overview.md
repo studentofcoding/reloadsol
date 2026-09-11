@@ -18,7 +18,9 @@
 
 ### Bulk Token Selling & Reloading (`/sell`)
 
-- **Functionality**: Sell multiple tokens at once to "reload" SOL.
+- **Functionality**: Sell multiple tokens at once. Home compact Reload always
+  goes to native SOL (or ETH on Robinhood). Full `/sell` can target one custom
+  mint (search/paste CA) instead.
 - **Dust Sweeping**: Automatically identifies and closes empty token accounts to reclaim rent (approx. 0.002 SOL per account).
 - **PnL Sharing**: Generate shareable images of trading performance.
 - **Key Component**: [BulkTokenSeller.tsx](src/components/BulkTokenSeller.tsx)

@@ -35,12 +35,13 @@ import RhPermit2SetupSheet, {
   RhPermit2StatusBanner,
 } from "@/components/rh/RhPermit2SetupSheet";
 import { useRhPermit2Readiness } from "@/hooks/useRhPermit2Readiness";
+import { matchesTradeChainAddress } from "@/utils/gmgn-currencies";
 import {
-  GMGN_RH_USDG,
-  GMGN_RH_WETH,
-  gmgnNativeToken,
-  matchesTradeChainAddress,
-} from "@/utils/gmgn-currencies";
+  sellOutputMint,
+  sameSellToken,
+  type SellOutputPreset,
+} from "@/utils/sell-output-mint";
+import TokenAddressSearchField from "./TokenAddressSearchField";
 import { walletsMatch } from "@/utils/rh-wallet-holdings";
 import { executeGmgnBulkSell } from "@/utils/gmgn-bulk-trade";
 import type { RhSwapQuote } from "@/utils/dlmm/rh-univ2-swap";
@@ -56,7 +57,7 @@ import {
   resolveTradeSlippageBps,
   worstImpactPct,
 } from "@/utils/auto-slippage";
-import { RH_WETH, erc20Abi } from "@/utils/dlmm/rh-univ2";
+import { erc20Abi } from "@/utils/dlmm/rh-univ2";
 import {
   fetchEthUsdSpot,
   simulateRhBoundSellLeg,
@@ -95,7 +96,6 @@ import {
   SLIPPAGE_OPTIONS,
   PRIORITY_FEE_OPTIONS,
   getSolPriceUSD,
-  TOKENS,
 } from "@/utils/solana";
 import { trackSell, trackClose } from "@/utils/operations-api";
 import { fetchTokenPricesForTracking } from "@/utils/trading-tracker";
@@ -210,8 +210,14 @@ export default function BulkTokenSeller({
   const [tradeAutoConfirm, setTradeAutoConfirm] = useState(readTradeAutoConfirm);
   const [gmgnQuoteRefreshing, setGmgnQuoteRefreshing] = useState(false);
   const autoConfirmFiredRef = useRef(false);
-  const [rhQuoteCurrency, setRhQuoteCurrency] =
-    useState<RhSwapQuote>("ETH");
+  const [sellOutPreset, setSellOutPreset] =
+    useState<SellOutputPreset>("native");
+  const [customOut, setCustomOut] = useState<{
+    address: string;
+    symbol: string;
+    decimals: number;
+  } | null>(null);
+  const [customOutSearch, setCustomOutSearch] = useState("");
   const boundWallets = useGmgnBoundWallets();
   // App network (header) is source of truth; the per-chain pages ensure
   // `effectiveChain` matches the URL. No local canUseRh coercion here.
@@ -373,11 +379,36 @@ export default function BulkTokenSeller({
     setPendingCloseableTokens([]);
     setQuotes({});
     setError("");
+    setSellOutPreset("native");
+    setCustomOut(null);
+    setCustomOutSearch("");
     if (compact) {
       setShowDustOnly(compactDustOnlyDefault(effectiveChain));
-      if (effectiveChain === "robinhood") setRhQuoteCurrency("ETH");
     }
   }
+
+  const sellOut = useMemo(() => {
+    const resolved = sellOutputMint({
+      chain: effectiveChain,
+      preset: compact ? "native" : sellOutPreset,
+      customAddress:
+        compact || sellOutPreset !== "custom"
+          ? undefined
+          : customOut?.address,
+    });
+    if (
+      customOut &&
+      resolved.outputMint.toLowerCase() === customOut.address.toLowerCase()
+    ) {
+      return {
+        ...resolved,
+        symbol: customOut.symbol || resolved.symbol,
+        decimals: customOut.decimals || resolved.decimals,
+      };
+    }
+    return resolved;
+  }, [effectiveChain, compact, sellOutPreset, customOut]);
+  const rhQuoteCurrency: RhSwapQuote = sellOut.rhQuote;
 
   const feeRates = getAllFeeRates();
 
@@ -401,7 +432,7 @@ export default function BulkTokenSeller({
       try {
         const query = new URLSearchParams({
           inputMint,
-          outputMint: TOKENS.SOL,
+          outputMint: sellOut.outputMint,
           amount,
           slippageBps: prefetchSlippageBps(slippage).toString(),
         });
@@ -416,7 +447,7 @@ export default function BulkTokenSeller({
         return {
           provider: "solanatracker",
           inputMint,
-          outputMint: TOKENS.SOL,
+          outputMint: sellOut.outputMint,
           amount,
           outAmount: mapped.outAmount,
           priceImpact: mapped.priceImpact * 100,
@@ -428,7 +459,7 @@ export default function BulkTokenSeller({
         return null;
       }
     },
-    [slippage],
+    [slippage, sellOut.outputMint],
   );
 
   // Main quote fetching function (Raptor only)
@@ -533,7 +564,7 @@ export default function BulkTokenSeller({
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [isSolTrade, autoQuote, tokensHash, selectedTokens.length]);
+  }, [isSolTrade, autoQuote, tokensHash, selectedTokens.length, sellOut.outputMint]);
 
   const sellPrefetchKey = useMemo(
     () =>
@@ -552,7 +583,7 @@ export default function BulkTokenSeller({
           prefetchSwapTransaction({
             userPublicKey: pk,
             inputMint: token.mintAddress,
-            outputMint: TOKENS.SOL,
+            outputMint: sellOut.outputMint,
             amount: token.sellAmount,
             slippageBps: prefetchSlippageBps(slippage),
             priorityFeeLamports: priorityFee,
@@ -572,9 +603,16 @@ export default function BulkTokenSeller({
     slippage,
     priorityFee,
     selectedTokens,
+    sellOut.outputMint,
   ]);
 
   // Fetch SOL price using robust multi-API system — handled by useSolPrice
+
+  useEffect(() => {
+    setSelectedTokens((prev) =>
+      prev.filter((t) => !sameSellToken(t.mintAddress, sellOut.outputMint)),
+    );
+  }, [sellOut.outputMint]);
 
   const handleMetadataUpdate = useCallback(
     (updatedTokens: UserToken[]) => {
@@ -637,6 +675,15 @@ export default function BulkTokenSeller({
 
   // Handle token selection
   const toggleTokenSelection = (token: UserToken) => {
+    const already = selectedTokens.some((t) =>
+      isRhChain
+        ? walletsMatch(t.mintAddress, token.mintAddress)
+        : t.mintAddress === token.mintAddress,
+    );
+    if (!already && sameSellToken(token.mintAddress, sellOut.outputMint)) {
+      setError("Cannot sell into the same token");
+      return;
+    }
     setSelectedTokens((prev) => {
       const isSelected = prev.some((t) =>
         isRhChain
@@ -645,21 +692,23 @@ export default function BulkTokenSeller({
       );
       if (isSelected) {
         return prev.filter((t) => t.mintAddress !== token.mintAddress);
-      } else {
-        // Check if already at the limit
-        if (prev.length >= tradeTokenLimit) {
-          setError(`Maximum ${tradeTokenLimit} tokens per sell`);
-          return prev;
-        }
-        // Convert UserToken to TokenToSell with default 100% sell amount
-        const tokenToSell: TokenToSell = {
-          ...token,
-          sellAmount: token.balance,
-          sellPercentage: 100,
-        };
-        return [...prev, tokenToSell];
       }
+      if (prev.length >= tradeTokenLimit) {
+        return prev;
+      }
+      const tokenToSell: TokenToSell = {
+        ...token,
+        sellAmount: token.balance,
+        sellPercentage: 100,
+      };
+      return [...prev, tokenToSell];
     });
+    if (
+      !already &&
+      selectedTokens.length >= tradeTokenLimit
+    ) {
+      setError(`Maximum ${tradeTokenLimit} tokens per sell`);
+    }
   };
 
   // Handle sell percentage change for a specific token
@@ -731,8 +780,9 @@ export default function BulkTokenSeller({
 
   // Select all tokens
   const selectAllTokens = () => {
-    const tokensToSelect = (showDustOnly ? filteredUserTokens : displayUserTokens)
-      .filter((token) => !zeroBalanceMintSet.has(token.mintAddress));
+    const tokensToSelect = filteredUserTokens.filter(
+      (token) => !zeroBalanceMintSet.has(token.mintAddress),
+    );
     const tokensToSell: TokenToSell[] = tokensToSelect.map((token) => ({
       ...token,
       sellAmount: token.balance,
@@ -900,6 +950,8 @@ export default function BulkTokenSeller({
                 quote: rhQuoteCurrency,
                 ethUsd,
                 tokenDecimals: t.decimals,
+                outputToken: sellOut.kyberOutputToken,
+                outputDecimals: sellOut.decimals,
               });
               return sim.priceImpactPct;
             }
@@ -922,6 +974,10 @@ export default function BulkTokenSeller({
               slippageBps: prefetchSlippageBps(slippage),
               ethUsd,
               amountRaw,
+              outputToken: sellOut.kyberOutputToken
+                ? sellOut.gmgnOutputToken
+                : undefined,
+              outputDecimals: sellOut.decimals,
             });
             return sim.priceImpactPct;
           } catch {
@@ -953,6 +1009,7 @@ export default function BulkTokenSeller({
     rhWallet,
     tradeFromAddress,
     rhQuoteCurrency,
+    sellOut,
     slippage,
     quotes,
     isQuoteValid,
@@ -972,15 +1029,13 @@ export default function BulkTokenSeller({
     setGmgnConfirmBusy(true);
     setError("");
     try {
-      if (
-        rhQuoteCurrency === "WETH" &&
-        selectedTokens.some(
-          (t) => t.mintAddress.toLowerCase() === RH_WETH.toLowerCase(),
-        )
-      ) {
-        throw new Error("Cannot sell WETH into WETH");
+      const sellableLegs = selectedTokens.filter(
+        (t) => !sameSellToken(t.mintAddress, sellOut.outputMint),
+      );
+      if (sellableLegs.length === 0) {
+        throw new Error("Cannot sell into the same token");
       }
-      const legs = selectedTokens.map((t) => ({
+      const legs = sellableLegs.map((t) => ({
         tokenAddress: t.mintAddress,
         percent: t.sellPercentage || 100,
         symbol: t.symbol,
@@ -997,17 +1052,13 @@ export default function BulkTokenSeller({
           legs,
           slippageBps,
           quote: rhQuoteCurrency,
+          outputToken: sellOut.kyberOutputToken,
         }));
       } else {
         ({ results, success } = await executeGmgnBulkSell({
           chain: effectiveChain,
           from: tradeFromAddress,
-          outputToken:
-            effectiveChain === "robinhood" && rhQuoteCurrency === "USDG"
-              ? GMGN_RH_USDG
-              : effectiveChain === "robinhood" && rhQuoteCurrency === "WETH"
-                ? GMGN_RH_WETH
-                : gmgnNativeToken(effectiveChain),
+          outputToken: sellOut.gmgnOutputToken,
           legs,
           slippageBps,
         }));
@@ -1039,7 +1090,7 @@ export default function BulkTokenSeller({
               const receivedQuote = r.estOut
                 ? rawAmountToHuman(
                     r.estOut,
-                    rhQuoteCurrency === "USDG" ? 6 : 18,
+                    rhQuoteCurrency === "USDG" ? 6 : sellOut.decimals,
                   )
                 : undefined;
               return buildRhSellToken({
@@ -1097,7 +1148,13 @@ export default function BulkTokenSeller({
         isSimulation: false,
         tokenSymbol:
           ok.length === 1 ? ok[0]?.symbol : `${ok.length} tokens`,
-        amountUnit: isRhChain ? rhQuoteCurrency : "SOL",
+        amountUnit:
+          sellOut.symbol === "SOL" ||
+          sellOut.symbol === "ETH" ||
+          sellOut.symbol === "USDG" ||
+          sellOut.symbol === "WETH"
+            ? sellOut.symbol
+            : undefined,
         error: success
           ? undefined
           : fail[0]?.error ||
@@ -1124,6 +1181,7 @@ export default function BulkTokenSeller({
     effectiveChain,
     isRhChain,
     rhQuoteCurrency,
+    sellOut,
     resolveSellSlippageBps,
     showOutcome,
     rhWalletTokens,
@@ -1151,6 +1209,8 @@ export default function BulkTokenSeller({
             quote: rhQuoteCurrency,
             ethUsd,
             tokenDecimals: t.decimals,
+            outputToken: sellOut.kyberOutputToken,
+            outputDecimals: sellOut.decimals,
           });
           fromUsd = sim.fromUsd;
           toUsd = sim.toUsd;
@@ -1175,6 +1235,10 @@ export default function BulkTokenSeller({
             slippageBps: prefetchSlippageBps(slippage),
             ethUsd,
             amountRaw,
+            outputToken: sellOut.kyberOutputToken
+              ? sellOut.gmgnOutputToken
+              : undefined,
+            outputDecimals: sellOut.decimals,
           });
           fromUsd = sim.fromUsd;
           toUsd = sim.toUsd;
@@ -1187,7 +1251,7 @@ export default function BulkTokenSeller({
       legs.push({
         tokenAddress: t.mintAddress,
         symbol: t.symbol,
-        amountLabel: `${pct}% → ${rhQuoteCurrency}${
+        amountLabel: `${pct}% → ${sellOut.symbol}${
           useRhParentPath ? " · Kyber / Rabby" : ""
         }`,
         side: "sell",
@@ -1204,6 +1268,7 @@ export default function BulkTokenSeller({
     rhWallet,
     tradeFromAddress,
     rhQuoteCurrency,
+    sellOut,
     slippage,
   ]);
 
@@ -1275,7 +1340,7 @@ export default function BulkTokenSeller({
         selectedTokens.map((t) => ({
           tokenAddress: t.mintAddress,
           symbol: t.symbol,
-          amountLabel: `${t.sellPercentage || 100}% → SOL`,
+          amountLabel: `${t.sellPercentage || 100}% → ${sellOut.symbol}`,
           side: "sell" as const,
         })),
       );
@@ -1326,6 +1391,8 @@ export default function BulkTokenSeller({
             : undefined,
         slippage: slippageBps,
         priorityFee,
+        outputMint: sellOut.outputMint,
+        outputDecimals: sellOut.decimals,
       };
 
       const sellResult = await executeBulkSellAlt(
@@ -1681,6 +1748,7 @@ export default function BulkTokenSeller({
     isSolTrade,
     solGmgnSynced,
     rhQuoteCurrency,
+    sellOut,
     rhWallet.getPublicClient(),
     runConfirmedRhSell,
     previewRhSellLegs,
@@ -2140,7 +2208,13 @@ export default function BulkTokenSeller({
     emptyAccountTokens,
   ]);
 
-  const filteredUserTokens = displayUserTokens;
+  const filteredUserTokens = useMemo(
+    () =>
+      displayUserTokens.filter(
+        (t) => !sameSellToken(t.mintAddress, sellOut.outputMint),
+      ),
+    [displayUserTokens, sellOut.outputMint],
+  );
 
   const compactSelectKey = `${compact}:${effectiveChain}:${isRhChain ? tradeFromAddress : walletAddress}:${showDustOnly}`;
   const compactSelectKeyRef = useRef("");
@@ -2287,9 +2361,7 @@ export default function BulkTokenSeller({
               ? effectiveChain === "robinhood"
                 ? "Reload to ETH"
                 : "Reload to SOL"
-              : effectiveChain === "robinhood"
-                ? `Sell Bulk & Reload ${rhQuoteCurrency}`
-                : "Sell Bulk & Reload your solana"}
+              : `Sell Bulk & Reload ${sellOut.symbol}`}
           </h2>
           {!compact && (
           <div className="shrink-0">
@@ -2322,41 +2394,106 @@ export default function BulkTokenSeller({
         </label>
       ) : null}
 
-      {!compact && isRhChain ? (
-        <div className="rounded-xl border border-gray-700 bg-gray-800/50 px-4 py-3 text-sm text-gray-300 space-y-1">
+      {!compact ? (
+        <div className="rounded-xl border border-gray-700 bg-gray-800/50 px-4 py-3 text-sm text-gray-300 space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <span>Sell to:</span>
-            {(["ETH", "USDG", "WETH"] as const).map((q) => (
+            {isRhChain ? (
+              (["ETH", "USDG", "WETH"] as const).map((q) => {
+                const preset: SellOutputPreset =
+                  q === "ETH" ? "native" : q;
+                const active =
+                  sellOutPreset === preset &&
+                  (preset !== "native" || !customOut);
+                return (
+                  <button
+                    key={q}
+                    type="button"
+                    onClick={() => {
+                      setSellOutPreset(preset);
+                      setCustomOut(null);
+                      setCustomOutSearch("");
+                    }}
+                    className={`px-2 py-0.5 rounded font-mono text-xs ${
+                      active
+                        ? "bg-white text-black"
+                        : "bg-gray-700 text-gray-300 hover:text-white"
+                    }`}
+                  >
+                    {q}
+                  </button>
+                );
+              })
+            ) : (
               <button
-                key={q}
                 type="button"
-                onClick={() => setRhQuoteCurrency(q)}
+                onClick={() => {
+                  setSellOutPreset("native");
+                  setCustomOut(null);
+                  setCustomOutSearch("");
+                }}
                 className={`px-2 py-0.5 rounded font-mono text-xs ${
-                  rhQuoteCurrency === q
+                  sellOutPreset === "native" && !customOut
                     ? "bg-white text-black"
                     : "bg-gray-700 text-gray-300 hover:text-white"
                 }`}
               >
-                {q}
+                SOL
               </button>
-            ))}
+            )}
           </div>
-          <div>
-            Mode:{" "}
-            <span className="text-white font-medium">
-              {rhMode === "parent" ? "Parent (Rabby / Kyber)" : "Bound (GMGN)"}
-            </span>
-          </div>
-          <div>
-            Active:{" "}
-            <span className="font-mono text-white break-all">
-              {tradeFromAddress || "—"}
-            </span>
-          </div>
-          {rhMode === "bound" && !boundWallets.evm ? (
-            <span className="text-amber-400">
-              No bound EVM wallet from GMGN API key / env
-            </span>
+          <TokenAddressSearchField
+            chain={effectiveChain}
+            value={customOutSearch}
+            onChange={(addr) => {
+              setCustomOutSearch(addr);
+              if (!matchesTradeChainAddress(effectiveChain, addr.trim())) {
+                return;
+              }
+              const held = displayUserTokens.find((t) =>
+                sameSellToken(t.mintAddress, addr.trim()),
+              );
+              setSellOutPreset("custom");
+              setCustomOut({
+                address: addr.trim(),
+                symbol: held?.symbol || "TOKEN",
+                decimals: held?.decimals || (isRhChain ? 18 : 9),
+              });
+            }}
+            holdings={displayUserTokens}
+            picked={selectedTokens.map((t) => t.mintAddress)}
+            placeholder="Custom token: search or paste CA"
+          />
+          {sellOutPreset === "custom" && customOut ? (
+            <div className="text-xs text-gray-400">
+              Output:{" "}
+              <span className="text-white font-mono">
+                {customOut.symbol}
+              </span>
+            </div>
+          ) : null}
+          {isRhChain ? (
+            <>
+              <div>
+                Mode:{" "}
+                <span className="text-white font-medium">
+                  {rhMode === "parent"
+                    ? "Parent (Rabby / Kyber)"
+                    : "Bound (GMGN)"}
+                </span>
+              </div>
+              <div>
+                Active:{" "}
+                <span className="font-mono text-white break-all">
+                  {tradeFromAddress || "—"}
+                </span>
+              </div>
+              {rhMode === "bound" && !boundWallets.evm ? (
+                <span className="text-amber-400">
+                  No bound EVM wallet from GMGN API key / env
+                </span>
+              ) : null}
+            </>
           ) : null}
         </div>
       ) : null}
@@ -2453,7 +2590,7 @@ export default function BulkTokenSeller({
                   ) : (
                     <span className="font-bold">holdings</span>
                   )}{" "}
-                  to sell → {rhQuoteCurrency}
+                  to sell → {sellOut.symbol}
                 </>
               ) : (
                 <>
@@ -3171,7 +3308,7 @@ export default function BulkTokenSeller({
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
                         <div className="text-center p-3 bg-gray-700 rounded-lg">
                           <div className="font-medium text-white">
-                            Total SOL Output
+                            Total {sellOut.symbol} Output
                           </div>
                           <div className="text-green-400 font-bold text-lg">
                             {selectedTokens
@@ -3181,13 +3318,15 @@ export default function BulkTokenSeller({
                                 );
                                 if (quote && isQuoteValid(quote)) {
                                   return (
-                                    total + parseFloat(quote.outAmount) / 1e9
-                                  ); // Convert lamports to SOL
+                                    total +
+                                    parseFloat(quote.outAmount) /
+                                      10 ** sellOut.decimals
+                                  );
                                 }
                                 return total;
                               }, 0)
                               .toFixed(6)}{" "}
-                            SOL
+                            {sellOut.symbol}
                           </div>
                         </div>
                         <div className="text-center p-3 bg-gray-700 rounded-lg">
@@ -3275,37 +3414,33 @@ export default function BulkTokenSeller({
                     <div className="flex items-center justify-center space-x-2">
                       <span>
                         {(() => {
+                          const n = selectedTokens.length;
+                          const tokenWord = n === 1 ? "token" : "tokens";
                           if (isRhChain) {
                             const usd = selectedTokens.reduce(
                               (s, t) =>
                                 s + (t.usdValue * (t.sellPercentage || 100)) / 100,
                               0,
                             );
-                            const n = selectedTokens.length;
                             if (compact) {
                               return usd > 0
-                                ? `Reload ${n} ${n === 1 ? "token" : "tokens"} to ETH (~$${usd.toLocaleString(undefined, { maximumFractionDigits: 2 })})`
-                                : `Reload ${n} ${n === 1 ? "token" : "tokens"} to ETH`;
+                                ? `Reload ${n} ${tokenWord} to ETH (~$${usd.toLocaleString(undefined, { maximumFractionDigits: 2 })})`
+                                : `Reload ${n} ${tokenWord} to ETH`;
                             }
-                            const label =
-                              n === 1
-                                ? selectedTokens[0].symbol || "token"
-                                : `${n} tokens`;
-                            const via = useRhParentPath
-                              ? `Kyber → ${rhQuoteCurrency}`
-                              : `GMGN → ${rhQuoteCurrency}`;
                             return usd > 0
-                              ? `Sell ${label} (~$${usd.toLocaleString(undefined, { maximumFractionDigits: 2 })}) ${via}`
-                              : `Sell ${label} ${via}`;
+                              ? `Sell ${n} ${tokenWord} → ${sellOut.symbol} (~$${usd.toLocaleString(undefined, { maximumFractionDigits: 2 })})`
+                              : `Sell ${n} ${tokenWord} → ${sellOut.symbol}`;
                           }
-                          const totalSolOutput = selectedTokens.reduce(
+                          const totalOut = selectedTokens.reduce(
                             (total, token) => {
                               const quote = getQuoteForToken(
                                 token.mintAddress,
                               );
                               if (quote && isQuoteValid(quote)) {
                                 return (
-                                  total + parseFloat(quote.outAmount) / 1e9
+                                  total +
+                                  parseFloat(quote.outAmount) /
+                                    10 ** sellOut.decimals
                                 );
                               }
                               return total;
@@ -3314,36 +3449,22 @@ export default function BulkTokenSeller({
                           );
 
                           if (compact) {
-                            const n = selectedTokens.length;
-                            return totalSolOutput > 0
-                              ? `Reload ${n} ${n === 1 ? "token" : "tokens"} to SOL (${totalSolOutput.toFixed(4)})`
-                              : `Reload ${n} ${n === 1 ? "token" : "tokens"} to SOL`;
+                            return totalOut > 0
+                              ? `Reload ${n} ${tokenWord} to SOL (${totalOut.toFixed(4)})`
+                              : `Reload ${n} ${tokenWord} to SOL`;
                           }
 
-                          // Close only runs for selected zero-balance accounts (not after 100% sells).
                           const willCloseZeroBalance =
                             selectedZeroBalanceTokens.length > 0;
 
-                          const tokenText =
-                            selectedTokens.length === 1
-                              ? "token"
-                              : `${selectedTokens.length} tokens`;
-
                           if (willCloseZeroBalance) {
-                            return totalSolOutput > 0
-                              ? `Sell & close dust for ${totalSolOutput.toFixed(4)} Sol`
-                              : `Sell & close dust`;
+                            return totalOut > 0
+                              ? `Sell ${n} ${tokenWord} → ${sellOut.symbol} (${totalOut.toFixed(4)}) & close dust`
+                              : `Sell ${n} ${tokenWord} → ${sellOut.symbol} & close dust`;
                           }
-                          if (selectedTokens.length === 1) {
-                            const symbol =
-                              selectedTokens[0].symbol || "token";
-                            return totalSolOutput > 0
-                              ? `Sell ${symbol} for ${totalSolOutput.toFixed(4)} Sol`
-                              : `Sell ${symbol}`;
-                          }
-                          return totalSolOutput > 0
-                            ? `Sell ${tokenText} for ${totalSolOutput.toFixed(4)} Sol`
-                            : `Sell ${tokenText}`;
+                          return totalOut > 0
+                            ? `Sell ${n} ${tokenWord} → ${sellOut.symbol} (${totalOut.toFixed(4)})`
+                            : `Sell ${n} ${tokenWord} → ${sellOut.symbol}`;
                         })()}
                       </span>
                       <svg

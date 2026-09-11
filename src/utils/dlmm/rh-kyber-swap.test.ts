@@ -160,6 +160,34 @@ describe('prepareKyberSwapLegsParallel approval planning', () => {
   })
 })
 
+describe('custom sell outputMint → Kyber tokenOut', () => {
+  it('routes the helper mint as Kyber tokenOut', async () => {
+    const { sellOutputMint } = await import('@/utils/sell-output-mint')
+    const { clientKyberRoute } = await import('@/utils/kyber-aggregator')
+    const custom = '0x1111111111111111111111111111111111111111'
+    const out = sellOutputMint({
+      chain: 'robinhood',
+      preset: 'custom',
+      customAddress: custom,
+    })
+    vi.mocked(clientKyberRoute).mockClear()
+    const publicClient = fakePublicClient(() => BigInt(0))
+    await prepareKyberSwapLegsParallel({
+      publicClient,
+      account: ACCOUNT as `0x${string}`,
+      legs: [
+        {
+          tokenIn: TOKEN_IN,
+          tokenOut: out.kyberOutputToken!,
+          amountIn: '1000',
+        },
+      ],
+      slippageBps: 100,
+    })
+    expect(vi.mocked(clientKyberRoute).mock.calls[0]?.[0].tokenOut).toBe(custom)
+  })
+})
+
 describe('prepareKyberSwapLegsParallel auto slippage', () => {
   const legs = [{ tokenIn: TOKEN_IN, tokenOut: TOKEN_OUT, amountIn: '1000' }]
 

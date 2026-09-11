@@ -12,6 +12,7 @@ import {
 import {
   buildGmgnBuyQuoteRequest,
   executeGmgnBulkBuy,
+  executeGmgnBulkSell,
 } from './gmgn-bulk-trade'
 import { buildRhUniv2SellCalls } from './dlmm/rh-univ2-swap'
 import { RH_USDG, RH_V2_ROUTER, RH_WETH } from './dlmm/rh-univ2'
@@ -150,5 +151,37 @@ describe('executeGmgnBulkBuy', () => {
     expect(calls.filter((c) => c === 'swap')).toHaveLength(2)
     // confirmed immediately — no poll
     expect(calls.filter((c) => c === 'order')).toHaveLength(0)
+  })
+})
+
+describe('executeGmgnBulkSell', () => {
+  it('forwards custom outputToken and skips same-token legs', async () => {
+    const custom = '0x1111111111111111111111111111111111111111'
+    const seen: string[] = []
+    const { results, success } = await executeGmgnBulkSell({
+      chain: 'robinhood',
+      from: '0xabc',
+      outputToken: custom,
+      legs: [
+        { tokenAddress: custom, percent: 100, symbol: 'SELF' },
+        {
+          tokenAddress: '0x2222222222222222222222222222222222222222',
+          percent: 100,
+          symbol: 'A',
+        },
+      ],
+      slippageBps: 100,
+      swapFn: async (req) => {
+        seen.push(String(req.outputToken ?? ''))
+        return { order_id: 'ord', status: 'confirmed', hash: 'h' }
+      },
+    })
+    expect(success).toBe(false)
+    expect(results[0]).toMatchObject({
+      success: false,
+      error: 'Cannot sell into the same token',
+    })
+    expect(results[1]?.success).toBe(true)
+    expect(seen).toEqual([custom])
   })
 })

@@ -97,7 +97,7 @@ DATABASE_URL=postgresql://postgres:change-me@reloadsol-bouncer:5432/reloadsol_db
 
 # Shyft — https://shyft.to dashboard (server-side RPC via /api/rpc proxy)
 # Wallet tokens: Shyft all_tokens via /api/shyft/wallet/all_tokens (cached; Jupiter Portfolio fallback)
-# Swaps: Solana Tracker Raptor (bulk /sell and /buy); GMGN charts only (no GMGN swap execution)
+# Swaps: Solana Tracker Raptor (bulk /sell and /buy; /sell custom outputMint optional); GMGN charts only (no GMGN swap execution)
 # Browser RPC is proxied through /api/rpc — NEXT_PUBLIC_RPC_URL is optional
 SHYFT_API_KEY=your-shyft-api-key
 RPC_URL=https://rpc.shyft.to?api_key=your-shyft-api-key,https://api.mainnet-beta.solana.com

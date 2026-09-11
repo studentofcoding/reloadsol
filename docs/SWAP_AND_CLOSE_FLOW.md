@@ -38,6 +38,9 @@ Per [Solana Tracker Swap API](https://docs.solanatracker.io/guides/swap-api):
 ### Call sites
 
 - **Bulk buy/sell** — `executeBulkBuy`, `executeBulkSellAlt` in `jupiter.ts`
+  (`executeBulkSellAlt` takes optional `outputMint` / `outputDecimals`; default
+  wrapped SOL. Full `/sell` can set a custom mint; PnL Fast Sell and compact
+  Reload do not.)
 - **Signals** — `LiveTab.tsx`, `BoardTab.tsx` via `executeClientSwap`
 - **Server bots** — `trade-executors.ts`, `sl-tp-tracker.ts`, `/api/trending/track`, `/api/buy`
 - **Chart page buy** — `executeBulkBuy` (tracking via `tradingTracker` directly)

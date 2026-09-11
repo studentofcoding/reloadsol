@@ -15,7 +15,7 @@ Related deep dives: [DECISION_MACHINE.md](./DECISION_MACHINE.md) (Solana + RH al
 
 Combined with:
 
-- **Manual trading** — bulk buy/sell, swaps, PnL tracking, wallet ops on both chains
+- **Manual trading** — bulk buy/sell (full `/sell` can swap the batch into one custom mint; home Reload stays native), swaps, PnL tracking, wallet ops on both chains
 - **Automated strategies** — trending bot, signals paper trading, DLMM/CLMM liquidity agents
 - **Research loop** — paper sims → labeled outcomes → ML shadow scoring → (future) enforce gates
 

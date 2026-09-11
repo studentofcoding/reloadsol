@@ -8,6 +8,16 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Full `/sell` can reload into one custom token
+
+- Full seller (`/sell`) keeps native SOL/ETH as the default output and adds a
+  preset + `TokenSearchBox` picker for a custom mint. Compact Reload on `/`
+  stays native.
+- Solana Raptor quotes/`executeBulkSellAlt` take `outputMint` (default wrapped
+  SOL). RH parent Kyber passes `outputToken` into existing BatchExecutor
+  batches; bound GMGN already accepted `outputToken`. Same-token legs skip.
+- Helper: `sellOutputMint` (`src/utils/sell-output-mint.ts`). No new contract.
+
 ### Changed — Token search lives under `/dev/search-token`
 
 - Find tokens at `/dev/search-token` (chain pages `/solana` and `/robinhood`).

@@ -203,6 +203,15 @@ export async function executeGmgnBulkSell(
 
   const results: GmgnBulkLegResult[] = []
   for (const leg of params.legs) {
+    if (leg.tokenAddress.trim().toLowerCase() === outputToken.trim().toLowerCase()) {
+      results.push({
+        tokenAddress: leg.tokenAddress,
+        symbol: leg.symbol,
+        success: false,
+        error: 'Cannot sell into the same token',
+      })
+      continue
+    }
     try {
       const swap = await swapFn({
         chain: params.chain,

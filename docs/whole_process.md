@@ -158,9 +158,14 @@ Wallet tokens: `useWalletTokens` → `GET /api/jupiter/portfolio` → `https://w
 
 **Process steps**
 
-1. User selects sellable tokens (percent or amount per token).
-2. Quote preview (UI only): `fetchQuoteForToken` → `GET /api/solanatracker/quote`.
-3. `executeBulkSellAlt` builds Raptor swaps (token → SOL) per selected token — same sign/send/poll chain as bulk buy.
+1. User selects sellable tokens (percent or amount per token). Full `/sell` also
+   picks an output (native SOL/ETH by default, or a custom mint). Compact Reload
+   on `/` is native only. The output mint is excluded from the sell checklist.
+2. Quote preview (UI only): `fetchQuoteForToken` → `GET /api/solanatracker/quote`
+   with that `outputMint`.
+3. `executeBulkSellAlt` builds Raptor swaps (token → chosen mint, default SOL)
+   per selected token — same sign/send/poll chain as bulk buy. Same-token legs
+   fail individually; the rest of the batch continues.
 4. After successful 100% sells: `closeTokenAccounts` runs automatically for those mints (see Bulk Close below).
 5. Track: `trackSell`, optional `trackClose` → `/api/operations/track`; `trackOperation` → `/api/trading/records`.
 
@@ -484,7 +489,7 @@ Env overrides: `RAPTOR_API_BASE`, `JUPITER_ULTRA_API_BASE`, `RPC_URL`, `SHYFT_AP
   BUY → Raptor (executeBulkBuy)
 
 /sell (bulk)
-  SELL → Raptor (executeBulkSellAlt)
+  SELL → Raptor (executeBulkSellAlt; outputMint default SOL, custom on full /sell)
   CLOSE-ONLY → Jupiter Reclaim + manual fallback (closeTokenAccounts)
 
 /dev/signals Live tab

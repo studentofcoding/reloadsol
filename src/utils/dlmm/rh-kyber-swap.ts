@@ -910,7 +910,7 @@ export async function executeRhParentKyberSell(params: {
     params.legs.map((leg) =>
       (async () => {
         if (sameToken(leg.tokenAddress, tokenOut)) {
-          throw new Error('Cannot sell WETH into WETH')
+          throw new Error('Cannot sell into the same token')
         }
         const pct = leg.percent
         if (!(pct > 0) || pct > 100) throw new Error('Sell % must be 1–100')
