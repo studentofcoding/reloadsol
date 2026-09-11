@@ -29,6 +29,28 @@ export type Permit2TokenReadiness = {
 
 const EXPIRATION_BUFFER_SECONDS = 60
 
+/**
+ * An ERC20→Permit2 grant counts as live while it is still effectively
+ * infinite. Permit2 pulls tokens with `ERC20.safeTransferFrom`, which
+ * decrements this allowance on every transfer, so a drained max grant
+ * (`maxUint256 - spent`) must stay "ready" rather than demand re-approval.
+ */
+export function hasLiveErc20Approval(allowance: bigint): boolean {
+  return allowance >= PERMIT2_MAX_UINT160
+}
+
+/** One-shot view read retry: the RH gateway can hang on the first attempt. */
+async function withReadRetry<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn()
+  } catch (err) {
+    // One retry, then surface the original failure to the caller.
+    return await fn().catch(() => {
+      throw err
+    })
+  }
+}
+
 function uniqueTokens(tokens: readonly Address[]): Address[] {
   const seen = new Set<string>()
   return tokens.filter((token) => {
@@ -45,7 +67,7 @@ function readinessStatus(
   permit2Expiration: number,
   nowSeconds: number,
 ): Permit2ReadinessStatus {
-  if (erc20Allowance < maxUint256) return 'needs-erc20'
+  if (!hasLiveErc20Approval(erc20Allowance)) return 'needs-erc20'
   if (permit2Expiration <= nowSeconds + EXPIRATION_BUFFER_SECONDS) return 'expired'
   if (permit2Allowance < PERMIT2_MAX_UINT160) return 'needs-permit2'
   return 'ready'
@@ -63,18 +85,22 @@ export async function readPermit2Readiness(params: {
   return await Promise.all(
     uniqueTokens(params.tokens).map(async (token) => {
       const [erc20Allowance, permit2State] = await Promise.all([
-        params.publicClient.readContract({
-          address: token,
-          abi: erc20Abi,
-          functionName: 'allowance',
-          args: [params.account, PERMIT2],
-        }),
-        params.publicClient.readContract({
-          address: PERMIT2,
-          abi: permit2Abi,
-          functionName: 'allowance',
-          args: [params.account, token, params.spender],
-        }),
+        withReadRetry(() =>
+          params.publicClient.readContract({
+            address: token,
+            abi: erc20Abi,
+            functionName: 'allowance',
+            args: [params.account, PERMIT2],
+          }),
+        ),
+        withReadRetry(() =>
+          params.publicClient.readContract({
+            address: PERMIT2,
+            abi: permit2Abi,
+            functionName: 'allowance',
+            args: [params.account, token, params.spender],
+          }),
+        ),
       ])
       const permit2Allowance = permit2State[0]
       const permit2Expiration = Number(permit2State[1])
@@ -109,7 +135,7 @@ export function planPermit2SetupCalls(params: {
     if (seen.has(key)) continue
     seen.add(key)
 
-    if (item.erc20Allowance < maxUint256) {
+    if (!hasLiveErc20Approval(item.erc20Allowance)) {
       calls.push({
         to: item.token,
         data: encodeFunctionData({

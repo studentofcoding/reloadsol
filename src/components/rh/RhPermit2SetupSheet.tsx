@@ -2,7 +2,10 @@
 
 import { useState } from 'react'
 import type { Address, PublicClient, WalletClient } from 'viem'
-import { executeRhWalletCalls } from '@/utils/dlmm/rh-send-calls'
+import {
+  executeRhApprovalCalls,
+  type RhApprovalFailure,
+} from '@/utils/dlmm/rh-send-calls'
 import {
   isPermit2Ready,
   planPermit2SetupCalls,
@@ -88,6 +91,7 @@ export default function RhPermit2SetupSheet(props: {
 }) {
   const [approving, setApproving] = useState(false)
   const [submitError, setSubmitError] = useState('')
+  const [failedTokens, setFailedTokens] = useState<ReadonlySet<string>>(new Set())
   if (!props.open) return null
 
   const labels = new Map(
@@ -95,25 +99,63 @@ export default function RhPermit2SetupSheet(props: {
   )
   const allReady =
     props.readiness != null && isPermit2Ready(props.readiness)
+  const buttonLabel = approving
+    ? 'Approving…'
+    : allReady
+      ? 'Ready'
+      : failedTokens.size > 0
+        ? 'Retry approvals'
+        : 'Approve once'
+
+  // A view read can lag the just-mined approval; poll a few times so a
+  // successful setup never renders as a stale "Needs approval".
+  const refreshSettled = async (
+    failed: ReadonlySet<string>,
+  ): Promise<readonly Permit2TokenReadiness[] | undefined> => {
+    const settled = (rows: readonly Permit2TokenReadiness[]) =>
+      rows.every(
+        (item) => item.status === 'ready' || failed.has(item.token.toLowerCase()),
+      )
+    let latest = await props.onRefresh()
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (latest && settled(latest)) break
+      await new Promise((resolve) => setTimeout(resolve, 1200))
+      latest = await props.onRefresh()
+    }
+    return latest
+  }
 
   const approve = async () => {
     if (!props.spender || !props.readiness) return
     setApproving(true)
     setSubmitError('')
+    setFailedTokens(new Set())
     try {
       const calls = planPermit2SetupCalls({
         readiness: props.readiness,
         spender: props.spender,
       })
+      let failures: RhApprovalFailure[] = []
       if (calls.length > 0) {
-        await executeRhWalletCalls({
+        const result = await executeRhApprovalCalls({
           publicClient: props.publicClient,
           walletClient: await props.getWalletClient(),
           account: props.account,
           calls,
         })
+        failures = result.failures
       }
-      const refreshed = await props.onRefresh()
+      const failed = new Set(failures.map((item) => item.call.to.toLowerCase()))
+      setFailedTokens(failed)
+      const refreshed = await refreshSettled(failed)
+      if (failures.length > 0) {
+        setSubmitError(
+          `${failures.length} approval${failures.length === 1 ? '' : 's'} failed — retry the highlighted token${
+            failures.length === 1 ? '' : 's'
+          }.`,
+        )
+        return
+      }
       if (refreshed && isPermit2Ready(refreshed)) {
         props.onReady?.()
         props.onClose()
@@ -168,6 +210,7 @@ export default function RhPermit2SetupSheet(props: {
           <div className="divide-y divide-gray-800 rounded-lg border border-gray-700">
             {props.readiness.map((item) => {
               const symbol = labels.get(item.token.toLowerCase())
+              const failed = failedTokens.has(item.token.toLowerCase())
               return (
                 <div
                   key={item.token.toLowerCase()}
@@ -185,12 +228,18 @@ export default function RhPermit2SetupSheet(props: {
                   </div>
                   <span
                     className={`shrink-0 text-xs font-semibold ${
-                      item.status === 'ready'
-                        ? 'text-emerald-400'
-                        : 'text-amber-300'
+                      failed
+                        ? 'text-red-400'
+                        : item.status === 'ready'
+                          ? 'text-emerald-400'
+                          : 'text-amber-300'
                     }`}
                   >
-                    {item.status === 'ready' ? 'Ready' : 'Needs approval'}
+                    {failed
+                      ? 'Approval failed'
+                      : item.status === 'ready'
+                        ? 'Ready'
+                        : 'Needs approval'}
                   </span>
                 </div>
               )
@@ -217,7 +266,7 @@ export default function RhPermit2SetupSheet(props: {
           }
           className="w-full rounded-lg bg-emerald-700 px-4 py-2.5 font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:bg-gray-700"
         >
-          {approving ? 'Approving…' : allReady ? 'Ready' : 'Approve once'}
+          {buttonLabel}
         </button>
       </div>
     </div>

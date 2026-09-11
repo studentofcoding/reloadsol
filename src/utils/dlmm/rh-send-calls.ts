@@ -288,3 +288,115 @@ export async function executeRhWalletCalls(params: {
     return { hash, batched: false }
   }
 }
+
+/**
+ * Applies approval calls one by one, never aborting on a single failure, and
+ * never counting a reverted receipt as confirmed.
+ */
+async function writeApprovalsSequential(params: {
+  publicClient: PublicClient
+  walletClient: WalletClient
+  account: Address
+  calls: RhTxCall[]
+}): Promise<RhApprovalResult> {
+  const { publicClient, walletClient, account, calls } = params
+  let confirmed = 0
+  const failures: RhApprovalFailure[] = []
+  for (const call of calls) {
+    try {
+      const hash = await walletClient.sendTransaction({
+        account,
+        chain: walletClient.chain,
+        to: call.to,
+        data: call.data,
+        value: call.value ?? BigInt(0),
+        ...(call.gas != null ? { gas: call.gas } : {}),
+      })
+      const receipt = await publicClient.waitForTransactionReceipt({ hash })
+      if (receipt.status !== 'success') {
+        failures.push({ call, error: `Transaction reverted: ${hash}` })
+        continue
+      }
+      confirmed += 1
+      recordConfirmedApprovals(account, [call])
+    } catch (error) {
+      failures.push({
+        call,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+  return { confirmed, failures }
+}
+
+export type RhApprovalFailure = { call: RhTxCall; error: string }
+export type RhApprovalResult = {
+  confirmed: number
+  failures: RhApprovalFailure[]
+}
+
+/**
+ * Setup-only approvals writer. Safe to retry: an approval is idempotent, so a
+ * failed atomic batch always falls back to sequential — and one failing call
+ * (e.g. a single hostile token) never blocks the remaining approvals.
+ */
+export async function executeRhApprovalCalls(params: {
+  publicClient: PublicClient
+  walletClient: WalletClient
+  account: Address
+  calls: RhTxCall[]
+}): Promise<RhApprovalResult> {
+  const { publicClient, walletClient, account, calls } = params
+  if (calls.length === 0) return { confirmed: 0, failures: [] }
+  if (calls.length === 1) {
+    return await writeApprovalsSequential({
+      publicClient,
+      walletClient,
+      account,
+      calls,
+    })
+  }
+
+  const canBatch = await rhWalletSupportsAtomicBatch({ walletClient, account })
+  if (canBatch) {
+    try {
+      const { id } = await sendCalls(walletClient, {
+        account,
+        chain: walletClient.chain,
+        calls: calls.map((c) => ({
+          to: c.to,
+          data: c.data,
+          value: c.value ?? BigInt(0),
+          ...(c.gas != null ? { gas: c.gas } : {}),
+        })),
+      })
+      const status = await waitForCallsStatus(walletClient, { id })
+      const receipts = status.receipts ?? []
+      const reverted = receipts.some(
+        (r) => r.status != null && r.status !== 'success',
+      )
+      if (status.status === 'success' && !reverted) {
+        recordConfirmedApprovals(account, calls)
+        return { confirmed: calls.length, failures: [] }
+      }
+      // Anything short of a fully-successful batch falls through to the
+      // idempotent sequential path below.
+    } catch (error) {
+      // A user rejection is a deliberate cancel — never re-prompt for it.
+      if (isWalletUserRejection(error)) {
+        const message = error instanceof Error ? error.message : String(error)
+        return {
+          confirmed: 0,
+          failures: calls.map((call) => ({ call, error: message })),
+        }
+      }
+    }
+  }
+
+  return await writeApprovalsSequential({
+    publicClient,
+    walletClient,
+    account,
+    calls,
+  })
+}

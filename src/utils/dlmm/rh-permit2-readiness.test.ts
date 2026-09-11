@@ -95,6 +95,38 @@ describe('readPermit2Readiness', () => {
     })
     expect(result.status).toBe(testCase.status)
   })
+
+  it('keeps a drained max ERC20 grant ready (Permit2 draws it down)', async () => {
+    // Permit2 pulls via ERC20 safeTransferFrom, so the setup grant reads back
+    // as maxUint256 - spent. That must not demand re-approval.
+    const { client } = clientWithReads([
+      maxUint256 - BigInt(1),
+      [PERMIT2_MAX_UINT160, NOW + 10_000, 0],
+    ])
+    const [result] = await readPermit2Readiness({
+      publicClient: client,
+      account: ACCOUNT,
+      tokens: [TOKEN_A],
+      spender: SPENDER,
+      nowSeconds: NOW,
+    })
+    expect(result.status).toBe('ready')
+  })
+
+  it('still flags a small finite ERC20 approval as needs-erc20', async () => {
+    const { client } = clientWithReads([
+      BigInt(1),
+      [PERMIT2_MAX_UINT160, NOW + 10_000, 0],
+    ])
+    const [result] = await readPermit2Readiness({
+      publicClient: client,
+      account: ACCOUNT,
+      tokens: [TOKEN_A],
+      spender: SPENDER,
+      nowSeconds: NOW,
+    })
+    expect(result.status).toBe('needs-erc20')
+  })
 })
 
 describe('planPermit2SetupCalls', () => {
@@ -114,6 +146,16 @@ describe('planPermit2SetupCalls', () => {
     expect(
       planPermit2SetupCalls({
         readiness: [row(TOKEN_A)],
+        spender: SPENDER,
+        nowSeconds: NOW,
+      }),
+    ).toEqual([])
+  })
+
+  it('does not re-approve ERC20 for a drained but still-live grant', () => {
+    expect(
+      planPermit2SetupCalls({
+        readiness: [row(TOKEN_A, { erc20Allowance: maxUint256 - BigInt(1) })],
         spender: SPENDER,
         nowSeconds: NOW,
       }),
