@@ -165,6 +165,8 @@ export async function POST(request: NextRequest) {
         oorTimeoutMin: strategy.config.oor_timeout_min,
         binRangeInterval: strategy.config.bin_range_interval,
       })
+      // Climate gate (CLIMATE_GATE=1) lives in deployPosition: stand-down/cascade
+      // blocks; otherwise sizeHint scales amountSol. Failures land in skippedPools.
 
       if (!result.success) {
         skippedPools.push(

@@ -3,6 +3,7 @@ import type {
   DlmmActionResult,
   EditPositionInput,
 } from '@/types/dlmm';
+import { applyClimateToNewRisk } from '@/utils/climateGate';
 import {
   appendLesson,
   getAgentConfig,
@@ -29,7 +30,23 @@ async function enforceCapitalLimits(amountSol: number): Promise<string | null> {
 
 export async function deployPosition(input: DeployPositionInput): Promise<DlmmActionResult> {
   const config = await getAgentConfig();
-  const capError = await enforceCapitalLimits(input.amountSol);
+  // Climate is an extra reducer only — capital caps / agent pause / dry-run still win.
+  const climate = await applyClimateToNewRisk({
+    amount: input.amountSol,
+    paper: config.dry_run,
+    source: 'dlmm_deploy',
+  });
+  if (!climate.allowed) {
+    return {
+      success: false,
+      dryRun: config.dry_run,
+      message: climate.reason,
+      error: 'CLIMATE_GATE',
+    };
+  }
+  const amountSol = climate.amount;
+
+  const capError = await enforceCapitalLimits(amountSol);
   if (capError) {
     return { success: false, dryRun: config.dry_run, message: capError, error: capError };
   }
@@ -48,17 +65,21 @@ export async function deployPosition(input: DeployPositionInput): Promise<DlmmAc
 
   const executor = await createDlmmExecutor();
   const binRange = input.binRangeInterval ?? config.bin_range_interval;
+  const climateNote =
+    climate.applied && climate.scale < 1
+      ? ` (climate ${climate.gate?.sizeKind ?? 'scaled'} ×${climate.scale})`
+      : '';
   const execResult = await executor.deploy({
     poolAddress: input.poolAddress,
     poolName: pool.name,
-    amountSol: input.amountSol,
+    amountSol,
     binRangeInterval: binRange,
     strategyType: input.strategyType,
   });
 
   if (!execResult.success) return execResult;
 
-  const entryUsd = input.amountSol * (pool.token_x.price ?? pool.current_price ?? 0);
+  const entryUsd = amountSol * (pool.token_x.price ?? pool.current_price ?? 0);
   const position = await insertPosition({
     pool_address: input.poolAddress,
     pool_name: pool.name,
@@ -67,7 +88,7 @@ export async function deployPosition(input: DeployPositionInput): Promise<DlmmAc
     max_bin_id: execResult.maxBinId ?? null,
     token_x_symbol: pool.token_x.symbol,
     token_y_symbol: pool.token_y.symbol,
-    amount_sol: input.amountSol,
+    amount_sol: amountSol,
     entry_value_usd: entryUsd,
     current_value_usd: entryUsd,
     take_profit_pct: input.takeProfitPct ?? config.take_profit_pct,
@@ -76,7 +97,7 @@ export async function deployPosition(input: DeployPositionInput): Promise<DlmmAc
     status: 'open',
     tx_signature: execResult.signature ?? null,
     last_decision: 'DEPLOY',
-    last_decision_reason: execResult.message,
+    last_decision_reason: `${execResult.message}${climateNote}`,
     last_decision_at: new Date().toISOString(),
   });
 
@@ -84,7 +105,7 @@ export async function deployPosition(input: DeployPositionInput): Promise<DlmmAc
     position_id: position.id,
     pool_address: input.poolAddress,
     decision: 'DEPLOY',
-    reason: execResult.message,
+    reason: `${execResult.message}${climateNote}`,
     pnl_pct: 0,
     fee_tvl_at_entry: getFeeTvlRatio24h(pool),
   });
@@ -111,7 +132,7 @@ export async function deployPosition(input: DeployPositionInput): Promise<DlmmAc
   return {
     ...execResult,
     positionId: position.id,
-    message: execResult.message,
+    message: `${execResult.message}${climateNote}`,
   };
 }
 
