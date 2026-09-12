@@ -1,294 +1,106 @@
 import { NextRequest, NextResponse, connection } from 'next/server'
-import { fetchTokenPricesBatch, getJupiterApiVersion, JupiterAPIError } from '@/utils/jupiter-api'
-import { cacheGet, cacheSet } from '@/utils/redis-cache'
+import { getUsdPrices } from '@/utils/usd-prices'
 
-// Enhanced cache with longer TTL for high-volume usage
-interface PriceCache {
-  price: number
-  timestamp: number
-  expiresAt: number
-  source: string
-}
+const MAX_TOKENS_PER_HTTP = 100
+const COALESCE_MS = 100
 
-// In-memory cache with 2-minute TTL (can be replaced with Redis)
-const priceCache = new Map<string, PriceCache>()
-
-// Request queue to batch multiple client requests
-interface PendingRequest {
+type PendingRequest = {
   tokens: string[]
-  resolve: (prices: Record<string, number>) => void
+  resolve: (value: { prices: Record<string, number>; unpriced: string[] }) => void
   reject: (error: Error) => void
-  timestamp: number
 }
 
 const pendingRequests: PendingRequest[] = []
-let batchTimeout: NodeJS.Timeout | null = null
-
-// Rate limiting state
-let requestCount = 0
-let resetTime = Date.now() + 60000 // Reset every minute
-const MAX_REQUESTS_PER_MINUTE = 55 // Leave buffer for other API calls
-
-// Cache TTL configurations
-const CACHE_TTL_MS = 2 * 60 * 1000 // 2 minutes for regular tokens
-const POPULAR_CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes for popular tokens
-const STALE_CACHE_TTL_MS = 10 * 60 * 1000 // 10 minutes stale fallback
-
-// Popular tokens that get longer cache (SOL, USDC, USDT, etc.)
-const POPULAR_TOKENS = new Set([
-  'So11111111111111111111111111111111111111112', // SOL
-  'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
-  'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // USDT
-  'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', // JUP
-  'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So', // mSOL
-])
-
-function isRateLimited(): boolean {
-  const now = Date.now()
-  if (now >= resetTime) {
-    requestCount = 0
-    resetTime = now + 60000
-  }
-  return requestCount >= MAX_REQUESTS_PER_MINUTE
-}
-
-function priceRedisKey(mint: string): string {
-  return `prices:${mint}`
-}
-
-function getCachedPriceFromMemory(mint: string): number | null {
-  const cached = priceCache.get(mint)
-  if (!cached) return null
-
-  const now = Date.now()
-  if (now <= cached.expiresAt) {
-    return cached.price
-  }
-
-  if (now <= cached.timestamp + STALE_CACHE_TTL_MS) {
-    console.log(`Using stale cache for ${mint}`)
-    return cached.price
-  }
-
-  return null
-}
-
-async function getCachedPrice(mint: string): Promise<number | null> {
-  const fromMemory = getCachedPriceFromMemory(mint)
-  if (fromMemory !== null) return fromMemory
-
-  const fromRedis = await cacheGet<PriceCache>(priceRedisKey(mint))
-  if (!fromRedis) return null
-
-  const now = Date.now()
-  if (now <= fromRedis.expiresAt || now <= fromRedis.timestamp + STALE_CACHE_TTL_MS) {
-    priceCache.set(mint, fromRedis)
-    return fromRedis.price
-  }
-
-  return null
-}
-
-function setCachedPrice(mint: string, price: number, source: string = 'jupiter') {
-  const now = Date.now()
-  const ttl = POPULAR_TOKENS.has(mint) ? POPULAR_CACHE_TTL_MS : CACHE_TTL_MS
-  const entry: PriceCache = {
-    price,
-    timestamp: now,
-    expiresAt: now + ttl,
-    source,
-  }
-
-  priceCache.set(mint, entry)
-
-  void cacheSet(
-    priceRedisKey(mint),
-    entry,
-    Math.ceil(ttl / 1000),
-  )
-}
-
-async function fetchPricesFromJupiter(tokens: string[]): Promise<Record<string, number>> {
-  if (tokens.length === 0) return {}
-
-  try {
-    requestCount++
-    console.log(`Fetching prices for ${tokens.length} tokens from Jupiter ${getJupiterApiVersion()}`)
-
-    const priceData = await fetchTokenPricesBatch(tokens, {
-      batchSize: 100,
-      timeout: 10000,
-      retries: 2
-    })
-
-    const prices: Record<string, number> = {}
-
-    Object.entries(priceData).forEach(([mint, data]) => {
-      prices[mint] = data.price
-      setCachedPrice(mint, data.price, `jupiter-${data.source}`)
-    })
-
-    return prices
-  } catch (error) {
-    if (error instanceof JupiterAPIError) {
-      console.error('Jupiter API error:', error.message, { statusCode: error.statusCode, isRateLimit: error.isRateLimit })
-    } else {
-      console.error('Jupiter price fetch error:', error)
-    }
-    throw error
-  }
-}
+let batchTimeout: ReturnType<typeof setTimeout> | null = null
 
 function processBatchedRequests() {
   if (pendingRequests.length === 0) return
 
   const allTokens = new Set<string>()
-  pendingRequests.forEach(req => {
-    req.tokens.forEach(token => allTokens.add(token))
+  pendingRequests.forEach((req) => {
+    req.tokens.forEach((token) => allTokens.add(token))
   })
-
   const uniqueTokens = Array.from(allTokens)
-  console.log(`Processing batch: ${pendingRequests.length} requests for ${uniqueTokens.length} unique tokens`)
+  const requestsToResolve = [...pendingRequests]
+  pendingRequests.length = 0
 
-  Promise.resolve().then(async () => {
-    const cachedPrices: Record<string, number> = {}
-    const tokensToFetch: string[] = []
-
-    await Promise.all(
-      uniqueTokens.map(async (token) => {
-        const cached = await getCachedPrice(token)
-        if (cached !== null) {
-          cachedPrices[token] = cached
-        } else {
-          tokensToFetch.push(token)
-        }
-      }),
-    )
-
-    console.log(`Cache hit: ${Object.keys(cachedPrices).length}, Need to fetch: ${tokensToFetch.length}`)
-
-    let freshPrices: Record<string, number> = {}
-
-    if (tokensToFetch.length > 0 && !isRateLimited()) {
-      try {
-        const chunks = []
-        for (let i = 0; i < tokensToFetch.length; i += 100) {
-          chunks.push(tokensToFetch.slice(i, i + 100))
-        }
-
-        const chunkPromises = chunks.slice(0, Math.floor((MAX_REQUESTS_PER_MINUTE - requestCount) / chunks.length))
-        const chunkResults = await Promise.allSettled(
-          chunkPromises.map(chunk => fetchPricesFromJupiter(chunk))
-        )
-
-        chunkResults.forEach(result => {
-          if (result.status === 'fulfilled') {
-            Object.assign(freshPrices, result.value)
-          }
+  Promise.resolve()
+    .then(async () => {
+      const { prices, unpriced } = await getUsdPrices(uniqueTokens)
+      const unpricedSet = new Set(unpriced)
+      requestsToResolve.forEach((request) => {
+        const requestPrices: Record<string, number> = {}
+        const requestUnpriced: string[] = []
+        request.tokens.forEach((token) => {
+          if (token in prices) requestPrices[token] = prices[token]
+          else if (unpricedSet.has(token)) requestUnpriced.push(token)
         })
-      } catch (error) {
-        console.error('Batch price fetch failed:', error)
-      }
-    }
-
-    const allPrices = { ...cachedPrices, ...freshPrices }
-
-    const requestsToResolve = [...pendingRequests]
-    pendingRequests.length = 0
-
-    requestsToResolve.forEach(request => {
-      const requestPrices: Record<string, number> = {}
-      request.tokens.forEach(token => {
-        requestPrices[token] = allPrices[token] ?? 0
+        request.resolve({ prices: requestPrices, unpriced: requestUnpriced })
       })
-      request.resolve(requestPrices)
     })
-  }).catch(error => {
-    const requestsToReject = [...pendingRequests]
-    pendingRequests.length = 0
-    requestsToReject.forEach(request => request.reject(error))
+    .catch((error: unknown) => {
+      const err = error instanceof Error ? error : new Error('Price fetch failed')
+      requestsToResolve.forEach((request) => request.reject(err))
+    })
+}
+
+function addToBatch(
+  tokens: string[],
+): Promise<{ prices: Record<string, number>; unpriced: string[] }> {
+  return new Promise((resolve, reject) => {
+    pendingRequests.push({ tokens, resolve, reject })
+    if (batchTimeout) clearTimeout(batchTimeout)
+    batchTimeout = setTimeout(processBatchedRequests, COALESCE_MS)
   })
 }
 
-function addToBatch(tokens: string[]): Promise<Record<string, number>> {
-  return new Promise((resolve, reject) => {
-    pendingRequests.push({
-      tokens,
-      resolve,
-      reject,
-      timestamp: Date.now()
-    })
-
-    // Set timeout to process batch (aggregate requests for 100ms)
-    if (batchTimeout) {
-      clearTimeout(batchTimeout)
-    }
-
-    batchTimeout = setTimeout(processBatchedRequests, 100)
-  })
+function validMints(tokens: unknown): string[] {
+  if (!Array.isArray(tokens)) return []
+  return tokens.filter(
+    (token): token is string =>
+      typeof token === 'string' && token.length >= 32 && token.length <= 44,
+  )
 }
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { tokens } = body
+    const tokens = validMints(body?.tokens)
 
-    if (!tokens || !Array.isArray(tokens)) {
+    if (!Array.isArray(body?.tokens)) {
       return NextResponse.json(
         { error: 'Invalid request. Expected { tokens: string[] }' },
-        { status: 400 }
+        { status: 400 },
       )
     }
 
     if (tokens.length === 0) {
-      return NextResponse.json({ prices: {} })
+      return NextResponse.json({ prices: {}, unpriced: [] })
     }
 
-    if (tokens.length > 100) {
+    if (tokens.length > MAX_TOKENS_PER_HTTP) {
       return NextResponse.json(
-        { error: 'Too many tokens. Maximum 100 per request.' },
-        { status: 400 }
+        { error: `Too many tokens. Maximum ${MAX_TOKENS_PER_HTTP} per request.` },
+        { status: 400 },
       )
     }
 
-    // Validate token addresses
-    const validTokens = tokens.filter(token =>
-      typeof token === 'string' && token.length >= 32 && token.length <= 44
-    )
-
-    if (validTokens.length === 0) {
-      return NextResponse.json(
-        { error: 'No valid token addresses provided' },
-        { status: 400 }
-      )
-    }
-
-    // Add to batch processing queue
-    const prices = await addToBatch(validTokens)
-
+    const { prices, unpriced } = await addToBatch(tokens)
     return NextResponse.json(
-      {
-        prices,
-        cached_tokens: validTokens.filter((token) => getCachedPriceFromMemory(token) !== null).length,
-        fresh_tokens: validTokens.filter((token) => getCachedPriceFromMemory(token) === null).length,
-        rate_limit_remaining: Math.max(0, MAX_REQUESTS_PER_MINUTE - requestCount),
-        cache_stats: {
-          total_cached: priceCache.size,
-          popular_tokens: validTokens.filter(token => POPULAR_TOKENS.has(token)).length
-        }
-      },
+      { prices, unpriced },
       {
         status: 200,
-        headers: {
-          'Cache-Control': 'public, max-age=60, stale-while-revalidate=30'
-        }
-      }
+        headers: { 'Cache-Control': 'public, max-age=15, stale-while-revalidate=30' },
+      },
     )
   } catch (error) {
     console.error('Price API error:', error)
     return NextResponse.json(
-      { error: 'Internal server error', message: error instanceof Error ? error.message : 'Unknown error' },
-      { status: 500 }
+      {
+        error: 'Internal server error',
+        message: error instanceof Error ? error.message : 'Unknown error',
+      },
+      { status: 500 },
     )
   }
 }
@@ -303,13 +115,23 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'No tokens specified' }, { status: 400 })
   }
 
+  if (tokens.length > MAX_TOKENS_PER_HTTP) {
+    return NextResponse.json(
+      { error: `Too many tokens. Maximum ${MAX_TOKENS_PER_HTTP} per request.` },
+      { status: 400 },
+    )
+  }
+
   try {
-    const prices = await addToBatch(tokens)
-    return NextResponse.json({ prices })
+    const { prices, unpriced } = await addToBatch(tokens)
+    return NextResponse.json({ prices, unpriced })
   } catch (error) {
     return NextResponse.json(
-      { error: 'Failed to fetch prices', message: error instanceof Error ? error.message : 'Unknown error' },
-      { status: 500 }
+      {
+        error: 'Failed to fetch prices',
+        message: error instanceof Error ? error.message : 'Unknown error',
+      },
+      { status: 500 },
     )
   }
 }

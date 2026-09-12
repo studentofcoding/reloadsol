@@ -8,8 +8,8 @@ const JUPITER_API_CONFIG = {
   FALLBACK_VERSION: 'v2' as 'v2' | 'v3',
   // Disable automatic fallback - using v3 only
   AUTO_FALLBACK: false,
-  BASE_URL: 'https://lite-api.jup.ag/price',
-  MAX_TOKENS_PER_REQUEST: 100,
+  BASE_URL: 'https://api.jup.ag/price',
+  MAX_TOKENS_PER_REQUEST: 50,
   REQUEST_TIMEOUT: 7000,
   RETRY_ATTEMPTS: 3,
   RETRY_DELAY: 1000,
@@ -169,12 +169,16 @@ async function fetchTokenPricesWithVersion(
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), timeout)
 
+      const headers: Record<string, string> = {
+        'accept': 'application/json',
+        'cache-control': 'no-cache',
+        'user-agent': 'BuyBulk/1.0'
+      }
+      const apiKey = process.env.JUPITER_API_KEY?.trim()
+      if (apiKey) headers['x-api-key'] = apiKey
+
       const response = await fetch(url, {
-        headers: {
-          'accept': 'application/json',
-          'cache-control': 'no-cache',
-          'user-agent': 'BuyBulk/1.0'
-        },
+        headers,
         signal: controller.signal
       })
 
@@ -195,16 +199,6 @@ async function fetchTokenPricesWithVersion(
       const normalized = normalizeResponse(data, version)
 
       console.log(`Successfully fetched ${Object.keys(normalized).length}/${tokens.length} prices`)
-
-      // Fill in missing tokens with zero price
-      tokens.forEach(token => {
-        if (!(token in normalized)) {
-          normalized[token] = {
-            price: 0,
-            source: version
-          }
-        }
-      })
 
       return normalized
 
@@ -282,14 +276,6 @@ export async function fetchTokenPricesBatch(
       }
     } catch (error) {
       console.error(`Batch ${i + 1}/${chunks.length} failed:`, error)
-
-      // Fill failed batch with zero prices
-      chunk.forEach(token => {
-        results[token] = {
-          price: 0,
-          source: JUPITER_API_CONFIG.PRIMARY_VERSION
-        }
-      })
     }
   }
 
@@ -300,11 +286,9 @@ export async function fetchTokenPricesBatch(
 export async function getTokenPrices(tokens: string[]): Promise<Record<string, number>> {
   const priceData = await fetchTokenPricesBatch(tokens)
   const prices: Record<string, number> = {}
-
   Object.entries(priceData).forEach(([token, data]) => {
     prices[token] = data.price
   })
-
   return prices
 }
 
@@ -331,14 +315,17 @@ export function getJupiterApiConfig(): typeof JUPITER_API_CONFIG {
   return { ...JUPITER_API_CONFIG }
 }
 
-/** Raw lite-api price v3 JSON for token locate (unmapped). */
+/** Raw Price V3 JSON for token locate (unmapped). */
 export async function fetchJupiterPriceRaw(token: string): Promise<unknown> {
   const url = `${JUPITER_API_CONFIG.BASE_URL}/v3?ids=${encodeURIComponent(token)}`
+  const headers: Record<string, string> = {
+    accept: 'application/json',
+    'user-agent': 'BuyBulk/1.0',
+  }
+  const apiKey = process.env.JUPITER_API_KEY?.trim()
+  if (apiKey) headers['x-api-key'] = apiKey
   const response = await fetch(url, {
-    headers: {
-      accept: 'application/json',
-      'user-agent': 'ReloadSol-API/1.0',
-    },
+    headers,
   })
   if (!response.ok) {
     throw new Error(`price HTTP ${response.status}`)

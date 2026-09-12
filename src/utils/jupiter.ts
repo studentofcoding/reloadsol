@@ -424,6 +424,8 @@ export interface UserToken {
   logoURI?: string
   uiAmount: number
   usdValue: number // USD value from Jupiter API
+  /** False when Price V3 omitted the mint. Absent = legacy (treat as priced). */
+  usdPriced?: boolean
   isLoadingPrice?: boolean
   frozen?: boolean // Whether the token account is frozen
   isNFT?: boolean // Whether the token is likely an NFT
@@ -2063,11 +2065,16 @@ export const DUST_USD_THRESHOLD = 1
 export const ZERO_VALUE_USD_THRESHOLD = 0.001
 export const MIN_BALANCE_UI = 0.000000000001
 
+function hasUsdPrice(token: UserToken): boolean {
+  return token.usdPriced !== false
+}
+
 export function isSwappableToken(token: UserToken): boolean {
   return (
     !token.frozen &&
     !token.isNFT &&
     token.uiAmount > MIN_BALANCE_UI &&
+    hasUsdPrice(token) &&
     (token.usdValue >= ZERO_VALUE_USD_THRESHOLD ||
       isPumpFunToken(token.mintAddress))
   )
@@ -2078,6 +2085,7 @@ export function isZeroValueToken(token: UserToken): boolean {
     !token.frozen &&
     !token.isNFT &&
     token.uiAmount > MIN_BALANCE_UI &&
+    hasUsdPrice(token) &&
     token.usdValue < ZERO_VALUE_USD_THRESHOLD &&
     !isPumpFunToken(token.mintAddress)
   )
@@ -2088,6 +2096,7 @@ export function isDustToken(token: UserToken): boolean {
     !token.frozen &&
     !token.isNFT &&
     token.uiAmount > MIN_BALANCE_UI &&
+    hasUsdPrice(token) &&
     token.usdValue < DUST_USD_THRESHOLD
   )
 }
@@ -2116,6 +2125,8 @@ export function categorizeUserTokens(tokens: UserToken[]): {
       frozen.push(token)
     } else if (token.uiAmount <= MIN_BALANCE_UI) {
       zeroBalance.push(token)
+    } else if (token.usdPriced === false) {
+      // Unpriced: not zero-value or dust
     } else if (isZeroValueToken(token)) {
       zeroValue.push(token)
     } else if (isSwappableToken(token)) {
@@ -2382,7 +2393,7 @@ class JupiterAPIManager {
 
     // Fetch uncached prices from server in batches
     if (uncachedMints.length > 0) {
-      const BATCH_SIZE = 100 // Server supports up to 100 per request
+      const BATCH_SIZE = 50
 
       for (let i = 0; i < uncachedMints.length; i += BATCH_SIZE) {
         const batch = uncachedMints.slice(i, i + BATCH_SIZE)
@@ -2413,12 +2424,6 @@ class JupiterAPIManager {
           }
         } catch (error) {
           console.warn(`Failed to fetch batch token prices:`, error)
-          // Set zero prices for failed batch
-          batch.forEach(mint => {
-            if (!results[mint]) {
-              results[mint] = { price: 0 }
-            }
-          })
         }
       }
     }

@@ -1422,10 +1422,26 @@ export const fetchTokenPricesForTracking = async (mintAddresses: string[]): Prom
   try {
     if (mintAddresses.length === 0) return {}
 
-    // Use the new Jupiter API utility
-    const { getTokenPrices } = await import('./jupiter-api')
-    const prices = await getTokenPrices(mintAddresses)
-
+    const unique = [...new Set(mintAddresses)]
+    const baseUrl =
+      typeof window !== 'undefined'
+        ? ''
+        : (process.env.API_HOST ||
+            process.env.NEXT_PUBLIC_API_HOST ||
+            'http://localhost:3000')
+    const prices: Record<string, number> = {}
+    const batchSize = 50
+    for (let i = 0; i < unique.length; i += batchSize) {
+      const batch = unique.slice(i, i + batchSize)
+      const response = await fetch(`${baseUrl}/api/tokens/prices`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tokens: batch }),
+      })
+      if (!response.ok) continue
+      const data = (await response.json()) as { prices?: Record<string, number> }
+      Object.assign(prices, data.prices ?? {})
+    }
     return prices
   } catch (error) {
     console.error('Error fetching token prices for tracking:', error)

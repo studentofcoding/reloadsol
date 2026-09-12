@@ -1,7 +1,7 @@
 import { query, queryOne } from '@/utils/db';
 import type { WalletWatchlistEntry } from '@/types/watchlist';
 import { assertDbWritable, formatDbError } from '@/utils/db-health';
-import { getTokenPrice } from '@/utils/jupiter-api';
+import { getUsdPrices } from '@/utils/usd-prices';
 import type { AppNetwork } from '@/utils/app-network';
 import { parseDbChain } from '@/utils/app-network-db';
 
@@ -32,8 +32,9 @@ async function resolveInitialPrice(
   }
 
   try {
-    const price = await getTokenPrice(tokenAddress);
-    return price > 0 ? price : null;
+    const { prices } = await getUsdPrices([tokenAddress]);
+    const price = prices[tokenAddress];
+    return typeof price === 'number' && price > 0 ? price : null;
   } catch {
     return null;
   }

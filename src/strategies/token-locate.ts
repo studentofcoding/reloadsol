@@ -520,7 +520,7 @@ export async function locateTokenByAddress(
     section(
       'jupiter-price-raw',
       'Jupiter price API (raw)',
-      'lite-api.jup.ag/price/v3',
+      'api.jup.ag/price/v3',
       'raw',
       jupiterPriceRaw,
     ),

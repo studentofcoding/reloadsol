@@ -15,8 +15,8 @@ vi.mock('@/strategies/social/crosscheck-db', () => ({
   updateCrosscheckSimOpened: vi.fn(),
 }))
 
-vi.mock('@/utils/jupiter-api', () => ({
-  fetchTokenPricesBatch: vi.fn(),
+vi.mock('@/utils/usd-prices', () => ({
+  getUsdPrices: vi.fn(),
 }))
 
 vi.mock('@/strategies/load-signals', () => ({
@@ -44,7 +44,7 @@ vi.mock('@/utils/telegram', () => ({
   sendTelegramAlert: vi.fn(async () => true),
 }))
 
-import { fetchTokenPricesBatch } from '@/utils/jupiter-api'
+import { getUsdPrices } from '@/utils/usd-prices'
 import { runSignalCrosscheck } from './run-crosscheck'
 
 describe('runSignalCrosscheck', () => {
@@ -61,11 +61,11 @@ describe('runSignalCrosscheck', () => {
   })
 
   it('passes when Jupiter within tolerance', async () => {
-    vi.mocked(fetchTokenPricesBatch).mockResolvedValue({
-      oVDNWQ6ZPQEPp9hcP6WheeacZncyy7ubHrwnKGDpump: {
-        price: 0.000068,
-        source: 'v3',
+    vi.mocked(getUsdPrices).mockResolvedValue({
+      prices: {
+        oVDNWQ6ZPQEPp9hcP6WheeacZncyy7ubHrwnKGDpump: 0.000068,
       },
+      unpriced: [],
     })
 
     const result = await runSignalCrosscheck({
@@ -80,11 +80,11 @@ describe('runSignalCrosscheck', () => {
   })
 
   it('fails when Jupiter diff exceeds tolerance', async () => {
-    vi.mocked(fetchTokenPricesBatch).mockResolvedValue({
-      oVDNWQ6ZPQEPp9hcP6WheeacZncyy7ubHrwnKGDpump: {
-        price: 0.0001,
-        source: 'v3',
+    vi.mocked(getUsdPrices).mockResolvedValue({
+      prices: {
+        oVDNWQ6ZPQEPp9hcP6WheeacZncyy7ubHrwnKGDpump: 0.0001,
       },
+      unpriced: [],
     })
 
     const result = await runSignalCrosscheck({

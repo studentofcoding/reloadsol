@@ -6,7 +6,7 @@ export const SHYFT_ALL_TOKENS_PATH = "/sol/v1/wallet/all_tokens";
 export const SHYFT_FETCH_TIMEOUT_MS = 15_000;
 export const SHYFT_ALL_TOKENS_TTL_SECONDS = 15;
 export const SHYFT_ALL_TOKENS_STALE_TTL_SECONDS = 120;
-export const PRICE_BATCH_SIZE = 100;
+export const PRICE_BATCH_SIZE = 50;
 
 export type ShyftWalletTokenInfo = {
   decimals: number;
@@ -70,6 +70,7 @@ export function mapShyftTokenToUserToken(token: ShyftWalletToken): UserToken {
     logoURI: token.info?.image,
     uiAmount: ui,
     usdValue: 0,
+    usdPriced: false,
     isLoadingPrice: true,
     frozen: false,
     isNFT: decimals === 0 && ui <= 1,
@@ -87,10 +88,13 @@ export function mapShyftTokensToUserTokens(
     .sort((a, b) => b.uiAmount - a.uiAmount);
 }
 
-async function fetchPricesFromApi(mints: string[]): Promise<Record<string, number>> {
-  if (mints.length === 0) return {};
+async function fetchPricesFromApi(
+  mints: string[],
+): Promise<{ prices: Record<string, number>; unpriced: string[] }> {
+  if (mints.length === 0) return { prices: {}, unpriced: [] };
 
   const prices: Record<string, number> = {};
+  const unpriced: string[] = [];
 
   for (let i = 0; i < mints.length; i += PRICE_BATCH_SIZE) {
     const batch = mints.slice(i, i + PRICE_BATCH_SIZE);
@@ -105,25 +109,38 @@ async function fetchPricesFromApi(mints: string[]): Promise<Record<string, numbe
       continue;
     }
 
-    const data = (await response.json()) as { prices?: Record<string, number> };
+    const data = (await response.json()) as {
+      prices?: Record<string, number>;
+      unpriced?: string[];
+    };
     Object.assign(prices, data.prices ?? {});
+    if (Array.isArray(data.unpriced)) unpriced.push(...data.unpriced);
   }
 
-  return prices;
+  return { prices, unpriced };
 }
 
 export async function enrichTokensWithPrices(
   tokens: UserToken[],
 ): Promise<UserToken[]> {
   const mints = tokens.map((t) => t.mintAddress);
-  const prices = await fetchPricesFromApi(mints);
+  const { prices } = await fetchPricesFromApi(mints);
 
   return tokens
     .map((token) => {
-      const price = prices[token.mintAddress] ?? 0;
+      if (token.mintAddress in prices) {
+        const price = prices[token.mintAddress];
+        return {
+          ...token,
+          usdValue: token.uiAmount * price,
+          usdPriced: true,
+          isLoadingPrice: false,
+        };
+      }
       return {
         ...token,
-        usdValue: token.uiAmount * price,
+        usdValue: 0,
+        usdPriced: false,
         isLoadingPrice: false,
       };
     })

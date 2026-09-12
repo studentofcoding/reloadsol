@@ -39,6 +39,7 @@ export function mapPortfolioTokenToUserToken(
     logoURI: token.icon,
     uiAmount: token.amount,
     usdValue: token.value,
+    usdPriced: true,
     isLoadingPrice: false,
     frozen: false,
     isNFT: token.decimals === 0 && token.amount <= 1,

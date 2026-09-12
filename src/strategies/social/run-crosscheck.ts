@@ -9,7 +9,7 @@ import { buildStrategyId } from '@/strategies/social/crosscheck-slug'
 import { parseTelegramAlert } from '@/strategies/social/parse-telegram-alert'
 import { upsertStrategyDefinition } from '@/strategies/db'
 import { openSignalsSimPosition } from '@/strategies/telegram-alpha-sim'
-import { fetchTokenPricesBatch } from '@/utils/jupiter-api'
+import { getUsdPrices } from '@/utils/usd-prices'
 import { trackTokenMcap } from '@/utils/mcap-tracker'
 import { sendTelegramAlert } from '@/utils/telegram'
 
@@ -170,9 +170,8 @@ export async function runSignalCrosscheck(body: CrosscheckRequest): Promise<Cros
   let status: 'passed' | 'failed' | 'error' = 'error'
 
   try {
-    const prices = await fetchTokenPricesBatch([parsed.token_address])
-    const priceData = prices[parsed.token_address]
-    jupiterPrice = priceData?.price ?? null
+    const { prices } = await getUsdPrices([parsed.token_address])
+    jupiterPrice = prices[parsed.token_address] ?? null
     diff = jupiterPrice != null ? pctDiff(parsed.signal_price_usd, jupiterPrice) : null
     if (diff == null) {
       status = 'error'

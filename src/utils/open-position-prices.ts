@@ -1,6 +1,6 @@
 import { cacheGet, cacheSet, publishJson } from '@/utils/redis-cache'
 import { GmgnApiError, tokenInfo } from '@/utils/gmgn-api'
-import { getTokenPrices } from '@/utils/jupiter-api'
+import { getUsdPrices } from '@/utils/usd-prices'
 import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
 import { RH_CHAIN_ID } from '@/utils/dlmm/rh-clmm/config'
 import { getTokenPriceUsd } from '@/utils/dlmm/rh-clmm/dexscreener'
@@ -152,7 +152,7 @@ export async function getOpenPositionPrices(
       })
     } else {
       try {
-        const jup = await getTokenPrices(stillMissing)
+        const { prices: jup } = await getUsdPrices(stillMissing)
         for (const mint of stillMissing) {
           const price = jup[mint]
           if (typeof price === 'number' && Number.isFinite(price) && price > 0) {
