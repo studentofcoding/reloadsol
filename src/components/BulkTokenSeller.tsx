@@ -41,6 +41,12 @@ import {
   sameSellToken,
   type SellOutputPreset,
 } from "@/utils/sell-output-mint";
+import {
+  mintsNeedingJupiterQuote,
+  sellAmountRaw,
+  sellQuoteAllFailedBanner,
+} from "@/utils/sell-quote-fallback";
+import { JUPITER_MAX_RPS } from "@/utils/jupiter-rps";
 import TokenAddressSearchField from "./TokenAddressSearchField";
 import { walletsMatch } from "@/utils/rh-wallet-holdings";
 import { executeGmgnBulkSell } from "@/utils/gmgn-bulk-trade";
@@ -134,7 +140,7 @@ const TRADE_SLIPPAGE_OPTIONS = [
 ];
 
 interface QuoteData {
-  provider: "solanatracker";
+  provider: "solanatracker" | "jupiter";
   inputMint: string;
   outputMint: string;
   amount: string;
@@ -362,6 +368,8 @@ export default function BulkTokenSeller({
   // Quote state (Raptor via /api/solanatracker/quote)
   const [autoQuote, setAutoQuote] = useState<boolean>(true);
   const [quotes, setQuotes] = useState<Record<string, QuoteData>>({});
+  const quotesRef = useRef(quotes);
+  quotesRef.current = quotes;
   const [isGettingQuotes, setIsGettingQuotes] = useState<boolean>(false);
   const [lastQuoteTime, setLastQuoteTime] = useState<number>(0);
   const [showSettings, setShowSettings] = useState<boolean>(false);
@@ -462,21 +470,53 @@ export default function BulkTokenSeller({
     [slippage, sellOut.outputMint],
   );
 
-  // Main quote fetching function (Raptor only)
-  const fetchQuoteForToken = useCallback(
-    async (token: TokenToSell): Promise<QuoteData | null> => {
-      return fetchSolanaTrackerQuote(
-        token.mintAddress,
-        token.sellAmount.toString(),
-      );
+  const fetchJupiterPreviewQuote = useCallback(
+    async (inputMint: string, amount: string): Promise<QuoteData | null> => {
+      try {
+        const query = new URLSearchParams({
+          inputMint,
+          outputMint: sellOut.outputMint,
+          amount,
+          slippageBps: prefetchSlippageBps(slippage).toString(),
+        });
+        const response = await fetch(`/api/jupiter/quote?${query.toString()}`);
+        if (!response.ok) throw new Error("Jupiter quote failed");
+        const mapped = (await response.json()) as {
+          outAmount?: string;
+          priceImpact?: number;
+          route?: unknown;
+        };
+        if (!mapped.outAmount || !/^\d+$/.test(mapped.outAmount)) return null;
+        return {
+          provider: "jupiter",
+          inputMint,
+          outputMint: sellOut.outputMint,
+          amount,
+          outAmount: mapped.outAmount,
+          priceImpact: (mapped.priceImpact ?? 0) * 100,
+          timestamp: Date.now(),
+          route: mapped.route,
+        };
+      } catch (error) {
+        console.error("Jupiter preview quote error:", error);
+        return null;
+      }
     },
-    [fetchSolanaTrackerQuote],
+    [slippage, sellOut.outputMint],
   );
 
-  // Batch quote fetching for all selected tokens (Sol / Raptor only)
+  const fetchQuoteForToken = useCallback(
+    async (token: TokenToSell): Promise<QuoteData | null> => {
+      const amount = sellAmountRaw(token.sellAmount);
+      const raptor = await fetchSolanaTrackerQuote(token.mintAddress, amount);
+      if (raptor) return raptor;
+      return fetchJupiterPreviewQuote(token.mintAddress, amount);
+    },
+    [fetchSolanaTrackerQuote, fetchJupiterPreviewQuote],
+  );
+
   const fetchAllQuotes = useCallback(async () => {
     if (!isSolTrade) return;
-    // Only fetch for tokens that are not unsellable
     const tokensToQuote = selectedTokens.filter(
       (t) =>
         !selectedZeroBalanceTokens.some((z) => z.mintAddress === t.mintAddress),
@@ -487,37 +527,60 @@ export default function BulkTokenSeller({
     setError("");
 
     try {
-      console.log(
-        `Fetching Raptor quotes for ${tokensToQuote.length} tokens`,
+      const raptorResults = await Promise.allSettled(
+        tokensToQuote.map(async (token) => {
+          const amount = sellAmountRaw(token.sellAmount);
+          const quote = await fetchSolanaTrackerQuote(token.mintAddress, amount);
+          return { mintAddress: token.mintAddress, amount, quote };
+        }),
       );
 
-      // Fetch quotes for all selected tokens in parallel
-      const quotePromises = tokensToQuote.map(async (token) => {
-        const quote = await fetchQuoteForToken(token);
-        return { mintAddress: token.mintAddress, quote };
-      });
-
-      const results = await Promise.allSettled(quotePromises);
       const newQuotes: Record<string, QuoteData> = {};
-      let successCount = 0;
-
-      results.forEach((result, index) => {
+      const raptorHits = new Set<string>();
+      raptorResults.forEach((result) => {
         if (result.status === "fulfilled" && result.value.quote) {
           newQuotes[result.value.mintAddress] = result.value.quote;
-          successCount++;
+          raptorHits.add(result.value.mintAddress);
         }
       });
+
+      const amountByMint = new Map(
+        tokensToQuote.map((t) => [t.mintAddress, sellAmountRaw(t.sellAmount)]),
+      );
+      const needJup = mintsNeedingJupiterQuote(
+        tokensToQuote.map((t) => t.mintAddress),
+        raptorHits,
+        quotesRef.current,
+        Date.now(),
+      );
+
+      const jupGapMs = 1000 / JUPITER_MAX_RPS;
+      let jupiterHits = 0;
+      for (let i = 0; i < needJup.length; i++) {
+        if (i > 0) {
+          await new Promise((r) => setTimeout(r, jupGapMs));
+        }
+        const mint = needJup[i];
+        const amount = amountByMint.get(mint) ?? "0";
+        const quote = await fetchJupiterPreviewQuote(mint, amount);
+        if (quote) {
+          newQuotes[mint] = quote;
+          jupiterHits++;
+        }
+      }
 
       setQuotes((prevQuotes) => ({ ...prevQuotes, ...newQuotes }));
       setLastQuoteTime(Date.now());
 
-      console.log(
-        `✅ Got ${successCount}/${tokensToQuote.length} Raptor quotes`,
-      );
-
-      if (successCount === 0) {
-        setError("Failed to get quotes from Raptor. Please try again.");
-      }
+      const keptValid = tokensToQuote.filter(
+        (t) =>
+          !raptorHits.has(t.mintAddress) &&
+          !needJup.includes(t.mintAddress) &&
+          quotesRef.current[t.mintAddress],
+      ).length;
+      const successCount = raptorHits.size + jupiterHits + keptValid;
+      const banner = sellQuoteAllFailedBanner(successCount);
+      if (banner) setError(banner);
     } catch (error) {
       console.error("Batch quote error:", error);
       setError("Failed to fetch quotes. Please try again.");
@@ -528,7 +591,8 @@ export default function BulkTokenSeller({
     isSolTrade,
     selectedTokens,
     selectedZeroBalanceTokens,
-    fetchQuoteForToken,
+    fetchSolanaTrackerQuote,
+    fetchJupiterPreviewQuote,
     isGettingQuotes,
   ]);
 
@@ -3370,6 +3434,12 @@ export default function BulkTokenSeller({
                               }).length
                             }
                             /{selectedTokens.length}
+                            {selectedTokens.some((token) => {
+                              const q = getQuoteForToken(token.mintAddress);
+                              return q && isQuoteValid(q) && q.provider === "jupiter";
+                            })
+                              ? " · Jup"
+                              : ""}
                           </div>
                         </div>
                       </div>

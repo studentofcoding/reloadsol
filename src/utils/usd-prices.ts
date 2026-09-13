@@ -1,4 +1,9 @@
 import { cacheGet, cacheSet, cacheSetNx } from '@/utils/redis-cache'
+import {
+  jupiterApiHeaders,
+  resetJupiterRpsForTests,
+  throttleJupiterRps,
+} from '@/utils/jupiter-rps'
 
 export const USD_PRICE_IDS_PER_REQUEST = 50
 export const USD_PRICE_FRESH_TTL_SEC = 30
@@ -7,8 +12,6 @@ export const USD_PRICE_MAX_RPS = 5
 export const USD_PRICE_LOCK_TTL_SEC = 5
 
 const JUPITER_PRICE_V3 = 'https://api.jup.ag/price/v3'
-const USER_AGENT = 'BuyBulk/1.0'
-const MIN_INTERVAL_MS = 1000 / USD_PRICE_MAX_RPS
 
 export type UsdPriceCacheEntry = {
   price: number | null
@@ -24,7 +27,6 @@ export type UsdPricesResult = {
 
 const memory = new Map<string, UsdPriceCacheEntry>()
 const inflight = new Map<string, Promise<void>>()
-let nextSlotMs = 0
 let missingKeyLogged = false
 
 export function usdPriceRedisKey(mint: string): string {
@@ -67,8 +69,8 @@ export function parseJupiterPriceV3(
 export function resetUsdPricesForTests(): void {
   memory.clear()
   inflight.clear()
-  nextSlotMs = 0
   missingKeyLogged = false
+  resetJupiterRpsForTests()
 }
 
 function applyEntry(
@@ -101,27 +103,6 @@ async function writeEntry(mint: string, entry: UsdPriceCacheEntry): Promise<void
   await cacheSet(usdPriceRedisKey(mint), entry, ttlSec)
 }
 
-async function throttleRps(): Promise<void> {
-  const now = Date.now()
-  const slot = Math.max(now, nextSlotMs)
-  nextSlotMs = slot + MIN_INTERVAL_MS
-  const wait = slot - now
-  if (wait > 0) {
-    await new Promise((resolve) => setTimeout(resolve, wait))
-  }
-}
-
-function jupiterHeaders(): HeadersInit {
-  const headers: Record<string, string> = {
-    accept: 'application/json',
-    'cache-control': 'no-cache',
-    'user-agent': USER_AGENT,
-  }
-  const key = process.env.JUPITER_API_KEY?.trim()
-  if (key) headers['x-api-key'] = key
-  return headers
-}
-
 async function fetchChunkFromJupiter(chunk: string[]): Promise<void> {
   const key = process.env.JUPITER_API_KEY?.trim()
   if (!key) {
@@ -139,9 +120,9 @@ async function fetchChunkFromJupiter(chunk: string[]): Promise<void> {
     return
   }
 
-  await throttleRps()
+  await throttleJupiterRps()
   const url = `${JUPITER_PRICE_V3}?ids=${chunk.map(encodeURIComponent).join(',')}`
-  const response = await fetch(url, { headers: jupiterHeaders() })
+  const response = await fetch(url, { headers: jupiterApiHeaders() })
   if (response.status === 429) {
     throw new Error('Jupiter price rate limited')
   }
