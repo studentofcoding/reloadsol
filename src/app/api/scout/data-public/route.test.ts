@@ -151,4 +151,25 @@ describe('GET /api/scout/data-public', () => {
     const body = await response.json()
     expect(body.ok).toBe(false)
   })
+
+  it('scopes rows when chain=solana or chain=robinhood', async () => {
+    mockFetch((input) => {
+      const url = String(input)
+      if (url.includes('regime/climate')) return jsonResponse(climateJson())
+      return jsonResponse(feedJson())
+    })
+
+    const sol = await (await GET(request('solana'))).json()
+    expect(sol.ok).toBe(true)
+    expect(sol.chain).toBe('solana')
+    expect(sol.strategyId).toBe('buybulk-datapublic-scout')
+    expect(sol.rows.every((r: { chain: string }) => r.chain === 'solana')).toBe(true)
+    expect(sol.counts.sol).toBe(sol.rows.length)
+
+    const rh = await (await GET(request('robinhood'))).json()
+    expect(rh.ok).toBe(true)
+    expect(rh.chain).toBe('robinhood')
+    expect(rh.rows.every((r: { chain: string }) => r.chain === 'robinhood')).toBe(true)
+    expect(rh.counts.rh).toBe(rh.rows.length)
+  })
 })

@@ -9,6 +9,7 @@ import {
   LIQ_FLOOR_USD,
   parseDataPublicFeed,
   paperNotchDisabledTip,
+  scoutChainFromAppNetwork,
   type ScoutFeedRow,
 } from '@/utils/data-public-scout'
 
@@ -279,5 +280,12 @@ describe('parseDataPublicFeed', () => {
     expect(parsed.rows).toHaveLength(1)
     expect(parsed.meta.solDelayMin).toBe(15)
     expect(parsed.meta.generatedAt).toBe(99)
+  })
+})
+
+describe('scoutChainFromAppNetwork', () => {
+  it('maps AppNetwork onto the scout BFF chain query', () => {
+    expect(scoutChainFromAppNetwork('sol')).toBe('solana')
+    expect(scoutChainFromAppNetwork('robinhood')).toBe('robinhood')
   })
 })

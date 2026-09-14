@@ -6,6 +6,7 @@ import { useClimateDisplay } from '@/hooks/useClimateDisplay'
 import { useDataPublicScout } from '@/hooks/useDataPublicScout'
 import { useBuybulkPaperNotches } from '@/hooks/useBuybulkPaperNotches'
 import { tokenSearchDetailHref } from '@/components/signals/shared/token-search-href'
+import { formatClimateRegimeDetail } from '@/utils/climateDisplay'
 import {
   canPaperNotchFromClimate,
   paperNotchDisabledTip,
@@ -18,14 +19,6 @@ import {
   type PaperNotch,
 } from '@/utils/paper-notch-store'
 import { formatCompactNumber } from '@/utils/formatters'
-
-type Tab = 'all' | ScoutChain
-
-const TABS: { id: Tab; label: string }[] = [
-  { id: 'all', label: 'All' },
-  { id: 'robinhood', label: 'RH' },
-  { id: 'solana', label: 'Sol' },
-]
 
 function storage(): Storage | null {
   if (typeof window === 'undefined') return null
@@ -45,14 +38,22 @@ function chainBadge(chain: ScoutChain): string {
   return chain === 'robinhood' ? 'RH' : 'Sol'
 }
 
+const CHIP_CLASS: Record<'Safe' | 'Not safe' | 'Unknown', string> = {
+  Safe: 'border-emerald-400/35 bg-emerald-500/10 text-emerald-200',
+  'Not safe': 'border-amber-400/50 bg-amber-500/15 text-amber-200',
+  Unknown: 'border-white/20 bg-white/5 text-gray-400',
+}
+
 export default function DataPublicObserveStrip({
+  chain,
   onInspectMint,
 }: {
+  /** Network-scoped BFF query (`robinhood` | `solana`). Same strategy id. */
+  chain: ScoutChain
   onInspectMint?: (mint: string) => void
 }) {
-  const scout = useDataPublicScout('all')
+  const scout = useDataPublicScout(chain)
   const climate = useClimateDisplay()
-  const [tab, setTab] = useState<Tab>('all')
   const cache = useMemo<PaperNotch[]>(
     () => readPaperNotchesFromStorage(storage()),
     [],
@@ -61,16 +62,26 @@ export default function DataPublicObserveStrip({
   const [flash, setFlash] = useState<string | null>(null)
 
   const climateLabel = climate.data?.label ?? 'Unknown'
+  const regimeDetail = formatClimateRegimeDetail({
+    state: climate.data?.state,
+    h: climate.data?.h,
+  })
   const paperAllowed = canPaperNotchFromClimate(climateLabel)
   const disabledTip = paperNotchDisabledTip(climateLabel)
 
-  const rows = useMemo(() => {
-    const all = scout.data?.rows ?? []
-    if (tab === 'all') return all
-    return all.filter((r) => r.chain === tab)
-  }, [scout.data?.rows, tab])
+  const rows = scout.data?.rows ?? []
 
-  const notedKeys = useMemo(() => new Set(paper.notches.map((n) => n.key)), [paper.notches])
+  const notedKeys = useMemo(
+    () =>
+      new Set(
+        paper.notches.filter((n) => n.chain === chain).map((n) => n.key),
+      ),
+    [chain, paper.notches],
+  )
+  const chainNotches = useMemo(
+    () => paper.notches.filter((n) => n.chain === chain),
+    [chain, paper.notches],
+  )
 
   const onPaperNote = useCallback(
     async (row: ScoutCandidate) => {
@@ -101,75 +112,62 @@ export default function DataPublicObserveStrip({
   )
 
   const solDelay = scout.data?.solDelayMin ?? 15
-  const rhCount = scout.data?.counts.rh ?? 0
-  const solCount = scout.data?.counts.sol ?? 0
+  const chainCount =
+    chain === 'robinhood' ? (scout.data?.counts.rh ?? 0) : (scout.data?.counts.sol ?? 0)
+  const title = chain === 'robinhood' ? 'RH scout · data-public' : 'Sol scout · data-public'
 
   return (
     <section
       className="rounded-xl border border-gray-700 bg-gray-800/40 px-4 py-3 space-y-3"
-      aria-label="data-public observe strip"
+      aria-label={`${chain === 'robinhood' ? 'RH' : 'Sol'} data-public scout`}
     >
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-white">Observe · data-public</h3>
+          <h3 className="text-sm font-semibold text-white">{title}</h3>
           <p className="text-[11px] text-gray-400 leading-snug mt-0.5">
             {DATA_PUBLIC_STUDY_DISCLAIMER}
           </p>
           <p className="text-[11px] text-amber-200/80 mt-1">
-            Sol feed delayed ≥{solDelay}m (staleness). Same paper mode on RH + Sol.
-            Never live-executes from this strip.
+            {chain === 'solana'
+              ? `Sol feed delayed ≥${solDelay}m (staleness). Same paper mode as RH. Never live-executes from this list.`
+              : 'Same paper mode as Sol. Never live-executes from this list.'}
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <span
-            className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
-              climateLabel === 'Safe'
-                ? 'border-emerald-400/35 bg-emerald-500/10 text-emerald-200'
-                : climateLabel === 'Not safe'
-                  ? 'border-amber-400/50 bg-amber-500/15 text-amber-200'
-                  : 'border-white/20 bg-white/5 text-gray-400'
-            }`}
+          <div
+            className={`flex flex-col items-end rounded-full border px-2.5 py-0.5 leading-tight ${CHIP_CLASS[climateLabel]}`}
             title="Paper notes follow the Header climate display label. Live trade controls stay ungated."
+            role="status"
+            aria-live="polite"
+            aria-label={`Climate ${climateLabel}${regimeDetail ? ` (${regimeDetail})` : ''}`}
           >
-            Climate {climateLabel}
-          </span>
+            <span className="whitespace-nowrap text-[10px] font-semibold">
+              {climateLabel}
+            </span>
+            {regimeDetail ? (
+              <span className="whitespace-nowrap text-[9px] opacity-70">
+                {regimeDetail}
+              </span>
+            ) : null}
+          </div>
           <span className="text-[10px] text-gray-500">
-            {rhCount} RH · {solCount} Sol
+            {chainCount} {chainBadge(chain)}
           </span>
         </div>
-      </div>
-
-      <div className="flex gap-1" role="tablist" aria-label="Observe chain">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            role="tab"
-            aria-selected={tab === t.id}
-            onClick={() => setTab(t.id)}
-            className={`rounded-md px-2.5 py-1 text-xs ${
-              tab === t.id
-                ? 'bg-white/10 text-white'
-                : 'text-gray-400 hover:text-gray-200'
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
       </div>
 
       {scout.isError ? (
         <p className="text-xs text-amber-300">
-          Observe feed unavailable. {scout.error instanceof Error ? scout.error.message : ''}
+          Scout feed unavailable. {scout.error instanceof Error ? scout.error.message : ''}
         </p>
       ) : scout.isPending ? (
-        <p className="text-xs text-gray-500">Loading observe candidates…</p>
+        <p className="text-xs text-gray-500">Loading scout candidates…</p>
       ) : rows.length === 0 ? (
         <p className="text-xs text-gray-500">
-          No filtered candidates{tab === 'solana' ? ' on Sol (feed is delayed)' : ''}.
+          No filtered candidates{chain === 'solana' ? ' on Sol (feed is delayed)' : ' on RH'}.
         </p>
       ) : (
-        <ul className="max-h-64 space-y-1.5 overflow-y-auto pr-1">
+        <ul className="max-h-[28rem] space-y-1.5 overflow-y-auto pr-1">
           {rows.map((row) => {
             const key = `${row.chain}:${row.mint.toLowerCase()}`
             const noted = notedKeys.has(key)
@@ -189,14 +187,24 @@ export default function DataPublicObserveStrip({
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-baseline gap-1.5">
-                    <button
-                      type="button"
-                      className="truncate text-xs font-medium text-white hover:underline"
-                      onClick={() => onInspectMint?.(row.mint)}
-                      title="Inspect in buy form (does not buy)"
-                    >
-                      {row.symbol}
-                    </button>
+                    {onInspectMint ? (
+                      <button
+                        type="button"
+                        className="truncate text-xs font-medium text-white hover:underline"
+                        onClick={() => onInspectMint(row.mint)}
+                        title="Inspect in buy form (does not buy)"
+                      >
+                        {row.symbol}
+                      </button>
+                    ) : (
+                      <Link
+                        href={tokenSearchDetailHref(row.mint)}
+                        className="truncate text-xs font-medium text-white hover:underline"
+                        title="Open token map (does not buy)"
+                      >
+                        {row.symbol}
+                      </Link>
+                    )}
                     <span className="truncate text-[10px] text-gray-500">{row.name}</span>
                   </div>
                   <div className="text-[10px] text-gray-400">
@@ -252,13 +260,13 @@ export default function DataPublicObserveStrip({
 
       {flash ? <p className="text-[11px] text-gray-300">{flash}</p> : null}
 
-      {paper.notches.length > 0 ? (
+      {chainNotches.length > 0 ? (
         <div className="border-t border-gray-700/80 pt-2">
           <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">
             Paper notes (DB, no fills)
           </div>
           <ul className="flex flex-wrap gap-1.5">
-            {paper.notches.slice(0, 12).map((n) => (
+            {chainNotches.slice(0, 12).map((n) => (
               <li
                 key={n.key}
                 className="rounded-md border border-gray-700 px-1.5 py-0.5 text-[10px] text-gray-300"

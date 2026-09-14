@@ -1,8 +1,8 @@
-# data-public observe + paper-sim (S6)
+# data-public scout + paper-sim (S6)
 
-Buy-bulk **observe strip** for the public research feed. Strategy id
-**`buybulk-datapublic-scout`**. Same mode on Robinhood and Solana. **Never**
-calls `executeBulkBuy` or a live swap from this path.
+Primary surface is **`/dev/insight`**. Strategy id **`buybulk-datapublic-scout`**.
+Same paper mode on Robinhood and Solana. **Never** calls `executeBulkBuy` or a
+live swap from this path.
 
 Identity and hard boundaries vs rh-tape (`rhtape-datapublic-scout`):
 [STRATEGY_SCOUT.md](./STRATEGY_SCOUT.md). These strategies do **not** share
@@ -12,15 +12,25 @@ config, notch store, routes, or ids.
 
 | Surface | Role |
 |---|---|
-| `GET /api/scout/data-public?chain=all\|robinhood\|solana` | BFF: proxies `https://data-public.vercel.app/api/feed`, applies filters, attaches `climateAtEmit` |
+| `GET /api/scout/data-public?chain=all\|robinhood\|solana` | BFF: proxies `https://data-public.vercel.app/api/feed`, applies filters, attaches `climateAtEmit`. Insight uses `chain=robinhood` or `chain=solana` from AppNetwork (`sol` → `solana`). `chain=all` remains for tests / other callers. |
 | `GET` / `POST /api/scout/data-public/paper` | Durable paper notes in Postgres (`strategy_paper_notches`). POST re-checks climate **on the server** |
-| Observe strip on `/buy` (`BulkTokenBuyer`) | Lists filtered RH + Sol candidates (tabs + chain badge) |
+| `/dev/insight` | Per-network scout home. RH context → RH scout. Sol context → Sol scout + **Roster digger (Sol)** (`RosterTab` / `/api/gmgn/roster`). |
+| `/buy` | Thin link to `/dev/insight` for dev wallets. Scout is no longer the buy-page primary UX. |
 | **Paper note** | DB row stamped `buybulk-datapublic-scout`. localStorage is a cache only. No fills, no sim-track open, no live exec |
-| Header climate chip | Display-only. Paper notes from *this* feed require binary label **Safe** |
+| Climate chip on insight | Binary label **Safe** / **Not safe** / **Unknown** (no `Climate ` prefix). Regime detail beside/under it, e.g. `De-risk · H 0.5` (state + H ~1 decimal). Same pattern when Safe/Unknown. Header chip stays display-only. |
 
 Climate mapping is unchanged: Safe = Mixed/Range/Hype and no cascade; Not safe /
-Unknown → strip still visible, Paper note disabled. The write path calls
+Unknown → list still visible, Paper note disabled. The write path calls
 `fetchClimate` itself and returns 403 when the display label is not Safe.
+
+## Per-network
+
+`InsightPageClient` follows `useAppNetwork()`. Sol/RH tabs call `setNetwork`, so
+scout rows and roster stay in the same network context — they are not mashed
+into one undifferentiated list.
+
+- **Robinhood:** RH scout only. Does not embed Sol roster digger as primary.
+- **Solana:** Sol scout + Roster digger (Sol). Link through to `/dev/signals?tab=roster`.
 
 ## Persistence
 
@@ -41,7 +51,7 @@ Applied before a row is shown as an actionable paper candidate:
 4. Skip obvious ring / fresh / copycat **when those fields are present** (`evmBundle.verdict=ring`, fresh ratio ≥ 50%, high `nameReuse` / `imageReuse` / registry priors).
 5. Dedupe by `(chain, mint)`.
 
-Sol rows are delayed ≥15 minutes (`solDelayMin` from the feed). The strip shows a staleness note.
+Sol rows are delayed ≥15 minutes (`solDelayMin` from the feed). The Sol scout shows a staleness note.
 
 ## Out of scope
 
@@ -53,14 +63,15 @@ Sol rows are delayed ≥15 minutes (`solDelayMin` from the feed). The strip show
 
 ## Disclaimer
 
-The public feed is **study / research** only. The strip repeats that ToS next to the list.
+The public feed is **study / research** only. The scout list repeats that ToS.
 
 ## Manual verify
 
-1. `npm test -- src/utils/data-public-scout.test.ts src/utils/paper-notch-store.test.ts src/app/api/scout/data-public/route.test.ts src/app/api/scout/data-public/paper/route.test.ts src/strategies/buybulk-datapublic-scout-notches.test.ts`
-2. `npm run dev` → open `/buy/solana` and `/buy/robinhood`.
-3. Confirm the **Observe · data-public** strip lists RH and/or Sol rows (tabs or combined with badge).
-4. Confirm the study/research disclaimer and Sol ≥15m delay note are visible.
-5. With Header climate **Safe**: **Paper note** POSTs `/api/scout/data-public/paper`, row appears in `strategy_paper_notches`; no wallet prompt / no swap.
-6. Force Not safe / Unknown (stale climate or Cash upstream): strip still lists rows; Paper note is disabled; POST returns 403 and inserts nothing.
-7. Network tab: client hits `/api/scout/data-public` and `/api/scout/data-public/paper` only. No `/api/buy` or swap routes from the strip.
+1. `npm test -- src/utils/climateDisplay.test.ts src/utils/data-public-scout.test.ts src/utils/paper-notch-store.test.ts src/app/api/scout/data-public/route.test.ts src/app/api/scout/data-public/paper/route.test.ts src/strategies/buybulk-datapublic-scout-notches.test.ts src/config/route-network.test.ts`
+2. `npm run dev` → open `/dev/insight` on Sol and on Robinhood (header network toggle or in-page Sol/RH tabs).
+3. Confirm climate chip shows **Not safe** / **Safe** / **Unknown** (no `Climate ` prefix) plus regime detail like `De-risk · H 0.5`.
+4. Sol: Sol scout list + **Roster digger (Sol)**. RH: RH scout only; roster is not the primary panel.
+5. `/buy` shows a thin link to `/dev/insight` for dev wallets, not the full observe strip.
+6. With Header climate **Safe**: **Paper note** POSTs `/api/scout/data-public/paper`, row appears in `strategy_paper_notches`; no wallet prompt / no swap.
+7. Force Not safe / Unknown: list still visible; Paper note is disabled; POST returns 403 and inserts nothing.
+8. Network tab: client hits `/api/scout/data-public?chain=solana` or `chain=robinhood` (not an unscoped mash) and `/api/scout/data-public/paper` only. No `/api/buy` or swap routes from the scout list.
