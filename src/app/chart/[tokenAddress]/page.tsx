@@ -5,6 +5,8 @@ import React, { useState, useCallback, useRef, useMemo } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useWallet, useConnection } from "@/components/WalletProvider";
 import { useAppNetwork } from "@/contexts/AppNetworkContext";
+import { useRhEvmWallet } from "@/hooks/useRhEvmWallet";
+import { connectedSellPath } from "@/config/route-network";
 import { useRpc } from "@/contexts/RpcContext";
 import { useWalletTokens } from "@/hooks/useWalletTokens";
 import { useWalletBalances } from "@/hooks/useWalletBalances";
@@ -58,6 +60,7 @@ export default function ChartPage() {
   const { activeRpcUrl } = useRpc();
 
   const { network } = useAppNetwork();
+  const rh = useRhEvmWallet();
   const tokenAddress = params.tokenAddress as string;
   const chainParam = searchParams.get("chain");
   // Infer chain from the address itself first so a sol mint opened while the
@@ -412,7 +415,9 @@ export default function ChartPage() {
   ]);
 
   const handleBackToHome = () => {
-    router.push("/");
+    router.push(
+      connectedSellPath(connected, Boolean(rh.address), network) ?? "/",
+    );
   };
 
   const getRiskBadgeColor = (risk: "LOW" | "MEDIUM" | "HIGH") => {

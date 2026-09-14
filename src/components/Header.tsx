@@ -5,6 +5,9 @@ import Link from "next/link";
 import UniversalWalletButton from '@/components/UniversalWalletButton'
 import ClimateChip from '@/components/ClimateChip';
 import { useWalletAddress } from '@/components/WalletProvider';
+import { useAppNetwork } from '@/contexts/AppNetworkContext';
+import { useRhEvmWallet } from '@/hooks/useRhEvmWallet';
+import { connectedSellPath } from '@/config/route-network';
 import { FaFire } from 'react-icons/fa';
 import { useDailyStreak } from '@/hooks/useDailyStreak';
 
@@ -15,11 +18,16 @@ interface HeaderProps {
 const Header: FC<HeaderProps> = ({ onOpenDailyStreak }) => {
   const walletAddress = useWalletAddress() ?? undefined;
   const { streak } = useDailyStreak(walletAddress);
+  const { network } = useAppNetwork();
+  const rh = useRhEvmWallet();
+  const brandHref =
+    connectedSellPath(Boolean(walletAddress), Boolean(rh.address), network) ??
+    '/';
 
   return (
     <header className="w-full border-b border-white/30 backdrop-blur-sm bg-black/80 relative z-40">
       <div className="container h-20 flex items-center max-w-4xl justify-between gap-2 px-3 md:px-4 mx-auto min-w-0">
-        <Link href="/" className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-300 md:text-2xl text-xl">
+        <Link href={brandHref} className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-300 md:text-2xl text-xl">
           ReloadSOL
         </Link>
 

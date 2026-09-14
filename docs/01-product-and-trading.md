@@ -8,7 +8,7 @@ util files cited inline.
 
 ## 1. What ReloadSOL is
 
-**ReloadSOL**’s public product is **reload dust / many tokens into native SOL (or ETH on Robinhood) in 1–2 clicks**. Home (`/`) keeps branding logos, never auto-navigates away on wallet connect, and mounts compact bulk-sell. Buy, swap, PnL, history, Hunter, strategies, and DLMM stay **URL-only** (`/buy`, `/swap`, `/sell`, `/pnl`, `/history`, `/dev/*`). Under the hood it is still a Next.js app with Go cron workers and Docker Postgres/Redis on Solana mainnet and Robinhood Chain (id `4663`). Paper strategies and ML remain operator tools, not the home CTA. All data lives in Docker Postgres `reloadsol_db` (Supabase cut off).
+**ReloadSOL**’s public product is **reload dust / many tokens into native SOL (or ETH on Robinhood) in 1–2 clicks**. Logged-out home (`/`) keeps branding logos. After wallet connect (or visiting `/` while already connected), the app navigates to `/sell/solana` or `/sell/robinhood` by active chain. Buy, swap, PnL, history, Hunter, strategies, and DLMM stay **URL-only** (`/buy`, `/swap`, `/sell`, `/pnl`, `/history`, `/dev/*`). Under the hood it is still a Next.js app with Go cron workers and Docker Postgres/Redis on Solana mainnet and Robinhood Chain (id `4663`). Paper strategies and ML remain operator tools, not the home CTA. All data lives in Docker Postgres `reloadsol_db` (Supabase cut off).
 
 ## 2. Networks: `sol` and `robinhood`
 
@@ -30,9 +30,9 @@ selection back to `sol`.
 
 | Surface | Route | What it does | Key files |
 |---|---|---|---|
-| **Reload (home)** | `/` | After connect: compact many→native (SOL dust pre-checked; RH all sellable). No `/sell` bounce. | `HomePageClient.tsx`, `ReloadHome.tsx`, `BulkTokenSeller` `variant="compact"` |
+| **Reload (home)** | `/` logged-out; `/sell/solana` or `/sell/robinhood` after connect | Logged-out: branding + wallet chooser. After connect (or brand click / visiting `/` while connected): full sell by `AppNetwork`. | `HomePageClient.tsx`, `connectedSellPath` in `route-network.ts`, `BulkTokenSeller` |
 | Bulk buy | `/buy` (`/buy/solana`, `/buy/robinhood`) | Buy up to the chain-specific cap (currently **5 RH / 5 Solana**) from one spend amount (SOL on Solana; ETH/USDG/WETH on RH); valid/parsed chips; risk analysis; trending/toast tokens append to the list | `src/components/BulkTokenBuyer.tsx`, `src/components/RiskAnalysis.tsx` |
-| Bulk sell / dust sweep / reload | `/sell` | Full seller UI (URL-only). Compact Reload lives on `/`. Dust categories (sellable / unsellable / zero-balance / frozen / NFT); empty-ATA close + rent reclaim. Full `/sell` can swap the batch into one custom mint (default native SOL/ETH); compact home stays native. | `src/components/BulkTokenSeller.tsx`, `src/utils/jupiter.ts`, `src/utils/swap-executor.ts` |
+| Bulk sell / dust sweep / reload | `/sell` (`/sell/solana`, `/sell/robinhood`) | Full seller UI. Post-connect landing from home. Dust categories (sellable / unsellable / zero-balance / frozen / NFT); empty-ATA close + rent reclaim. Full `/sell` can swap the batch into one custom mint (default native SOL/ETH). | `src/components/BulkTokenSeller.tsx`, `src/utils/jupiter.ts`, `src/utils/swap-executor.ts` |
 | Single swap | `/swap` (+ solana/robinhood subroutes) | Solana: **Jupiter Terminal** widget with SOL/USDC presets; Robinhood: in-house RhSwap panel (quote-pair or token→token) | `src/app/(trade)/swap/SwapPageClient.tsx`, `src/components/RhGmgnSwapPanel.tsx`, `src/components/JupiterTerminal.tsx` |
 | Chart buy modal | modals over charts / signals / trend boards | Quick single-token buy from any chart surface, keyboard navigable | `src/components/ChartBuyModal.tsx` |
 | Token search (dev) | `/dev/search-token` (`/solana`, `/robinhood`); map at `/dev/search-token/detail?address=&view=` | Name/symbol/CA search; Open map / View chart go to TokenLocateHub (Freeview / List). `/search-token*` and `/dev/token-search` redirect here | `src/components/search/SearchTokenClient.tsx`, `src/components/token-locate/TokenLocateHub.tsx`, `src/components/signals/shared/token-search-href.ts` |
@@ -52,7 +52,7 @@ selection back to `sol`.
   `executeBulkSellAlt`, `executeClientSwap`; server proxy `/api/solanatracker/*`).
   Full `/sell` defaults `outputMint` to wrapped SOL; a custom mint is resolved by
   `sellOutputMint` (`src/utils/sell-output-mint.ts`) and threaded into quotes,
-  prefetch, and `executeBulkSellAlt`. Compact Reload on `/` always sells to SOL.
+  prefetch, and `executeBulkSellAlt`. Compact `ReloadHome` (native SOL only) is unused as a post-connect landing; connect goes to `/sell/{chain}`.
   PnL Fast Sell stays native SOL.
 - **Jupiter** handles pricing/metadata, the wallet token list (Portfolio), the `/swap`
   Jupiter Terminal widget, and account close/reclaim — not the main swap executor.

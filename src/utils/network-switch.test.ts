@@ -83,4 +83,10 @@ describe('chainSwitchTarget', () => {
     )
     expect(chainSwitchTarget('/swap', 'sol')).toBe('/swap/solana')
   })
+
+  it('sends home and other non-trade routes to /sell/{chain}', () => {
+    expect(chainSwitchTarget('/', 'sol')).toBe('/sell/solana')
+    expect(chainSwitchTarget('/', 'robinhood')).toBe('/sell/robinhood')
+    expect(chainSwitchTarget('/blog', 'sol')).toBe('/sell/solana')
+  })
 })
