@@ -3,6 +3,7 @@
 import { FC } from "react";
 import Link from "next/link";
 import UniversalWalletButton from '@/components/UniversalWalletButton'
+import ClimateChip from '@/components/ClimateChip';
 import { useWalletAddress } from '@/components/WalletProvider';
 import { FaFire } from 'react-icons/fa';
 import { useDailyStreak } from '@/hooks/useDailyStreak';
@@ -22,7 +23,7 @@ const Header: FC<HeaderProps> = ({ onOpenDailyStreak }) => {
           ReloadSOL
         </Link>
 
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-2 md:gap-4 min-w-0">
           {walletAddress && (
             <button
               onClick={onOpenDailyStreak}
@@ -37,6 +38,7 @@ const Header: FC<HeaderProps> = ({ onOpenDailyStreak }) => {
               </span>
             </button>
           )}
+          <ClimateChip />
           <UniversalWalletButton />
         </div>
       </div>
