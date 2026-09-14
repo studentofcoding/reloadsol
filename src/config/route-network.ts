@@ -68,6 +68,22 @@ export function routeSupportsNetwork(
   return entry.networks.includes(network)
 }
 
-export function defaultPathForNetwork(_network: AppNetwork): string {
-  return '/'
+/** Fallback when a gated route is not allowed, and post-connect sell landing. */
+export function defaultPathForNetwork(network: AppNetwork): string {
+  return network === 'robinhood' ? '/sell/robinhood' : '/sell/solana'
+}
+
+/**
+ * Home `/` stays for logged-out browsing. Once a wallet is connected,
+ * send them to the chain sell route (old reload-home path).
+ * Uses existing AppNetwork (`sol` | `robinhood`) — no new enum.
+ */
+export function connectedSellPath(
+  solConnected: boolean,
+  rhConnected: boolean,
+  network: AppNetwork,
+): string | null {
+  if (!solConnected && !rhConnected) return null
+  if (solConnected && rhConnected) return defaultPathForNetwork(network)
+  return defaultPathForNetwork(rhConnected ? 'robinhood' : 'sol')
 }

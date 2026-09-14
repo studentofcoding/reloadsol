@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  connectedSellPath,
   defaultPathForNetwork,
   routeSupportsNetwork,
 } from './route-network'
@@ -50,8 +51,30 @@ describe('routeSupportsNetwork', () => {
 })
 
 describe('defaultPathForNetwork', () => {
-  it('sends both networks home (Reload)', () => {
-    expect(defaultPathForNetwork('sol')).toBe('/')
-    expect(defaultPathForNetwork('robinhood')).toBe('/')
+  it('lands each network on its sell route', () => {
+    expect(defaultPathForNetwork('sol')).toBe('/sell/solana')
+    expect(defaultPathForNetwork('robinhood')).toBe('/sell/robinhood')
+  })
+})
+
+describe('connectedSellPath', () => {
+  it('keeps unauthenticated users on home (no redirect)', () => {
+    expect(connectedSellPath(false, false, 'sol')).toBeNull()
+    expect(connectedSellPath(false, false, 'robinhood')).toBeNull()
+  })
+
+  it('sends a Solana-only connect to /sell/solana', () => {
+    expect(connectedSellPath(true, false, 'sol')).toBe('/sell/solana')
+    expect(connectedSellPath(true, false, 'robinhood')).toBe('/sell/solana')
+  })
+
+  it('sends a Robinhood-only connect to /sell/robinhood', () => {
+    expect(connectedSellPath(false, true, 'sol')).toBe('/sell/robinhood')
+    expect(connectedSellPath(false, true, 'robinhood')).toBe('/sell/robinhood')
+  })
+
+  it('when both wallets are connected, follows the active app network', () => {
+    expect(connectedSellPath(true, true, 'sol')).toBe('/sell/solana')
+    expect(connectedSellPath(true, true, 'robinhood')).toBe('/sell/robinhood')
   })
 })

@@ -2,22 +2,24 @@
 
 import { OptimizedImage } from "@/components/OptimizedImage";
 import React, { useEffect, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import LastReloadTracker from '@/components/LastReloadTracker'
 import WalletChooser from '@/components/WalletChooser'
 import Footer from '@/components/Footer'
-import ReloadHome from '@/components/reload/ReloadHome'
+import TokenSkeleton from '@/components/TokenSkeleton'
 import { useWallet } from '@/components/WalletProvider'
 import { useAppNetwork } from '@/contexts/AppNetworkContext'
 import { useRhEvmWallet } from '@/hooks/useRhEvmWallet'
+import { connectedSellPath } from '@/config/route-network'
 
 function HomeContent() {
+  const router = useRouter()
   const { connected } = useWallet()
   const rh = useRhEvmWallet()
-  const { setNetwork } = useAppNetwork()
+  const { network, setNetwork } = useAppNetwork()
   const solConnectedRef = useRef(false)
   const rhConnectedRef = useRef(false)
   const rhConnected = Boolean(rh.address)
-  const showReload = connected || rhConnected
 
   useEffect(() => {
     const solJustConnected = connected && !solConnectedRef.current
@@ -27,12 +29,30 @@ function HomeContent() {
 
     if (solJustConnected) {
       setNetwork('sol')
+      router.replace(connectedSellPath(true, rhConnected, 'sol') ?? '/sell/solana')
       return
     }
     if (rhJustConnected) {
       setNetwork('robinhood', { skipCoerce: true })
+      router.replace(
+        connectedSellPath(connected, true, 'robinhood') ?? '/sell/robinhood',
+      )
+      return
     }
-  }, [connected, rhConnected, setNetwork])
+
+    const dest = connectedSellPath(connected, rhConnected, network)
+    if (dest) router.replace(dest)
+  }, [connected, rhConnected, network, router, setNetwork])
+
+  if (connected || rhConnected) {
+    return (
+      <div className="min-h-screen bg-black py-8">
+        <div className="container mx-auto px-4">
+          <TokenSkeleton count={3} variant="progressive" />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-black py-8">
@@ -48,18 +68,9 @@ function HomeContent() {
 
         <WalletChooser />
 
-        {showReload ? (
-          <div className="mt-8">
-            <div className="mb-6 max-w-md mx-auto">
-              <LastReloadTracker />
-            </div>
-            <ReloadHome />
-          </div>
-        ) : (
-          <div className="mt-8 max-w-md mx-auto">
-            <LastReloadTracker />
-          </div>
-        )}
+        <div className="mt-8 max-w-md mx-auto">
+          <LastReloadTracker />
+        </div>
       </div>
       <Footer />
     </div>

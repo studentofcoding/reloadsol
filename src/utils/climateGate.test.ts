@@ -3,6 +3,7 @@ import {
   applyClimateToNewRisk,
   fetchClimate,
   interpretClimate,
+  readClimateComputedAt,
   resetClimateCache,
   sizeHint,
 } from '@/utils/climateGate'
@@ -72,6 +73,16 @@ describe('interpretClimate / sizeHint', () => {
   })
 })
 
+describe('readClimateComputedAt', () => {
+  it('reads timestamps.computedAt from the terminal payload', () => {
+    expect(readClimateComputedAt({ timestamps: { computedAt: 1_700_000_000_000 } })).toBe(
+      1_700_000_000_000,
+    )
+    expect(readClimateComputedAt({ computedAt: 1_700_000_000_123 })).toBe(1_700_000_000_123)
+    expect(readClimateComputedAt({})).toBeNull()
+  })
+})
+
 describe('fetchClimate', () => {
   it('caches for ~30s', async () => {
     const fetchImpl = vi.fn(async () => jsonResponse(climateJson({ state: 'Range' })))
@@ -80,6 +91,20 @@ describe('fetchClimate', () => {
     expect(first.scale).toBe(0.75)
     expect(second).toBe(first)
     expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('passes through timestamps.computedAt', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(
+        climateJson({
+          state: 'Range',
+          timestamps: { computedAt: 1_700_000_000_000 },
+        }),
+      ),
+    )
+    const gate = await fetchClimate({ fetchImpl, now: 1_700_000_010_000 })
+    expect(gate.ok).toBe(true)
+    expect(gate.computedAt).toBe(1_700_000_000_000)
   })
 
   it('fail-opens on fetch error unless fail-closed', async () => {

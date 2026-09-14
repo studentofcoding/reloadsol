@@ -12,7 +12,11 @@
  * Default OFF (`CLIMATE_GATE=1` to enable). Paper/dry-run only unless `CLIMATE_GATE_LIVE=1`
  * (ask before enabling live). Fetch errors fail-open unless `CLIMATE_FAIL_CLOSED=1`.
  *
- * TODO(S5): wire climateGate into buy_bulk when that tree exists in this repo.
+ * Header climate chip is display-only (`GET /api/regime/climate` + climateDisplay).
+ * Do not import this module into the Header client bundle or wire
+ * applyClimateToNewRisk into the chip. Do not enable CLIMATE_GATE_LIVE from that surface.
+ *
+ * TODO(S5): wire climateGate into buy_bulk *trading* when that tree exists in this repo.
  * buy_bulk is not part of reloadsol (social-ingest posts to an external buy_bulk ingest).
  */
 
@@ -76,6 +80,8 @@ export type InterpretedClimate = {
 export type ClimateGateResult = {
   ok: boolean
   fetchedAt: number
+  /** Upstream `computedAt` / `timestamps.computedAt` when present (ms). */
+  computedAt: number | null
   state: ClimateState | null
   h: number | null
   c: number | null
@@ -123,6 +129,26 @@ function envInt(key: string, fallback: number): number {
 
 function isState(value: unknown): value is ClimateState {
   return typeof value === 'string' && (CLIMATE_STATES as readonly string[]).includes(value)
+}
+
+/** Prefer top-level `computedAt`, then `timestamps.computedAt`. */
+export function readClimateComputedAt(data: unknown): number | null {
+  const o = asObject(data)
+  if (!o) return null
+  const timestamps = asObject(o.timestamps)
+  const raw = o.computedAt ?? timestamps?.computedAt
+  if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) {
+    return raw < 1e12 ? raw * 1000 : raw
+  }
+  if (typeof raw === 'string' && raw.trim()) {
+    const asNum = Number(raw)
+    if (Number.isFinite(asNum) && asNum > 0) {
+      return asNum < 1e12 ? asNum * 1000 : asNum
+    }
+    const parsed = Date.parse(raw)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
 }
 
 function capState(state: ClimateState, max: ClimateState): ClimateState {
@@ -242,7 +268,12 @@ export async function fetchClimate(opts: FetchClimateOpts = {}): Promise<Climate
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const json: unknown = await res.json()
     const parsed = interpretClimate(json)
-    const gate: ClimateGateResult = { ok: true, fetchedAt: now, ...parsed }
+    const gate: ClimateGateResult = {
+      ok: true,
+      fetchedAt: now,
+      computedAt: readClimateComputedAt(json),
+      ...parsed,
+    }
     cache = { at: now, gate }
     return gate
   } catch (error) {
@@ -262,6 +293,7 @@ export async function fetchClimate(opts: FetchClimateOpts = {}): Promise<Climate
         ? `climate fetch failed (fail-closed): ${msg}`
         : `climate fetch failed (fail-open): ${msg}`,
       fetchedAt: now,
+      computedAt: null,
       error: msg,
     }
     cache = { at: now, gate }

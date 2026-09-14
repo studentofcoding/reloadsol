@@ -46,14 +46,32 @@ Wired paths:
 - Solana DLMM deploy — `deployPosition` (`/api/dlmm/positions`, `/api/dlmm/sim-track`, Telegram `/deploy`)
 - Robinhood paper LP opens — `rh_lp_screen` (`openPaperPositions`)
 
+## Header chip (display-only)
+
+ReloadSOL Header always shows a **binary** climate chip (Safe / Not safe / Unknown)
+by polling `GET /api/regime/climate` (~30s). That BFF calls `fetchClimate` even when
+`CLIMATE_GATE` is off. It does **not** apply the gate, does **not** enable
+`CLIMATE_GATE_LIVE`, and must **not** hard-disable trade controls (amber/gray tip
+only). Mapping: [`src/utils/climateDisplay.ts`](../src/utils/climateDisplay.ts).
+
+| Label | When |
+|---|---|
+| **Not safe** | `cascade.veto` **or** interpreted `state` in {Cash, De-risk} |
+| **Safe** | interpreted `state` in {Mixed, Range, Hype} **and** no cascade veto |
+| **Unknown** | fetch fail / `error`, or stale (`fetchedAt` or `computedAt` older than 90s) |
+
+`e4_depth` missing does **not** force Not safe. Fail-open climateGate `scale=1` on
+fetch error must **not** render as Safe/Hype — it is Unknown. Optional subtitle
+(state and/or H) is informational; the binary label is authoritative.
+
 ## Ownership split
 
 | Owner | Surface |
 |---|---|
 | btc-sentiment-terminal / `@btc/shared` | Climate API + `interpretClimate` / `sizeHint` semantics |
 | rh-tape-bot-cf | Cloudflare vendored gate (pattern this module mirrors) |
-| **reloadsol (this file)** | DLMM paper/live flag + logging only |
-| buy_bulk | **Not in this repo** — see TODO in `src/utils/climateGate.ts` |
+| **reloadsol (this file)** | DLMM paper/live flag + logging; Header climate chip (display-only BFF) |
+| buy_bulk | Header chip is in this repo; do **not** wire `applyClimateToNewRisk` into Header |
 | S6 observe | Separate; this PR does not wait on it |
 
 ## Ask before live
