@@ -29,7 +29,7 @@ export default function ClimateChip() {
 
   return (
     <div
-      className={`flex max-w-[7.5rem] flex-col items-end rounded-full border px-2 py-0.5 leading-tight md:max-w-none md:px-3 md:py-1 ${CHIP_CLASS[label]} ${
+      className={`flex shrink-0 max-w-[7.5rem] flex-col items-end rounded-full border px-2 py-0.5 leading-tight md:max-w-none md:px-3 md:py-1 ${CHIP_CLASS[label]} ${
         isPending ? 'opacity-70' : ''
       }`}
       title={tip}

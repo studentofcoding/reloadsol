@@ -18,12 +18,12 @@ const Header: FC<HeaderProps> = ({ onOpenDailyStreak }) => {
 
   return (
     <header className="w-full border-b border-white/30 backdrop-blur-sm bg-black/80 relative z-40">
-      <div className="container h-20 flex items-center max-w-4xl justify-between px-4 mx-auto">
+      <div className="container h-20 flex items-center max-w-4xl justify-between gap-2 px-3 md:px-4 mx-auto min-w-0">
         <Link href="/" className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-300 md:text-2xl text-xl">
           ReloadSOL
         </Link>
 
-        <div className="flex items-center gap-2 md:gap-4 min-w-0">
+        <div className="flex items-center gap-1.5 md:gap-4 min-w-0 shrink-0">
           {walletAddress && (
             <button
               onClick={onOpenDailyStreak}
