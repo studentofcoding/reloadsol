@@ -9,6 +9,7 @@ export const WALLET_REQUIRED_ROUTES = [
 
 /** Dev tools — connected wallet must be on the dev whitelist. */
 export const DEV_ROUTES = [
+  '/dev/insight',
   '/dev/signals',
   '/dev/algo-tester',
   '/dev/dlmm',

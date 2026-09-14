@@ -6,7 +6,7 @@ store, routes, or strategy ids.
 | | buy_bulk (this repo) | rh-tape (already shipped) |
 |---|---|---|
 | **Strategy id** | `buybulk-datapublic-scout` | `rhtape-datapublic-scout` |
-| **Surface** | `/buy` observe strip + `GET /api/scout/data-public` | Worker UI [rh-tape-bot `?v=3`](https://rh-tape-bot.yonathanevanchristy.workers.dev/?v=3) — **other repo / other agent** |
+| **Surface** | `/dev/insight` (per-network scout) + `GET /api/scout/data-public?chain=robinhood\|solana` | Worker UI [rh-tape-bot `?v=3`](https://rh-tape-bot.yonathanevanchristy.workers.dev/?v=3) — **other repo / other agent** |
 | **Notch store** | Postgres `strategy_paper_notches` (`strategy_id` CHECK = `buybulk-datapublic-scout`); localStorage cache only | rh-tape's own store — do not reuse |
 | **Routes** | `/api/scout/data-public` + `/api/scout/data-public/paper` | rh-tape routes — do not reuse |
 | **Live exec** | Never | rh-tape `processFill` — **do not couple** |

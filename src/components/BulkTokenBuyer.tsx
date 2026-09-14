@@ -3,6 +3,8 @@
 import { OptimizedImage } from "@/components/OptimizedImage";
 import React, { useState, useCallback, useEffect, useRef, useMemo, useDeferredValue } from "react";
 import Link from "next/link";
+import { ChevronGlyph } from "@/components/insight/InsightIcons";
+import { insightLink } from "@/components/insight/insight-ui";
 import { tokenSearchDetailHref } from "@/components/signals/shared/token-search-href";
 import { useSearchParams } from "next/navigation";
 import {
@@ -32,7 +34,6 @@ import UniversalWalletButton from "./UniversalWalletButton";
 import BalanceSliderField from "./BalanceSliderField";
 import TokenSearchBox from "./TokenSearchBox";
 import TrendingTokens from "./TrendingTokens";
-import DataPublicObserveStrip from "./DataPublicObserveStrip";
 import TradeOutcomeModal, { useTradeOutcome } from "./TradeOutcomeModal";
 import TokenSkeleton from "./TokenSkeleton";
 import HoldingsTokenList from "./HoldingsTokenList";
@@ -1862,9 +1863,16 @@ export default function BulkTokenBuyer() {
             </div>
           </div>
 
-          <DataPublicObserveStrip
-            onInspectMint={(mint) => void handleSelectToken(mint)}
-          />
+          {isDevUser ? (
+            <p className="text-xs text-gray-400">
+              Data-public scout moved to{" "}
+              <Link href="/dev/insight" className={insightLink}>
+                /dev/insight
+                <ChevronGlyph className="size-3.5 translate-x-px" />
+              </Link>
+              {effectiveChain === "robinhood" ? " (RH scout)" : " (Sol scout + roster digger)"}.
+            </p>
+          ) : null}
 
           {useRhParentPath ? (
             <RhPermit2StatusBanner

@@ -8,6 +8,7 @@ import { useWalletAddress } from '@/components/WalletProvider';
 import { useAppNetwork } from '@/contexts/AppNetworkContext';
 import { useRhEvmWallet } from '@/hooks/useRhEvmWallet';
 import { connectedSellPath } from '@/config/route-network';
+import { chromeFloat, chromePrimary, insightPress } from '@/components/insight/insight-ui';
 import { FaFire } from 'react-icons/fa';
 import { useDailyStreak } from '@/hooks/useDailyStreak';
 
@@ -25,29 +26,30 @@ const Header: FC<HeaderProps> = ({ onOpenDailyStreak }) => {
     '/';
 
   return (
-    <header className="w-full border-b border-white/30 backdrop-blur-sm bg-black/80 relative z-40">
-      <div className="container h-20 flex items-center max-w-4xl justify-between gap-2 px-3 md:px-4 mx-auto min-w-0">
-        <Link href={brandHref} className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-300 md:text-2xl text-xl">
+    <header className={chromeFloat} data-chrome="primary">
+      <div className={chromePrimary}>
+        <Link
+          href={brandHref}
+          className={`shrink-0 text-lg font-semibold tracking-tight text-neutral-900 md:text-xl ${insightPress}`}
+        >
           ReloadSOL
         </Link>
 
-        <div className="flex items-center gap-1.5 md:gap-4 min-w-0 shrink-0">
+        <div className="flex min-w-0 shrink-0 items-center gap-1.5 md:gap-3">
           {walletAddress && (
             <button
+              type="button"
               onClick={onOpenDailyStreak}
-              className="flex items-center gap-1 md:gap-2 px-2 md:px-4 py-1 md:py-2 rounded-full
-                         bg-gradient-to-r from-orange-500/20 to-red-500/10
-                         border border-orange-400/30 hover:border-orange-400/60 hover:bg-orange-500/10
-                         transition-colors duration-200 group text-xs md:text-base"
+              className={`flex items-center gap-1 rounded-full bg-orange-500/15 py-1 ps-1.5 pe-2 text-xs font-semibold text-orange-800 md:gap-1.5 md:ps-2 md:pe-3 ${insightPress} fine-hover:bg-orange-500/22`}
             >
-              <FaFire className="w-3 h-3 md:w-4 md:h-4 text-orange-400" />
-              <span className="font-bold text-white">
+              <FaFire className="h-3 w-3 text-orange-600 md:h-3.5 md:w-3.5" />
+              <span className="tabular-nums">
                 {streak} Day Streak
               </span>
             </button>
           )}
           <ClimateChip />
-          <UniversalWalletButton />
+          <UniversalWalletButton surface="chrome" />
         </div>
       </div>
     </header>

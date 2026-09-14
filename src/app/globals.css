@@ -20,6 +20,16 @@
   --surface-2: #1a1a1e;
   --border-soft: #2a2a2e;
   --text-dim: #8a8f8a;
+
+  /* Apple HIG layered materials — chrome (primary) vs content (2/3). */
+  --chrome-header-height: 5rem;
+  --material-chrome: rgba(246, 247, 250, 0.78);
+  --material-secondary: rgba(28, 28, 32, 0.92);
+  --material-tertiary: rgba(16, 16, 18, 0.72);
+  /* emil-design-eng strong ease-out */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  /* better-ui exact curve — not interchangeable with --ease-out */
+  --ease-out-ui: cubic-bezier(0.2, 0, 0, 1);
 }
 
 * {
@@ -148,6 +158,133 @@ dialog[role="dialog"] {
 }
 .tabular {
   font-variant-numeric: tabular-nums;
+}
+
+/* Floating light chrome — the only surface that uses backdrop blur. */
+.chrome-primary {
+  background: var(--material-chrome);
+  color: #1d1d1f;
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  box-shadow:
+    0 8px 28px rgba(0, 0, 0, 0.28),
+    0 0 0 1px rgba(255, 255, 255, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.chrome-network-seg {
+  background: rgba(0, 0, 0, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+}
+
+.material-secondary {
+  background: var(--material-secondary);
+  box-shadow: 0 0 0 1px oklch(1 0 0 / 0.08);
+}
+
+.material-tertiary {
+  background: var(--material-tertiary);
+  box-shadow: 0 0 0 1px oklch(1 0 0 / 0.06);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .chrome-primary {
+    background: #f5f5f7;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .material-secondary,
+  .material-tertiary {
+    background: #1c1c20;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .chrome-primary {
+    background: #ffffff;
+    box-shadow: 0 0 0 1px #1d1d1f;
+  }
+}
+
+/* better-ui enter-exit: split/stagger ~100ms, y 12px + blur(4px).
+   emil-design-eng: ease-out <300ms, never scale(0). Apple: enter from ≥0.95. */
+@keyframes insight-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.97);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+.insight-enter {
+  animation: insight-enter 220ms var(--ease-out) both;
+}
+
+.insight-enter-d2 {
+  animation-delay: 100ms;
+}
+
+.insight-enter-d3 {
+  animation-delay: 200ms;
+}
+
+/* emil @starting-style flash; better-ui exit softer/shorter than enter (−12px / 150ms). */
+.insight-flash {
+  opacity: 1;
+  transform: translateY(0);
+  transition-property: opacity, transform;
+  transition-duration: 150ms;
+  transition-timing-function: var(--ease-out);
+}
+
+.insight-flash[data-ending] {
+  opacity: 0;
+  transform: translateY(-12px);
+}
+
+@starting-style {
+  .insight-flash {
+    opacity: 0;
+    transform: translateY(12px) scale(0.97);
+  }
+}
+
+/* better-ui icon-transitions: opacity + scale(0.25) + blur(4px), cubic-bezier(0.2, 0, 0, 1). */
+.insight-icon-swap {
+  transition-property: opacity, filter, scale;
+  transition-duration: 300ms;
+  transition-timing-function: var(--ease-out-ui);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .insight-enter,
+  .insight-enter-d2,
+  .insight-enter-d3 {
+    animation: none;
+  }
+
+  .insight-flash {
+    transition-property: opacity;
+    transform: none;
+  }
+
+  @starting-style {
+    .insight-flash {
+      transform: none;
+    }
+  }
+
+  .insight-icon-swap {
+    transition-property: opacity;
+    scale: 1;
+    filter: none;
+  }
 }
 
 /* Focus rings for accessibility */

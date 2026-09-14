@@ -67,6 +67,27 @@ export function climateChipLabel(input: {
   return 'Unknown'
 }
 
+/** Regime Hurst-like H for chips: `H 0.5` (one decimal). */
+export function formatClimateH(
+  h: number | null | undefined,
+  digits = 1,
+): string | null {
+  if (typeof h !== 'number' || !Number.isFinite(h)) return null
+  return `H ${h.toFixed(digits)}`
+}
+
+/** Detail under the binary label, e.g. `De-risk · H 0.5`. Same for Safe/Unknown. */
+export function formatClimateRegimeDetail(opts: {
+  state?: string | null
+  h?: number | null
+  digits?: number
+}): string | null {
+  const hLabel = formatClimateH(opts.h, opts.digits ?? 1)
+  const state = typeof opts.state === 'string' && opts.state.trim() ? opts.state.trim() : null
+  const parts = [state, hLabel].filter((part): part is string => Boolean(part))
+  return parts.length > 0 ? parts.join(' · ') : null
+}
+
 export function toClimateChipPayload(
   gate: ClimateChipSource,
   opts: { now?: number; staleMs?: number } = {},

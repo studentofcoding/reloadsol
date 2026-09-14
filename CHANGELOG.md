@@ -8,6 +8,26 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — data-public scout lives on `/dev/insight`
+
+- Primary scout UX moved from the `/buy` observe strip to **`/dev/insight`**.
+  Dev wallets on `/buy` keep a thin link. Same BFF
+  `GET /api/scout/data-public?chain=robinhood|solana` (AppNetwork `sol` → `solana`);
+  strategy id remains `buybulk-datapublic-scout`. Paper notes still Safe-gated
+  server-side into `strategy_paper_notches`. Never `executeBulkBuy` / live swap /
+  `CLIMATE_GATE_LIVE`.
+- Insight climate chip: binary **Safe** / **Not safe** / **Unknown** (no
+  `Climate ` prefix) plus regime detail `De-risk · H 0.5` (state + H ~1 decimal).
+- Per-network: RH context shows RH scout only; Sol shows Sol scout + **Roster
+  digger (Sol)** (`RosterTab` / `/api/gmgn/roster`). In-page Sol/RH tabs call
+  `setNetwork`.
+- Apple HIG polish on insight + Header chrome: floating light Header (blur on
+  sticky chrome only), secondary/tertiary content materials, concentric radii,
+  tabular `H x.x` climate chips. Motion tokens follow **better-ui**
+  (`scale(0.96)`, `cubic-bezier(0.2, 0, 0, 1)`, icon 0.25/blur 4px, `fine-hover`)
+  and **emil-design-eng** (`cubic-bezier(0.23, 1, 0.32, 1)` enters, UI <300ms,
+  no `transition:all` / `scale(0)` / `ease-in`).
+
 ### Added — data-public observe + paper-sim on buy_bulk
 
 - BFF `GET /api/scout/data-public?chain=all|robinhood|solana` proxies the public

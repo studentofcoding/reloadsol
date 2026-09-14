@@ -2,6 +2,8 @@
  * data-public observe + paper-sim for buy_bulk only (S6).
  *
  * Strategy id: `buybulk-datapublic-scout`.
+ * Primary UI: `/dev/insight` (per-network). Same BFF
+ * `GET /api/scout/data-public?chain=robinhood|solana`.
  * Not shared with rh-tape (`rhtape-datapublic-scout`): separate config,
  * notch store, routes, and strategy id. Do not call processFill or touch
  * the rh-tape Worker from this path.
@@ -14,6 +16,7 @@
  * Safe (Mixed/Range/Hype, no cascade). Not safe / Unknown → observe only.
  */
 
+import type { AppNetwork } from '@/utils/app-network'
 import type { ClimateChipLabel, ClimateChipPayload } from '@/utils/climateDisplay'
 
 /** Buy-bulk data-public observe + paper-sim. Do not reuse on rh-tape. */
@@ -174,6 +177,11 @@ export function parseScoutChainQuery(raw: unknown): ScoutChainQuery | null {
   if (v === 'robinhood' || v === 'rh') return 'robinhood'
   if (v === 'solana' || v === 'sol') return 'solana'
   return null
+}
+
+/** Map AppNetwork (`sol` | `robinhood`) onto the scout BFF `chain` query. */
+export function scoutChainFromAppNetwork(network: AppNetwork): ScoutChain {
+  return network === 'robinhood' ? 'robinhood' : 'solana'
 }
 
 export function normalizeScoutChain(raw: unknown): ScoutChain | null {

@@ -11,6 +11,7 @@ import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import { routeSupportsNetwork } from "@/config/route-network";
 import { useIsClient } from "@/hooks/useIsClient";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { navChromeItem, navMobileBar, navSticky } from "@/components/insight/insight-ui";
 
 export default function NavigationTabs({
   activeOverlayTab,
@@ -43,6 +44,7 @@ export default function NavigationTabs({
     "/history",
     "/pnl",
     "/dev/search-token",
+    "/dev/insight",
     "/dev/signals",
     "/dev/algo-tester",
     "/dev/dlmm",
@@ -63,7 +65,7 @@ export default function NavigationTabs({
   return (
     <div className="w-full relative z-50">
       {/* Desktop Navigation */}
-      <div className="sticky top-0 z-40 hidden bg-black/85 backdrop-blur-sm border-b border-white/5 px-2 pt-2 md:block">
+      <div className={navSticky}>
         <div
           className={`${mounted && isDevUser ? "max-w-6xl" : "max-w-4xl"} mx-auto mb-2`}
         >
@@ -75,10 +77,10 @@ export default function NavigationTabs({
                 {can("/sell") ? (
                 <Link
                   href="/sell"
-                  className={`px-3 py-3 rounded-lg font-semibold transition-all duration-200 ${
+                  className={`px-3 py-3 rounded-lg font-semibold ${navChromeItem} ${
                     isActive("/sell")
                       ? "tab-active"
-                      : "text-gray-400 hover:text-white hover:bg-gray-700"
+                      : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-700"
                   }`}
                 >
                   <div className="flex items-center space-x-2">
@@ -103,10 +105,10 @@ export default function NavigationTabs({
                 {can("/buy") ? (
                 <Link
                   href="/buy"
-                  className={`px-3 py-3 rounded-lg font-semibold transition-all duration-200 ${
+                  className={`px-3 py-3 rounded-lg font-semibold ${navChromeItem} ${
                     isActive("/buy")
                       ? "tab-active"
-                      : "text-gray-400 hover:text-white hover:bg-gray-700"
+                      : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-700"
                   }`}
                 >
                   <div className="flex items-center space-x-2">
@@ -131,10 +133,10 @@ export default function NavigationTabs({
                 {can("/swap") ? (
                 <Link
                   href="/swap"
-                  className={`px-3 py-3 rounded-lg font-semibold transition-all duration-200 ${
+                  className={`px-3 py-3 rounded-lg font-semibold ${navChromeItem} ${
                     isActive("/swap")
                       ? "tab-active"
-                      : "text-gray-400 hover:text-white hover:bg-gray-700"
+                      : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-700"
                   }`}
                 >
                   <div className="flex items-center space-x-2">
@@ -159,10 +161,10 @@ export default function NavigationTabs({
                 {can("/dev/search-token") ? (
                 <Link
                   href="/dev/search-token"
-                  className={`px-3 py-3 rounded-lg font-semibold transition-all duration-200 ${
+                  className={`px-3 py-3 rounded-lg font-semibold ${navChromeItem} ${
                     isActive("/dev/search-token")
                       ? "tab-active"
-                      : "text-gray-400 hover:text-white hover:bg-gray-700"
+                      : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-700"
                   }`}
                 >
                   <div className="flex items-center space-x-2">
@@ -186,13 +188,45 @@ export default function NavigationTabs({
 
                 {mounted && isDevUser && (
                   <>
+                    {can("/dev/insight") ? (
+                    <Link
+                      href="/dev/insight"
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
+                        isActive("/dev/insight")
+                          ? "bg-gray-700 text-white"
+                          : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
+                      }`}
+                      title="Insight"
+                      aria-label="Insight"
+                    >
+                      <svg
+                        className="w-5 h-5"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                        />
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+                        />
+                      </svg>
+                    </Link>
+                    ) : null}
                     {can("/dev/signals") ? (
                     <Link
                       href="/dev/signals"
-                      className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
                         isActive("/dev/signals")
                           ? "bg-gray-700 text-white"
-                          : "text-gray-400 hover:text-white hover:bg-gray-800"
+                          : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
                       }`}
                       title="Signals"
                       aria-label="Signals"
@@ -215,10 +249,10 @@ export default function NavigationTabs({
                     {can("/dev/algo-tester") ? (
                     <Link
                       href="/dev/algo-tester"
-                      className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
                         isActive("/dev/algo-tester")
                           ? "bg-gray-700 text-white"
-                          : "text-gray-400 hover:text-white hover:bg-gray-800"
+                          : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
                       }`}
                       title="Algo Tester"
                       aria-label="Algo Tester"
@@ -241,10 +275,10 @@ export default function NavigationTabs({
                     {can("/dev/dlmm") ? (
                     <Link
                       href="/dev/dlmm"
-                      className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
                         isActive("/dev/dlmm")
                           ? "bg-gray-700 text-white"
-                          : "text-gray-400 hover:text-white hover:bg-gray-800"
+                          : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
                       }`}
                       title="DLMM Agent"
                       aria-label="DLMM Agent"
@@ -267,10 +301,10 @@ export default function NavigationTabs({
                     {can("/dev/social") ? (
                     <Link
                       href="/dev/social"
-                      className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
                         isActive("/dev/social")
                           ? "bg-gray-700 text-white"
-                          : "text-gray-400 hover:text-white hover:bg-gray-800"
+                          : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
                       }`}
                       title="Social"
                       aria-label="Social"
@@ -293,10 +327,10 @@ export default function NavigationTabs({
                     {can("/dev/fomo") ? (
                     <Link
                       href="/dev/fomo"
-                      className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
                         isActive("/dev/fomo")
                           ? "bg-gray-700 text-white"
-                          : "text-gray-400 hover:text-white hover:bg-gray-800"
+                          : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
                       }`}
                       title="FOMO tape"
                       aria-label="FOMO tape"
@@ -307,10 +341,10 @@ export default function NavigationTabs({
                     {can("/dev/strategies") ? (
                     <Link
                       href="/dev/strategies"
-                      className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
                         isActive("/dev/strategies")
                           ? "bg-gray-700 text-white"
-                          : "text-gray-400 hover:text-white hover:bg-gray-800"
+                          : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
                       }`}
                       title="Strategy Admin"
                       aria-label="Strategy Admin"
@@ -339,10 +373,10 @@ export default function NavigationTabs({
                     {can("/dev/search-token") ? (
                     <Link
                       href="/dev/search-token"
-                      className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
                         isActive("/dev/search-token")
                           ? "bg-gray-700 text-white"
-                          : "text-gray-400 hover:text-white hover:bg-gray-800"
+                          : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
                       }`}
                       title="Search token"
                       aria-label="Search token"
@@ -365,10 +399,10 @@ export default function NavigationTabs({
                     {can("/dev/ohlc-labels") ? (
                     <Link
                       href="/dev/ohlc-labels"
-                      className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
                         isActive("/dev/ohlc-labels")
                           ? "bg-gray-700 text-white"
-                          : "text-gray-400 hover:text-white hover:bg-gray-800"
+                          : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
                       }`}
                       title="OHLC labels"
                     >
@@ -378,10 +412,10 @@ export default function NavigationTabs({
                     {can("/dev/arbitrage") ? (
                     <Link
                       href="/dev/arbitrage"
-                      className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
                         isActive("/dev/arbitrage")
                           ? "bg-gray-700 text-white"
-                          : "text-gray-400 hover:text-white hover:bg-gray-800"
+                          : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
                       }`}
                       title="SOL arbitration"
                     >
@@ -398,10 +432,10 @@ export default function NavigationTabs({
               <button
                 type="button"
                 onClick={() => handleTabClick("history")}
-                className={`px-4 py-3 rounded-lg font-medium transition-all duration-200 ${
+                className={`px-4 py-3 rounded-lg font-medium ${navChromeItem} ${
                   isActive("history")
                     ? "bg-gray-700 text-white"
-                    : "text-gray-400 hover:text-white hover:bg-gray-800"
+                    : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
                 }`}
                 title="Trading History"
                 aria-label="Trading History"
@@ -423,10 +457,10 @@ export default function NavigationTabs({
               <button
                 type="button"
                 onClick={() => handleTabClick("pnl")}
-                className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
+                className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
                   isActive("pnl")
                     ? "bg-gray-700 text-white"
-                    : "text-gray-400 hover:text-white hover:bg-gray-800"
+                    : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
                 }`}
                 title="P&L Tracker"
                 aria-label="P&L Tracker"
@@ -473,10 +507,10 @@ export default function NavigationTabs({
             <button
               type="button"
               onClick={() => handleTabClick("history")}
-              className={`p-2 rounded-lg transition-all duration-200 ${
+              className={`p-2 rounded-lg ${navChromeItem} ${
                 isActive("history")
                   ? "bg-gray-700 text-white"
-                  : "text-gray-400 hover:text-white hover:bg-gray-800"
+                  : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
               }`}
               title="Trading History"
             >
@@ -497,10 +531,10 @@ export default function NavigationTabs({
             <button
               type="button"
               onClick={() => handleTabClick("pnl")}
-              className={`p-2 rounded-lg transition-all duration-200 ${
+              className={`p-2 rounded-lg ${navChromeItem} ${
                 isActive("pnl")
                   ? "bg-gray-700 text-white"
-                  : "text-gray-400 hover:text-white hover:bg-gray-800"
+                  : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
               }`}
               title="P&L Tracker"
             >
@@ -525,12 +559,12 @@ export default function NavigationTabs({
 
       {/* Mobile Navigation - Bottom Fixed */}
       {showMainTabs && (
-        <div className="md:hidden fixed bottom-0 left-0 right-0 bg-black border-t border-gray-800 z-9999">
+        <div className={navMobileBar}>
           <ScrollableMenuRow className="py-3 px-2" innerClassName="gap-1 mx-auto" bleed={false}>
             {can("/sell") ? (
             <Link
               href="/sell"
-              className={`flex shrink-0 flex-col items-center px-4 py-2 rounded-lg transition-all duration-200 ${
+              className={`flex shrink-0 flex-col items-center px-4 py-2 rounded-lg ${navChromeItem} ${
                 isActive("/sell") ? "tab-active" : "text-gray-400"
               }`}
             >
@@ -556,7 +590,7 @@ export default function NavigationTabs({
             {can("/buy") ? (
             <Link
               href="/buy"
-              className={`flex shrink-0 flex-col items-center px-4 py-2 rounded-lg transition-all duration-200 ${
+              className={`flex shrink-0 flex-col items-center px-4 py-2 rounded-lg ${navChromeItem} ${
                 isActive("/buy") ? "tab-active" : "text-gray-400"
               }`}
             >
@@ -580,7 +614,7 @@ export default function NavigationTabs({
             {can("/swap") ? (
             <Link
               href="/swap"
-              className={`flex shrink-0 flex-col items-center px-4 py-2 rounded-lg transition-all duration-200 ${
+              className={`flex shrink-0 flex-col items-center px-4 py-2 rounded-lg ${navChromeItem} ${
                 isActive("/swap") ? "tab-active" : "text-gray-400"
               }`}
             >
@@ -604,7 +638,7 @@ export default function NavigationTabs({
             {can("/dev/search-token") ? (
             <Link
               href="/dev/search-token"
-              className={`flex shrink-0 flex-col items-center px-4 py-2 rounded-lg transition-all duration-200 ${
+              className={`flex shrink-0 flex-col items-center px-4 py-2 rounded-lg ${navChromeItem} ${
                 isActive("/dev/search-token") ? "tab-active" : "text-gray-400"
               }`}
             >
@@ -627,10 +661,41 @@ export default function NavigationTabs({
 
             {mounted && isDevUser && (
               <>
+                {can("/dev/insight") ? (
+                <Link
+                  href="/dev/insight"
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg ${navChromeItem} ${
+                    isActive("/dev/insight")
+                      ? "bg-white text-black"
+                      : "text-gray-400"
+                  }`}
+                >
+                  <svg
+                    className="w-6 h-6 mb-1"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                    />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+                    />
+                  </svg>
+                  <span className="text-xs font-medium">Insight</span>
+                </Link>
+                ) : null}
                 {can("/dev/signals") ? (
                 <Link
                   href="/dev/signals"
-                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg ${navChromeItem} ${
                     isActive("/dev/signals")
                       ? "bg-white text-black"
                       : "text-gray-400"
@@ -655,7 +720,7 @@ export default function NavigationTabs({
                 {can("/dev/algo-tester") ? (
                 <Link
                   href="/dev/algo-tester"
-                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg ${navChromeItem} ${
                     isActive("/dev/algo-tester")
                       ? "bg-white text-black"
                       : "text-gray-400"
@@ -680,7 +745,7 @@ export default function NavigationTabs({
                 {can("/dev/dlmm") ? (
                 <Link
                   href="/dev/dlmm"
-                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg ${navChromeItem} ${
                     isActive("/dev/dlmm")
                       ? "bg-white text-black"
                       : "text-gray-400"
@@ -705,7 +770,7 @@ export default function NavigationTabs({
                 {can("/dev/social") ? (
                 <Link
                   href="/dev/social"
-                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg ${navChromeItem} ${
                     isActive("/dev/social")
                       ? "bg-white text-black"
                       : "text-gray-400"
@@ -730,7 +795,7 @@ export default function NavigationTabs({
                 {can("/dev/fomo") ? (
                 <Link
                   href="/dev/fomo"
-                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg ${navChromeItem} ${
                     isActive("/dev/fomo")
                       ? "bg-white text-black"
                       : "text-gray-400"
@@ -743,7 +808,7 @@ export default function NavigationTabs({
                 {can("/dev/strategies") ? (
                 <Link
                   href="/dev/strategies"
-                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg ${navChromeItem} ${
                     isActive("/dev/strategies")
                       ? "bg-white text-black"
                       : "text-gray-400"
@@ -774,7 +839,7 @@ export default function NavigationTabs({
                 {can("/dev/search-token") ? (
                 <Link
                   href="/dev/search-token"
-                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg ${navChromeItem} ${
                     isActive("/dev/search-token")
                       ? "bg-white text-black"
                       : "text-gray-400"
@@ -799,7 +864,7 @@ export default function NavigationTabs({
                 {can("/dev/ohlc-labels") ? (
                 <Link
                   href="/dev/ohlc-labels"
-                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg ${navChromeItem} ${
                     isActive("/dev/ohlc-labels")
                       ? "bg-white text-black"
                       : "text-gray-400"
@@ -812,7 +877,7 @@ export default function NavigationTabs({
                 {can("/dev/arbitrage") ? (
                 <Link
                   href="/dev/arbitrage"
-                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg ${navChromeItem} ${
                     isActive("/dev/arbitrage")
                       ? "bg-white text-black"
                       : "text-gray-400"

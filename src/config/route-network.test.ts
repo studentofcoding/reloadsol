@@ -39,12 +39,14 @@ describe('routeSupportsNetwork', () => {
     expect(routeSupportsNetwork('/dev/fomo', 'robinhood')).toBe(true)
     expect(routeSupportsNetwork('/dev/token-search', 'robinhood')).toBe(true)
     expect(routeSupportsNetwork('/dev/search-token', 'robinhood')).toBe(true)
+    expect(routeSupportsNetwork('/dev/insight', 'robinhood')).toBe(true)
     expect(routeSupportsNetwork('/dev/arbitrage', 'robinhood')).toBe(false)
   })
 
   it('allows sol everywhere in registry', () => {
     expect(routeSupportsNetwork('/swap', 'sol')).toBe(true)
     expect(routeSupportsNetwork('/dev/signals', 'sol')).toBe(true)
+    expect(routeSupportsNetwork('/dev/insight', 'sol')).toBe(true)
     expect(routeSupportsNetwork('/dev/dlmm', 'sol')).toBe(true)
     expect(routeSupportsNetwork('/buy', 'sol')).toBe(true)
   })

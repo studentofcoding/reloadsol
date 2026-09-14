@@ -1,50 +1,103 @@
 'use client';
 
 import { useClimateDisplay, type ClimateChipLabel } from '@/hooks/useClimateDisplay';
+import { formatClimateRegimeDetail } from '@/utils/climateDisplay';
 
-const CHIP_CLASS: Record<ClimateChipLabel, string> = {
-  Safe: 'border-emerald-400/35 bg-emerald-500/10 text-emerald-200',
-  'Not safe': 'border-amber-400/50 bg-amber-500/15 text-amber-200',
-  Unknown: 'border-white/20 bg-white/5 text-gray-400',
+const CHIP_TONE_LIGHT: Record<ClimateChipLabel, string> = {
+  Safe: 'bg-emerald-600/15 text-emerald-800 shadow-[0_0_0_1px_rgba(6,95,70,0.22)]',
+  'Not safe': 'bg-amber-500/20 text-amber-900 shadow-[0_0_0_1px_rgba(146,64,14,0.28)]',
+  Unknown: 'bg-black/[0.05] text-neutral-600 shadow-[0_0_0_1px_rgba(0,0,0,0.08)]',
 };
 
-function formatH(h: number | null | undefined): string | null {
-  if (typeof h !== 'number' || !Number.isFinite(h)) return null;
-  return `H ${h.toFixed(2)}`;
+const CHIP_TONE_DARK: Record<ClimateChipLabel, string> = {
+  Safe: 'bg-emerald-500/10 text-emerald-200 shadow-[0_0_0_1px_oklch(0.76_0.14_155_/_0.35)]',
+  'Not safe': 'bg-amber-500/15 text-amber-200 shadow-[0_0_0_1px_oklch(0.84_0.14_75_/_0.5)]',
+  Unknown: 'bg-white/5 text-gray-400 shadow-elev',
+};
+
+function ClimateDot({ label }: { label: ClimateChipLabel }) {
+  const filled = label !== 'Unknown';
+  return (
+    <span className="mt-0.5 inline-flex size-1.5 shrink-0" aria-hidden>
+      <span
+        className={`block size-1.5 rounded-full ${
+          filled ? 'bg-current' : 'bg-transparent shadow-[0_0_0_1px_currentColor]'
+        }`}
+      />
+    </span>
+  );
+}
+
+export function ClimateChipView({
+  label,
+  subtitle,
+  isPending = false,
+  title,
+  ariaLabel,
+  layout = 'header',
+}: {
+  label: ClimateChipLabel
+  subtitle: string | null
+  isPending?: boolean
+  title?: string
+  ariaLabel?: string
+  layout?: 'header' | 'inline'
+}) {
+  const compact = layout === 'header'
+  const tone = compact ? CHIP_TONE_LIGHT : CHIP_TONE_DARK
+  return (
+    <div
+      className={`flex shrink-0 items-start gap-1.5 rounded-full px-2 py-0.5 leading-tight md:px-2.5 md:py-1 ${
+        compact ? 'max-w-[7.5rem] md:max-w-none' : ''
+      } ${tone[label]} ${
+        isPending ? 'opacity-70' : 'opacity-100'
+      } transition-[opacity,box-shadow,background-color,color] duration-150 ease-out-strong motion-reduce:transition-[opacity,background-color,color]`}
+      title={title}
+      role="status"
+      aria-live="polite"
+      aria-label={ariaLabel ?? label}
+    >
+      <ClimateDot label={label} />
+      <span className="flex min-w-0 flex-col items-start">
+        <span className="whitespace-nowrap text-[10px] font-semibold tracking-[0.02em] md:text-xs md:tracking-normal">
+          {label}
+        </span>
+        {subtitle ? (
+          <span
+            className={`whitespace-nowrap text-[9px] tabular-nums tracking-[0.01em] opacity-75 md:text-[10px] ${
+              compact ? 'hidden sm:block' : ''
+            }`}
+          >
+            {subtitle}
+          </span>
+        ) : null}
+      </span>
+    </div>
+  )
 }
 
 export default function ClimateChip() {
   const { data, isPending, isError } = useClimateDisplay();
   const label: ClimateChipLabel =
     isError || !data ? 'Unknown' : data.label;
-  const state = data?.state ?? undefined;
-  const hLabel = formatH(data?.h);
-  const subtitle = [state, hLabel].filter(Boolean).join(' · ');
+  const subtitle = formatClimateRegimeDetail({
+    state: data?.state,
+    h: data?.h,
+  });
   const tip =
     label === 'Unknown'
       ? 'Regime climate unknown (fetch failed or stale). Display only — does not block trades.'
       : label === 'Not safe'
-        ? `Regime climate: Not safe${subtitle ? ` (${subtitle})` : ''}. Display only — does not block trades.`
-        : `Regime climate: Safe${subtitle ? ` (${subtitle})` : ''}. Display only.`;
+        ? `Not safe${subtitle ? ` (${subtitle})` : ''}. Display only — does not block trades.`
+        : `Safe${subtitle ? ` (${subtitle})` : ''}. Display only.`;
 
   return (
-    <div
-      className={`flex shrink-0 max-w-[7.5rem] flex-col items-end rounded-full border px-2 py-0.5 leading-tight md:max-w-none md:px-3 md:py-1 ${CHIP_CLASS[label]} ${
-        isPending ? 'opacity-70' : ''
-      }`}
+    <ClimateChipView
+      label={label}
+      subtitle={subtitle}
+      isPending={isPending}
       title={tip}
-      role="status"
-      aria-live="polite"
-      aria-label={`Regime climate: ${label}`}
-    >
-      <span className="whitespace-nowrap text-[10px] font-semibold md:text-xs">
-        {label}
-      </span>
-      {subtitle ? (
-        <span className="hidden whitespace-nowrap text-[9px] opacity-70 sm:block md:text-[10px]">
-          {subtitle}
-        </span>
-      ) : null}
-    </div>
+      ariaLabel={subtitle ? `${label}, ${subtitle}` : label}
+    />
   );
 }
