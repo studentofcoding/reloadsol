@@ -23,6 +23,7 @@ const Header: FC<HeaderProps> = ({ onOpenDailyStreak }) => {
   const brandHref =
     connectedSellPath(Boolean(walletAddress), Boolean(rh.address), network) ??
     '/';
+  const walletConnected = Boolean(walletAddress) || Boolean(rh.address);
 
   return (
     <header className="w-full border-b border-white/30 backdrop-blur-sm bg-black/80 relative z-40">
@@ -46,7 +47,7 @@ const Header: FC<HeaderProps> = ({ onOpenDailyStreak }) => {
               </span>
             </button>
           )}
-          <ClimateChip />
+          {walletConnected ? <ClimateChip /> : null}
           <UniversalWalletButton />
         </div>
       </div>

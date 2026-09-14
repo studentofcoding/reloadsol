@@ -48,11 +48,23 @@ Wired paths:
 
 ## Header chip (display-only)
 
-ReloadSOL Header always shows a **binary** climate chip (Safe / Not safe / Unknown)
-by polling `GET /api/regime/climate` (~30s). That BFF calls `fetchClimate` even when
-`CLIMATE_GATE` is off. It does **not** apply the gate, does **not** enable
-`CLIMATE_GATE_LIVE`, and must **not** hard-disable trade controls (amber/gray tip
-only). Mapping: [`src/utils/climateDisplay.ts`](../src/utils/climateDisplay.ts).
+ReloadSOL Header shows a climate chip **only while a wallet is connected**
+(Solana `useWalletAddress` or Robinhood `useRhEvmWallet` — same Header connect
+detection as the brand link). Logged-out users see Connect Wallet only.
+
+The chip polls `GET /api/regime/climate` (~30s). That BFF calls `fetchClimate`
+even when `CLIMATE_GATE` is off. It does **not** apply the gate, does **not**
+enable `CLIMATE_GATE_LIVE`, and must **not** hard-disable trade controls.
+Binary mapping: [`src/utils/climateDisplay.ts`](../src/utils/climateDisplay.ts).
+Visible copy: [`src/utils/climateChipCopy.ts`](../src/utils/climateChipCopy.ts).
+
+| Binary | Visible | Tone |
+|---|---|---|
+| **Not safe** | `Caution` | amber/red; tip: cut exposure / cascade risk; trading still allowed |
+| **Safe** | `Regime OK` | muted green; optional quiet state name |
+| **Unknown** | `Regime …` | gray/neutral; no warning vibe |
+
+Binary mapping is unchanged:
 
 | Label | When |
 |---|---|

@@ -1,31 +1,35 @@
 'use client';
 
 import { useClimateDisplay, type ClimateChipLabel } from '@/hooks/useClimateDisplay';
+import {
+  climateChipHeadline,
+  climateChipSubtitle,
+  climateChipTip,
+} from '@/utils/climateChipCopy';
 
 const CHIP_CLASS: Record<ClimateChipLabel, string> = {
-  Safe: 'border-emerald-400/35 bg-emerald-500/10 text-emerald-200',
-  'Not safe': 'border-amber-400/50 bg-amber-500/15 text-amber-200',
-  Unknown: 'border-white/20 bg-white/5 text-gray-400',
+  Safe: 'border-emerald-400/20 bg-emerald-500/5 text-emerald-300/80',
+  'Not safe': 'border-amber-500/70 bg-amber-500/20 text-amber-100',
+  Unknown: 'border-white/10 bg-transparent text-gray-500',
 };
-
-function formatH(h: number | null | undefined): string | null {
-  if (typeof h !== 'number' || !Number.isFinite(h)) return null;
-  return `H ${h.toFixed(2)}`;
-}
 
 export default function ClimateChip() {
   const { data, isPending, isError } = useClimateDisplay();
   const label: ClimateChipLabel =
     isError || !data ? 'Unknown' : data.label;
-  const state = data?.state ?? undefined;
-  const hLabel = formatH(data?.h);
-  const subtitle = [state, hLabel].filter(Boolean).join(' · ');
-  const tip =
-    label === 'Unknown'
-      ? 'Regime climate unknown (fetch failed or stale). Display only — does not block trades.'
-      : label === 'Not safe'
-        ? `Regime climate: Not safe${subtitle ? ` (${subtitle})` : ''}. Display only — does not block trades.`
-        : `Regime climate: Safe${subtitle ? ` (${subtitle})` : ''}. Display only.`;
+  const headline = climateChipHeadline(label);
+  const subtitle = climateChipSubtitle({
+    label,
+    state: data?.state,
+    h: data?.h,
+  });
+  const tip = climateChipTip({
+    label,
+    state: data?.state,
+    cascadeVeto: data?.cascadeVeto,
+  });
+  const weight =
+    label === 'Not safe' ? 'font-semibold' : 'font-medium';
 
   return (
     <div
@@ -35,13 +39,13 @@ export default function ClimateChip() {
       title={tip}
       role="status"
       aria-live="polite"
-      aria-label={`Regime climate: ${label}`}
+      aria-label={tip}
     >
-      <span className="whitespace-nowrap text-[10px] font-semibold md:text-xs">
-        {label}
+      <span className={`whitespace-nowrap text-[10px] md:text-xs ${weight}`}>
+        {headline}
       </span>
       {subtitle ? (
-        <span className="hidden whitespace-nowrap text-[9px] opacity-70 sm:block md:text-[10px]">
+        <span className="hidden whitespace-nowrap text-[9px] opacity-60 sm:block md:text-[10px]">
           {subtitle}
         </span>
       ) : null}
