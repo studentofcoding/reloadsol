@@ -258,7 +258,14 @@ describe('climate gate on paper action', () => {
     const blocked = buildScoutBffResponse({
       chain: 'all',
       rows: [row()],
-      meta: body,
+      meta: {
+        generatedAt: 1_000,
+        solDelayMin: 15,
+        windowH: 24,
+        page: 1,
+        pages: 1,
+        upstreamCounts: { rows: 1 },
+      },
       climateAtEmit: { ...climateAtEmit, label: 'Not safe' },
     })
     expect(blocked.paperAllowed).toBe(false)

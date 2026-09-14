@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse, connection } from 'next/server'
-import { toClimateChipPayload } from '@/utils/climateDisplay'
+import { toClimateChipPayload, type ClimateChipLabel } from '@/utils/climateDisplay'
 import { fetchClimate } from '@/utils/climateGate'
 import {
   BUYBULK_DATAPUBLIC_SCOUT_ID,
@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  let climateLabel: string = 'Unknown'
+  let climateLabel: ClimateChipLabel = 'Unknown'
   let climateState: string | null = null
   try {
     const gate = await fetchClimate({ failClosed: false, now })
