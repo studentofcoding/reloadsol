@@ -3,6 +3,8 @@
 import { OptimizedImage } from "@/components/OptimizedImage";
 import React, { useState, useCallback, useEffect, useRef, useMemo, useDeferredValue } from "react";
 import Link from "next/link";
+import { ChevronGlyph } from "@/components/insight/InsightIcons";
+import { insightLink } from "@/components/insight/insight-ui";
 import { tokenSearchDetailHref } from "@/components/signals/shared/token-search-href";
 import { useSearchParams } from "next/navigation";
 import {
@@ -1864,11 +1866,9 @@ export default function BulkTokenBuyer() {
           {isDevUser ? (
             <p className="text-xs text-gray-400">
               Data-public scout moved to{" "}
-              <Link
-                href="/dev/insight"
-                className="text-sky-300 hover:underline"
-              >
+              <Link href="/dev/insight" className={insightLink}>
                 /dev/insight
+                <ChevronGlyph className="size-3.5 translate-x-px" />
               </Link>
               {effectiveChain === "robinhood" ? " (RH scout)" : " (Sol scout + roster digger)"}.
             </p>

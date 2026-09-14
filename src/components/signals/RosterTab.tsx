@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import InsightPressButton from "@/components/insight/InsightPressButton";
 
 type HitToken = {
   token_address: string;
@@ -249,7 +250,7 @@ export default function RosterTab() {
   return (
     <div className="space-y-8 text-sm text-gray-200">
       {error && (
-        <div className="rounded border border-red-800 bg-red-950/40 px-3 py-2 text-red-300">
+        <div className="rounded-xl bg-red-950/40 px-3 py-2 text-red-300 shadow-[0_0_0_1px_oklch(0.63_0.2_25_/_0.45)]">
           {error}
         </div>
       )}
@@ -258,8 +259,7 @@ export default function RosterTab() {
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-base font-semibold text-white">Needs follow</h2>
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
+            <InsightPressButton
               disabled={emptyQueue}
               onClick={() =>
                 void copy(
@@ -267,12 +267,11 @@ export default function RosterTab() {
                   `Copied ${needsFollow.length} wallets (text)`,
                 )
               }
-              className="rounded bg-gray-800 px-3 py-1 text-xs text-gray-300 hover:bg-gray-700 disabled:opacity-40"
+              className="rounded-lg bg-gray-800 px-3 py-1 text-xs text-gray-300 disabled:opacity-40 fine-hover:bg-gray-700"
             >
               Export text
-            </button>
-            <button
-              type="button"
+            </InsightPressButton>
+            <InsightPressButton
               disabled={emptyQueue}
               onClick={() =>
                 void copy(
@@ -280,17 +279,16 @@ export default function RosterTab() {
                   `Copied ${needsFollow.length} wallets (JSON)`,
                 )
               }
-              className="rounded bg-gray-800 px-3 py-1 text-xs text-gray-300 hover:bg-gray-700 disabled:opacity-40"
+              className="rounded-lg bg-gray-800 px-3 py-1 text-xs text-gray-300 disabled:opacity-40 fine-hover:bg-gray-700"
             >
               Export JSON
-            </button>
-            <button
-              type="button"
+            </InsightPressButton>
+            <InsightPressButton
               onClick={() => void rosterQuery.refetch()}
-              className="rounded bg-gray-800 px-3 py-1 text-xs text-gray-300 hover:bg-gray-700"
+              className="rounded-lg bg-gray-800 px-3 py-1 text-xs text-gray-300 fine-hover:bg-gray-700"
             >
               Refresh
-            </button>
+            </InsightPressButton>
           </div>
         </div>
         <p className="mb-3 text-xs text-gray-500">
@@ -303,7 +301,7 @@ export default function RosterTab() {
         {emptyQueue ? (
           <p className="text-gray-500">Queue empty.</p>
         ) : (
-          <ul className="divide-y divide-gray-800 rounded border border-gray-800">
+          <ul className="divide-y divide-white/10 rounded-xl shadow-elev">
             {needsFollow.map((row) => (
               <li
                 key={row.address}
@@ -313,7 +311,7 @@ export default function RosterTab() {
                   href={gmgnWalletUrl(row.address)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="font-mono text-xs text-amber-200 underline-offset-2 hover:underline"
+                  className="font-mono text-xs text-amber-200 underline-offset-2 fine-hover:underline"
                   title={row.address}
                 >
                   {shortAddr(row.address)}
@@ -329,31 +327,28 @@ export default function RosterTab() {
                     {row.runner_hits}
                   </HoverTip>
                 </span>
-                <button
-                  type="button"
-                  className="rounded bg-gray-800 px-2 py-0.5 text-xs"
+                <InsightPressButton
+                  className="rounded-md bg-gray-800 px-2 py-0.5 text-xs fine-hover:bg-gray-700"
                   onClick={() => void copy(row.address)}
                 >
                   Copy
-                </button>
-                <button
-                  type="button"
+                </InsightPressButton>
+                <InsightPressButton
                   disabled={busy === row.address}
-                  className="rounded bg-emerald-800 px-2 py-0.5 text-xs text-white disabled:opacity-50"
+                  className="rounded-md bg-emerald-800 px-2 py-0.5 text-xs text-white disabled:opacity-50"
                   onClick={() =>
                     void patch(row.address, { follow_status: "followed" })
                   }
                 >
                   Mark followed
-                </button>
-                <button
-                  type="button"
+                </InsightPressButton>
+                <InsightPressButton
                   disabled={busy === row.address}
-                  className="rounded bg-red-900/60 px-2 py-0.5 text-xs text-red-200 disabled:opacity-50"
+                  className="rounded-md bg-red-900/60 px-2 py-0.5 text-xs text-red-200 disabled:opacity-50"
                   onClick={() => void patch(row.address, { status: "banned" })}
                 >
                   Ban
-                </button>
+                </InsightPressButton>
               </li>
             ))}
           </ul>
@@ -364,7 +359,7 @@ export default function RosterTab() {
         <h2 className="mb-2 text-base font-semibold text-white">
           Active / followed roster
         </h2>
-        <div className="overflow-x-auto overflow-y-visible rounded border border-gray-800">
+        <div className="overflow-x-auto overflow-y-visible rounded-xl shadow-elev">
           <table className="min-w-full text-left text-xs">
             <thead className="bg-gray-900 text-gray-400">
               <tr>
@@ -386,7 +381,7 @@ export default function RosterTab() {
                         href={gmgnWalletUrl(row.address)}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="underline-offset-2 hover:underline"
+                        className="underline-offset-2 fine-hover:underline"
                         title={row.address}
                       >
                         {shortAddr(row.address)}
@@ -436,7 +431,7 @@ export default function RosterTab() {
         {signals.length === 0 ? (
           <p className="text-gray-500">No signals yet.</p>
         ) : (
-          <ul className="divide-y divide-gray-800 rounded border border-gray-800">
+          <ul className="divide-y divide-white/10 rounded-xl shadow-elev">
             {signals.map((s) => (
               <li key={s.id} className="px-3 py-2 text-xs">
                 <div className="font-medium text-white">
@@ -444,7 +439,7 @@ export default function RosterTab() {
                     href={gmgnTokenUrl(s.token_address, s.chain)}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="underline-offset-2 hover:underline"
+                        className="underline-offset-2 fine-hover:underline"
                   >
                     {s.symbol || shortAddr(s.token_address)}
                   </a>
