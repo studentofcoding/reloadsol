@@ -35,7 +35,7 @@ Sol rows are delayed ≥15 minutes (`solDelayMin` from the feed). The strip show
 ## Out of scope
 
 - Live `executeBulkBuy` / live swap from this feed
-- rh-tape Worker changes / `processFill` / `rhtape-datapublic-scout`
+- rh-tape-bot-cf / Worker / `processFill` / `rhtape-datapublic-scout` (separate agent)
 - Enabling `CLIMATE_GATE_LIVE`
 - Terminal `/api/chain-volume`
 - Production deploy (VPS Docker — user / parent only)
