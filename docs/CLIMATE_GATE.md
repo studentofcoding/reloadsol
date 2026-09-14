@@ -72,7 +72,7 @@ fetch error must **not** render as Safe/Hype — it is Unknown. Optional subtitl
 | rh-tape-bot-cf | Cloudflare vendored gate (pattern this module mirrors) |
 | **reloadsol (this file)** | DLMM paper/live flag + logging; Header climate chip (display-only BFF) |
 | buy_bulk | Header chip is in this repo; do **not** wire `applyClimateToNewRisk` into Header |
-| S6 observe | Separate; this PR does not wait on it |
+| S6 observe | data-public strip on `/buy` ([DATA_PUBLIC_SCOUT.md](./DATA_PUBLIC_SCOUT.md)): observe always; paper notes only when display label is **Safe**. Does not enable `CLIMATE_GATE_LIVE` or live exec |
 
 ## Ask before live
 
