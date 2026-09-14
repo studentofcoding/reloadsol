@@ -6,7 +6,7 @@ store, routes, or strategy ids.
 | | buy_bulk (this repo) | rh-tape (already shipped) |
 |---|---|---|
 | **Strategy id** | `buybulk-datapublic-scout` | `rhtape-datapublic-scout` |
-| **Surface** | `/buy` observe strip + `GET /api/scout/data-public` | rh-tape Worker |
+| **Surface** | `/buy` observe strip + `GET /api/scout/data-public` | Worker UI [rh-tape-bot `?v=3`](https://rh-tape-bot.yonathanevanchristy.workers.dev/?v=3) — **other repo / other agent** |
 | **Notch store** | `localStorage` key `reloadsol:buybulk-datapublic-scout:paper-notches` | rh-tape's own store — do not reuse |
 | **Routes** | `/api/scout/data-public` only | rh-tape routes — do not reuse |
 | **Live exec** | Never | rh-tape `processFill` — **do not couple** |
@@ -44,7 +44,7 @@ filters, paper rules, or become a live-exec exception.
 
 ## Out of scope
 
-- rh-tape Worker changes
+- **rh-tape-bot-cf** (Worker at `https://rh-tape-bot.yonathanevanchristy.workers.dev/?v=3`). Wire that surface in a separate PR/agent. This reloadsol PR must not change that repo.
 - `CLIMATE_GATE_LIVE`
 - Terminal `/api/chain-volume`
 - Production deploy (VPS Docker — user / parent only)
