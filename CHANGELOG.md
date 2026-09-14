@@ -8,6 +8,25 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — data-public observe + paper-sim on buy_bulk
+
+- BFF `GET /api/scout/data-public?chain=all|robinhood|solana` proxies the public
+  research feed, applies the same filters on RH and Sol, and attaches
+  `climateAtEmit`. Client never talks to data-public directly.
+- Buy-bulk **Observe · data-public** strip lists filtered candidates (tabs +
+  chain badge), with study/research disclaimer and Sol ≥15m delay note.
+- **Paper note** is a Postgres row in `strategy_paper_notches` (strategy id
+  `buybulk-datapublic-scout`). It records when climate display is **Safe**
+  (enforced on `POST /api/scout/data-public/paper`); Not safe / Unknown keeps
+  the list visible and disables the button. Never calls `executeBulkBuy` /
+  live swap. localStorage is cache only. Migration:
+  `db/init/31-buybulk-datapublic-scout-notches.sql`.
+- Strategy id **`buybulk-datapublic-scout`** — not shared with rh-tape
+  (`rhtape-datapublic-scout`): separate notch store, route, and id. Docs:
+  [docs/STRATEGY_SCOUT.md](docs/STRATEGY_SCOUT.md),
+  [docs/DATA_PUBLIC_SCOUT.md](docs/DATA_PUBLIC_SCOUT.md).
+- Helpers: `data-public-scout.ts`, `paper-notch-store.ts`, `buybulk-datapublic-scout-notches.ts`.
+
 ### Added — Full `/sell` can reload into one custom token
 
 - Full seller (`/sell`) keeps native SOL/ETH as the default output and adds a

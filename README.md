@@ -64,6 +64,8 @@ Condensed entry points (5 categories + diagrams hub):
 | [docs/04-machine-learning.md](docs/04-machine-learning.md) | ML pipeline, artifacts, shadow-vs-enforce |
 | [docs/05-operations-and-deployment.md](docs/05-operations-and-deployment.md) | Env keys, Docker stack, deploy runbook, ops |
 | [docs/CLIMATE_GATE.md](docs/CLIMATE_GATE.md) | Optional S5 DLMM paper climate gate (default off; ask before live) |
+| [docs/DATA_PUBLIC_SCOUT.md](docs/DATA_PUBLIC_SCOUT.md) | Buy-bulk data-public observe + Safe-gated paper notes (no live exec) |
+| [docs/STRATEGY_SCOUT.md](docs/STRATEGY_SCOUT.md) | `buybulk-datapublic-scout` vs `rhtape-datapublic-scout` (separate) |
 | [handoff.md](handoff.md) | Session handoff — Pattern ML focus, ops checklist |
 
 Diagrams: [`docs/diagrams/`](docs/diagrams/) (trading surfaces, confirmation lifecycle,
@@ -231,6 +233,7 @@ Copy from [`.env.docker.example`](.env.docker.example). Key groups:
 | `DLMM_API_PASSWORD` | — | Password for dashboard config changes |
 | `CLIMATE_GATE` | off | `1` enables paper/dry-run climate sizing on DLMM opens ([docs/CLIMATE_GATE.md](docs/CLIMATE_GATE.md)) |
 | `CLIMATE_GATE_LIVE` | off | `1` also gates live (`dry_run=false`) — **ask before enabling** |
+| `DATA_PUBLIC_FEED_URL` | public feed | Optional override for the buy-bulk observe BFF ([docs/DATA_PUBLIC_SCOUT.md](docs/DATA_PUBLIC_SCOUT.md)); no secrets |
 | `TRADING_KEYPAIR_JSON` | — | `[1,2,3,...]` array for live trading |
 
 ### Telegram (optional)
@@ -294,7 +297,7 @@ DLMM_DRY_RUN=true
 # CLIMATE_GATE=1
 ```
 
-Regime climate (`GET https://terminal.reloadsol.app/api/regime/climate`) can scale or block **new** DLMM risk when `CLIMATE_GATE=1`. Kill switch / capital caps still win. Details: [docs/CLIMATE_GATE.md](docs/CLIMATE_GATE.md).
+Regime climate (`GET https://terminal.reloadsol.app/api/regime/climate`) can scale or block **new** DLMM risk when `CLIMATE_GATE=1`. Kill switch / capital caps still win. Details: [docs/CLIMATE_GATE.md](docs/CLIMATE_GATE.md). Buy-bulk observe (`GET /api/scout/data-public`) uses the Header climate **display** label only to allow paper notes when Safe — it does not enable live climate force.
 
 Check status: `GET /api/dlmm/health` · Config: `GET /api/dlmm/config`
 
