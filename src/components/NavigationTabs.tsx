@@ -11,7 +11,7 @@ import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import { routeSupportsNetwork } from "@/config/route-network";
 import { useIsClient } from "@/hooks/useIsClient";
 import { useIsMobile } from "@/hooks/useIsMobile";
-import { navMobileBar, navSticky } from "@/components/insight/insight-ui";
+import { navChromeItem, navMobileBar, navSticky } from "@/components/insight/insight-ui";
 
 export default function NavigationTabs({
   activeOverlayTab,
@@ -77,7 +77,7 @@ export default function NavigationTabs({
                 {can("/sell") ? (
                 <Link
                   href="/sell"
-                  className={`px-3 py-3 rounded-lg font-semibold origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+                  className={`px-3 py-3 rounded-lg font-semibold ${navChromeItem} ${
                     isActive("/sell")
                       ? "tab-active"
                       : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-700"
@@ -105,7 +105,7 @@ export default function NavigationTabs({
                 {can("/buy") ? (
                 <Link
                   href="/buy"
-                  className={`px-3 py-3 rounded-lg font-semibold origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+                  className={`px-3 py-3 rounded-lg font-semibold ${navChromeItem} ${
                     isActive("/buy")
                       ? "tab-active"
                       : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-700"
@@ -133,7 +133,7 @@ export default function NavigationTabs({
                 {can("/swap") ? (
                 <Link
                   href="/swap"
-                  className={`px-3 py-3 rounded-lg font-semibold origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+                  className={`px-3 py-3 rounded-lg font-semibold ${navChromeItem} ${
                     isActive("/swap")
                       ? "tab-active"
                       : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-700"
@@ -161,7 +161,7 @@ export default function NavigationTabs({
                 {can("/dev/search-token") ? (
                 <Link
                   href="/dev/search-token"
-                  className={`px-3 py-3 rounded-lg font-semibold origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+                  className={`px-3 py-3 rounded-lg font-semibold ${navChromeItem} ${
                     isActive("/dev/search-token")
                       ? "tab-active"
                       : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-700"
@@ -191,7 +191,7 @@ export default function NavigationTabs({
                     {can("/dev/insight") ? (
                     <Link
                       href="/dev/insight"
-                      className={`px-4 py-3 ml-1 rounded-lg font-medium origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
                         isActive("/dev/insight")
                           ? "bg-gray-700 text-white"
                           : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
@@ -223,7 +223,7 @@ export default function NavigationTabs({
                     {can("/dev/signals") ? (
                     <Link
                       href="/dev/signals"
-                      className={`px-4 py-3 ml-1 rounded-lg font-medium origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
                         isActive("/dev/signals")
                           ? "bg-gray-700 text-white"
                           : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
@@ -249,7 +249,7 @@ export default function NavigationTabs({
                     {can("/dev/algo-tester") ? (
                     <Link
                       href="/dev/algo-tester"
-                      className={`px-4 py-3 ml-1 rounded-lg font-medium origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
                         isActive("/dev/algo-tester")
                           ? "bg-gray-700 text-white"
                           : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
@@ -275,7 +275,7 @@ export default function NavigationTabs({
                     {can("/dev/dlmm") ? (
                     <Link
                       href="/dev/dlmm"
-                      className={`px-4 py-3 ml-1 rounded-lg font-medium origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
                         isActive("/dev/dlmm")
                           ? "bg-gray-700 text-white"
                           : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
@@ -301,7 +301,7 @@ export default function NavigationTabs({
                     {can("/dev/social") ? (
                     <Link
                       href="/dev/social"
-                      className={`px-4 py-3 ml-1 rounded-lg font-medium origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
                         isActive("/dev/social")
                           ? "bg-gray-700 text-white"
                           : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
@@ -327,7 +327,7 @@ export default function NavigationTabs({
                     {can("/dev/fomo") ? (
                     <Link
                       href="/dev/fomo"
-                      className={`px-4 py-3 ml-1 rounded-lg font-medium origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
                         isActive("/dev/fomo")
                           ? "bg-gray-700 text-white"
                           : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
@@ -341,7 +341,7 @@ export default function NavigationTabs({
                     {can("/dev/strategies") ? (
                     <Link
                       href="/dev/strategies"
-                      className={`px-4 py-3 ml-1 rounded-lg font-medium origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
                         isActive("/dev/strategies")
                           ? "bg-gray-700 text-white"
                           : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
@@ -373,7 +373,7 @@ export default function NavigationTabs({
                     {can("/dev/search-token") ? (
                     <Link
                       href="/dev/search-token"
-                      className={`px-4 py-3 ml-1 rounded-lg font-medium origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
                         isActive("/dev/search-token")
                           ? "bg-gray-700 text-white"
                           : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
@@ -399,7 +399,7 @@ export default function NavigationTabs({
                     {can("/dev/ohlc-labels") ? (
                     <Link
                       href="/dev/ohlc-labels"
-                      className={`px-4 py-3 ml-1 rounded-lg font-medium origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
                         isActive("/dev/ohlc-labels")
                           ? "bg-gray-700 text-white"
                           : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
@@ -412,7 +412,7 @@ export default function NavigationTabs({
                     {can("/dev/arbitrage") ? (
                     <Link
                       href="/dev/arbitrage"
-                      className={`px-4 py-3 ml-1 rounded-lg font-medium origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
                         isActive("/dev/arbitrage")
                           ? "bg-gray-700 text-white"
                           : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
@@ -432,7 +432,7 @@ export default function NavigationTabs({
               <button
                 type="button"
                 onClick={() => handleTabClick("history")}
-                className={`px-4 py-3 rounded-lg font-medium origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+                className={`px-4 py-3 rounded-lg font-medium ${navChromeItem} ${
                   isActive("history")
                     ? "bg-gray-700 text-white"
                     : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
@@ -457,7 +457,7 @@ export default function NavigationTabs({
               <button
                 type="button"
                 onClick={() => handleTabClick("pnl")}
-                className={`px-4 py-3 ml-1 rounded-lg font-medium origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+                className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
                   isActive("pnl")
                     ? "bg-gray-700 text-white"
                     : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
@@ -507,7 +507,7 @@ export default function NavigationTabs({
             <button
               type="button"
               onClick={() => handleTabClick("history")}
-              className={`p-2 rounded-lg origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+              className={`p-2 rounded-lg ${navChromeItem} ${
                 isActive("history")
                   ? "bg-gray-700 text-white"
                   : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
@@ -531,7 +531,7 @@ export default function NavigationTabs({
             <button
               type="button"
               onClick={() => handleTabClick("pnl")}
-              className={`p-2 rounded-lg origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+              className={`p-2 rounded-lg ${navChromeItem} ${
                 isActive("pnl")
                   ? "bg-gray-700 text-white"
                   : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
@@ -564,7 +564,7 @@ export default function NavigationTabs({
             {can("/sell") ? (
             <Link
               href="/sell"
-              className={`flex shrink-0 flex-col items-center px-4 py-2 rounded-lg origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+              className={`flex shrink-0 flex-col items-center px-4 py-2 rounded-lg ${navChromeItem} ${
                 isActive("/sell") ? "tab-active" : "text-gray-400"
               }`}
             >
@@ -590,7 +590,7 @@ export default function NavigationTabs({
             {can("/buy") ? (
             <Link
               href="/buy"
-              className={`flex shrink-0 flex-col items-center px-4 py-2 rounded-lg origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+              className={`flex shrink-0 flex-col items-center px-4 py-2 rounded-lg ${navChromeItem} ${
                 isActive("/buy") ? "tab-active" : "text-gray-400"
               }`}
             >
@@ -614,7 +614,7 @@ export default function NavigationTabs({
             {can("/swap") ? (
             <Link
               href="/swap"
-              className={`flex shrink-0 flex-col items-center px-4 py-2 rounded-lg origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+              className={`flex shrink-0 flex-col items-center px-4 py-2 rounded-lg ${navChromeItem} ${
                 isActive("/swap") ? "tab-active" : "text-gray-400"
               }`}
             >
@@ -638,7 +638,7 @@ export default function NavigationTabs({
             {can("/dev/search-token") ? (
             <Link
               href="/dev/search-token"
-              className={`flex shrink-0 flex-col items-center px-4 py-2 rounded-lg origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+              className={`flex shrink-0 flex-col items-center px-4 py-2 rounded-lg ${navChromeItem} ${
                 isActive("/dev/search-token") ? "tab-active" : "text-gray-400"
               }`}
             >
@@ -664,7 +664,7 @@ export default function NavigationTabs({
                 {can("/dev/insight") ? (
                 <Link
                   href="/dev/insight"
-                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg ${navChromeItem} ${
                     isActive("/dev/insight")
                       ? "bg-white text-black"
                       : "text-gray-400"
@@ -695,7 +695,7 @@ export default function NavigationTabs({
                 {can("/dev/signals") ? (
                 <Link
                   href="/dev/signals"
-                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg ${navChromeItem} ${
                     isActive("/dev/signals")
                       ? "bg-white text-black"
                       : "text-gray-400"
@@ -720,7 +720,7 @@ export default function NavigationTabs({
                 {can("/dev/algo-tester") ? (
                 <Link
                   href="/dev/algo-tester"
-                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg ${navChromeItem} ${
                     isActive("/dev/algo-tester")
                       ? "bg-white text-black"
                       : "text-gray-400"
@@ -745,7 +745,7 @@ export default function NavigationTabs({
                 {can("/dev/dlmm") ? (
                 <Link
                   href="/dev/dlmm"
-                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg ${navChromeItem} ${
                     isActive("/dev/dlmm")
                       ? "bg-white text-black"
                       : "text-gray-400"
@@ -770,7 +770,7 @@ export default function NavigationTabs({
                 {can("/dev/social") ? (
                 <Link
                   href="/dev/social"
-                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg ${navChromeItem} ${
                     isActive("/dev/social")
                       ? "bg-white text-black"
                       : "text-gray-400"
@@ -795,7 +795,7 @@ export default function NavigationTabs({
                 {can("/dev/fomo") ? (
                 <Link
                   href="/dev/fomo"
-                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg ${navChromeItem} ${
                     isActive("/dev/fomo")
                       ? "bg-white text-black"
                       : "text-gray-400"
@@ -808,7 +808,7 @@ export default function NavigationTabs({
                 {can("/dev/strategies") ? (
                 <Link
                   href="/dev/strategies"
-                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg ${navChromeItem} ${
                     isActive("/dev/strategies")
                       ? "bg-white text-black"
                       : "text-gray-400"
@@ -839,7 +839,7 @@ export default function NavigationTabs({
                 {can("/dev/search-token") ? (
                 <Link
                   href="/dev/search-token"
-                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg ${navChromeItem} ${
                     isActive("/dev/search-token")
                       ? "bg-white text-black"
                       : "text-gray-400"
@@ -864,7 +864,7 @@ export default function NavigationTabs({
                 {can("/dev/ohlc-labels") ? (
                 <Link
                   href="/dev/ohlc-labels"
-                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg ${navChromeItem} ${
                     isActive("/dev/ohlc-labels")
                       ? "bg-white text-black"
                       : "text-gray-400"
@@ -877,7 +877,7 @@ export default function NavigationTabs({
                 {can("/dev/arbitrage") ? (
                 <Link
                   href="/dev/arbitrage"
-                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg origin-center transition-[transform,background-color,color] duration-150 ease-out-ui active:scale-[0.97] motion-reduce:transition-[background-color,color] motion-reduce:active:scale-100 ${
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg ${navChromeItem} ${
                     isActive("/dev/arbitrage")
                       ? "bg-white text-black"
                       : "text-gray-400"

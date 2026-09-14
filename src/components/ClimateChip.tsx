@@ -51,7 +51,7 @@ export function ClimateChipView({
         compact ? 'max-w-[7.5rem] md:max-w-none' : ''
       } ${tone[label]} ${
         isPending ? 'opacity-70' : 'opacity-100'
-      } transition-[opacity,box-shadow,background-color,color] duration-150 ease-out-ui motion-reduce:transition-[opacity,background-color,color]`}
+      } transition-[opacity,box-shadow,background-color,color] duration-150 ease-out-strong motion-reduce:transition-[opacity,background-color,color]`}
       title={title}
       role="status"
       aria-live="polite"

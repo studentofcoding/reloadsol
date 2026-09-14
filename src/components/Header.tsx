@@ -40,7 +40,7 @@ const Header: FC<HeaderProps> = ({ onOpenDailyStreak }) => {
             <button
               type="button"
               onClick={onOpenDailyStreak}
-              className={`flex items-center gap-1 rounded-full bg-orange-500/15 px-2 py-1 text-xs font-semibold text-orange-800 md:gap-1.5 md:px-3 ${insightPress} fine-hover:bg-orange-500/22`}
+              className={`flex items-center gap-1 rounded-full bg-orange-500/15 py-1 ps-1.5 pe-2 text-xs font-semibold text-orange-800 md:gap-1.5 md:ps-2 md:pe-3 ${insightPress} fine-hover:bg-orange-500/22`}
             >
               <FaFire className="h-3 w-3 text-orange-600 md:h-3.5 md:w-3.5" />
               <span className="tabular-nums">

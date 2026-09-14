@@ -1,4 +1,4 @@
-/** One SVG set, currentColor, stroke tuned to adjacent text weight. */
+/** One SVG set, currentColor. better-ui: stroke 2px next to semibold labels; outline default / fill active. */
 
 export function ChevronGlyph({ className }: { className?: string }) {
   return (

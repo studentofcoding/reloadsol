@@ -23,8 +23,10 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `setNetwork`.
 - Apple HIG polish on insight + Header chrome: floating light Header (blur on
   sticky chrome only), secondary/tertiary content materials, concentric radii,
-  tabular `H x.x` climate chips, named ease-out motion, `fine-hover`,
-  `prefers-reduced-motion` / `prefers-reduced-transparency`.
+  tabular `H x.x` climate chips. Motion tokens follow **better-ui**
+  (`scale(0.96)`, `cubic-bezier(0.2, 0, 0, 1)`, icon 0.25/blur 4px, `fine-hover`)
+  and **emil-design-eng** (`cubic-bezier(0.23, 1, 0.32, 1)` enters, UI <300ms,
+  no `transition:all` / `scale(0)` / `ease-in`).
 
 ### Added — data-public observe + paper-sim on buy_bulk
 

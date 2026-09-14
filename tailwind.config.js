@@ -10,7 +10,9 @@ module.exports = {
   theme: {
     extend: {
       transitionTimingFunction: {
+        /* emil-design-eng --ease-out */
         'out-ui': 'cubic-bezier(0.23, 1, 0.32, 1)',
+        /* better-ui exact press/icon curve */
         'out-strong': 'cubic-bezier(0.2, 0, 0, 1)',
       },
       boxShadow: {

@@ -26,7 +26,9 @@
   --material-chrome: rgba(246, 247, 250, 0.78);
   --material-secondary: rgba(28, 28, 32, 0.92);
   --material-tertiary: rgba(16, 16, 18, 0.72);
+  /* emil-design-eng strong ease-out */
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  /* better-ui exact curve — not interchangeable with --ease-out */
   --ease-out-ui: cubic-bezier(0.2, 0, 0, 1);
 }
 
@@ -205,10 +207,12 @@ dialog[role="dialog"] {
   }
 }
 
+/* better-ui enter-exit: split/stagger ~100ms, y 12px + blur(4px).
+   emil-design-eng: ease-out <300ms, never scale(0). Apple: enter from ≥0.95. */
 @keyframes insight-enter {
   from {
     opacity: 0;
-    transform: translateY(8px) scale(0.97);
+    transform: translateY(12px) scale(0.97);
     filter: blur(4px);
   }
   to {
@@ -230,29 +234,31 @@ dialog[role="dialog"] {
   animation-delay: 200ms;
 }
 
+/* emil @starting-style flash; better-ui exit softer/shorter than enter (−12px / 150ms). */
 .insight-flash {
   opacity: 1;
   transform: translateY(0);
   transition-property: opacity, transform;
-  transition-duration: 180ms;
+  transition-duration: 150ms;
   transition-timing-function: var(--ease-out);
 }
 
 .insight-flash[data-ending] {
   opacity: 0;
-  transform: translateY(-8px);
+  transform: translateY(-12px);
 }
 
 @starting-style {
   .insight-flash {
     opacity: 0;
-    transform: translateY(8px) scale(0.97);
+    transform: translateY(12px) scale(0.97);
   }
 }
 
+/* better-ui icon-transitions: opacity + scale(0.25) + blur(4px), cubic-bezier(0.2, 0, 0, 1). */
 .insight-icon-swap {
   transition-property: opacity, filter, scale;
-  transition-duration: 200ms;
+  transition-duration: 300ms;
   transition-timing-function: var(--ease-out-ui);
 }
 
