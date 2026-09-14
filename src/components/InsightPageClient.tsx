@@ -22,10 +22,10 @@ export default function InsightPageClient() {
   const isSol = network === 'sol'
 
   return (
-    <div className="mx-auto max-w-7xl space-y-8 px-4 py-6">
+    <div className="mx-auto max-w-7xl space-y-10 px-4 py-8">
       <div className={insightEnter}>
-        <h1 className="mb-2 text-2xl font-semibold text-white">Insight</h1>
-        <p className="text-sm text-gray-400">
+        <h1 className="mb-2 text-2xl font-semibold tracking-tight text-white">Insight</h1>
+        <p className="text-sm leading-relaxed text-gray-400">
           Per-network data-public scout plus Solana roster digger. Paper notes stay
           Safe-gated in Postgres — this page never live-executes.
         </p>

@@ -31,7 +31,7 @@ export function InsightNetworkTabs({
             onClick={() => onSelect(tab.id)}
             className={`${insightSegTabBase} ${
               selected
-                ? 'bg-white/10 text-white shadow-elev'
+                ? 'bg-white text-neutral-900 shadow-[0_1px_2px_rgba(0,0,0,0.2)]'
                 : tab.disabled
                   ? 'cursor-not-allowed text-gray-600'
                   : 'text-gray-400 fine-hover:text-gray-200'

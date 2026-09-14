@@ -11,6 +11,15 @@ import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import { useRhEvmWallet } from "@/hooks/useRhEvmWallet";
 import { useDisconnectWallet } from "@/components/WalletProvider";
 import { chainSwitchTarget } from "@/utils/network-switch";
+import {
+  chromeConnect,
+  chromeGhost,
+  chromeNetworkSeg,
+  chromeNetworkTab,
+  chromeNetworkTabOff,
+  chromeNetworkTabOn,
+  insightPress,
+} from "@/components/insight/insight-ui";
 
 /** Path at click time — usePathname here would break static prerender of /chart/[token]. */
 function currentPath(): string {
@@ -20,6 +29,8 @@ function currentPath(): string {
 interface UniversalWalletButtonProps {
   variant?: "default" | "jupiter";
   connectLabel?: string;
+  /** Light Header chrome vs dark in-page controls. Network logic is unchanged. */
+  surface?: "default" | "chrome";
 }
 
 function shortAddr(a: string) {
@@ -29,7 +40,9 @@ function shortAddr(a: string) {
 export default function UniversalWalletButton({
   variant = "default",
   connectLabel = "Connect Wallet",
+  surface = "default",
 }: UniversalWalletButtonProps) {
+  const isChrome = surface === "chrome";
   const { connected, connecting } = useUnifiedWallet();
   const { setShowModal } = useUnifiedWalletContext();
   const rh = useRhEvmWallet();
@@ -59,56 +72,110 @@ export default function UniversalWalletButton({
     );
   }
 
+  const networkToggle = showRhToggle ? (
+    isChrome ? (
+      <div className={chromeNetworkSeg} role="tablist" aria-label="Network">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={network === "sol"}
+          onClick={() => {
+            setNetwork("sol");
+            router.push(chainSwitchTarget(currentPath(), "sol"));
+          }}
+          className={`${chromeNetworkTab} ${
+            network === "sol" ? chromeNetworkTabOn : chromeNetworkTabOff
+          }`}
+        >
+          <span className="md:hidden">Sol</span>
+          <span className="hidden md:inline">Solana</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={network === "robinhood"}
+          onClick={() => {
+            setNetwork("robinhood", { skipCoerce: true });
+            void rh.connect().catch(() => {
+              /* rh.error surfaces below */
+            });
+            router.push(chainSwitchTarget(currentPath(), "robinhood"));
+          }}
+          className={`${chromeNetworkTab} ${
+            network === "robinhood" ? chromeNetworkTabOn : chromeNetworkTabOff
+          }`}
+        >
+          <span className="md:hidden">RH</span>
+          <span className="hidden md:inline">Robinhood</span>
+        </button>
+      </div>
+    ) : (
+      <div className="flex overflow-hidden rounded-lg border border-gray-600 text-xs">
+        <button
+          type="button"
+          onClick={() => {
+            setNetwork("sol");
+            router.push(chainSwitchTarget(currentPath(), "sol"));
+          }}
+          className={`px-2.5 py-1 font-medium ${insightPress} ${
+            network === "sol"
+              ? "bg-white text-black"
+              : "bg-black text-gray-400 fine-hover:text-white"
+          }`}
+        >
+          Solana
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setNetwork("robinhood", { skipCoerce: true });
+            void rh.connect().catch(() => {
+              /* rh.error surfaces below */
+            });
+            router.push(chainSwitchTarget(currentPath(), "robinhood"));
+          }}
+          className={`border-l border-gray-600 px-2.5 py-1 font-medium ${insightPress} ${
+            network === "robinhood"
+              ? "bg-white text-black"
+              : "bg-black text-gray-400 fine-hover:text-white"
+          }`}
+        >
+          Robinhood
+        </button>
+      </div>
+    )
+  ) : null;
+
   return (
-    <div className="inline-flex flex-col items-stretch gap-1.5">
-      {showRhToggle ? (
-        <div className="flex rounded-lg border border-gray-600 overflow-hidden text-xs">
-          <button
-            type="button"
-            onClick={() => {
-              setNetwork("sol");
-              router.push(chainSwitchTarget(currentPath(), "sol"));
-            }}
-            className={`px-2.5 py-1 font-medium ${
-              network === "sol"
-                ? "bg-white text-black"
-                : "bg-black text-gray-400 hover:text-white"
-            }`}
-          >
-            Solana
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setNetwork("robinhood", { skipCoerce: true });
-              void rh.connect().catch(() => {
-                /* rh.error surfaces below */
-              });
-              router.push(chainSwitchTarget(currentPath(), "robinhood"));
-            }}
-            className={`px-2.5 py-1 font-medium border-l border-gray-600 ${
-              network === "robinhood"
-                ? "bg-white text-black"
-                : "bg-black text-gray-400 hover:text-white"
-            }`}
-          >
-            Robinhood
-          </button>
-        </div>
-      ) : null}
+    <div
+      className={
+        isChrome
+          ? "inline-flex items-center gap-1.5"
+          : "inline-flex flex-col items-stretch gap-1.5"
+      }
+    >
+      {networkToggle}
 
       {network === "sol" ? (
         connected ? (
           <div className="flex items-center gap-1.5">
             <UnifiedWalletButton
-              currentUserClassName="bg-black hover:bg-gray-800 text-white px-4 py-2 rounded-lg font-medium transition-colors border border-gray-600"
+              currentUserClassName={
+                isChrome
+                  ? "bg-neutral-900 text-white px-3 py-1.5 rounded-full font-medium text-xs"
+                  : "bg-black hover:bg-gray-800 text-white px-4 py-2 rounded-lg font-medium transition-colors border border-gray-600"
+              }
             />
             <button
               type="button"
               onClick={() => void handleDisconnect()}
               disabled={disconnecting}
               title="Disconnect Solana wallet"
-              className="px-2.5 py-2 rounded-lg font-semibold border border-gray-600 text-gray-300 hover:bg-gray-800 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed text-xs"
+              className={
+                isChrome
+                  ? `${chromeGhost} disabled:cursor-not-allowed disabled:opacity-50`
+                  : `px-2.5 py-2 rounded-lg font-semibold border border-gray-600 text-gray-300 ${insightPress} fine-hover:bg-gray-800 fine-hover:text-white disabled:opacity-50 disabled:cursor-not-allowed text-xs`
+              }
             >
               {disconnecting ? "…" : "Disconnect"}
             </button>
@@ -117,11 +184,21 @@ export default function UniversalWalletButton({
           <button
             type="button"
             onClick={() => setShowModal(true)}
-            className="flex items-center justify-center space-x-2 px-3 py-2 rounded-lg font-semibold transition-all duration-200 border bg-white hover:bg-gray-100 text-black border-gray-300 shadow-lg hover:shadow-xl"
+            className={
+              isChrome
+                ? chromeConnect
+                : `flex items-center justify-center space-x-2 px-3 py-2 rounded-lg font-semibold ${insightPress} border bg-white fine-hover:bg-gray-100 text-black border-gray-300 shadow-lg`
+            }
           >
             {connecting ? (
               <>
-                <div className="w-4 h-4 border-2 border-gray-400 border-t-black rounded-full animate-spin" />
+                <div
+                  className={`h-3.5 w-3.5 rounded-full border-2 ${
+                    isChrome
+                      ? "border-white/30 border-t-white"
+                      : "border-gray-400 border-t-black"
+                  } animate-spin`}
+                />
                 <span>Connecting...</span>
               </>
             ) : (
@@ -135,7 +212,11 @@ export default function UniversalWalletButton({
             <button
               type="button"
               onClick={() => void rh.connect()}
-              className="bg-black hover:bg-gray-800 text-white px-4 py-2 rounded-lg font-medium border border-gray-600 font-mono text-sm"
+              className={
+                isChrome
+                  ? `${chromeConnect} font-mono`
+                  : `bg-black fine-hover:bg-gray-800 text-white px-4 py-2 rounded-lg font-medium border border-gray-600 font-mono text-sm ${insightPress}`
+              }
               title={rh.address}
             >
               {shortAddr(rh.address)}
@@ -146,7 +227,11 @@ export default function UniversalWalletButton({
               onClick={() => void disconnectRh()}
               disabled={disconnecting}
               title="Disconnect Robinhood wallet"
-              className="px-2.5 py-2 rounded-lg font-semibold border border-gray-600 text-gray-300 hover:bg-gray-800 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed text-xs"
+              className={
+                isChrome
+                  ? `${chromeGhost} disabled:cursor-not-allowed disabled:opacity-50`
+                  : `px-2.5 py-2 rounded-lg font-semibold border border-gray-600 text-gray-300 ${insightPress} fine-hover:bg-gray-800 fine-hover:text-white disabled:opacity-50 disabled:cursor-not-allowed text-xs`
+              }
             >
               {disconnecting ? "…" : "Disconnect"}
             </button>
@@ -170,14 +255,15 @@ export default function UniversalWalletButton({
               });
             }}
             disabled={rh.connecting}
-            className={`
-              flex items-center justify-center px-3 py-2 rounded-lg font-semibold border
-              ${
-                rh.connecting
-                  ? "bg-gray-600 text-gray-400 cursor-not-allowed border-gray-500"
-                  : "bg-white hover:bg-gray-100 text-black border-gray-300"
-              }
-            `}
+            className={
+              rh.connecting
+                ? isChrome
+                  ? `${chromeGhost} cursor-not-allowed opacity-50`
+                  : "flex items-center justify-center px-3 py-2 rounded-lg font-semibold border bg-gray-600 text-gray-400 cursor-not-allowed border-gray-500"
+                : isChrome
+                  ? chromeConnect
+                  : `flex items-center justify-center px-3 py-2 rounded-lg font-semibold border bg-white fine-hover:bg-gray-100 text-black border-gray-300 ${insightPress}`
+            }
           >
             {!rh.hasProvider
               ? "No Rabby"

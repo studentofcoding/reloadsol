@@ -3,7 +3,13 @@
 import { useClimateDisplay, type ClimateChipLabel } from '@/hooks/useClimateDisplay';
 import { formatClimateRegimeDetail } from '@/utils/climateDisplay';
 
-const CHIP_TONE: Record<ClimateChipLabel, string> = {
+const CHIP_TONE_LIGHT: Record<ClimateChipLabel, string> = {
+  Safe: 'bg-emerald-600/15 text-emerald-800 shadow-[0_0_0_1px_rgba(6,95,70,0.22)]',
+  'Not safe': 'bg-amber-500/20 text-amber-900 shadow-[0_0_0_1px_rgba(146,64,14,0.28)]',
+  Unknown: 'bg-black/[0.05] text-neutral-600 shadow-[0_0_0_1px_rgba(0,0,0,0.08)]',
+};
+
+const CHIP_TONE_DARK: Record<ClimateChipLabel, string> = {
   Safe: 'bg-emerald-500/10 text-emerald-200 shadow-[0_0_0_1px_oklch(0.76_0.14_155_/_0.35)]',
   'Not safe': 'bg-amber-500/15 text-amber-200 shadow-[0_0_0_1px_oklch(0.84_0.14_75_/_0.5)]',
   Unknown: 'bg-white/5 text-gray-400 shadow-elev',
@@ -38,11 +44,12 @@ export function ClimateChipView({
   layout?: 'header' | 'inline'
 }) {
   const compact = layout === 'header'
+  const tone = compact ? CHIP_TONE_LIGHT : CHIP_TONE_DARK
   return (
     <div
       className={`flex shrink-0 items-start gap-1.5 rounded-full px-2 py-0.5 leading-tight md:px-2.5 md:py-1 ${
         compact ? 'max-w-[7.5rem] md:max-w-none' : ''
-      } ${CHIP_TONE[label]} ${
+      } ${tone[label]} ${
         isPending ? 'opacity-70' : 'opacity-100'
       } transition-[opacity,box-shadow,background-color,color] duration-150 ease-out-ui motion-reduce:transition-[opacity,background-color,color]`}
       title={title}
@@ -52,12 +59,12 @@ export function ClimateChipView({
     >
       <ClimateDot label={label} />
       <span className="flex min-w-0 flex-col items-start">
-        <span className="whitespace-nowrap text-[10px] font-semibold md:text-xs">
+        <span className="whitespace-nowrap text-[10px] font-semibold tracking-[0.02em] md:text-xs md:tracking-normal">
           {label}
         </span>
         {subtitle ? (
           <span
-            className={`whitespace-nowrap text-[9px] tabular-nums opacity-70 md:text-[10px] ${
+            className={`whitespace-nowrap text-[9px] tabular-nums tracking-[0.01em] opacity-75 md:text-[10px] ${
               compact ? 'hidden sm:block' : ''
             }`}
           >

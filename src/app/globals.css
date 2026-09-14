@@ -20,6 +20,14 @@
   --surface-2: #1a1a1e;
   --border-soft: #2a2a2e;
   --text-dim: #8a8f8a;
+
+  /* Apple HIG layered materials — chrome (primary) vs content (2/3). */
+  --chrome-header-height: 5rem;
+  --material-chrome: rgba(246, 247, 250, 0.78);
+  --material-secondary: rgba(28, 28, 32, 0.92);
+  --material-tertiary: rgba(16, 16, 18, 0.72);
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-out-ui: cubic-bezier(0.2, 0, 0, 1);
 }
 
 * {
@@ -150,10 +158,51 @@ dialog[role="dialog"] {
   font-variant-numeric: tabular-nums;
 }
 
-/* Insight / buy scout surfaces (better-ui + emil-design-eng) */
-:root {
-  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
-  --ease-out-ui: cubic-bezier(0.2, 0, 0, 1);
+/* Floating light chrome — the only surface that uses backdrop blur. */
+.chrome-primary {
+  background: var(--material-chrome);
+  color: #1d1d1f;
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  box-shadow:
+    0 8px 28px rgba(0, 0, 0, 0.28),
+    0 0 0 1px rgba(255, 255, 255, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.chrome-network-seg {
+  background: rgba(0, 0, 0, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+}
+
+.material-secondary {
+  background: var(--material-secondary);
+  box-shadow: 0 0 0 1px oklch(1 0 0 / 0.08);
+}
+
+.material-tertiary {
+  background: var(--material-tertiary);
+  box-shadow: 0 0 0 1px oklch(1 0 0 / 0.06);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .chrome-primary {
+    background: #f5f5f7;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .material-secondary,
+  .material-tertiary {
+    background: #1c1c20;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .chrome-primary {
+    background: #ffffff;
+    box-shadow: 0 0 0 1px #1d1d1f;
+  }
 }
 
 @keyframes insight-enter {
@@ -174,11 +223,11 @@ dialog[role="dialog"] {
 }
 
 .insight-enter-d2 {
-  animation-delay: 80ms;
+  animation-delay: 100ms;
 }
 
 .insight-enter-d3 {
-  animation-delay: 160ms;
+  animation-delay: 200ms;
 }
 
 .insight-flash {

@@ -21,6 +21,10 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Per-network: RH context shows RH scout only; Sol shows Sol scout + **Roster
   digger (Sol)** (`RosterTab` / `/api/gmgn/roster`). In-page Sol/RH tabs call
   `setNetwork`.
+- Apple HIG polish on insight + Header chrome: floating light Header (blur on
+  sticky chrome only), secondary/tertiary content materials, concentric radii,
+  tabular `H x.x` climate chips, named ease-out motion, `fine-hover`,
+  `prefers-reduced-motion` / `prefers-reduced-transparency`.
 
 ### Added — data-public observe + paper-sim on buy_bulk
 
