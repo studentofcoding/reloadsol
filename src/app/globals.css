@@ -160,6 +160,13 @@ dialog[role="dialog"] {
   font-variant-numeric: tabular-nums;
 }
 
+/* @sfinterface/numbers on trading readouts — inherit type; cap roll to UI <300ms. */
+.insight-live-number {
+  --sfi-resolve: 240ms;
+  --sfi-ease: var(--ease-out-ui);
+  --sfi-ease-exit: var(--ease-out);
+}
+
 /* Floating light chrome — the only surface that uses backdrop blur. */
 .chrome-primary {
   background: var(--material-chrome);

@@ -1,6 +1,12 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { ClimateChipView } from '@/components/ClimateChip'
+import { ClimateChipView, ClimateRegimeLiveDetail } from '@/components/ClimateChip'
+import LiveNumber, {
+  LIVE_NUMBER_COMPACT_USD,
+  LIVE_NUMBER_COUNT,
+  LIVE_NUMBER_H,
+  LIVE_NUMBER_SCORE,
+} from '@/components/insight/LiveNumber'
 import { InsightNetworkTabs } from '@/components/insight/InsightNetworkTabs'
 import {
   chromeFloat,
@@ -33,6 +39,22 @@ describe('ClimateChipView copy', () => {
     expect(html).not.toContain('Climate De-risk')
   })
 
+  it('rolls H with @sfinterface/numbers while keeping the state prefix', () => {
+    const html = renderToStaticMarkup(
+      <ClimateChipView
+        label="Not safe"
+        subtitle={<ClimateRegimeLiveDetail state="De-risk" h={0.48} />}
+        ariaLabel="Not safe, De-risk · H 0.5"
+      />,
+    )
+    expect(html).toContain('Not safe')
+    expect(html).toContain('De-risk · ')
+    expect(html).toContain('sfi-numbers')
+    expect(html).toContain('H ')
+    expect(html).toContain('0.5')
+    expect(html).not.toMatch(/>Climate /)
+  })
+
   it('uses light-legible tones on the Header chrome and dark tones inline', () => {
     const header = renderToStaticMarkup(
       <ClimateChipView label="Not safe" subtitle="De-risk · H 0.5" layout="header" />,
@@ -52,6 +74,35 @@ describe('ClimateChipView copy', () => {
     )
     expect(html).toContain('aria-label="Safe"')
     expect(html).not.toContain('Climate Safe')
+  })
+})
+
+describe('LiveNumber formats', () => {
+  it('SSRs compact USD, scores, counts, and H without a flash of empty', () => {
+    const usd = renderToStaticMarkup(
+      <LiveNumber value={20_000} format={LIVE_NUMBER_COMPACT_USD} />,
+    )
+    const score = renderToStaticMarkup(
+      <LiveNumber value={70} format={LIVE_NUMBER_SCORE} />,
+    )
+    const count = renderToStaticMarkup(
+      <LiveNumber value={3} format={LIVE_NUMBER_COUNT} />,
+    )
+    const h = renderToStaticMarkup(
+      <LiveNumber value={0.48} format={LIVE_NUMBER_H} prefix="H " />,
+    )
+    expect(usd).toContain('sfi-numbers')
+    expect(usd).toMatch(/\$20K|\$20.0K/)
+    expect(score).toContain('70')
+    expect(count).toContain('3')
+    expect(h).toContain('H ')
+    expect(h).toContain('0.5')
+  })
+
+  it('falls back to an em dash when the value is missing', () => {
+    const html = renderToStaticMarkup(<LiveNumber value={null} />)
+    expect(html).toContain('—')
+    expect(html).not.toContain('sfi-numbers')
   })
 })
 
@@ -98,6 +149,11 @@ describe('better-ui + emil-design-eng CSS tokens', () => {
   it('uses better-ui icon swap 0.25 / blur(4px) / 300ms', () => {
     expect(css).toMatch(/insight-icon-swap[\s\S]*transition-duration: 300ms/)
     expect(css).toMatch(/insight-icon-swap[\s\S]*var\(--ease-out-ui\)/)
+  })
+
+  it('caps @sfinterface/numbers roll to the shipped insight UI budget', () => {
+    expect(css).toContain('--sfi-resolve: 240ms')
+    expect(css).toContain('.insight-live-number')
   })
 })
 

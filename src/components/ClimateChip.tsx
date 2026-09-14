@@ -1,7 +1,9 @@
 'use client';
 
+import type { ReactNode } from 'react';
 import { useClimateDisplay, type ClimateChipLabel } from '@/hooks/useClimateDisplay';
 import { formatClimateRegimeDetail } from '@/utils/climateDisplay';
+import LiveNumber, { LIVE_NUMBER_H } from '@/components/insight/LiveNumber';
 
 const CHIP_TONE_LIGHT: Record<ClimateChipLabel, string> = {
   Safe: 'bg-emerald-600/15 text-emerald-800 shadow-[0_0_0_1px_rgba(6,95,70,0.22)]',
@@ -28,6 +30,33 @@ function ClimateDot({ label }: { label: ClimateChipLabel }) {
   );
 }
 
+/** Live H (and optional state) under the binary climate label. */
+export function ClimateRegimeLiveDetail({
+  state,
+  h,
+}: {
+  state?: string | null
+  h?: number | null
+}): ReactNode {
+  const stateLabel = typeof state === 'string' && state.trim() ? state.trim() : null
+  const hasH = typeof h === 'number' && Number.isFinite(h)
+  if (!stateLabel && !hasH) return null
+  return (
+    <>
+      {stateLabel}
+      {stateLabel && hasH ? ' · ' : null}
+      {hasH ? (
+        <LiveNumber
+          value={h}
+          format={LIVE_NUMBER_H}
+          prefix="H "
+          aria-hidden
+        />
+      ) : null}
+    </>
+  )
+}
+
 export function ClimateChipView({
   label,
   subtitle,
@@ -37,7 +66,7 @@ export function ClimateChipView({
   layout = 'header',
 }: {
   label: ClimateChipLabel
-  subtitle: string | null
+  subtitle: ReactNode
   isPending?: boolean
   title?: string
   ariaLabel?: string
@@ -80,16 +109,19 @@ export default function ClimateChip() {
   const { data, isPending, isError } = useClimateDisplay();
   const label: ClimateChipLabel =
     isError || !data ? 'Unknown' : data.label;
-  const subtitle = formatClimateRegimeDetail({
+  const subtitleText = formatClimateRegimeDetail({
     state: data?.state,
     h: data?.h,
   });
+  const subtitle = subtitleText ? (
+    <ClimateRegimeLiveDetail state={data?.state} h={data?.h} />
+  ) : null;
   const tip =
     label === 'Unknown'
       ? 'Regime climate unknown (fetch failed or stale). Display only — does not block trades.'
       : label === 'Not safe'
-        ? `Not safe${subtitle ? ` (${subtitle})` : ''}. Display only — does not block trades.`
-        : `Safe${subtitle ? ` (${subtitle})` : ''}. Display only.`;
+        ? `Not safe${subtitleText ? ` (${subtitleText})` : ''}. Display only — does not block trades.`
+        : `Safe${subtitleText ? ` (${subtitleText})` : ''}. Display only.`;
 
   return (
     <ClimateChipView
@@ -97,7 +129,7 @@ export default function ClimateChip() {
       subtitle={subtitle}
       isPending={isPending}
       title={tip}
-      ariaLabel={subtitle ? `${label}, ${subtitle}` : label}
+      ariaLabel={subtitleText ? `${label}, ${subtitleText}` : label}
     />
   );
 }

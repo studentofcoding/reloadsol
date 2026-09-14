@@ -77,6 +77,7 @@
     "@metaplex-foundation/umi": "^1.2.0",
     "@metaplex-foundation/umi-bundle-defaults": "^1.2.0",
     "@meteora-ag/dlmm": "^1.9.10",
+    "@sfinterface/numbers": "0.3.4",
     "@solana/spl-token": "^0.3.11",
     "@solana/web3.js": "^1.98.4",
     "@tanstack/react-query": "^5.81.2",
