@@ -8,6 +8,17 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — live `@sfinterface/numbers` readouts on insight / climate chips
+
+- Pin **`@sfinterface/numbers@0.3.4`** (exact). Wrapper
+  [`LiveNumber`](src/components/insight/LiveNumber.tsx) inherits parent type
+  and rolls only trading-surface figures (not admin chrome).
+- **`/dev/insight` scout** (`DataPublicObserveStrip`): compact USD **liq** /
+  **mcap**, integer **score**, chain **count**, paper-note **scores**.
+- **Header + insight climate chips**: regime **H** (`H 0.5`) via Numbers;
+  binary Safe / Not safe / Unknown copy unchanged. Paper Safe-gate and
+  `buybulk-datapublic-scout` execute paths untouched.
+
 ### Changed — data-public scout lives on `/dev/insight`
 
 - Primary scout UX moved from the `/buy` observe strip to **`/dev/insight`**.

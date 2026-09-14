@@ -41,7 +41,7 @@ const nextConfig = {
   },
   reactStrictMode: true,
   poweredByHeader: false,
-  transpilePackages: ['@jup-ag/wallet-adapter'],
+  transpilePackages: ['@jup-ag/wallet-adapter', '@sfinterface/numbers'],
   serverExternalPackages: ['puppeteer', 'bigint-buffer', 'onnxruntime-node'],
 
   // Faster dev compiles: tree-shake heavy package entrypoints (Turbopack + webpack)
@@ -54,6 +54,7 @@ const nextConfig = {
       'chart.js',
       'react-chartjs-2',
       'date-fns',
+      '@sfinterface/numbers',
     ],
   },
 

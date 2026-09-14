@@ -17,7 +17,7 @@ config, notch store, routes, or ids.
 | `/dev/insight` | Per-network scout home. RH context → RH scout. Sol context → Sol scout + **Roster digger (Sol)** (`RosterTab` / `/api/gmgn/roster`). |
 | `/buy` | Thin link to `/dev/insight` for dev wallets. Scout is no longer the buy-page primary UX. |
 | **Paper note** | DB row stamped `buybulk-datapublic-scout`. localStorage is a cache only. No fills, no sim-track open, no live exec |
-| Climate chip on insight | Binary label **Safe** / **Not safe** / **Unknown** (no `Climate ` prefix). Regime detail beside/under it, e.g. `De-risk · H 0.5` (state + H ~1 decimal). Same pattern when Safe/Unknown. Header chip stays display-only. |
+| Climate chip on insight | Binary label **Safe** / **Not safe** / **Unknown** (no `Climate ` prefix). Regime detail beside/under it, e.g. `De-risk · H 0.5` (state + live `@sfinterface/numbers` H, one decimal). Same pattern when Safe/Unknown. Header chip stays display-only. |
 
 Climate mapping is unchanged: Safe = Mixed/Range/Hype and no cascade; Not safe /
 Unknown → list still visible, Paper note disabled. The write path calls
@@ -69,7 +69,7 @@ The public feed is **study / research** only. The scout list repeats that ToS.
 
 1. `npm test -- src/utils/climateDisplay.test.ts src/utils/data-public-scout.test.ts src/utils/paper-notch-store.test.ts src/app/api/scout/data-public/route.test.ts src/app/api/scout/data-public/paper/route.test.ts src/strategies/buybulk-datapublic-scout-notches.test.ts src/config/route-network.test.ts`
 2. `npm run dev` → open `/dev/insight` on Sol and on Robinhood (header network toggle or in-page Sol/RH tabs).
-3. Confirm climate chip shows **Not safe** / **Safe** / **Unknown** (no `Climate ` prefix) plus regime detail like `De-risk · H 0.5`.
+3. Confirm climate chip shows **Not safe** / **Safe** / **Unknown** (no `Climate ` prefix) plus regime detail like `De-risk · H 0.5`. **H**, scout **score**, **liq**, **mcap**, chain count, and paper-note scores use `@sfinterface/numbers` (they roll when the poll updates).
 4. Sol: Sol scout list + **Roster digger (Sol)**. RH: RH scout only; roster is not the primary panel.
 5. `/buy` shows a thin link to `/dev/insight` for dev wallets, not the full observe strip.
 6. With Header climate **Safe**: **Paper note** POSTs `/api/scout/data-public/paper`, row appears in `strategy_paper_notches`; no wallet prompt / no swap.

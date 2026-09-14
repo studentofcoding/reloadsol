@@ -2,7 +2,12 @@
 
 import { useCallback, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { ClimateChipView } from '@/components/ClimateChip'
+import { ClimateChipView, ClimateRegimeLiveDetail } from '@/components/ClimateChip'
+import LiveNumber, {
+  LIVE_NUMBER_COMPACT_USD,
+  LIVE_NUMBER_COUNT,
+  LIVE_NUMBER_SCORE,
+} from '@/components/insight/LiveNumber'
 import { BookmarkFill, BookmarkOutline } from '@/components/insight/InsightIcons'
 import InsightPressButton from '@/components/insight/InsightPressButton'
 import {
@@ -26,7 +31,6 @@ import {
   readPaperNotchesFromStorage,
   type PaperNotch,
 } from '@/utils/paper-notch-store'
-import { formatCompactNumber } from '@/utils/formatters'
 
 function storage(): Storage | null {
   if (typeof window === 'undefined') return null
@@ -35,11 +39,6 @@ function storage(): Storage | null {
   } catch {
     return null
   }
-}
-
-function formatUsd(n: number | null): string {
-  if (n == null) return '—'
-  return `$${formatCompactNumber(n)}`
 }
 
 function chainBadge(chain: ScoutChain): string {
@@ -93,6 +92,12 @@ export default function DataPublicObserveStrip({
     state: climate.data?.state,
     h: climate.data?.h,
   })
+  const regimeLive = regimeDetail ? (
+    <ClimateRegimeLiveDetail
+      state={climate.data?.state}
+      h={climate.data?.h}
+    />
+  ) : null
   const paperAllowed = canPaperNotchFromClimate(climateLabel)
   const disabledTip = paperNotchDisabledTip(climateLabel)
 
@@ -164,14 +169,15 @@ export default function DataPublicObserveStrip({
         <div className="flex shrink-0 items-center gap-2">
           <ClimateChipView
             label={climateLabel}
-            subtitle={regimeDetail}
+            subtitle={regimeLive}
             isPending={climate.isPending}
             layout="inline"
             title="Paper notes follow the Header climate display label. Live trade controls stay ungated."
             ariaLabel={climateAria}
           />
           <span className="text-[10px] tabular-nums text-gray-500">
-            {chainCount} {chainBadge(chain)}
+            <LiveNumber value={chainCount} format={LIVE_NUMBER_COUNT} />{' '}
+            {chainBadge(chain)}
           </span>
         </div>
       </div>
@@ -229,9 +235,16 @@ export default function DataPublicObserveStrip({
                   </div>
                   <div className="text-[10px] tabular-nums text-gray-400">
                     {row.decision ?? row.kind}
-                    {' · '}liq {formatUsd(row.liq)}
-                    {' · '}mcap {formatUsd(row.mcap)}
-                    {row.score != null ? ` · ${row.score}` : ''}
+                    {' · '}liq{' '}
+                    <LiveNumber value={row.liq} format={LIVE_NUMBER_COMPACT_USD} />
+                    {' · '}mcap{' '}
+                    <LiveNumber value={row.mcap} format={LIVE_NUMBER_COMPACT_USD} />
+                    {row.score != null ? (
+                      <>
+                        {' · '}
+                        <LiveNumber value={row.score} format={LIVE_NUMBER_SCORE} />
+                      </>
+                    ) : null}
                   </div>
                 </div>
                 {row.url ? (
@@ -293,6 +306,12 @@ export default function DataPublicObserveStrip({
                 className="rounded-lg px-1.5 py-0.5 text-[10px] text-gray-300 shadow-elev"
               >
                 {chainBadge(n.chain)} {n.symbol}
+                {n.score != null ? (
+                  <>
+                    {' '}
+                    <LiveNumber value={n.score} format={LIVE_NUMBER_SCORE} />
+                  </>
+                ) : null}
               </li>
             ))}
           </ul>
