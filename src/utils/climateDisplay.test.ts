@@ -42,6 +42,7 @@ function fromInterpreted(
       cascadeVeto: parsed.cascadeVeto,
       sizeKind: parsed.sizeKind,
       scale: extra.scale ?? parsed.scale,
+      reason: parsed.reason,
     },
     { now: extra.now ?? fetchedAt },
   )
@@ -99,6 +100,7 @@ describe('climateChipLabel / toClimateChipPayload', () => {
         cascadeVeto: false,
         sizeKind: 'unknown',
         scale: 1,
+        reason: 'HTTP 503',
       },
       { now: 1_000 },
     )

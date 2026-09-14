@@ -31,6 +31,7 @@ export async function GET() {
           cascadeVeto: false,
           sizeKind: 'unknown',
           scale: 1,
+          reason: msg,
         },
         { now },
       ),

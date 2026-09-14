@@ -24,13 +24,14 @@ export type ClimateChipPayload = {
   cascadeVeto?: boolean
   sizeKind?: ClimateSizeKind | 'unknown'
   scale?: number
+  reason?: string
   fetchedAt: number
   stale: boolean
 }
 
 export type ClimateChipSource = Pick<
   ClimateGateResult,
-  'ok' | 'error' | 'fetchedAt' | 'state' | 'h' | 'cascadeVeto' | 'sizeKind' | 'scale'
+  'ok' | 'error' | 'fetchedAt' | 'state' | 'h' | 'cascadeVeto' | 'sizeKind' | 'scale' | 'reason'
 > & { computedAt?: number | null }
 
 export function isClimateDisplayStale(opts: {
@@ -93,6 +94,7 @@ export function toClimateChipPayload(
     cascadeVeto: gate.cascadeVeto,
     sizeKind: gate.sizeKind,
     scale: gate.scale,
+    reason: gate.reason,
     fetchedAt: gate.fetchedAt,
     stale,
   }

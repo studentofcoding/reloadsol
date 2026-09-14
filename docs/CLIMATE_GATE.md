@@ -60,7 +60,7 @@ Visible copy: [`src/utils/climateChipCopy.ts`](../src/utils/climateChipCopy.ts).
 
 | Binary | Visible | Tone |
 |---|---|---|
-| **Not safe** | `Caution` | amber/red; tip: cut exposure / cascade risk; trading still allowed |
+| **Not safe** | `Beware: The current market is very risky` (`Beware` on small screens) | amber/red; no De-risk/H on the chip face — those go in the tooltip; trading still allowed |
 | **Safe** | `Regime OK` | muted green; optional quiet state name |
 | **Unknown** | `Regime …` | gray/neutral; no warning vibe |
 

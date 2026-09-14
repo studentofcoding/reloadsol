@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  NOT_SAFE_CHIP_TEXT,
+  NOT_SAFE_CHIP_TEXT_COMPACT,
   climateChipHeadline,
   climateChipSubtitle,
   climateChipTip,
@@ -16,23 +18,43 @@ describe('climateChipHeadline / tip (presentation only)', () => {
         state: 'Hype',
       }),
     ).toBe('Not safe')
-    expect(climateChipHeadline('Not safe')).toBe('Caution')
+    expect(climateChipHeadline('Not safe')).toBe(
+      'Beware: The current market is very risky',
+    )
+    expect(climateChipHeadline('Not safe')).toBe(NOT_SAFE_CHIP_TEXT)
+    expect(climateChipHeadline('Not safe', 'compact')).toBe(
+      NOT_SAFE_CHIP_TEXT_COMPACT,
+    )
     expect(climateChipHeadline('Safe')).toBe('Regime OK')
     expect(climateChipHeadline('Unknown')).toBe('Regime …')
   })
 
-  it('makes only Not safe cautionary', () => {
+  it('shows the exact Beware string on the chip and keeps De-risk/H in the tooltip only', () => {
+    expect(climateChipHeadline('Not safe')).toBe(
+      'Beware: The current market is very risky',
+    )
+    expect(
+      climateChipSubtitle({ label: 'Not safe', state: 'De-risk', h: 0.48 }),
+    ).toBeNull()
+
     const tip = climateChipTip({
       label: 'Not safe',
       state: 'De-risk',
+      h: 0.48,
       cascadeVeto: true,
+      sizeKind: 'trim',
+      scale: 0.25,
+      reason: 'cascade.veto caps ≤ trim',
     })
-    expect(tip).toMatch(/Caution/i)
-    expect(tip).toMatch(/cascade risk/i)
-    expect(tip).toMatch(/still allowed/i)
-    expect(climateChipSubtitle({ label: 'Not safe', state: 'De-risk', h: 0.45 })).toBe(
-      'De-risk · H 0.45',
+    expect(tip.startsWith('Beware: The current market is very risky.')).toBe(
+      true,
     )
+    expect(tip).toContain('De-risk')
+    expect(tip).toContain('H 0.48')
+    expect(tip).toContain('cascade veto')
+    expect(tip).toContain('trim 0.25')
+    expect(tip).toContain('cascade.veto caps ≤ trim')
+    expect(tip).toContain('Trading is still allowed.')
   })
 
   it('keeps Safe calm and Unknown quiet', () => {

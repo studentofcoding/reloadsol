@@ -13,6 +13,7 @@ export type ClimateChipResponse = {
   cascadeVeto?: boolean
   sizeKind?: string
   scale?: number
+  reason?: string
   fetchedAt: number
   stale: boolean
 }
