@@ -150,6 +150,88 @@ dialog[role="dialog"] {
   font-variant-numeric: tabular-nums;
 }
 
+/* Insight / buy scout surfaces (better-ui + emil-design-eng) */
+:root {
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-out-ui: cubic-bezier(0.2, 0, 0, 1);
+}
+
+@keyframes insight-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+.insight-enter {
+  animation: insight-enter 220ms var(--ease-out) both;
+}
+
+.insight-enter-d2 {
+  animation-delay: 80ms;
+}
+
+.insight-enter-d3 {
+  animation-delay: 160ms;
+}
+
+.insight-flash {
+  opacity: 1;
+  transform: translateY(0);
+  transition-property: opacity, transform;
+  transition-duration: 180ms;
+  transition-timing-function: var(--ease-out);
+}
+
+.insight-flash[data-ending] {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+
+@starting-style {
+  .insight-flash {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+  }
+}
+
+.insight-icon-swap {
+  transition-property: opacity, filter, scale;
+  transition-duration: 200ms;
+  transition-timing-function: var(--ease-out-ui);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .insight-enter,
+  .insight-enter-d2,
+  .insight-enter-d3 {
+    animation: none;
+  }
+
+  .insight-flash {
+    transition-property: opacity;
+    transform: none;
+  }
+
+  @starting-style {
+    .insight-flash {
+      transform: none;
+    }
+  }
+
+  .insight-icon-swap {
+    transition-property: opacity;
+    scale: 1;
+    filter: none;
+  }
+}
+
 /* Focus rings for accessibility */
 :focus-visible {
   outline: 2px solid var(--accent);

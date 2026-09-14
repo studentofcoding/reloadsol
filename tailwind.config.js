@@ -1,3 +1,5 @@
+const plugin = require('tailwindcss/plugin')
+
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: [
@@ -7,6 +9,14 @@ module.exports = {
   ],
   theme: {
     extend: {
+      transitionTimingFunction: {
+        'out-ui': 'cubic-bezier(0.23, 1, 0.32, 1)',
+        'out-strong': 'cubic-bezier(0.2, 0, 0, 1)',
+      },
+      boxShadow: {
+        elev: '0 0 0 1px oklch(1 0 0 / 0.08)',
+        'elev-hover': '0 0 0 1px oklch(1 0 0 / 0.13)',
+      },
       colors: {
         primary: {
           50: '#f0f9ff',
@@ -27,5 +37,10 @@ module.exports = {
       },
     },
   },
-  plugins: [],
+  plugins: [
+    plugin(function ({ addVariant }) {
+      // Touch devices synthesize :hover on tap; gate lift/hover motion.
+      addVariant('fine-hover', '@media (hover: hover) and (pointer: fine)')
+    }),
+  ],
 } 

@@ -3,9 +3,18 @@
 import Link from 'next/link'
 import DataPublicObserveStrip from '@/components/DataPublicObserveStrip'
 import RosterTab from '@/components/signals/RosterTab'
+import { ChevronGlyph } from '@/components/insight/InsightIcons'
+import { InsightNetworkTabs } from '@/components/insight/InsightNetworkTabs'
+import {
+  insightCard,
+  insightCardInner,
+  insightEnter,
+  insightEnter2,
+  insightEnter3,
+  insightLink,
+} from '@/components/insight/insight-ui'
 import { useAppNetwork } from '@/contexts/AppNetworkContext'
 import { scoutChainFromAppNetwork } from '@/utils/data-public-scout'
-import type { AppNetwork } from '@/utils/app-network'
 
 export default function InsightPageClient() {
   const { network, setNetwork, canUseRh } = useAppNetwork()
@@ -13,8 +22,8 @@ export default function InsightPageClient() {
   const isSol = network === 'sol'
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-6 space-y-8">
-      <div>
+    <div className="mx-auto max-w-7xl space-y-8 px-4 py-6">
+      <div className={insightEnter}>
         <h1 className="mb-2 text-2xl font-semibold text-white">Insight</h1>
         <p className="text-sm text-gray-400">
           Per-network data-public scout plus Solana roster digger. Paper notes stay
@@ -22,53 +31,38 @@ export default function InsightPageClient() {
         </p>
       </div>
 
-      <div className="flex gap-1" role="tablist" aria-label="Insight network">
-        {(
-          [
-            { id: 'sol' as const, label: 'Sol', disabled: false },
-            { id: 'robinhood' as const, label: 'RH', disabled: !canUseRh },
-          ] satisfies { id: AppNetwork; label: string; disabled: boolean }[]
-        ).map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            role="tab"
-            aria-selected={network === tab.id}
-            disabled={tab.disabled}
-            onClick={() => setNetwork(tab.id)}
-            className={`rounded-md px-3 py-1.5 text-xs font-medium ${
-              network === tab.id
-                ? 'bg-white/10 text-white'
-                : tab.disabled
-                  ? 'cursor-not-allowed text-gray-600'
-                  : 'text-gray-400 hover:text-gray-200'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
+      <div className={insightEnter2}>
+        <InsightNetworkTabs
+          network={network}
+          canUseRh={canUseRh}
+          onSelect={setNetwork}
+        />
       </div>
 
-      <DataPublicObserveStrip chain={scoutChain} />
+      <div className={insightEnter3}>
+        <DataPublicObserveStrip chain={scoutChain} />
+      </div>
 
       {isSol ? (
         <section
-          className="rounded-xl border border-gray-700 bg-gray-800/40 px-4 py-4 space-y-3"
+          className={`${insightCard} space-y-3 ${insightEnter3}`}
           aria-label="Roster digger (Sol)"
         >
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <h2 className="text-base font-semibold text-white">Roster digger (Sol)</h2>
-            <Link
-              href="/dev/signals?tab=roster"
-              className="text-xs text-sky-300 hover:underline"
-            >
-              Open in Signals
-            </Link>
+          <div className={`${insightCardInner} px-2 pt-1`}>
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 className="text-base font-semibold text-white">Roster digger (Sol)</h2>
+              <Link href="/dev/signals?tab=roster" className={insightLink}>
+                Open in Signals
+                <ChevronGlyph className="size-3.5 translate-x-px" />
+              </Link>
+            </div>
+            <p className="mt-1 text-xs text-gray-500">
+              GMGN wallet digger + roster concurrence. Solana-only — not the RH scout list.
+            </p>
           </div>
-          <p className="text-xs text-gray-500">
-            GMGN wallet digger + roster concurrence. Solana-only — not the RH scout list.
-          </p>
-          <RosterTab />
+          <div className={`${insightCardInner} px-1 pb-1`}>
+            <RosterTab />
+          </div>
         </section>
       ) : (
         <p className="text-xs text-gray-500">
