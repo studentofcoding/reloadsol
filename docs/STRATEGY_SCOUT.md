@@ -7,8 +7,8 @@ store, routes, or strategy ids.
 |---|---|---|
 | **Strategy id** | `buybulk-datapublic-scout` | `rhtape-datapublic-scout` |
 | **Surface** | `/buy` observe strip + `GET /api/scout/data-public` | Worker UI [rh-tape-bot `?v=3`](https://rh-tape-bot.yonathanevanchristy.workers.dev/?v=3) — **other repo / other agent** |
-| **Notch store** | `localStorage` key `reloadsol:buybulk-datapublic-scout:paper-notches` | rh-tape's own store — do not reuse |
-| **Routes** | `/api/scout/data-public` only | rh-tape routes — do not reuse |
+| **Notch store** | Postgres `strategy_paper_notches` (`strategy_id` CHECK = `buybulk-datapublic-scout`); localStorage cache only | rh-tape's own store — do not reuse |
+| **Routes** | `/api/scout/data-public` + `/api/scout/data-public/paper` | rh-tape routes — do not reuse |
 | **Live exec** | Never | rh-tape `processFill` — **do not couple** |
 
 Implementation notes for buy_bulk: [DATA_PUBLIC_SCOUT.md](./DATA_PUBLIC_SCOUT.md).
@@ -26,8 +26,9 @@ Constants: `BUYBULK_DATAPUBLIC_SCOUT_ID` / `RHTAPE_DATAPUBLIC_SCOUT_ID` in
 
 ## Climate (buy_bulk)
 
-Uses the Header **display** label (`GET /api/regime/climate`), not the DLMM
-`CLIMATE_GATE` policy.
+Uses the Header **display** mapping (`fetchClimate` → `toClimateChipPayload`),
+enforced **server-side** on `POST /api/scout/data-public/paper`. The chip UI
+is still display-only for live trade controls.
 
 | Label | Behavior |
 |---|---|
@@ -41,6 +42,25 @@ Live trade controls stay ungated by this strip.
 Robinhood and Solana use the **same** filters and the same paper gate. Sol
 feed delay ≥15 minutes is a **staleness note only** — it does not change
 filters, paper rules, or become a live-exec exception.
+
+## Persistence (buy_bulk)
+
+Paper notes live in Postgres table `strategy_paper_notches` (migration
+[`db/init/31-buybulk-datapublic-scout-notches.sql`](../db/init/31-buybulk-datapublic-scout-notches.sql)).
+This follows `strategy_review_notes`: a dedicated additive table, **not**
+`trading_records` sim buys (would pollute PnL) and **not** `strategy_outcomes`
+(reports/ML). The CHECK constraint stamps `strategy_id = buybulk-datapublic-scout`
+so rh-tape cannot share the store.
+
+On an existing VPS volume (Docker init scripts only run on first start):
+
+```bash
+docker exec -i reloadsol-db psql -U reloadsol -d reloadsol_db < db/init/31-buybulk-datapublic-scout-notches.sql
+# or: bash scripts/deploy-tencent.sh schema
+```
+
+Fresh `docker compose up` applies `db/init/*.sql` automatically. Do not merge-deploy
+from this agent; parent applies after merge.
 
 ## Out of scope
 

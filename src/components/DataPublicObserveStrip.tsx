@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useClimateDisplay } from '@/hooks/useClimateDisplay'
 import { useDataPublicScout } from '@/hooks/useDataPublicScout'
+import { useBuybulkPaperNotches } from '@/hooks/useBuybulkPaperNotches'
 import { tokenSearchDetailHref } from '@/components/signals/shared/token-search-href'
 import {
   canPaperNotchFromClimate,
@@ -14,8 +15,6 @@ import {
 } from '@/utils/data-public-scout'
 import {
   readPaperNotchesFromStorage,
-  tryAddPaperNotch,
-  writePaperNotchesToStorage,
   type PaperNotch,
 } from '@/utils/paper-notch-store'
 import { formatCompactNumber } from '@/utils/formatters'
@@ -54,9 +53,11 @@ export default function DataPublicObserveStrip({
   const scout = useDataPublicScout('all')
   const climate = useClimateDisplay()
   const [tab, setTab] = useState<Tab>('all')
-  const [notches, setNotches] = useState<PaperNotch[]>(() =>
-    readPaperNotchesFromStorage(storage()),
+  const cache = useMemo<PaperNotch[]>(
+    () => readPaperNotchesFromStorage(storage()),
+    [],
   )
+  const paper = useBuybulkPaperNotches(cache)
   const [flash, setFlash] = useState<string | null>(null)
 
   const climateLabel = climate.data?.label ?? 'Unknown'
@@ -69,30 +70,34 @@ export default function DataPublicObserveStrip({
     return all.filter((r) => r.chain === tab)
   }, [scout.data?.rows, tab])
 
-  const notedKeys = useMemo(() => new Set(notches.map((n) => n.key)), [notches])
+  const notedKeys = useMemo(() => new Set(paper.notches.map((n) => n.key)), [paper.notches])
 
   const onPaperNote = useCallback(
-    (row: ScoutCandidate) => {
-      const result = tryAddPaperNotch(notches, row, {
-        label: climateLabel,
-        state: climate.data?.state ?? null,
-        emitLabel: scout.data?.climateAtEmit.label ?? null,
-      })
-      if (!result.ok) {
-        setFlash(
-          result.reason === 'climate_not_safe'
-            ? disabledTip
-            : result.reason === 'duplicate'
-              ? 'Already paper-noted.'
-              : 'Could not record paper note.',
-        )
+    async (row: ScoutCandidate) => {
+      if (!paperAllowed) {
+        setFlash(disabledTip)
         return
       }
-      setNotches(result.notches)
-      writePaperNotchesToStorage(result.notches, storage())
-      setFlash(`Paper noted ${row.symbol} (${chainBadge(row.chain)}) — no trade sent.`)
+      try {
+        const result = await paper.note(row)
+        if (!result.ok) {
+          setFlash(
+            result.reason === 'climate_not_safe'
+              ? result.error || disabledTip
+              : result.reason === 'duplicate'
+                ? 'Already paper-noted.'
+                : result.error || 'Could not record paper note.',
+          )
+          return
+        }
+        setFlash(
+          `Paper noted ${row.symbol} (${chainBadge(row.chain)}) — saved to DB, no trade sent.`,
+        )
+      } catch {
+        setFlash('Could not record paper note (DB). Observe list is unchanged.')
+      }
     },
-    [climate.data?.state, climateLabel, disabledTip, notches, scout.data?.climateAtEmit.label],
+    [disabledTip, paper, paperAllowed],
   )
 
   const solDelay = scout.data?.solDelayMin ?? 15
@@ -220,15 +225,15 @@ export default function DataPublicObserveStrip({
                 )}
                 <button
                   type="button"
-                  disabled={!paperAllowed || noted}
+                  disabled={!paperAllowed || noted || paper.noting}
                   title={
                     noted
                       ? 'Already paper-noted'
                       : paperAllowed
-                        ? 'Record paper interest. Does not execute a trade.'
+                        ? 'Record paper interest in DB. Does not execute a trade.'
                         : disabledTip
                   }
-                  onClick={() => onPaperNote(row)}
+                  onClick={() => void onPaperNote(row)}
                   className={`shrink-0 rounded-md px-2 py-1 text-[10px] font-semibold ${
                     noted
                       ? 'cursor-default border border-emerald-400/20 text-emerald-300/70'
@@ -247,13 +252,13 @@ export default function DataPublicObserveStrip({
 
       {flash ? <p className="text-[11px] text-gray-300">{flash}</p> : null}
 
-      {notches.length > 0 ? (
+      {paper.notches.length > 0 ? (
         <div className="border-t border-gray-700/80 pt-2">
           <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">
-            Paper notes (local, no fills)
+            Paper notes (DB, no fills)
           </div>
           <ul className="flex flex-wrap gap-1.5">
-            {notches.slice(0, 12).map((n) => (
+            {paper.notches.slice(0, 12).map((n) => (
               <li
                 key={n.key}
                 className="rounded-md border border-gray-700 px-1.5 py-0.5 text-[10px] text-gray-300"

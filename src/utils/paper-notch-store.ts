@@ -1,10 +1,9 @@
 /**
- * Local paper-notch store for buy_bulk strategy `buybulk-datapublic-scout`.
+ * Local paper-notch *cache* for buy_bulk strategy `buybulk-datapublic-scout`.
  *
- * Isolated from rh-tape (`rhtape-datapublic-scout`): different storage key,
- * strategy id, and route. Records paper interest only. Does not open
- * sim-track positions, does not call executeBulkBuy / live swap, and does
- * not write trading_records.
+ * Postgres (`strategy_paper_notches`) is the source of truth via
+ * GET/POST `/api/scout/data-public/paper`. This module is an offline hint
+ * only. Isolated from rh-tape (`rhtape-datapublic-scout`).
  */
 
 import type { ClimateChipLabel } from '@/utils/climateDisplay'
