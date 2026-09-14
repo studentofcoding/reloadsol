@@ -247,6 +247,7 @@ describe('climate gate on paper action', () => {
       },
       climateAtEmit,
     })
+    expect(body.strategyId).toBe('buybulk-datapublic-scout')
     expect(body.climateAtEmit.label).toBe('Safe')
     expect(body.paperAllowed).toBe(true)
     expect(body.rows).toHaveLength(1)

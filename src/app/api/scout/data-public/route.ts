@@ -59,7 +59,7 @@ export async function GET(req: NextRequest) {
       method: 'GET',
       headers: {
         Accept: 'application/json',
-        'User-Agent': 'ReloadSOL-data-public-scout/1.0',
+        'User-Agent': 'ReloadSOL-buybulk-datapublic-scout/1.0',
       },
       cache: 'no-store',
       signal: AbortSignal.timeout(FEED_TIMEOUT_MS),

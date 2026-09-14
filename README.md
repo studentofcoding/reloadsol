@@ -65,6 +65,7 @@ Condensed entry points (5 categories + diagrams hub):
 | [docs/05-operations-and-deployment.md](docs/05-operations-and-deployment.md) | Env keys, Docker stack, deploy runbook, ops |
 | [docs/CLIMATE_GATE.md](docs/CLIMATE_GATE.md) | Optional S5 DLMM paper climate gate (default off; ask before live) |
 | [docs/DATA_PUBLIC_SCOUT.md](docs/DATA_PUBLIC_SCOUT.md) | Buy-bulk data-public observe + Safe-gated paper notes (no live exec) |
+| [docs/STRATEGY_SCOUT.md](docs/STRATEGY_SCOUT.md) | `buybulk-datapublic-scout` vs `rhtape-datapublic-scout` (separate) |
 | [handoff.md](handoff.md) | Session handoff — Pattern ML focus, ops checklist |
 
 Diagrams: [`docs/diagrams/`](docs/diagrams/) (trading surfaces, confirmation lifecycle,

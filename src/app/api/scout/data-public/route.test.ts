@@ -116,6 +116,8 @@ describe('GET /api/scout/data-public', () => {
     const body = await response.json()
     expect(response.status).toBe(200)
     expect(body.ok).toBe(true)
+    expect(body.strategyId).toBe('buybulk-datapublic-scout')
+    expect(body.strategyId).not.toBe('rhtape-datapublic-scout')
     expect(body.climateAtEmit.label).toBe('Safe')
     expect(body.paperAllowed).toBe(true)
     expect(body.solDelayMin).toBe(15)

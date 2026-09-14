@@ -1,23 +1,28 @@
 /**
- * Local paper-notch store for the data-public observe strip.
+ * Local paper-notch store for buy_bulk strategy `buybulk-datapublic-scout`.
  *
- * Records paper interest only. Does not open sim-track positions, does not
- * call executeBulkBuy / live swap, and does not write trading_records.
+ * Isolated from rh-tape (`rhtape-datapublic-scout`): different storage key,
+ * strategy id, and route. Records paper interest only. Does not open
+ * sim-track positions, does not call executeBulkBuy / live swap, and does
+ * not write trading_records.
  */
 
 import type { ClimateChipLabel } from '@/utils/climateDisplay'
 import {
+  BUYBULK_DATAPUBLIC_SCOUT_ID,
   canPaperNotchFromClimate,
   mintKey,
   type ScoutCandidate,
   type ScoutChain,
 } from '@/utils/data-public-scout'
 
-export const PAPER_NOTCH_STORAGE_KEY = 'reloadsol:data-public-paper-notches'
-export const PAPER_NOTCH_SOURCE = 'data-public' as const
+export const PAPER_NOTCH_STORAGE_KEY =
+  `reloadsol:${BUYBULK_DATAPUBLIC_SCOUT_ID}:paper-notches` as const
+export const PAPER_NOTCH_SOURCE = BUYBULK_DATAPUBLIC_SCOUT_ID
 
 export type PaperNotch = {
   key: string
+  strategyId: typeof BUYBULK_DATAPUBLIC_SCOUT_ID
   chain: ScoutChain
   mint: string
   symbol: string
@@ -49,11 +54,13 @@ export function parsePaperNotches(raw: unknown): PaperNotch[] {
     const row = item as Partial<PaperNotch>
     if (row.chain !== 'robinhood' && row.chain !== 'solana') continue
     if (typeof row.mint !== 'string' || !row.mint.trim()) continue
+    if (row.strategyId != null && row.strategyId !== BUYBULK_DATAPUBLIC_SCOUT_ID) continue
     const key = typeof row.key === 'string' && row.key ? row.key : mintKey(row.chain, row.mint)
     if (seen.has(key)) continue
     seen.add(key)
     out.push({
       key,
+      strategyId: BUYBULK_DATAPUBLIC_SCOUT_ID,
       chain: row.chain,
       mint: row.mint,
       symbol: typeof row.symbol === 'string' ? row.symbol : row.mint.slice(0, 6),
@@ -97,6 +104,7 @@ export function tryAddPaperNotch(
   }
   const notch: PaperNotch = {
     key,
+    strategyId: BUYBULK_DATAPUBLIC_SCOUT_ID,
     chain: candidate.chain,
     mint,
     symbol: candidate.symbol,

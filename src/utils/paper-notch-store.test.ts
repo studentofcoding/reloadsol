@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { canPaperNotchFromClimate } from '@/utils/data-public-scout'
 import {
+  BUYBULK_DATAPUBLIC_SCOUT_ID,
+  RHTAPE_DATAPUBLIC_SCOUT_ID,
+  canPaperNotchFromClimate,
+} from '@/utils/data-public-scout'
+import {
+  PAPER_NOTCH_STORAGE_KEY,
   parsePaperNotches,
   tryAddPaperNotch,
   type PaperNotch,
@@ -21,7 +26,8 @@ describe('tryAddPaperNotch climate gate', () => {
     const result = tryAddPaperNotch([], candidate, { label: 'Safe', state: 'Range' }, 5_000)
     expect(result.ok).toBe(true)
     if (result.ok) {
-      expect(result.notch.source).toBe('data-public')
+      expect(result.notch.strategyId).toBe(BUYBULK_DATAPUBLIC_SCOUT_ID)
+      expect(result.notch.source).toBe(BUYBULK_DATAPUBLIC_SCOUT_ID)
       expect(result.notch.climateLabel).toBe('Safe')
       expect(result.notch.notedAt).toBe(5_000)
       expect(result.notches).toHaveLength(1)
@@ -72,10 +78,25 @@ describe('parsePaperNotches', () => {
         climateLabel: 'Safe',
         climateState: 'Hype',
         climateAtEmitLabel: 'Safe',
-        source: 'data-public',
+        strategyId: BUYBULK_DATAPUBLIC_SCOUT_ID,
+        source: BUYBULK_DATAPUBLIC_SCOUT_ID,
       },
     ]
     expect(parsePaperNotches(saved)).toHaveLength(1)
+    expect(parsePaperNotches(saved)[0]?.strategyId).toBe(BUYBULK_DATAPUBLIC_SCOUT_ID)
     expect(parsePaperNotches([{ mint: 'nope' }, null, 'x'])).toEqual([])
+    expect(
+      parsePaperNotches([
+        { ...saved[0], strategyId: RHTAPE_DATAPUBLIC_SCOUT_ID },
+      ]),
+    ).toEqual([])
+  })
+
+  it('is isolated from rhtape-datapublic-scout (id + storage key)', () => {
+    expect(BUYBULK_DATAPUBLIC_SCOUT_ID).toBe('buybulk-datapublic-scout')
+    expect(RHTAPE_DATAPUBLIC_SCOUT_ID).toBe('rhtape-datapublic-scout')
+    expect(BUYBULK_DATAPUBLIC_SCOUT_ID).not.toBe(RHTAPE_DATAPUBLIC_SCOUT_ID)
+    expect(PAPER_NOTCH_STORAGE_KEY).toContain(BUYBULK_DATAPUBLIC_SCOUT_ID)
+    expect(PAPER_NOTCH_STORAGE_KEY).not.toContain(RHTAPE_DATAPUBLIC_SCOUT_ID)
   })
 })

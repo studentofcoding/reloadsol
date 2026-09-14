@@ -1,14 +1,29 @@
 /**
- * data-public observe + paper-sim (S6).
+ * data-public observe + paper-sim for buy_bulk only (S6).
+ *
+ * Strategy id: `buybulk-datapublic-scout`.
+ * Not shared with rh-tape (`rhtape-datapublic-scout`): separate config,
+ * notch store, routes, and strategy id. Do not call processFill or touch
+ * the rh-tape Worker from this path.
  *
  * Filters the public research feed into paper candidates. Same rules for
- * Robinhood and Solana. Never executes live buys/swaps.
+ * Robinhood and Solana. Never executes live buys/swaps. Never enables
+ * CLIMATE_GATE_LIVE.
  *
  * Paper notches are allowed only when the Header climate *display* label is
  * Safe (Mixed/Range/Hype, no cascade). Not safe / Unknown → observe only.
  */
 
 import type { ClimateChipLabel, ClimateChipPayload } from '@/utils/climateDisplay'
+
+/** Buy-bulk data-public observe + paper-sim. Do not reuse on rh-tape. */
+export const BUYBULK_DATAPUBLIC_SCOUT_ID = 'buybulk-datapublic-scout' as const
+
+/**
+ * rh-tape's shipped scout id — listed only so buy_bulk never collides.
+ * Do not import rh-tape config, notch store, routes, or processFill.
+ */
+export const RHTAPE_DATAPUBLIC_SCOUT_ID = 'rhtape-datapublic-scout' as const
 
 export const DATA_PUBLIC_FEED_DEFAULT =
   'https://data-public.vercel.app/api/feed'
@@ -383,6 +398,7 @@ export function paperNotchDisabledTip(label: ClimateChipLabel | string | null | 
 
 export type ScoutBffResponse = {
   ok: true
+  strategyId: typeof BUYBULK_DATAPUBLIC_SCOUT_ID
   chain: ScoutChainQuery
   generatedAt: number | null
   solDelayMin: number
@@ -409,6 +425,7 @@ export function buildScoutBffResponse(opts: {
   const { candidates, rejected } = filterScoutRows(opts.rows, opts.chain)
   return {
     ok: true,
+    strategyId: BUYBULK_DATAPUBLIC_SCOUT_ID,
     chain: opts.chain,
     generatedAt: opts.meta.generatedAt,
     solDelayMin: opts.meta.solDelayMin,

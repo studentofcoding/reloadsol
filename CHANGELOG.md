@@ -18,8 +18,11 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Paper note** is a local interest notch only. It records when the Header
   climate display label is **Safe**; Not safe / Unknown keeps the list visible
   and disables the button. Never calls `executeBulkBuy` / live swap.
-- Helpers: `data-public-scout.ts`, `paper-notch-store.ts`. Docs:
+- Strategy id **`buybulk-datapublic-scout`** — not shared with rh-tape
+  (`rhtape-datapublic-scout`): separate notch store, route, and id. Docs:
+  [docs/STRATEGY_SCOUT.md](docs/STRATEGY_SCOUT.md),
   [docs/DATA_PUBLIC_SCOUT.md](docs/DATA_PUBLIC_SCOUT.md).
+- Helpers: `data-public-scout.ts`, `paper-notch-store.ts`.
 
 ### Added — Full `/sell` can reload into one custom token
 

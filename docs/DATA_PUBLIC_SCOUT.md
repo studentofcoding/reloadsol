@@ -1,7 +1,12 @@
 # data-public observe + paper-sim (S6)
 
-Buy-bulk **observe strip** for the public research feed. Same mode on Robinhood
-and Solana. **Never** calls `executeBulkBuy` or a live swap from this path.
+Buy-bulk **observe strip** for the public research feed. Strategy id
+**`buybulk-datapublic-scout`**. Same mode on Robinhood and Solana. **Never**
+calls `executeBulkBuy` or a live swap from this path.
+
+Identity and hard boundaries vs rh-tape (`rhtape-datapublic-scout`):
+[STRATEGY_SCOUT.md](./STRATEGY_SCOUT.md). These strategies do **not** share
+config, notch store, routes, or ids.
 
 ## Surfaces
 
@@ -30,10 +35,10 @@ Sol rows are delayed ≥15 minutes (`solDelayMin` from the feed). The strip show
 ## Out of scope
 
 - Live `executeBulkBuy` / live swap from this feed
-- rh-tape Worker changes
+- rh-tape Worker changes / `processFill` / `rhtape-datapublic-scout`
 - Enabling `CLIMATE_GATE_LIVE`
 - Terminal `/api/chain-volume`
-- Production deploy
+- Production deploy (VPS Docker — user / parent only)
 
 ## Disclaimer
 
