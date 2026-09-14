@@ -14,7 +14,7 @@ Three dev surfaces share data but historically used separate strategy config. v1
 | DLMM | `/dev/dlmm` | `POST /api/dlmm/screen`, `/api/dlmm/manage` cron | registry + `dlmm_agent_config` |
 | GMGN | `/dev/strategies` | `POST /api/gmgn/sim-track` + `POST /api/gmgn/activity-poll` | registry + DB overrides; Radar (`config.radar`) + single-thread Telegram + comeback; table `radar_alert_threads` |
 | Social / Pattern ML | `/dev/social` | social rollup cron → 24h patterns | `mcap_social_pattern_24h`, rollups; `signals_early` + `gmgn_*` events |
-| Buy-bulk data-public scout | `/buy` observe strip | Local paper notes only (`buybulk-datapublic-scout`) persisted in `strategy_paper_notches`. **Not** rh-tape (`rhtape-datapublic-scout`) | [STRATEGY_SCOUT.md](./STRATEGY_SCOUT.md) — no shared config/store/routes |
+| Buy-bulk data-public scout | `/dev/insight` (RH scout or Sol scout + roster digger) | Local paper notes only (`buybulk-datapublic-scout`) persisted in `strategy_paper_notches`. **Not** rh-tape (`rhtape-datapublic-scout`) | [STRATEGY_SCOUT.md](./STRATEGY_SCOUT.md) — no shared config/store/routes |
 
 **Shared engine spine:** all domains adapt to `StrategyParameterSet` + `CanonicalEntryFeatures` ([`canonical-params.ts`](../src/strategies/canonical-params.ts), [`canonical-features.ts`](../src/strategies/canonical-features.ts)). Memecoin opens use [`attachMlEntryShadow`](../src/strategies/ml-entry-shadow.ts) (ML1/ML2 + Pattern shadow). Read-only `canonical` on `GET /api/strategies`. Full plan: [reloadsol_engine_strategies_and_ml.md](./reloadsol_engine_strategies_and_ml.md).
 

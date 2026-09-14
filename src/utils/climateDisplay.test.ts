@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   climateChipLabel,
+  formatClimateH,
+  formatClimateRegimeDetail,
   isClimateDisplayStale,
   toClimateChipPayload,
 } from '@/utils/climateDisplay'
@@ -164,5 +166,28 @@ describe('climateChipLabel / toClimateChipPayload', () => {
     expect(payload.h).toBe(0.88)
     expect(payload.sizeKind).toBe('full')
     expect(payload.scale).toBe(1)
+  })
+})
+
+describe('formatClimateH / formatClimateRegimeDetail', () => {
+  it('rounds H to one decimal as H 0.5', () => {
+    expect(formatClimateH(0.48)).toBe('H 0.5')
+    expect(formatClimateH(0.5)).toBe('H 0.5')
+    expect(formatClimateH(null)).toBeNull()
+    expect(formatClimateH(Number.NaN)).toBeNull()
+  })
+
+  it('formats regime detail as state · H for Safe, Not safe, and Unknown', () => {
+    expect(formatClimateRegimeDetail({ state: 'De-risk', h: 0.48 })).toBe(
+      'De-risk · H 0.5',
+    )
+    expect(formatClimateRegimeDetail({ state: 'Range', h: 0.91 })).toBe(
+      'Range · H 0.9',
+    )
+    expect(formatClimateRegimeDetail({ state: 'Mixed', h: 0.4 })).toBe(
+      'Mixed · H 0.4',
+    )
+    expect(formatClimateRegimeDetail({ state: null, h: 0.5 })).toBe('H 0.5')
+    expect(formatClimateRegimeDetail({ state: '  ', h: null })).toBeNull()
   })
 })

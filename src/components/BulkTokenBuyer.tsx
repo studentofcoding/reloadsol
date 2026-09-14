@@ -32,7 +32,6 @@ import UniversalWalletButton from "./UniversalWalletButton";
 import BalanceSliderField from "./BalanceSliderField";
 import TokenSearchBox from "./TokenSearchBox";
 import TrendingTokens from "./TrendingTokens";
-import DataPublicObserveStrip from "./DataPublicObserveStrip";
 import TradeOutcomeModal, { useTradeOutcome } from "./TradeOutcomeModal";
 import TokenSkeleton from "./TokenSkeleton";
 import HoldingsTokenList from "./HoldingsTokenList";
@@ -1862,9 +1861,18 @@ export default function BulkTokenBuyer() {
             </div>
           </div>
 
-          <DataPublicObserveStrip
-            onInspectMint={(mint) => void handleSelectToken(mint)}
-          />
+          {isDevUser ? (
+            <p className="text-xs text-gray-400">
+              Data-public scout moved to{" "}
+              <Link
+                href="/dev/insight"
+                className="text-sky-300 hover:underline"
+              >
+                /dev/insight
+              </Link>
+              {effectiveChain === "robinhood" ? " (RH scout)" : " (Sol scout + roster digger)"}.
+            </p>
+          ) : null}
 
           {useRhParentPath ? (
             <RhPermit2StatusBanner

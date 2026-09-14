@@ -1,6 +1,7 @@
 'use client';
 
 import { useClimateDisplay, type ClimateChipLabel } from '@/hooks/useClimateDisplay';
+import { formatClimateRegimeDetail } from '@/utils/climateDisplay';
 
 const CHIP_CLASS: Record<ClimateChipLabel, string> = {
   Safe: 'border-emerald-400/35 bg-emerald-500/10 text-emerald-200',
@@ -8,18 +9,14 @@ const CHIP_CLASS: Record<ClimateChipLabel, string> = {
   Unknown: 'border-white/20 bg-white/5 text-gray-400',
 };
 
-function formatH(h: number | null | undefined): string | null {
-  if (typeof h !== 'number' || !Number.isFinite(h)) return null;
-  return `H ${h.toFixed(2)}`;
-}
-
 export default function ClimateChip() {
   const { data, isPending, isError } = useClimateDisplay();
   const label: ClimateChipLabel =
     isError || !data ? 'Unknown' : data.label;
-  const state = data?.state ?? undefined;
-  const hLabel = formatH(data?.h);
-  const subtitle = [state, hLabel].filter(Boolean).join(' · ');
+  const subtitle = formatClimateRegimeDetail({
+    state: data?.state,
+    h: data?.h,
+  });
   const tip =
     label === 'Unknown'
       ? 'Regime climate unknown (fetch failed or stale). Display only — does not block trades.'
