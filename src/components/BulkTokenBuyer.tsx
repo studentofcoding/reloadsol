@@ -4,7 +4,9 @@ import { OptimizedImage } from "@/components/OptimizedImage";
 import React, { useState, useCallback, useEffect, useRef, useMemo, useDeferredValue } from "react";
 import Link from "next/link";
 import { ChevronGlyph } from "@/components/insight/InsightIcons";
-import { insightLink } from "@/components/insight/insight-ui";
+import { ctaPress, fieldControl, insightLink } from "@/components/insight/insight-ui";
+import FocusRelay from "@/components/ui/FocusRelay";
+import SwitchControl from "@/components/ui/SwitchControl";
 import { tokenSearchDetailHref } from "@/components/signals/shared/token-search-href";
 import { useSearchParams } from "next/navigation";
 import {
@@ -1852,7 +1854,7 @@ export default function BulkTokenBuyer() {
           {/* Header with Wallet Connection */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
-              <h2 className="text-3xl font-bold text-white mb-2">Buy bulk</h2>
+              <h1 className="text-3xl font-bold text-white mb-2">Buy bulk</h1>
               <p className="text-gray-400">
                 Split your {effectiveChain === "robinhood" ? "ETH" : "SOL"}{" "}
                 across multiple tokens
@@ -1886,15 +1888,14 @@ export default function BulkTokenBuyer() {
           ) : null}
 
           {isDevUser && effectiveChain === "sol" && solGmgnSynced ? (
-            <label className="flex items-center gap-2 text-xs text-gray-300">
-              <input
-                type="checkbox"
-                checked={useGmgnOnSol}
-                onChange={(e) => setUseGmgnOnSol(e.target.checked)}
-              />
+            <SwitchControl
+              checked={useGmgnOnSol}
+              onCheckedChange={setUseGmgnOnSol}
+              className="text-xs text-gray-300"
+            >
               Use GMGN
               <span className="text-emerald-400">GMGN synced</span>
-            </label>
+            </SwitchControl>
           ) : null}
 
           {isRhChain ? (
@@ -1925,7 +1926,7 @@ export default function BulkTokenBuyer() {
           ) : null}
 
           {showTradeUi && (
-            <div className="space-y-8">
+            <FocusRelay className="space-y-8">
               {isDevUser && (rosterRecsQuery.data?.length ?? 0) > 0 ? (
                 <div className="space-y-2">
                   <div className="text-xs uppercase tracking-wide text-gray-400">
@@ -2406,7 +2407,8 @@ export default function BulkTokenBuyer() {
                     <button
                       type="button"
                       onClick={handleClearTokens}
-                      className="text-xs text-gray-400 hover:text-white flex items-center"
+                      aria-label="Clear all tokens"
+                      className="text-xs text-gray-400 hover:text-white flex min-h-11 items-center"
                     >
                       <svg
                         className="w-3 h-3 mr-1"
@@ -2424,6 +2426,8 @@ export default function BulkTokenBuyer() {
                   )}
                 </div>
                 <TokenSearchBox
+                  inputId="tokenMints"
+                  inputLabel={`Token to buy (up to ${tradeTokenLimit} on ${isRhChain ? "RH" : "Solana"})`}
                   value={searchTerm}
                   onChange={setSearchTerm}
                   options={searchResults.map((t) => ({
@@ -2564,7 +2568,7 @@ export default function BulkTokenBuyer() {
                     id="slippage"
                     value={slippage}
                     onChange={(e) => setSlippage(Number(e.target.value))}
-                    className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl text-white focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
+                    className={fieldControl}
                     disabled={isLoading}
                   >
                     {TRADE_SLIPPAGE_OPTIONS.map((option) => (
@@ -2596,7 +2600,7 @@ export default function BulkTokenBuyer() {
                       id="priorityFee"
                       value={priorityFee}
                       onChange={(e) => setPriorityFee(Number(e.target.value))}
-                      className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl text-white focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
+                      className={fieldControl}
                       disabled={isLoading}
                     >
                       {PRIORITY_FEE_OPTIONS.map((option) => (
@@ -2650,6 +2654,13 @@ export default function BulkTokenBuyer() {
 
               {/* Buy Button */}
               <button
+                data-slot="button"
+                data-variant="primary"
+                aria-label={
+                  isLoading
+                    ? "Processing buy transactions"
+                    : `Buy ${validMints.length} token${validMints.length !== 1 ? "s" : ""}`
+                }
                 onClick={handleBulkBuy}
                 disabled={
                   isLoading ||
@@ -2658,14 +2669,14 @@ export default function BulkTokenBuyer() {
                   validMints.length === 0 ||
                   !meetsMinBuyUsd
                 }
-                className={`w-full py-4 px-6 rounded-xl font-semibold text-lg transition-all duration-200 ${
+                className={`w-full py-4 px-6 rounded-xl font-semibold text-lg ${ctaPress} ${
                   isLoading ||
                   !tradeReady ||
                   !solAmount ||
                   validMints.length === 0 ||
                   !meetsMinBuyUsd
                     ? "bg-gray-600 text-gray-400 cursor-not-allowed"
-                    : "bg-white hover:bg-gray-100 text-black shadow-lg hover:shadow-xl"
+                    : "bg-white fine-hover:bg-gray-100 text-black shadow-lg"
                 }`}
               >
                 {isLoading ? (
@@ -2717,7 +2728,7 @@ export default function BulkTokenBuyer() {
               )}
 
               <TradeOutcomeModal {...outcomeModalProps} />
-            </div>
+            </FocusRelay>
           )}
 
           {effectiveChain === "sol" && !connected && (

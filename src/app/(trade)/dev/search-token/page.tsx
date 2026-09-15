@@ -4,7 +4,7 @@ import SearchTokenDispatcher from './Client'
 import { Metadata } from 'next'
 
 export const metadata: Metadata = {
-  title: 'Search Token - ReloadSOL',
+  title: 'Search tokens',
   description: 'Search Solana and Robinhood tokens by name, symbol, or contract address.',
 }
 

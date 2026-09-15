@@ -26,10 +26,11 @@ const Header: FC<HeaderProps> = ({ onOpenDailyStreak }) => {
     '/';
 
   return (
-    <header className={chromeFloat} data-chrome="primary">
+    <header className={chromeFloat} data-chrome="primary" data-slot="chrome">
       <div className={chromePrimary}>
         <Link
           href={brandHref}
+          aria-label="ReloadSOL home"
           className={`shrink-0 text-lg font-semibold tracking-tight text-neutral-900 md:text-xl ${insightPress}`}
         >
           ReloadSOL
@@ -40,7 +41,8 @@ const Header: FC<HeaderProps> = ({ onOpenDailyStreak }) => {
             <button
               type="button"
               onClick={onOpenDailyStreak}
-              className={`flex items-center gap-1 rounded-full bg-orange-500/15 py-1 ps-1.5 pe-2 text-xs font-semibold text-orange-800 md:gap-1.5 md:ps-2 md:pe-3 ${insightPress} fine-hover:bg-orange-500/22`}
+              aria-label={`${streak} day streak`}
+              className={`flex min-h-11 items-center gap-1 rounded-full bg-orange-500/15 py-1 ps-1.5 pe-2 text-xs font-semibold text-orange-800 md:gap-1.5 md:ps-2 md:pe-3 ${insightPress} fine-hover:bg-orange-500/22`}
             >
               <FaFire className="h-3 w-3 text-orange-600 md:h-3.5 md:w-3.5" />
               <span className="tabular-nums">

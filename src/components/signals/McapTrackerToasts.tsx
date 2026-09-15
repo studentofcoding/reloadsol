@@ -147,14 +147,31 @@ export default function McapTrackerToasts({ toasts }: McapTrackerToastsProps) {
     };
   }, []);
 
+  useEffect(() => {
+    if (active.length === 0) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      const top = active[0];
+      if (top) dismiss(top.id);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [active, dismiss]);
+
   if (active.length === 0) return null;
 
   return (
     <div
-      className="fixed top-4 right-4 flex w-full max-w-sm flex-col gap-2 pointer-events-none"
+      data-slot="toast-viewport"
+      data-paused="false"
+      role="region"
+      aria-label="Notifications"
+      aria-live="polite"
+      aria-relevant="additions text"
+      className="toast-viewport pointer-events-none fixed top-4 right-4 w-full max-w-sm"
       style={{ zIndex: TOAST_Z_INDEX }}
     >
-      {active.map((toast) => {
+      {active.map((toast, index) => {
         const isCopyTrade = isCopyTradeToast(toast.category);
         const item = toast.items?.[0];
         const badge = strategyBadgeLabel(item?.strategyId, item?.entryTemplate);
@@ -164,9 +181,18 @@ export default function McapTrackerToasts({ toasts }: McapTrackerToastsProps) {
         return (
           <div
             key={toast.id}
-            className={`pointer-events-auto rounded-lg border px-4 py-3 shadow-lg ${toastStyles(toast.type, toast.category)}`}
+            data-slot="toast"
+            data-index={index}
             role="status"
-            onMouseEnter={() => {
+            aria-atomic="true"
+            className={`pointer-events-auto relative overflow-hidden rounded-xl border px-4 py-3 shadow-lg ${toastStyles(toast.type, toast.category)}`}
+            style={{
+              zIndex: active.length - index,
+              ["--toast-scale" as string]: Math.max(0.91, 1 - index * 0.03),
+              ["--toast-ms" as string]: `${dismissMs}ms`,
+            }}
+            onMouseEnter={(event) => {
+              event.currentTarget.parentElement?.setAttribute("data-paused", "true");
               pausedRef.current.add(toast.id);
               const timer = timersRef.current.get(toast.id);
               if (timer) {
@@ -174,15 +200,16 @@ export default function McapTrackerToasts({ toasts }: McapTrackerToastsProps) {
                 timersRef.current.delete(toast.id);
               }
             }}
-            onMouseLeave={() => {
+            onMouseLeave={(event) => {
+              event.currentTarget.parentElement?.setAttribute("data-paused", "false");
               pausedRef.current.delete(toast.id);
               scheduleDismiss(toast.id, dismissMs);
             }}
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold">{toast.title}</p>
-                <p className="mt-1 text-xs opacity-90 break-words">{toast.message}</p>
+                <p data-slot="toast-title" className="text-sm font-semibold">{toast.title}</p>
+                <p data-slot="toast-description" className="mt-1 text-xs opacity-90 break-words">{toast.message}</p>
                 {item && (
                   <div className="mt-2 flex flex-wrap items-center gap-2">
                     {badge && (
@@ -210,6 +237,7 @@ export default function McapTrackerToasts({ toasts }: McapTrackerToastsProps) {
                     )}
                     <button
                       type="button"
+                      data-slot="toast-action"
                       onClick={() => handleAddTokenToBuy(item.address)}
                       className="text-xs underline opacity-90 hover:opacity-100"
                       title="Add to buy list and open chart"
@@ -221,9 +249,10 @@ export default function McapTrackerToasts({ toasts }: McapTrackerToastsProps) {
               </div>
               <button
                 type="button"
+                data-slot="toast-close"
                 onClick={() => dismiss(toast.id)}
-                className="shrink-0 text-lg leading-none opacity-70 hover:opacity-100"
-                aria-label="Dismiss"
+                className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center text-lg leading-none opacity-70 hover:opacity-100"
+                aria-label="Dismiss notification"
               >
                 ×
               </button>
@@ -234,17 +263,21 @@ export default function McapTrackerToasts({ toasts }: McapTrackerToastsProps) {
                 {isRobinhood ? (
                   <button
                     type="button"
+                    data-slot="button"
+                    data-variant="primary"
                     onClick={() => handleAddTokenToBuy(item.address)}
-                    className="rounded bg-white px-3 py-1.5 text-xs font-semibold text-black transition hover:bg-gray-100"
+                    className="cta-press rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-black"
                   >
                     Open on /buy
                   </button>
                 ) : (
                   <button
                     type="button"
+                    data-slot="button"
+                    data-variant="primary"
                     disabled={buyStates[item.address]?.loading}
                     onClick={() => void fastBuy(item.address, item.symbol)}
-                    className="rounded bg-white px-3 py-1.5 text-xs font-semibold text-black transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="cta-press rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-black disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {buyStates[item.address]?.loading
                       ? "Buying…"
@@ -261,6 +294,7 @@ export default function McapTrackerToasts({ toasts }: McapTrackerToastsProps) {
                 )}
               </div>
             )}
+            <span data-slot="toast-lifetime" aria-hidden />
           </div>
         );
       })}

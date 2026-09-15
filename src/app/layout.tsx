@@ -7,43 +7,46 @@ import McapSimOpenToastHost from "@/components/signals/McapSimOpenToastHost";
 import { Metadata } from "next";
 import { Analytics } from "@vercel/analytics/next";
 import Script from "next/script";
+import { SITE_URL } from "@/lib/seo";
 
 export const metadata: Metadata = {
-  title: "Reload your Solana & trade smarter with us!",
+  metadataBase: new URL(SITE_URL),
+  title: {
+    default: "Reload your Solana & trade smarter",
+    template: "%s · ReloadSOL",
+  },
   description:
-    "Easily reload your Solana with converting dust tokens and useless tokens back to SOL. Trade smarter with us!",
+    "Reload dust and unused tokens back to SOL, or buy multiple tokens in bulk. Trade smarter with ReloadSOL.",
   icons: {
     icon: "/logo.png",
   },
   openGraph: {
-    title:
-      "Reclaim your Solana from worthless memecoins (via Reload or Swap & Reload)",
+    title: "ReloadSOL — reload Solana from unused memecoins",
     description:
-      "Easily reload your Solana with converting dust tokens and useless tokens back to SOL.",
-    url: "https://reloadsol.app",
+      "Convert dust tokens back to SOL, or split a buy across multiple tokens.",
+    url: SITE_URL,
     siteName: "ReloadSOL",
     locale: "en-US",
     type: "website",
     images: [
       {
-        url: "https://reloadsol.app/og-reload.png",
+        url: "/og-reload.png",
         width: 1200,
         height: 630,
-        alt: "Reclaim your Solana from worthless memecoins (via Reload or Swap & Reload)",
+        alt: "ReloadSOL — reload Solana from unused memecoins",
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Reload your Solana & trade smarter with us!",
+    title: "Reload your Solana & trade smarter",
     description:
-      "Easily reload your Solana tokens with converting dust tokens and useless tokens back to SOL.",
-    images: ["https://reloadsol.app/og-reload.png"],
+      "Convert dust tokens back to SOL, or split a buy across multiple tokens.",
+    images: ["/og-reload.png"],
   },
   keywords:
-    "Solana, SOL, reclaim solana, buy bulk tokens, buy memecoin, beli koin meme, reclaim your solana, burn token, reload sol dust tokens, token converter, crypto tools, blockchain, DeFi",
+    "Solana, SOL, reclaim solana, buy bulk tokens, buy memecoin, reload sol dust tokens, token converter, DeFi",
   authors: [{ name: "ReloadSOL Team" }],
-  metadataBase: new URL("https://reloadsol.app"),
   robots: {
     index: true,
     follow: true,
@@ -62,11 +65,16 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body suppressHydrationWarning>
+        <a href="#main-content" className="skip-link">
+          Skip to main content
+        </a>
         <AppQueryClientProvider>
           <WalletProvider>
             <div className="min-h-screen bg-black">
               <Header />
-              <main className="flex-1">{children}</main>
+              <main id="main-content" tabIndex={-1} className="flex-1 outline-none">
+                {children}
+              </main>
             </div>
             <Suspense fallback={null}>
               <McapSimOpenToastHost />

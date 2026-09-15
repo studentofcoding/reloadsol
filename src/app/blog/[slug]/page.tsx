@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { Metadata } from 'next';
 import Link from 'next/link';
 import Footer from '@/components/Footer';
+import { publicPageMetadata } from '@/lib/seo';
 
 type Props = {
   params: Promise<{
@@ -14,14 +15,17 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   try {
     const post = await getCachedPostData(slug);
+    return publicPageMetadata({
+      title: post.title,
+      description: post.excerpt?.trim() || `A ReloadSOL post: ${post.title}`,
+      path: `/blog/${slug}`,
+      type: 'article',
+    });
+  } catch {
     return {
-      title: `${post.title} | ReloadSOL Blog`,
-      description: `Read the latest post from the ReloadSOL team: ${post.title}`,
-    };
-  } catch (error) {
-    return {
-      title: 'Post Not Found | ReloadSOL Blog',
+      title: 'Post not found',
       description: 'This blog post could not be found.',
+      robots: { index: false, follow: false },
     };
   }
 }
@@ -43,7 +47,7 @@ export default async function Post({ params }: Props) {
   return (
     <>
       <div className="bg-black text-white min-h-screen">
-        <main className="container mx-auto px-4 py-16">
+        <div className="container mx-auto px-4 py-16">
           <div className="max-w-3xl mx-auto">
             <div className="mb-8">
               <Link href="/blog" className="text-indigo-400 hover:text-indigo-300 transition-colors duration-200">
@@ -61,7 +65,7 @@ export default async function Post({ params }: Props) {
               />
             </article>
           </div>
-        </main>
+        </div>
       </div>
       <Footer />
     </>

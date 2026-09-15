@@ -8,6 +8,32 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — accessibility and SEO on public + buy/insight chrome
+
+- One root `<main id="main-content">` (no nested landmarks), skip link, tab
+  keyboard (arrows) on network pills, 44px switch/toast-dismiss hits, labeled
+  buy search + CTAs, toast `aria-live` region, dialog Escape, WCAG-friendlier
+  climate chip contrast. Footer Discord is a real link.
+- Follow-up: sell page `h1`, chart-buy / welcome dialogs (Escape, labels,
+  44px close), home wallet CTAs, chart-buy amount `htmlFor`. Public metadata
+  keeps OG/Twitter images (child OG replaces root). `robots` disallows
+  `/search-token` (redirects into `/dev`). Blog posts use excerpt + `article`.
+- App Router `robots.ts` / `sitemap.ts`: index `/`, `/buy`, `/sell`, `/swap`,
+  `/blog`; **noindex** `/dev/*`, `/history`, `/pnl`, `/chart/*`, `/api`,
+  `/search-token`. Canonical + Open Graph on public routes. Title template
+  `%s · ReloadSOL`.
+
+### Changed — Kinetics springs + Kobra craft on live buy / insight chrome
+
+- Ported Kinetics spring curves (`spring-pop`, `glide`, `overshoot`,
+  `symmetric`) and Kobra composition (`data-slot` parts, sliding tab pill,
+  morphing focus relay, toast enter/drain, switch thumb) into existing React
+  + Tailwind primitives. Did **not** install `@kobra/*`.
+- Surfaces: Header + `/dev/insight` network pills, climate chip state pop,
+  `/buy` + chart-buy primary CTAs, amount/token inputs, GMGN / auto-confirm
+  switches, tracker toast deck. Apple HIG radii, better-ui `scale(0.96)`
+  chrome press, and climate/scout/trading logic are unchanged.
+
 ### Changed — all buy_bulk swaps take 25 bps (0.25%)
 
 - Sol Raptor `quote-and-swap` (bulk buy/sell, `executeClientSwap`, bots) now

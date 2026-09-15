@@ -12,6 +12,8 @@ import {
   chromeFloat,
   chromePrimary,
   chromeNetworkSeg,
+  ctaPress,
+  fieldControl,
   insightCard,
   insightPress,
   insightEnter,
@@ -81,8 +83,8 @@ describe('ClimateChipView copy', () => {
     const inline = renderToStaticMarkup(
       <ClimateChipView label="Not safe" subtitle="BTC is dumping — beware" layout="inline" />,
     )
-    expect(header).toContain('text-amber-900')
-    expect(inline).toContain('text-amber-200')
+    expect(header).toContain('text-amber-950')
+    expect(inline).toContain('text-amber-100')
     expect(header).not.toContain('transition-all')
     expect(inline).not.toContain('transition-all')
   })
@@ -92,6 +94,8 @@ describe('ClimateChipView copy', () => {
       <ClimateChipView label="Safe" subtitle={null} />,
     )
     expect(html).toContain('aria-label="Safe"')
+    expect(html).toContain('data-slot="climate-chip"')
+    expect(html).toContain('data-state="safe"')
     expect(html).not.toContain('Climate Safe')
   })
 })
@@ -134,6 +138,9 @@ describe('InsightNetworkTabs', () => {
     expect(html).toContain('Sol')
     expect(html).toContain('RH')
     expect(html).toContain('disabled')
+    expect(html).toContain('data-slot="tabs"')
+    expect(html).toContain('data-slot="tabs-indicator"')
+    expect(html).toContain('data-slot="tabs-trigger"')
   })
 })
 
@@ -147,6 +154,11 @@ describe('insight motion tokens', () => {
     expect(insightEnter).toBe('insight-enter')
     expect(navChromeItem).toContain('scale-[0.96]')
     expect(navChromeItem).not.toContain('transition-all')
+    expect(ctaPress).toContain('cta-press')
+    expect(ctaPress).not.toContain('transition-all')
+    expect(ctaPress).not.toContain('scale-[0.96]')
+    expect(fieldControl).not.toContain('transition-all')
+    expect(fieldControl).toContain('ease-glide')
   })
 })
 
@@ -168,6 +180,19 @@ describe('better-ui + emil-design-eng CSS tokens', () => {
   it('uses better-ui icon swap 0.25 / blur(4px) / 300ms', () => {
     expect(css).toMatch(/insight-icon-swap[\s\S]*transition-duration: 300ms/)
     expect(css).toMatch(/insight-icon-swap[\s\S]*var\(--ease-out-ui\)/)
+  })
+
+  it('locks Kinetics spring curves alongside better-ui / emil easings', () => {
+    expect(css).toContain('--ease-spring-pop: cubic-bezier(0.34, 1.56, 0.64, 1)')
+    expect(css).toContain('--ease-glide: cubic-bezier(0.16, 1, 0.3, 1)')
+    expect(css).toContain('--ease-overshoot: cubic-bezier(0.18, 1.25, 0.4, 1)')
+    expect(css).toContain('--ease-symmetric: cubic-bezier(0.65, 0, 0.35, 1)')
+    expect(css).toContain('transform: scale(0.88)')
+    expect(css).toContain('animation: toast-enter 0.55s var(--ease-overshoot) both')
+    expect(css).toContain('[data-slot="tabs-indicator"]')
+    expect(css).toContain('[data-slot="focus-ring"]')
+    expect(css).toContain('[data-slot="switch-thumb"]')
+    expect(css).toContain('.skip-link')
   })
 
   it('caps @sfinterface/numbers roll to the shipped insight UI budget', () => {

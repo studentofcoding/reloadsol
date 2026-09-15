@@ -14,6 +14,11 @@ module.exports = {
         'out-ui': 'cubic-bezier(0.23, 1, 0.32, 1)',
         /* better-ui exact press/icon curve */
         'out-strong': 'cubic-bezier(0.2, 0, 0, 1)',
+        /* Kinetics canonical springs */
+        'spring-pop': 'cubic-bezier(0.34, 1.56, 0.64, 1)',
+        glide: 'cubic-bezier(0.16, 1, 0.3, 1)',
+        overshoot: 'cubic-bezier(0.18, 1.25, 0.4, 1)',
+        symmetric: 'cubic-bezier(0.65, 0, 0.35, 1)',
       },
       boxShadow: {
         elev: '0 0 0 1px oklch(1 0 0 / 0.08)',

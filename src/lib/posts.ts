@@ -78,6 +78,11 @@ export async function getPostData(id: string) {
   return {
     id,
     contentHtml,
-    ...(matterResult.data as { title: string; date: string; author: string }),
+    ...(matterResult.data as {
+      title: string
+      date: string
+      author: string
+      excerpt?: string
+    }),
   }
 }

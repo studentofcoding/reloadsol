@@ -11,6 +11,8 @@ import TradeShellClient from "./trade-shell-client";
  * chrome (nav tabs + watchlist bar + footer) renders instantly on client
  * navigation. Client-only state (nav tab bar, overlay tabs, route gates,
  * TradingDataProvider) lives in TradeShellClient below this boundary.
+ *
+ * Uses a <div> (not <main>) so it does not nest inside the root landmark.
  */
 export default function TradeLayout({
   children,
@@ -18,7 +20,7 @@ export default function TradeLayout({
   children: React.ReactNode;
 }) {
   return (
-    <main className="min-h-screen bg-black py-8 pb-24 md:pb-8">
+    <div className="min-h-screen bg-black py-8 pb-24 md:pb-8">
       <div className="container mx-auto px-4">
         <GlobalWatchlistBar />
 
@@ -26,6 +28,6 @@ export default function TradeLayout({
       </div>
 
       <Footer />
-    </main>
+    </div>
   );
 }

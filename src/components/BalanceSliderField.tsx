@@ -1,5 +1,8 @@
 "use client";
 
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { fieldControl } from "@/components/insight/insight-ui";
+
 /**
  * Labeled numeric input paired with a "% of balance" slider — shared by the
  * Buy page (split spend across a batch) and the Robinhood swap panel.
@@ -85,6 +88,25 @@ export default function BalanceSliderField({
   };
 
   const sliderValue = displayPercent();
+  const prevSlider = useRef(sliderValue);
+  const [bump, setBump] = useState(false);
+
+  useEffect(() => {
+    if (prevSlider.current === sliderValue) return;
+    prevSlider.current = sliderValue;
+    if (
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      return;
+    }
+    const kick = window.requestAnimationFrame(() => setBump(true));
+    const timer = window.setTimeout(() => setBump(false), 180);
+    return () => {
+      window.cancelAnimationFrame(kick);
+      window.clearTimeout(timer);
+    };
+  }, [sliderValue]);
   // Amount mode: hide the slider until a spendable balance is known. Percent
   // mode has no balance dependency, so it is always shown.
   const showSlider = isPercentMode || balance != null;
@@ -93,7 +115,7 @@ export default function BalanceSliderField({
     : balance != null && balance > 0 && !sliderDisabled;
   const sliderLocked = !showSlider || disabled || (isPercentMode ? false : !canSlide);
 
-  const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSliderChange = (e: ChangeEvent<HTMLInputElement>) => {
     const percent = Math.min(
       maxPercent,
       Math.max(minPercent, parseInt(e.target.value, 10) || minPercent),
@@ -123,6 +145,7 @@ export default function BalanceSliderField({
           <div className="flex items-center space-x-3">
             <input
               type="range"
+              data-slot="slider"
               min={minPercent}
               max={maxPercent}
               step={1}
@@ -131,7 +154,11 @@ export default function BalanceSliderField({
               disabled={sliderLocked}
               className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer disabled:opacity-50"
             />
-            <span className="text-xs text-gray-400 font-mono w-12 text-right">
+            <span
+              data-slot="stepper-value"
+              data-bump={bump ? "true" : "false"}
+              className="text-xs text-gray-400 font-mono w-12 text-right"
+            >
               {sliderValue}%
             </span>
           </div>
@@ -142,6 +169,7 @@ export default function BalanceSliderField({
         <input
           id={inputId}
           type="number"
+          data-slot="input"
           step={isPercentMode ? "1" : step}
           min={
             isPercentMode
@@ -154,22 +182,23 @@ export default function BalanceSliderField({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
-          className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl shadow-inner text-white placeholder-gray-400 focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
+          className={`${fieldControl} tabular-nums ${unit ? "pe-16" : ""}`}
           disabled={disabled}
         />
         {unit && (
-          <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+          <div className="absolute right-3 top-1/2 -translate-y-1/2">
             {onToggleUnit ? (
               <button
                 type="button"
+                data-slot="input-addon"
                 onClick={onToggleUnit}
-                className="text-gray-400 hover:text-white font-mono text-sm px-2 py-1 rounded transition-colors duration-200 hover:bg-gray-700"
+                className="text-gray-400 fine-hover:text-white font-mono text-sm px-2 py-1 rounded transition-[background-color,color] duration-150 ease-out-strong fine-hover:bg-gray-700"
                 disabled={disabled || unitDisabled}
               >
                 {unit}
               </button>
             ) : (
-              <span className="text-gray-400 font-mono text-sm px-2 py-1">
+              <span data-slot="input-addon" className="text-gray-400 font-mono text-sm px-2 py-1">
                 {unit}
               </span>
             )}

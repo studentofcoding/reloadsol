@@ -1,9 +1,11 @@
 'use client'
 
-import React from 'react'
+import React, { useEffect } from 'react'
 import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
 import { RH_CHAIN_ID, txUrl } from '@/utils/dlmm/rh-clmm/config'
 import { AUTO_SLIPPAGE_CAP_BPS } from '@/utils/auto-slippage'
+import { ctaPress } from '@/components/insight/insight-ui'
+import SwitchControl from '@/components/ui/SwitchControl'
 
 export type GmgnConfirmLeg = {
   tokenAddress: string
@@ -79,6 +81,17 @@ export default function GmgnTradeConfirmModal({
   autoConfirm?: boolean
   onAutoConfirmChange?: (on: boolean) => void
 }) {
+  useEffect(() => {
+    if (!open) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      if (busy) return
+      onCancel()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, busy, onCancel])
+
   if (!open) return null
   const phase: SubmitPhase = submitPhase ?? (busy ? 'submitting' : 'idle')
   const isSubmitting = phase === 'submitting'
@@ -198,15 +211,14 @@ export default function GmgnTradeConfirmModal({
             ) : null}
 
             {onAutoConfirmChange ? (
-              <label className="mt-3 flex items-center gap-2 text-xs text-gray-300">
-                <input
-                  type="checkbox"
-                  checked={Boolean(autoConfirm)}
-                  onChange={(e) => onAutoConfirmChange(e.target.checked)}
-                  disabled={isSubmitting}
-                />
+              <SwitchControl
+                checked={Boolean(autoConfirm)}
+                onCheckedChange={onAutoConfirmChange}
+                disabled={isSubmitting}
+                className="mt-3 text-xs text-gray-300"
+              >
                 Auto confirm (sign in wallet only)
-              </label>
+              </SwitchControl>
             ) : null}
 
             {isSubmitting ? (
@@ -260,7 +272,7 @@ export default function GmgnTradeConfirmModal({
                 type="button"
                 onClick={onConfirm}
                 disabled={isSubmitting}
-                className="btn-primary rounded-lg px-4 py-2 text-sm disabled:opacity-50"
+                className={`btn-primary ${ctaPress} rounded-lg px-4 py-2 text-sm disabled:opacity-50`}
               >
                 {isSubmitting ? (
                   <span className="flex items-center gap-2">

@@ -65,7 +65,7 @@ export default function NavigationTabs({
   return (
     <div className="w-full relative z-50">
       {/* Desktop Navigation */}
-      <div className={navSticky}>
+      <nav className={navSticky} aria-label="Primary">
         <div
           className={`${mounted && isDevUser ? "max-w-6xl" : "max-w-4xl"} mx-auto mb-2`}
         >
@@ -489,9 +489,9 @@ export default function NavigationTabs({
               showSolChrome ? <WalletBalance /> : <RhWalletBalance />
             ) : null}
           </div>
+          </div>
         </div>
-      </div>
-      </div>
+      </nav>
 
       {/* Mobile Top Bar - Balance & Info Tabs */}
       <div className="md:hidden max-w-4xl mx-auto mb-2 z-50 pt-2">
@@ -559,7 +559,7 @@ export default function NavigationTabs({
 
       {/* Mobile Navigation - Bottom Fixed */}
       {showMainTabs && (
-        <div className={navMobileBar}>
+        <nav className={navMobileBar} aria-label="Primary">
           <ScrollableMenuRow className="py-3 px-2" innerClassName="gap-1 mx-auto" bleed={false}>
             {can("/sell") ? (
             <Link
@@ -890,7 +890,7 @@ export default function NavigationTabs({
               </>
             )}
           </ScrollableMenuRow>
-        </div>
+        </nav>
       )}
     </div>
   );

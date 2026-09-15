@@ -880,7 +880,7 @@ export default function RhGmgnSwapPanel({
       ) : null}
 
       <div className="flex items-center justify-between gap-2">
-        <h2 className="text-lg font-semibold text-white">Robinhood Swap</h2>
+        <h1 className="text-lg font-semibold text-white">Robinhood Swap</h1>
         <UniversalWalletButton />
       </div>
       <p className="text-xs text-gray-400">

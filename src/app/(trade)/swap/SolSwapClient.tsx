@@ -140,8 +140,9 @@ export default function SolSwapClient() {
       className="flex flex-col items-center justify-center gap-4"
       style={{ minHeight: '550px' }}
     >
+      <h1 className="sr-only">Swap on Solana</h1>
       <div className="w-full max-w-2xl space-y-2">
-        <h3 className="text-sm font-semibold text-white">Your tokens</h3>
+        <h2 className="text-sm font-semibold text-white">Your tokens</h2>
         <HoldingsTokenList
           mode="pick"
           tokens={walletTokens.sellable.filter((t) => !t.isNFT)}
@@ -173,7 +174,7 @@ export default function SolSwapClient() {
               key={preset.key}
               type="button"
               onClick={() => setSelectedPresetKey(preset.key)}
-              className={`rounded-full border px-4 py-2 text-sm transition ${
+              className={`min-h-11 rounded-full border px-4 py-2 text-sm transition ${
                 isActive
                   ? 'border-white bg-white text-black'
                   : 'border-gray-700 bg-gray-900 text-gray-300 hover:border-gray-500 hover:text-white'

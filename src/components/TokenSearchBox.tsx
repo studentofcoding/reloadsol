@@ -1,6 +1,7 @@
 "use client";
 
 import { OptimizedImage } from "@/components/OptimizedImage";
+import { fieldControl } from "@/components/insight/insight-ui";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 /**
@@ -42,6 +43,9 @@ type TokenSearchBoxProps = {
   onPick: (token: TokenSearchOption) => void;
   placeholder?: string;
   disabled?: boolean;
+  inputId?: string;
+  /** Accessible name when a visible <label htmlFor> is not used. */
+  inputLabel?: string;
   /** Show the holdings section when the box is focused (default true). */
   openHoldingsOnFocus?: boolean;
 };
@@ -61,6 +65,8 @@ export default function TokenSearchBox({
   onPick,
   placeholder,
   disabled,
+  inputId,
+  inputLabel,
   openHoldingsOnFocus = true,
 }: TokenSearchBoxProps) {
   const [open, setOpen] = useState(false);
@@ -150,7 +156,11 @@ export default function TokenSearchBox({
     <div className="relative" ref={rootRef}>
       <div className="relative">
         <input
+          id={inputId}
           type="text"
+          data-slot="input"
+          aria-label={inputLabel ?? placeholder ?? 'Search tokens'}
+          autoComplete="off"
           value={value}
           onChange={(e) => {
             onChange(e.target.value);
@@ -170,7 +180,7 @@ export default function TokenSearchBox({
           }}
           placeholder={placeholder}
           disabled={disabled}
-          className="w-full pl-4 pr-4 py-3 bg-gray-800 border border-gray-600 rounded-xl shadow-inner text-white placeholder-gray-400 focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
+          className={`${fieldControl} pr-10`}
         />
         <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
           <svg
@@ -206,7 +216,7 @@ export default function TokenSearchBox({
                     type="button"
                     disabled={already}
                     onClick={() => (already ? undefined : pick(token))}
-                    className={`flex items-center w-full px-4 py-2 text-left transition-all ${
+                    className={`flex items-center w-full px-4 py-2 text-left transition-[background-color,color] duration-150 ease-out-strong ${
                       already
                         ? "bg-gray-700 text-gray-400 cursor-not-allowed"
                         : "hover:bg-gray-800 text-white"
