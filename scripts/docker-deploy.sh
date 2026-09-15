@@ -2,7 +2,11 @@
 # docker-deploy.sh
 # Production deploy for Docker stack (web + cron + social-ingest).
 #
-# Key idea: build while the old container is still serving traffic.
+# Key idea: on hosts with enough RAM, build while the old container still
+# serves traffic. On hosts <4Gi total RAM, stop web (and cron/social in
+# scope) first so Turbopack `next build` has headroom; the previous web
+# image is kept for rollback. Do not use `next build --webpack` on low-RAM:
+# ioredis (dns) and node:diagnostics_channel break the client webpack graph.
 # Only rebuild/recreate services that changed (or --web-only / --cron-only / --social-only / --all).
 #
 # Usage:
@@ -21,8 +25,8 @@
 #   DEPLOY_BRANCH=main
 #   WEB_PORT=3000
 #   SKIP_BUILD_CHECKS=true
-#   NEXT_BUILD_CMD='npm run build:webpack'  # override Next build command
-#   DEPLOY_USE_WEBPACK=1|0                  # force webpack (1) or default next build (0)
+#   NEXT_BUILD_CMD='npm run build'          # override Next build command
+#   DEPLOY_USE_WEBPACK=1|0                  # force webpack (1) or Turbopack (0); default is Turbopack
 #   DEPLOY_LOCK=/tmp/reloadsol-deploy.lock
 
 set -euo pipefail
@@ -477,6 +481,20 @@ verify_env_and_compose() {
   verify_compose_port_config
 }
 
+stop_scoped_app_containers() {
+  local reason="$1"
+  log "${reason} — stopping app containers in deploy scope before host Next build (DB stays up; previous web image kept for rollback) ..."
+  if [[ "$DEPLOY_WEB" == true ]]; then
+    docker stop reloadsol-web 2>/dev/null || true
+  fi
+  if [[ "$DEPLOY_CRON" == true ]]; then
+    docker stop reloadsol-cron 2>/dev/null || true
+  fi
+  if should_build_social; then
+    docker stop reloadsol-social-ingest 2>/dev/null || true
+  fi
+}
+
 prepare_low_memory_deploy() {
   bash scripts/check-deploy-memory.sh
 
@@ -484,19 +502,19 @@ prepare_low_memory_deploy() {
     return 0
   fi
 
-  local avail_mb
+  local total_mb avail_mb
+  total_mb="$(free -m | awk '/^Mem:/ {print $2}')"
   avail_mb="$(free -m | awk '/^Mem:/ {print $7}')"
+
+  # Always stop running app containers on <4Gi hosts before next build.
+  # "Available" can look fine while web/cron/social still hold hundreds of MB.
+  if [[ "${total_mb:-0}" -lt 4096 ]]; then
+    stop_scoped_app_containers "Low-RAM host (${total_mb}MB total)"
+    return 0
+  fi
+
   if [[ "${avail_mb:-0}" -lt 2048 ]]; then
-    log "Low memory (${avail_mb}MB available) — stopping containers in deploy scope (DB stays up) ..."
-    if [[ "$DEPLOY_WEB" == true ]]; then
-      docker stop reloadsol-web 2>/dev/null || true
-    fi
-    if [[ "$DEPLOY_CRON" == true ]]; then
-      docker stop reloadsol-cron 2>/dev/null || true
-    fi
-    if should_build_social; then
-      docker stop reloadsol-social-ingest 2>/dev/null || true
-    fi
+    stop_scoped_app_containers "Low memory (${avail_mb}MB available)"
   fi
 }
 
@@ -515,10 +533,12 @@ resolve_build_node_options() {
   fi
 }
 
-# Next 16.3 defaults `next build` to Turbopack, which thrash-locks ~3.6Gi hosts
-# (swap 100%, SSH dies). Low-RAM machines (<4096 MB total — same cutoff as
-# NODE_OPTIONS=1536) must use webpack. Override via NEXT_BUILD_CMD or
-# DEPLOY_USE_WEBPACK=1/0.
+# Next 16.3 defaults `next build` to Turbopack. Webpack (`--webpack`) is not
+# used on low-RAM hosts: this app's client graph pulls ioredis (dns) and
+# node:diagnostics_channel, so `npm run build:webpack` fails. Free RAM by
+# stopping app containers instead (see prepare_low_memory_deploy). Override
+# via NEXT_BUILD_CMD or DEPLOY_USE_WEBPACK=1/0. NEXT_CPU_COUNT is not a
+# documented Next env; heap is capped via NODE_OPTIONS.
 resolve_next_build_cmd() {
   if [[ -n "${NEXT_BUILD_CMD:-}" ]]; then
     NEXT_BUILD_CMD_RESOLVED="$NEXT_BUILD_CMD"
@@ -529,7 +549,7 @@ resolve_next_build_cmd() {
   case "${DEPLOY_USE_WEBPACK:-}" in
     1)
       NEXT_BUILD_CMD_RESOLVED="npm run build:webpack"
-      NEXT_BUILD_REASON="DEPLOY_USE_WEBPACK=1"
+      NEXT_BUILD_REASON="DEPLOY_USE_WEBPACK=1 (ioredis/node: client webpack is known-broken on this app)"
       return 0
       ;;
     0)
@@ -543,12 +563,11 @@ resolve_next_build_cmd() {
   if command -v free >/dev/null 2>&1; then
     total_mb="$(free -m | awk '/^Mem:/ {print $2}')"
   fi
+  NEXT_BUILD_CMD_RESOLVED="npm run build"
   if [[ "${total_mb:-0}" -lt 4096 ]]; then
-    NEXT_BUILD_CMD_RESOLVED="npm run build:webpack"
-    NEXT_BUILD_REASON="host RAM ${total_mb}MB < 4096MB — webpack (Turbopack default OOMs low-RAM hosts)"
+    NEXT_BUILD_REASON="host RAM ${total_mb}MB < 4096MB — Turbopack; webpack disabled (ioredis dns / node:diagnostics_channel break the client bundle)"
   else
-    NEXT_BUILD_CMD_RESOLVED="npm run build"
-    NEXT_BUILD_REASON="host RAM ${total_mb}MB >= 4096MB — default next build"
+    NEXT_BUILD_REASON="host RAM ${total_mb}MB >= 4096MB — default next build (Turbopack)"
   fi
 }
 
@@ -645,9 +664,9 @@ if [[ "$DEPLOY_WEB" == true ]]; then
   bash scripts/rebuild-native-deps.sh || true
   bash scripts/install-build-deps.sh
 
-  log "Building Next.js on host (old container still running) ..."
-  # Low-RAM hosts must use webpack: Next 16.3 `npm run build` (= next build)
-  # defaults to Turbopack and OOMs a ~3.6Gi VPS. See resolve_next_build_cmd.
+  log "Building Next.js on host ..."
+  # Low-RAM: Turbopack + stop app containers. Do not use --webpack:
+  # ioredis (dns) and node:diagnostics_channel break the client bundle.
   export SKIP_BUILD_CHECKS="${SKIP_BUILD_CHECKS:-true}"
   resolve_build_node_options
   log "NODE_OPTIONS=${NODE_OPTIONS}"
