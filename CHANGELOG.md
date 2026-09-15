@@ -8,6 +8,16 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — accessibility and SEO on public + buy/insight chrome
+
+- One root `<main id="main-content">` (no nested landmarks), skip link, tab
+  keyboard (arrows) on network pills, 44px switch/toast-dismiss hits, labeled
+  buy search + CTAs, toast `aria-live` region, dialog Escape, WCAG-friendlier
+  climate chip contrast. Footer Discord is a real link.
+- App Router `robots.ts` / `sitemap.ts`: index `/`, `/buy`, `/sell`, `/swap`,
+  `/blog`; **noindex** `/dev/*`, `/history`, `/pnl`, `/chart/*`, `/api`.
+  Canonical + Open Graph on public routes. Title template `%s · ReloadSOL`.
+
 ### Changed — Kinetics springs + Kobra craft on live buy / insight chrome
 
 - Ported Kinetics spring curves (`spring-pop`, `glide`, `overshoot`,

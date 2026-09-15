@@ -1,6 +1,11 @@
 'use client'
 
-import type { CSSProperties, ReactNode } from 'react'
+import {
+  useRef,
+  type CSSProperties,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react'
 import {
   chromeNetworkSeg,
   chromeNetworkTab,
@@ -31,6 +36,7 @@ type SegPillListProps<T extends string> = {
 /**
  * Kobra tabs craft: named parts + one sliding indicator.
  * Kinetics snap-rail: equal columns, pill width = 1/n, translateX by index.
+ * Keyboard: Left/Right/Home/End (ARIA tabs, roving tabindex).
  */
 export default function SegPillList<T extends string>({
   value,
@@ -40,6 +46,7 @@ export default function SegPillList<T extends string>({
   variant = 'insight',
   className = '',
 }: SegPillListProps<T>) {
+  const listRef = useRef<HTMLDivElement>(null)
   const index = Math.max(
     0,
     options.findIndex((option) => option.id === value),
@@ -47,15 +54,55 @@ export default function SegPillList<T extends string>({
   const listClass = variant === 'chrome' ? chromeNetworkSeg : insightSeg
   const triggerBase =
     variant === 'chrome'
-      ? chromeNetworkTab
-      : `${insightSegTabBase} ${insightPressQuiet}`
+      ? `${chromeNetworkTab} min-h-11`
+      : `${insightSegTabBase} ${insightPressQuiet} min-h-11`
+
+  const enabledIndexes = options
+    .map((option, i) => (option.disabled ? -1 : i))
+    .filter((i) => i >= 0)
+
+  const moveTo = (nextIndex: number) => {
+    const option = options[nextIndex]
+    if (!option || option.disabled) return
+    onSelect(option.id)
+    requestAnimationFrame(() => {
+      const buttons = listRef.current?.querySelectorAll<HTMLButtonElement>(
+        '[data-slot="tabs-trigger"]',
+      )
+      buttons?.[nextIndex]?.focus()
+    })
+  }
+
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (enabledIndexes.length === 0) return
+    const currentPos = Math.max(0, enabledIndexes.indexOf(index))
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+      event.preventDefault()
+      moveTo(enabledIndexes[(currentPos + 1) % enabledIndexes.length]!)
+    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      moveTo(
+        enabledIndexes[
+          (currentPos - 1 + enabledIndexes.length) % enabledIndexes.length
+        ]!,
+      )
+    } else if (event.key === 'Home') {
+      event.preventDefault()
+      moveTo(enabledIndexes[0]!)
+    } else if (event.key === 'End') {
+      event.preventDefault()
+      moveTo(enabledIndexes[enabledIndexes.length - 1]!)
+    }
+  }
 
   return (
     <div
+      ref={listRef}
       data-slot="tabs"
       data-variant={variant}
       role="tablist"
       aria-label={ariaLabel}
+      onKeyDown={onKeyDown}
       className={`${listClass} ${className}`.trim()}
       style={
         {
@@ -83,6 +130,8 @@ export default function SegPillList<T extends string>({
             data-slot="tabs-trigger"
             data-active={selected ? 'true' : 'false'}
             aria-selected={selected}
+            aria-disabled={option.disabled || undefined}
+            tabIndex={selected ? 0 : -1}
             disabled={option.disabled}
             title={option.title}
             onClick={() => {

@@ -147,12 +147,27 @@ export default function McapTrackerToasts({ toasts }: McapTrackerToastsProps) {
     };
   }, []);
 
+  useEffect(() => {
+    if (active.length === 0) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      const top = active[0];
+      if (top) dismiss(top.id);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [active, dismiss]);
+
   if (active.length === 0) return null;
 
   return (
     <div
       data-slot="toast-viewport"
       data-paused="false"
+      role="region"
+      aria-label="Notifications"
+      aria-live="polite"
+      aria-relevant="additions text"
       className="toast-viewport pointer-events-none fixed top-4 right-4 w-full max-w-sm"
       style={{ zIndex: TOAST_Z_INDEX }}
     >
@@ -169,6 +184,7 @@ export default function McapTrackerToasts({ toasts }: McapTrackerToastsProps) {
             data-slot="toast"
             data-index={index}
             role="status"
+            aria-atomic="true"
             className={`pointer-events-auto relative overflow-hidden rounded-xl border px-4 py-3 shadow-lg ${toastStyles(toast.type, toast.category)}`}
             style={{
               zIndex: active.length - index,
@@ -235,8 +251,8 @@ export default function McapTrackerToasts({ toasts }: McapTrackerToastsProps) {
                 type="button"
                 data-slot="toast-close"
                 onClick={() => dismiss(toast.id)}
-                className="shrink-0 text-lg leading-none opacity-70 hover:opacity-100"
-                aria-label="Dismiss"
+                className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center text-lg leading-none opacity-70 hover:opacity-100"
+                aria-label="Dismiss notification"
               >
                 ×
               </button>

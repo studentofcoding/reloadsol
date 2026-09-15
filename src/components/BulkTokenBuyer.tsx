@@ -1854,7 +1854,7 @@ export default function BulkTokenBuyer() {
           {/* Header with Wallet Connection */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
-              <h2 className="text-3xl font-bold text-white mb-2">Buy bulk</h2>
+              <h1 className="text-3xl font-bold text-white mb-2">Buy bulk</h1>
               <p className="text-gray-400">
                 Split your {effectiveChain === "robinhood" ? "ETH" : "SOL"}{" "}
                 across multiple tokens
@@ -2407,7 +2407,8 @@ export default function BulkTokenBuyer() {
                     <button
                       type="button"
                       onClick={handleClearTokens}
-                      className="text-xs text-gray-400 hover:text-white flex items-center"
+                      aria-label="Clear all tokens"
+                      className="text-xs text-gray-400 hover:text-white flex min-h-11 items-center"
                     >
                       <svg
                         className="w-3 h-3 mr-1"
@@ -2425,6 +2426,8 @@ export default function BulkTokenBuyer() {
                   )}
                 </div>
                 <TokenSearchBox
+                  inputId="tokenMints"
+                  inputLabel={`Token to buy (up to ${tradeTokenLimit} on ${isRhChain ? "RH" : "Solana"})`}
                   value={searchTerm}
                   onChange={setSearchTerm}
                   options={searchResults.map((t) => ({
@@ -2653,6 +2656,11 @@ export default function BulkTokenBuyer() {
               <button
                 data-slot="button"
                 data-variant="primary"
+                aria-label={
+                  isLoading
+                    ? "Processing buy transactions"
+                    : `Buy ${validMints.length} token${validMints.length !== 1 ? "s" : ""}`
+                }
                 onClick={handleBulkBuy}
                 disabled={
                   isLoading ||

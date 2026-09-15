@@ -83,8 +83,8 @@ describe('ClimateChipView copy', () => {
     const inline = renderToStaticMarkup(
       <ClimateChipView label="Not safe" subtitle="BTC is dumping — beware" layout="inline" />,
     )
-    expect(header).toContain('text-amber-900')
-    expect(inline).toContain('text-amber-200')
+    expect(header).toContain('text-amber-950')
+    expect(inline).toContain('text-amber-100')
     expect(header).not.toContain('transition-all')
     expect(inline).not.toContain('transition-all')
   })
@@ -192,6 +192,7 @@ describe('better-ui + emil-design-eng CSS tokens', () => {
     expect(css).toContain('[data-slot="tabs-indicator"]')
     expect(css).toContain('[data-slot="focus-ring"]')
     expect(css).toContain('[data-slot="switch-thumb"]')
+    expect(css).toContain('.skip-link')
   })
 
   it('caps @sfinterface/numbers roll to the shipped insight UI budget', () => {

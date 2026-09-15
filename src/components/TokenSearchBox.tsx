@@ -43,6 +43,9 @@ type TokenSearchBoxProps = {
   onPick: (token: TokenSearchOption) => void;
   placeholder?: string;
   disabled?: boolean;
+  inputId?: string;
+  /** Accessible name when a visible <label htmlFor> is not used. */
+  inputLabel?: string;
   /** Show the holdings section when the box is focused (default true). */
   openHoldingsOnFocus?: boolean;
 };
@@ -62,6 +65,8 @@ export default function TokenSearchBox({
   onPick,
   placeholder,
   disabled,
+  inputId,
+  inputLabel,
   openHoldingsOnFocus = true,
 }: TokenSearchBoxProps) {
   const [open, setOpen] = useState(false);
@@ -151,8 +156,11 @@ export default function TokenSearchBox({
     <div className="relative" ref={rootRef}>
       <div className="relative">
         <input
+          id={inputId}
           type="text"
           data-slot="input"
+          aria-label={inputLabel ?? placeholder ?? 'Search tokens'}
+          autoComplete="off"
           value={value}
           onChange={(e) => {
             onChange(e.target.value);

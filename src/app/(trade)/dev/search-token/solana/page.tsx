@@ -4,7 +4,7 @@ import SearchTokenSolanaClient from './Client'
 import { Metadata } from 'next'
 
 export const metadata: Metadata = {
-  title: 'Search Token (Solana) - ReloadSOL',
+  title: 'Search Solana tokens',
   description: 'Find Solana tokens by name, symbol, or contract address.',
 }
 

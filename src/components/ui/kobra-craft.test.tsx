@@ -25,6 +25,7 @@ describe('Kobra-ported primitives', () => {
     expect(html).toContain('--tab-count:2')
     expect(html).toContain('--tab-i:0')
     expect(html).toContain('aria-selected="true"')
+    expect(html).toContain('tabindex="0"')
     expect(html).toContain('disabled')
   })
 
@@ -56,7 +57,9 @@ describe('Kobra-ported primitives', () => {
     expect(html).toContain('data-slot="switch-thumb"')
     expect(html).toContain('role="switch"')
     expect(html).toContain('aria-checked="false"')
+    expect(html).toContain('aria-labelledby')
     expect(html).toContain('Use GMGN')
+    expect(html).toContain('size-11')
   })
 
   it('wraps fields with a shared morphing focus ring', () => {

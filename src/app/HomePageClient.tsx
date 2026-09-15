@@ -58,12 +58,12 @@ function HomeContent() {
     <div className="min-h-screen bg-black py-8">
       <div className="container mx-auto px-4">
         <div className="text-center mb-8">
-          <h2 className="text-xl text-gray-400 max-w-2xl mx-auto leading-relaxed">
+          <h1 className="text-xl text-gray-400 max-w-2xl mx-auto leading-relaxed">
             Reload your Solana from all worthless memecoins, and trade smartly with us!
             <br />
-            Powered by <OptimizedImage className="inline-block h-[1.25rem]" src="https://s3.coinmarketcap.com/static-gravity/image/4dc5810324c74688a5a1b805f7506ec5.jpg" alt="Jupiter Logo" /> Jupiter, <OptimizedImage className="inline-block h-[1.25rem]" src="https://pbs.twimg.com/profile_images/1902372646249234432/T4kNyTq0_400x400.jpg" alt="Superteam Logo" /> Superteam Indonesia and
+            Powered by <OptimizedImage className="inline-block h-[1.25rem]" src="https://s3.coinmarketcap.com/static-gravity/image/4dc5810324c74688a5a1b805f7506ec5.jpg" alt="Jupiter" /> Jupiter, <OptimizedImage className="inline-block h-[1.25rem]" src="https://pbs.twimg.com/profile_images/1902372646249234432/T4kNyTq0_400x400.jpg" alt="" /> Superteam Indonesia and
             a part of <OptimizedImage className="inline-block h-[1.25rem]" src="https://pbs.twimg.com/profile_images/1843973608378421248/CzmuKtDx_400x400.jpg" alt="Colosseum Breakout" />.
-          </h2>
+          </h1>
         </div>
 
         <WalletChooser />

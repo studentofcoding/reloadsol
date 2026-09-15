@@ -9,15 +9,15 @@ import {
 import LiveNumber, { LIVE_NUMBER_H } from '@/components/insight/LiveNumber';
 
 const CHIP_TONE_LIGHT: Record<ClimateChipLabel, string> = {
-  Safe: 'bg-emerald-600/15 text-emerald-800 shadow-[0_0_0_1px_rgba(6,95,70,0.22)]',
-  'Not safe': 'bg-amber-500/20 text-amber-900 shadow-[0_0_0_1px_rgba(146,64,14,0.28)]',
-  Unknown: 'bg-black/[0.05] text-neutral-600 shadow-[0_0_0_1px_rgba(0,0,0,0.08)]',
+  Safe: 'bg-emerald-700/20 text-emerald-900 shadow-[0_0_0_1px_rgba(6,95,70,0.35)]',
+  'Not safe': 'bg-amber-500/20 text-amber-950 shadow-[0_0_0_1px_rgba(146,64,14,0.4)]',
+  Unknown: 'bg-black/[0.08] text-neutral-800 shadow-[0_0_0_1px_rgba(0,0,0,0.14)]',
 };
 
 const CHIP_TONE_DARK: Record<ClimateChipLabel, string> = {
-  Safe: 'bg-emerald-500/10 text-emerald-200 shadow-[0_0_0_1px_oklch(0.76_0.14_155_/_0.35)]',
-  'Not safe': 'bg-amber-500/15 text-amber-200 shadow-[0_0_0_1px_oklch(0.84_0.14_75_/_0.5)]',
-  Unknown: 'bg-white/5 text-gray-400 shadow-elev',
+  Safe: 'bg-emerald-500/15 text-emerald-100 shadow-[0_0_0_1px_oklch(0.76_0.14_155_/_0.45)]',
+  'Not safe': 'bg-amber-500/20 text-amber-100 shadow-[0_0_0_1px_oklch(0.84_0.14_75_/_0.55)]',
+  Unknown: 'bg-white/10 text-gray-200 shadow-elev',
 };
 
 function climateState(label: ClimateChipLabel) {
@@ -131,7 +131,7 @@ export function ClimateChipView({
         {subtitle ? (
           <span
             data-slot="climate-chip-detail"
-            className={`max-w-full truncate text-[9px] tracking-[0.01em] opacity-75 md:text-[10px] ${
+            className={`max-w-full truncate text-[9px] tracking-[0.01em] opacity-90 md:text-[10px] ${
               compact ? 'hidden sm:block' : ''
             }`}
           >

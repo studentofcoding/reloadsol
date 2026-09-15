@@ -394,24 +394,33 @@ dialog[role="dialog"] {
   opacity: 1;
 }
 [data-slot="focus-relay"] :is(input, select, textarea):focus {
-  outline: none;
   --tw-ring-offset-shadow: 0 0 #0000;
   --tw-ring-shadow: 0 0 #0000;
   box-shadow: none;
 }
+[data-slot="focus-relay"] :is(input, select, textarea):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@media (forced-colors: active) {
+  [data-slot="focus-ring"][data-active="true"] {
+    outline: 2px solid Highlight;
+    box-shadow: none;
+  }
+}
 
-/* Switch: knob spring-pop, track color 0.3s. */
-[data-slot="switch-control"] {
+/* Switch: 44px control; visual track + spring thumb inside. */
+[data-slot="switch-track"] {
   position: relative;
+  display: block;
   width: 2.25rem;
   height: 1.375rem;
-  flex-shrink: 0;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.12);
   box-shadow: inset 0 0 0 1px oklch(1 0 0 / 0.08);
   transition: background-color 0.3s var(--ease-glide);
 }
-[data-slot="switch-control"][data-state="on"] {
+[data-slot="switch-control"][data-state="on"] [data-slot="switch-track"] {
   background: var(--accent);
 }
 [data-slot="switch-thumb"] {
@@ -488,6 +497,26 @@ dialog[role="dialog"] {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+.skip-link {
+  position: absolute;
+  left: 1rem;
+  top: 0;
+  z-index: 10000;
+  transform: translateY(-120%);
+  border-radius: 999px;
+  background: #fff;
+  color: #111;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.24);
+  transition: transform 0.2s var(--ease-out-ui);
+}
+.skip-link:focus {
+  transform: translateY(0.75rem);
+}
+
 input:focus,
 textarea:focus,
 select:focus {

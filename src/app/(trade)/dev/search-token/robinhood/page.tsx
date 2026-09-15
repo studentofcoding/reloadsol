@@ -4,7 +4,7 @@ import SearchTokenRobinhoodClient from './Client'
 import { Metadata } from 'next'
 
 export const metadata: Metadata = {
-  title: 'Search Token (Robinhood) - ReloadSOL',
+  title: 'Search Robinhood tokens',
   description: 'Find Robinhood Chain ERC-20 tokens by name, symbol, or contract address.',
 }
 

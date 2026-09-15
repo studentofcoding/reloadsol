@@ -1,6 +1,6 @@
 'use client'
 
-import React from 'react'
+import React, { useEffect } from 'react'
 import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
 import { RH_CHAIN_ID, txUrl } from '@/utils/dlmm/rh-clmm/config'
 import { AUTO_SLIPPAGE_CAP_BPS } from '@/utils/auto-slippage'
@@ -81,6 +81,17 @@ export default function GmgnTradeConfirmModal({
   autoConfirm?: boolean
   onAutoConfirmChange?: (on: boolean) => void
 }) {
+  useEffect(() => {
+    if (!open) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      if (busy) return
+      onCancel()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, busy, onCancel])
+
   if (!open) return null
   const phase: SubmitPhase = submitPhase ?? (busy ? 'submitting' : 'idle')
   const isSubmitting = phase === 'submitting'
