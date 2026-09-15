@@ -21,11 +21,26 @@
 #   DEPLOY_BRANCH=main
 #   WEB_PORT=3000
 #   SKIP_BUILD_CHECKS=true
+#   NEXT_BUILD_CMD='npm run build:webpack'  # override Next build command
+#   DEPLOY_USE_WEBPACK=1|0                  # force webpack (1) or default next build (0)
+#   DEPLOY_LOCK=/tmp/reloadsol-deploy.lock
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+
+log() {
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+}
+
+# Fail-fast: concurrent git-pull / post-merge deploys must not stack.
+DEPLOY_LOCK="${DEPLOY_LOCK:-/tmp/reloadsol-deploy.lock}"
+exec 9>"$DEPLOY_LOCK"
+if ! flock -n 9; then
+  log "Another deploy is already running (lock ${DEPLOY_LOCK}) — skipping."
+  exit 0
+fi
 
 COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.prod.yml)
 BRANCH="${DEPLOY_BRANCH:-main}"
@@ -110,10 +125,6 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
-
-log() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
-}
 
 read_env_var() {
   local key="$1"
@@ -504,6 +515,43 @@ resolve_build_node_options() {
   fi
 }
 
+# Next 16.3 defaults `next build` to Turbopack, which thrash-locks ~3.6Gi hosts
+# (swap 100%, SSH dies). Low-RAM machines (<4096 MB total — same cutoff as
+# NODE_OPTIONS=1536) must use webpack. Override via NEXT_BUILD_CMD or
+# DEPLOY_USE_WEBPACK=1/0.
+resolve_next_build_cmd() {
+  if [[ -n "${NEXT_BUILD_CMD:-}" ]]; then
+    NEXT_BUILD_CMD_RESOLVED="$NEXT_BUILD_CMD"
+    NEXT_BUILD_REASON="NEXT_BUILD_CMD override"
+    return 0
+  fi
+
+  case "${DEPLOY_USE_WEBPACK:-}" in
+    1)
+      NEXT_BUILD_CMD_RESOLVED="npm run build:webpack"
+      NEXT_BUILD_REASON="DEPLOY_USE_WEBPACK=1"
+      return 0
+      ;;
+    0)
+      NEXT_BUILD_CMD_RESOLVED="npm run build"
+      NEXT_BUILD_REASON="DEPLOY_USE_WEBPACK=0"
+      return 0
+      ;;
+  esac
+
+  local total_mb=0
+  if command -v free >/dev/null 2>&1; then
+    total_mb="$(free -m | awk '/^Mem:/ {print $2}')"
+  fi
+  if [[ "${total_mb:-0}" -lt 4096 ]]; then
+    NEXT_BUILD_CMD_RESOLVED="npm run build:webpack"
+    NEXT_BUILD_REASON="host RAM ${total_mb}MB < 4096MB — webpack (Turbopack default OOMs low-RAM hosts)"
+  else
+    NEXT_BUILD_CMD_RESOLVED="npm run build"
+    NEXT_BUILD_REASON="host RAM ${total_mb}MB >= 4096MB — default next build"
+  fi
+}
+
 start_db_stack() {
   log "Starting Postgres + PgBouncer (db-first) ..."
   set +e
@@ -598,10 +646,14 @@ if [[ "$DEPLOY_WEB" == true ]]; then
   bash scripts/install-build-deps.sh
 
   log "Building Next.js on host (old container still running) ..."
+  # Low-RAM hosts must use webpack: Next 16.3 `npm run build` (= next build)
+  # defaults to Turbopack and OOMs a ~3.6Gi VPS. See resolve_next_build_cmd.
   export SKIP_BUILD_CHECKS="${SKIP_BUILD_CHECKS:-true}"
   resolve_build_node_options
   log "NODE_OPTIONS=${NODE_OPTIONS}"
-  npm run build
+  resolve_next_build_cmd
+  log "Next.js build path: ${NEXT_BUILD_CMD_RESOLVED} (${NEXT_BUILD_REASON})"
+  bash -c "$NEXT_BUILD_CMD_RESOLVED"
   verify_standalone_build
 
   log "Building web image ..."
