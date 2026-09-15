@@ -10,6 +10,10 @@ import {
   type RaptorQuoteResponse,
 } from "@/utils/solanatracker-raptor";
 import {
+  resolveBuybulkFeeBps,
+  resolveBuybulkSolFeeAccount,
+} from "@/utils/buybulk-fee";
+import {
   prepareJupiterLiteSwap,
   fetchJupiterLiteQuote,
   fetchJupiterLiteQuoteDirect,
@@ -139,8 +143,8 @@ async function prepareRaptorSwap(
     amount: params.amount,
     slippageBps: params.slippageBps,
     priorityFeeLamports: params.priorityFeeLamports,
-    feeAccount: params.feeAccount,
-    feeBps: params.feeBps,
+    feeAccount: resolveBuybulkSolFeeAccount(params.feeAccount),
+    feeBps: resolveBuybulkFeeBps(params.feeBps),
     maxHops: params.maxHops,
   };
 
@@ -182,7 +186,9 @@ async function prepareJupiterLiteSwapPrepared(
   };
 }
 
-/** Shyft stack: Raptor build first, Jupiter Lite on failure. */
+/** Shyft stack: Raptor (buy_bulk 25 bps) first. Jupiter Lite has no
+ *  referral ATA in this repo, so it cannot collect the platform fee —
+ *  fallback is last-resort only when Raptor cannot build the tx. */
 async function prepareShyftStackSwap(
   params: PrepareSwapParams,
 ): Promise<PreparedSwap> {

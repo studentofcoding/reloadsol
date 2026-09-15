@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   PERMIT2,
   RH_NATIVE_FEE_TOKEN,
+  RH_PLATFORM_FEE_BPS,
   RH_WETH,
   batchExecutorAbi,
   computePullAmounts,
@@ -14,6 +15,7 @@ import {
   platformFeeAmount,
   type ExecutorSwapLeg,
 } from '@/utils/dlmm/rh-batch-executor'
+import { BUYBULK_PLATFORM_FEE_BPS } from '@/utils/buybulk-fee'
 
 const EXECUTOR = '0x00000000000000000000000000000000000000e1'
 const ACCOUNT = '0x00000000000000000000000000000000000000a1'
@@ -28,6 +30,12 @@ afterEach(() => {
 })
 
 describe('env flags', () => {
+  it('shares the buy_bulk 25 bps constant', () => {
+    expect(RH_PLATFORM_FEE_BPS).toBe(25)
+    expect(RH_PLATFORM_FEE_BPS).toBe(BUYBULK_PLATFORM_FEE_BPS)
+    expect(platformFeeAmount(BigInt(10_000))).toBe(BigInt(25))
+  })
+
   it('executor address is null when unset or invalid', () => {
     expect(getRhBatchExecutorAddress()).toBeNull()
     process.env.RH_BATCH_EXECUTOR_ADDRESS = 'not-an-address'

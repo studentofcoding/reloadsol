@@ -84,6 +84,12 @@ describe("swap-executor shyft provider", () => {
 
     expect(prepared.provider).toBe("raptor");
     expect(prepareJupiterLiteSwap).not.toHaveBeenCalled();
+    expect(fetchRaptorQuoteAndSwapDirect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        feeBps: 25,
+        feeAccount: "3V3N5xh6vUUVU3CnbjMAXoyXendfXzXYKzTVEsFrLkgX",
+      }),
+    );
   });
 
   it("prepareSwapTransaction falls back to Jupiter Lite when Raptor fails", async () => {

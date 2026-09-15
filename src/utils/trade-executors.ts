@@ -170,7 +170,7 @@ class RealTradeExecutor implements TradeExecutor {
         signature: sendResult.signature,
         inputAmount: String(params.amount),
         outputAmount: prepared.outAmount ?? '0',
-        fees: { totalFees: 0, feePercentage: 0.5 },
+        fees: { totalFees: 0, feePercentage: 0.25 },
         provider: 'raptor',
         rpcUsed: sendResult.via === 'raptor' ? 'raptor' : 'rpc',
         responseTime: elapsed
