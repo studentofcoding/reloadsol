@@ -1,8 +1,34 @@
 /** @type {import('next').NextConfig} */
+const path = require('path')
 const { IMAGE_REMOTE_HOSTS: imageHosts, UNOPTIMIZED_IMAGE_HOSTS } = require('./src/config/image-hosts.js')
 const optimizedImageHosts = imageHosts.filter(
   (hostname) => !UNOPTIMIZED_IMAGE_HOSTS.includes(hostname),
 )
+
+// npm override bigint-buffer → bigint-buffer-fixed@1.1.6 is not hoisted.
+// The package lives only under @solana/buffer-layout-utils/node_modules.
+// require.resolve('bigint-buffer/dist/browser') works when a top-level
+// install exists; the missing .js suffix is not the failure. Fall back to
+// the nested browser build and never throw MODULE_NOT_FOUND at config load.
+function resolveBigintBufferBrowser() {
+  const tryResolve = (id, options) => {
+    try {
+      return require.resolve(id, options)
+    } catch {
+      return undefined
+    }
+  }
+
+  return (
+    tryResolve('bigint-buffer/dist/browser') ||
+    tryResolve(
+      path.join(
+        __dirname,
+        'node_modules/@solana/buffer-layout-utils/node_modules/bigint-buffer/dist/browser.js',
+      ),
+    )
+  )
+}
 
 const nextConfig = {
   // ===== INSTANT NAVIGATIONS (Next 16.3) =====
@@ -189,9 +215,12 @@ const nextConfig = {
     }
 
     if (!isServer) {
-      config.resolve.alias = {
-        ...config.resolve.alias,
-        'bigint-buffer': require.resolve('bigint-buffer/dist/browser'),
+      const bigintBufferBrowser = resolveBigintBufferBrowser()
+      if (bigintBufferBrowser) {
+        config.resolve.alias = {
+          ...config.resolve.alias,
+          'bigint-buffer': bigintBufferBrowser,
+        }
       }
     }
 
