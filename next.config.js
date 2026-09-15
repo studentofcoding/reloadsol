@@ -1,8 +1,36 @@
 /** @type {import('next').NextConfig} */
+const path = require('path')
 const { IMAGE_REMOTE_HOSTS: imageHosts, UNOPTIMIZED_IMAGE_HOSTS } = require('./src/config/image-hosts.js')
 const optimizedImageHosts = imageHosts.filter(
   (hostname) => !UNOPTIMIZED_IMAGE_HOSTS.includes(hostname),
 )
+
+// bigint-buffer-fixed (package.json override) is often nested under
+// @solana/buffer-layout-utils instead of hoisted. Webpack client alias
+// must not throw MODULE_NOT_FOUND when evaluating next.config.js.
+function resolveBigintBufferBrowser() {
+  const tryResolve = (id, options) => {
+    try {
+      return require.resolve(id, options)
+    } catch {
+      return undefined
+    }
+  }
+
+  return (
+    tryResolve('bigint-buffer/dist/browser') ||
+    tryResolve('bigint-buffer/dist/browser.js') ||
+    tryResolve('bigint-buffer/dist/browser.js', {
+      paths: [path.join(__dirname, 'node_modules/@solana/buffer-layout-utils')],
+    }) ||
+    tryResolve(
+      path.join(
+        __dirname,
+        'node_modules/@solana/buffer-layout-utils/node_modules/bigint-buffer/dist/browser.js',
+      ),
+    )
+  )
+}
 
 const nextConfig = {
   // ===== INSTANT NAVIGATIONS (Next 16.3) =====
@@ -189,9 +217,12 @@ const nextConfig = {
     }
 
     if (!isServer) {
-      config.resolve.alias = {
-        ...config.resolve.alias,
-        'bigint-buffer': require.resolve('bigint-buffer/dist/browser'),
+      const bigintBufferBrowser = resolveBigintBufferBrowser()
+      if (bigintBufferBrowser) {
+        config.resolve.alias = {
+          ...config.resolve.alias,
+          'bigint-buffer': bigintBufferBrowser,
+        }
       }
     }
 
