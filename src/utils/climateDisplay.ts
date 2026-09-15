@@ -6,7 +6,14 @@
  * never Safe/Hype. `e4_depth` missing does not force Not safe.
  */
 
-import type { ClimateGateResult, ClimateSizeKind, ClimateState } from '@/utils/climateGate'
+import type {
+  ClimateGateResult,
+  ClimateSizeKind,
+  ClimateState,
+  ClimateTone,
+} from '@/utils/climateGate'
+
+export type { ClimateTone } from '@/utils/climateGate'
 
 export const CLIMATE_DISPLAY_STALE_MS = 90_000
 
@@ -26,12 +33,20 @@ export type ClimateChipPayload = {
   scale?: number
   fetchedAt: number
   stale: boolean
+  headline?: string | null
+  detail?: string | null
+  tone?: ClimateTone | null
 }
 
 export type ClimateChipSource = Pick<
   ClimateGateResult,
   'ok' | 'error' | 'fetchedAt' | 'state' | 'h' | 'cascadeVeto' | 'sizeKind' | 'scale'
-> & { computedAt?: number | null }
+> & {
+  computedAt?: number | null
+  headline?: string | null
+  detail?: string | null
+  tone?: ClimateTone | null
+}
 
 export function isClimateDisplayStale(opts: {
   now: number
@@ -67,6 +82,12 @@ export function climateChipLabel(input: {
   return 'Unknown'
 }
 
+function trimCopy(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed ? trimmed : null
+}
+
 /** Regime Hurst-like H for chips: `H 0.5` (one decimal). */
 export function formatClimateH(
   h: number | null | undefined,
@@ -76,16 +97,67 @@ export function formatClimateH(
   return `H ${h.toFixed(digits)}`
 }
 
-/** Detail under the binary label, e.g. `De-risk · H 0.5`. Same for Safe/Unknown. */
+/**
+ * Chip subtitle under the binary label.
+ * Prefers terminal `headline` (e.g. `Chop mode`); falls back to `state · H`
+ * for older terminals that omit headline.
+ */
 export function formatClimateRegimeDetail(opts: {
+  headline?: string | null
   state?: string | null
   h?: number | null
   digits?: number
 }): string | null {
+  const headline = trimCopy(opts.headline)
+  if (headline) return headline
   const hLabel = formatClimateH(opts.h, opts.digits ?? 1)
-  const state = typeof opts.state === 'string' && opts.state.trim() ? opts.state.trim() : null
+  const state = trimCopy(opts.state)
   const parts = [state, hLabel].filter((part): part is string => Boolean(part))
   return parts.length > 0 ? parts.join(' · ') : null
+}
+
+/**
+ * Native tooltip / secondary copy. Prefers terminal `detail` when present;
+ * keeps H in the tooltip when useful. Falls back to the chip subtitle.
+ */
+export function formatClimateRegimeTooltip(opts: {
+  label: ClimateChipLabel
+  headline?: string | null
+  detail?: string | null
+  state?: string | null
+  h?: number | null
+}): string {
+  const detail = trimCopy(opts.detail)
+  const chipLine = formatClimateRegimeDetail({
+    headline: opts.headline,
+    state: opts.state,
+    h: opts.h,
+  })
+  const hLabel = formatClimateH(opts.h)
+  const suffix =
+    opts.label === 'Safe'
+      ? 'Display only.'
+      : 'Display only — does not block trades.'
+
+  if (opts.label === 'Unknown' && !detail && !chipLine) {
+    return 'Regime climate unknown (fetch failed or stale). Display only — does not block trades.'
+  }
+
+  if (detail) {
+    const hBit = hLabel && !detail.includes(hLabel) ? ` (${hLabel})` : ''
+    if (opts.label === 'Unknown') {
+      return `Regime climate unknown (${detail}${hBit}). ${suffix}`
+    }
+    return `${opts.label}. ${detail}${hBit}. ${suffix}`
+  }
+
+  if (opts.label === 'Unknown') {
+    return `Regime climate unknown${chipLine ? ` (${chipLine})` : ''}. ${suffix}`
+  }
+
+  return chipLine
+    ? `${opts.label} (${chipLine}). ${suffix}`
+    : `${opts.label}. ${suffix}`
 }
 
 export function toClimateChipPayload(
@@ -116,5 +188,8 @@ export function toClimateChipPayload(
     scale: gate.scale,
     fetchedAt: gate.fetchedAt,
     stale,
+    headline: gate.headline ?? null,
+    detail: gate.detail ?? null,
+    tone: gate.tone ?? null,
   }
 }

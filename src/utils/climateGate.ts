@@ -29,6 +29,10 @@ export type ClimateState = (typeof CLIMATE_STATES)[number]
 export const SIZE_KINDS = ['stand-down', 'trim', 'reduced', 'neutral', 'full'] as const
 export type ClimateSizeKind = (typeof SIZE_KINDS)[number]
 
+/** Display-only copy from terminal.reloadsol.app (not used for size/gating). */
+export const CLIMATE_TONES = ['danger', 'warn', 'neutral', 'ok'] as const
+export type ClimateTone = (typeof CLIMATE_TONES)[number]
+
 const STATE_RANK: Record<ClimateState, number> = {
   Cash: 0,
   'De-risk': 1,
@@ -93,6 +97,12 @@ export type ClimateGateResult = {
   notWired: string[]
   reason: string
   error?: string
+  /** Short human chip line from the terminal API (display-only). */
+  headline: string | null
+  /** One-sentence tooltip from the terminal API (display-only). */
+  detail: string | null
+  /** Chip tone hint from the terminal API (display-only). */
+  tone: ClimateTone | null
 }
 
 export type ClimateOpenDecision = {
@@ -129,6 +139,32 @@ function envInt(key: string, fallback: number): number {
 
 function isState(value: unknown): value is ClimateState {
   return typeof value === 'string' && (CLIMATE_STATES as readonly string[]).includes(value)
+}
+
+function trimCopy(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed ? trimmed : null
+}
+
+function isTone(value: string): value is ClimateTone {
+  return (CLIMATE_TONES as readonly string[]).includes(value)
+}
+
+/** Display-only `headline` / `detail` / `tone` from the terminal climate JSON. */
+export function readClimateHumanCopy(data: unknown): {
+  headline: string | null
+  detail: string | null
+  tone: ClimateTone | null
+} {
+  const o = asObject(data)
+  if (!o) return { headline: null, detail: null, tone: null }
+  const toneRaw = trimCopy(o.tone)
+  return {
+    headline: trimCopy(o.headline),
+    detail: trimCopy(o.detail),
+    tone: toneRaw && isTone(toneRaw) ? toneRaw : null,
+  }
 }
 
 /** Prefer top-level `computedAt`, then `timestamps.computedAt`. */
@@ -268,11 +304,13 @@ export async function fetchClimate(opts: FetchClimateOpts = {}): Promise<Climate
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const json: unknown = await res.json()
     const parsed = interpretClimate(json)
+    const human = readClimateHumanCopy(json)
     const gate: ClimateGateResult = {
       ok: true,
       fetchedAt: now,
       computedAt: readClimateComputedAt(json),
       ...parsed,
+      ...human,
     }
     cache = { at: now, gate }
     return gate
@@ -295,6 +333,9 @@ export async function fetchClimate(opts: FetchClimateOpts = {}): Promise<Climate
       fetchedAt: now,
       computedAt: null,
       error: msg,
+      headline: null,
+      detail: null,
+      tone: null,
     }
     cache = { at: now, gate }
     return gate

@@ -8,6 +8,17 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — climate chips use terminal headline / detail
+
+- Header and `/dev/insight` scout chips show the binary **Safe** / **Not
+  safe** / **Unknown** label plus the terminal **`headline`** (e.g. `Chop
+  mode`, `BTC is dumping — beware`, `Mixed tape`). Tooltip prefers
+  **`detail`**; H stays in the tooltip. Falls back to `state · H` only when
+  headline is missing (old terminals).
+- Display mapping still uses `state` / cascade / news for the binary Safe
+  gate. Paper-sim Safe-gate, `buybulk-datapublic-scout`, and live execute
+  paths are unchanged.
+
 ### Added — live `@sfinterface/numbers` readouts on insight / climate chips
 
 - Pin **`@sfinterface/numbers@0.3.4`** (exact). Wrapper
@@ -28,7 +39,8 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   server-side into `strategy_paper_notches`. Never `executeBulkBuy` / live swap /
   `CLIMATE_GATE_LIVE`.
 - Insight climate chip: binary **Safe** / **Not safe** / **Unknown** (no
-  `Climate ` prefix) plus regime detail `De-risk · H 0.5` (state + H ~1 decimal).
+  `Climate ` prefix) plus terminal `headline` (fallback `state · H` on old
+  terminals).
 - Per-network: RH context shows RH scout only; Sol shows Sol scout + **Roster
   digger (Sol)** (`RosterTab` / `/api/gmgn/roster`). In-page Sol/RH tabs call
   `setNetwork`.

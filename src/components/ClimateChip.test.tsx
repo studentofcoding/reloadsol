@@ -23,23 +23,42 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 describe('ClimateChipView copy', () => {
-  it('renders Not safe + De-risk · H 0.5 without a Climate prefix', () => {
+  it('renders Safe + Chop mode without a Climate prefix', () => {
     const html = renderToStaticMarkup(
       <ClimateChipView
-        label="Not safe"
-        subtitle="De-risk · H 0.5"
-        ariaLabel="Not safe, De-risk · H 0.5"
+        label="Safe"
+        subtitle="Chop mode"
+        ariaLabel="Safe, Chop mode"
       />,
     )
-    expect(html).toContain('Not safe')
-    expect(html).toContain('De-risk · H 0.5')
-    expect(html).toContain('tabular-nums')
+    expect(html).toContain('Safe')
+    expect(html).toContain('Chop mode')
+    expect(html).not.toContain('Range · H')
     expect(html).not.toMatch(/>Climate /)
-    expect(html).not.toContain('Climate Not safe')
-    expect(html).not.toContain('Climate De-risk')
+    expect(html).not.toContain('Climate Safe')
   })
 
-  it('rolls H with @sfinterface/numbers while keeping the state prefix', () => {
+  it('renders headline from ClimateRegimeLiveDetail instead of rolling H', () => {
+    const html = renderToStaticMarkup(
+      <ClimateChipView
+        label="Safe"
+        subtitle={
+          <ClimateRegimeLiveDetail
+            headline="Chop mode"
+            state="Range"
+            h={0.52}
+          />
+        }
+        ariaLabel="Safe, Chop mode"
+      />,
+    )
+    expect(html).toContain('Chop mode')
+    expect(html).not.toContain('Range · ')
+    expect(html).not.toContain('sfi-numbers')
+    expect(html).not.toMatch(/>Climate /)
+  })
+
+  it('falls back to state · H when headline is missing', () => {
     const html = renderToStaticMarkup(
       <ClimateChipView
         label="Not safe"
@@ -57,10 +76,10 @@ describe('ClimateChipView copy', () => {
 
   it('uses light-legible tones on the Header chrome and dark tones inline', () => {
     const header = renderToStaticMarkup(
-      <ClimateChipView label="Not safe" subtitle="De-risk · H 0.5" layout="header" />,
+      <ClimateChipView label="Not safe" subtitle="BTC is dumping — beware" layout="header" />,
     )
     const inline = renderToStaticMarkup(
-      <ClimateChipView label="Not safe" subtitle="De-risk · H 0.5" layout="inline" />,
+      <ClimateChipView label="Not safe" subtitle="BTC is dumping — beware" layout="inline" />,
     )
     expect(header).toContain('text-amber-900')
     expect(inline).toContain('text-amber-200')
