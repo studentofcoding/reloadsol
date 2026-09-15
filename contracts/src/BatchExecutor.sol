@@ -75,7 +75,7 @@ contract BatchExecutor {
     IPermit2 public immutable permit2;
     address public immutable weth;
     address public immutable feeTo;
-    uint256 public constant FEE_BPS = 25;
+    uint256 public constant FEE_BPS = 25; // buy_bulk: exactly 0.25% (25 / 10_000)
     uint256 private constant _BPS_DENOM = 10_000;
 
     address public owner;

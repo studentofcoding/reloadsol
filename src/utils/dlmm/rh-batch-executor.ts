@@ -15,6 +15,7 @@
  */
 
 import { encodeFunctionData, type Address, type Hex } from 'viem'
+import { BUYBULK_PLATFORM_FEE_BPS, BUYBULK_PLATFORM_FEE_LABEL } from '@/utils/buybulk-fee'
 import { PERMIT2 } from '@/utils/dlmm/rh-clmm/config'
 import { permit2Abi } from '@/utils/dlmm/rh-clmm/abis'
 import { weth9Abi } from '@/utils/dlmm/rh-clmm/wrap'
@@ -125,12 +126,13 @@ export type RhExecutorCall = {
 export const PERMIT2_MAX_UINT160 = (BigInt(1) << BigInt(160)) - BigInt(1)
 export const PERMIT2_MAX_UINT48 = (BigInt(1) << BigInt(48)) - BigInt(1)
 
-export const RH_PLATFORM_FEE_BPS = 25
+/** Same 25 bps as BatchExecutor.FEE_BPS / Sol Raptor buy_bulk fee. */
+export const RH_PLATFORM_FEE_BPS = BUYBULK_PLATFORM_FEE_BPS
 export const RH_PLATFORM_FEE_TO =
   '0x795b5c0c89fC5D3b0De6c04141C3F1b6C340603D' as Address
 export const RH_NATIVE_FEE_TOKEN =
   '0x0000000000000000000000000000000000000000' as Address
-export const RH_PLATFORM_FEE_LABEL = '0.25% platform fee'
+export const RH_PLATFORM_FEE_LABEL = BUYBULK_PLATFORM_FEE_LABEL
 
 export function platformFeeAmount(tradeAmount: bigint): bigint {
   return (tradeAmount * BigInt(RH_PLATFORM_FEE_BPS)) / BigInt(10_000)

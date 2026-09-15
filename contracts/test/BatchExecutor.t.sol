@@ -393,6 +393,10 @@ contract BatchExecutorTest is TestBase {
         assertTrue(exec.owner() == USER2, "owner rotated");
     }
 
+    function test_feeBpsIsExactly25() public view {
+        assertEq(exec.FEE_BPS(), 25, "buy_bulk platform fee is 25 bps");
+    }
+
     function test_ethFeeTakenThenLeftoverReturned() public {
         vm.deal(OWNER, 2 ether);
         vm.deal(FEE_TO, 0);

@@ -52,7 +52,9 @@ Per [Solana Tracker Swap API](https://docs.solanatracker.io/guides/swap-api):
   - Swap: `POST /api/solanatracker/swap` → Raptor `POST /quote-and-swap`
   - Send: `POST /api/solanatracker/send` → Raptor `POST /send-transaction`
   - Status: `GET /api/solanatracker/transaction/[signature]`
-  - Env: `RAPTOR_API_BASE` (optional), platform fee via `feeAccount` / `feeBps`
+  - Env: `RAPTOR_API_BASE` (optional). Platform fee is **always 25 bps (0.25%)**
+    to the buy_bulk treasury (`feeAccount` / `feeBps` via `src/utils/buybulk-fee.ts`);
+    clients cannot omit or override it.
 
 - **Jupiter Ultra Reclaim (close only — not swaps)**
   - Craft: `POST /api/jupiter/reclaim/craft` → reclaim API

@@ -2194,7 +2194,7 @@ export default function BulkTokenSeller({
     0,
   );
   const grossSOL = grossUSD / solPriceUsd; // Convert USD to SOL
-  const sellFee = getFeeForOperation("SELL", grossSOL); // 0.5% of SOL received
+  const sellFee = getFeeForOperation("SELL", grossSOL); // 0.25% of SOL received
   // Close fees/rent only for explicit close targets (zero-balance), not 100% sells —
   // sell no longer auto-closes emptied ATAs (use Close for rent reclaim).
   const tokensToClose = selectedZeroBalanceTokens.length;

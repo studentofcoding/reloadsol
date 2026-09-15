@@ -28,6 +28,11 @@ import {
   injectInstructionsIntoVersionedTransaction,
 } from './jupiter-reclaim'
 import { SwapQuote, SwapTransaction, BulkBuyRequest, BulkBuyResult, TokenPurchase } from '@/types'
+import {
+  BUYBULK_PLATFORM_FEE_BPS,
+  BUYBULK_PLATFORM_FEE_PERCENT,
+  BUYBULK_SOL_FEE_ACCOUNT,
+} from '@/utils/buybulk-fee'
 
 // Add BigInt JSON serialization support
 declare global {
@@ -196,12 +201,12 @@ export async function preWarmTokenCache(mints: string[]): Promise<void> {
   }
 }
 
-// Fee configuration with percentage-based fees for buy/sell and fixed fees for close
+// Fee configuration — buy/sell take the buy_bulk 25 bps (0.25%) platform fee.
 const FEE_CONFIG = {
-  DEV_WALLET: '3V3N5xh6vUUVU3CnbjMAXoyXendfXzXYKzTVEsFrLkgX',
+  DEV_WALLET: BUYBULK_SOL_FEE_ACCOUNT,
   FEES: {
-    BUY_PERCENTAGE: 0.5,     // 0.5% of SOL budget for buy operations
-    SELL_PERCENTAGE: 0.5,    // 0.5% of SOL received for sell operations
+    BUY_PERCENTAGE: BUYBULK_PLATFORM_FEE_PERCENT,
+    SELL_PERCENTAGE: BUYBULK_PLATFORM_FEE_PERCENT,
     CLOSE: 0.001,          // 0.001 SOL per successful close operation (fixed)
   },
   REFERRAL_PERCENTAGE: 0, // All fees go to dev wallet (no referral split)
@@ -510,7 +515,7 @@ export async function getSwapTransaction(
 ): Promise<SwapTransaction | null> {
   return buildSwapTransaction(quote, userPublicKey, priorityFeeLamports, {
     feeAccount: FEE_CONFIG.DEV_WALLET,
-    feeBps: 50,
+    feeBps: BUYBULK_PLATFORM_FEE_BPS,
   })
 }
 
@@ -1864,7 +1869,7 @@ export async function executeBulkBuy(
               slippageBps: request.slippage,
               priorityFeeLamports: request.priorityFee,
               feeAccount: FEE_CONFIG.DEV_WALLET,
-              feeBps: 50,
+              feeBps: BUYBULK_PLATFORM_FEE_BPS,
               connection,
             })
 
@@ -2007,7 +2012,7 @@ export async function executeBulkBuy(
 
     // Calculate fee information (fees are included in Solana Tracker API)
     if (result.successfulPurchases.length > 0) {
-      // For buy: 0.5% of total SOL budget (request.solAmount)
+      // For buy: 0.25% (25 bps) of total SOL budget (request.solAmount)
       const feeDistribution = calculateFeeDistribution('BUY', result.successfulPurchases.length, request.solAmount)
 
       result.feeInfo = {
@@ -2021,7 +2026,7 @@ export async function executeBulkBuy(
 
       console.log(`🎉 Bulk buy completed: ${result.successfulPurchases.length} successful, ${result.failedPurchases.length} failed`)
       console.log(`⚡ Total processing time: ${Date.now() - start}ms`)
-      console.log(`💰 Total fees: ${feeDistribution.totalFee} SOL (0.5% of ${request.solAmount} SOL budget)`)
+      console.log(`💰 Total fees: ${feeDistribution.totalFee} SOL (0.25% of ${request.solAmount} SOL budget)`)
     }
 
     return result
@@ -2638,7 +2643,7 @@ export async function executeBulkSellAlt(
                   slippageBps: request.slippage,
                   priorityFeeLamports: request.priorityFee,
                   feeAccount: FEE_CONFIG.DEV_WALLET,
-                  feeBps: 50,
+                  feeBps: BUYBULK_PLATFORM_FEE_BPS,
                   connection,
                 });
 

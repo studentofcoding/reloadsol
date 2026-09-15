@@ -1,10 +1,16 @@
 import { TOKENS } from "@/utils/solana";
+import {
+  BUYBULK_PLATFORM_FEE_BPS,
+  BUYBULK_SOL_FEE_ACCOUNT,
+  resolveBuybulkFeeBps,
+  resolveBuybulkSolFeeAccount,
+} from "@/utils/buybulk-fee";
 
 export const RAPTOR_DEFAULT_BASE = "https://raptor-beta.solanatracker.io";
 export const RAPTOR_FETCH_TIMEOUT_MS = 20_000;
-export const RAPTOR_DEV_FEE_BPS = 50;
-export const RAPTOR_DEV_FEE_ACCOUNT =
-  "3V3N5xh6vUUVU3CnbjMAXoyXendfXzXYKzTVEsFrLkgX";
+/** Buy-bulk 25 bps — always applied on quote-and-swap. */
+export const RAPTOR_DEV_FEE_BPS = BUYBULK_PLATFORM_FEE_BPS;
+export const RAPTOR_DEV_FEE_ACCOUNT = BUYBULK_SOL_FEE_ACCOUNT;
 
 /** Direct/single-hop only — avoids multi-hop route failures on thin pump tokens. */
 export const RAPTOR_DEFAULT_MAX_HOPS = 1;
@@ -146,8 +152,9 @@ export function buildRaptorQuoteAndSwapBody(
     maxHops: params.maxHops ?? getRaptorMaxHops(),
     priorityFee: priority.priorityFee,
     maxPriorityFee: priority.maxPriorityFee,
-    feeAccount: params.feeAccount ?? RAPTOR_DEV_FEE_ACCOUNT,
-    feeBps: params.feeBps ?? RAPTOR_DEV_FEE_BPS,
+    // Canonical buy_bulk fee — ignore caller values so swaps cannot bypass 25 bps.
+    feeAccount: resolveBuybulkSolFeeAccount(params.feeAccount),
+    feeBps: resolveBuybulkFeeBps(params.feeBps),
   };
 }
 

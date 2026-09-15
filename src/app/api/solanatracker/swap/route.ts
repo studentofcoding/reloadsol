@@ -5,6 +5,10 @@ import {
   RaptorAPIError,
   type RaptorQuoteAndSwapParams,
 } from "@/utils/solanatracker-raptor";
+import {
+  resolveBuybulkFeeBps,
+  resolveBuybulkSolFeeAccount,
+} from "@/utils/buybulk-fee";
 
 
 export async function POST(request: NextRequest) {
@@ -54,8 +58,9 @@ export async function POST(request: NextRequest) {
       amount: amountStr,
       slippageBps: body.slippageBps ?? 200,
       priorityFeeLamports: body.priorityFeeLamports,
-      feeAccount: body.feeAccount,
-      feeBps: body.feeBps,
+      // Always 25 bps to the buy_bulk treasury — client cannot omit or redirect.
+      feeAccount: resolveBuybulkSolFeeAccount(body.feeAccount),
+      feeBps: resolveBuybulkFeeBps(body.feeBps),
       maxHops: body.maxHops,
     });
 

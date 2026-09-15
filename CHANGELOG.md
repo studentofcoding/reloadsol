@@ -8,6 +8,18 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — all buy_bulk swaps take 25 bps (0.25%)
+
+- Sol Raptor `quote-and-swap` (bulk buy/sell, `executeClientSwap`, bots) now
+  stamps **25 bps** to the buy_bulk treasury — same rate as RH
+  `BatchExecutor.FEE_BPS`. Callers cannot pass `feeBps: 0` / `50` or a
+  different `feeAccount`; `src/utils/buybulk-fee.ts` is the single source.
+- `FEE_CONFIG` buy/sell percentages updated from 0.5% → 0.25% so UI accounting
+  matches the on-route fee.
+- RH Kyber executor path unchanged (already 25 bps). Jupiter Lite fallback,
+  Jupiter Terminal `/swap`, and GMGN bound-wallet trades still do not go
+  through BatchExecutor / Raptor fee injection.
+
 ### Changed — climate chips use terminal headline / detail
 
 - Header and `/dev/insight` scout chips show the binary **Safe** / **Not

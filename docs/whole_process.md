@@ -83,17 +83,17 @@ flowchart TB
 
 ## Fees
 
-From `FEE_CONFIG` in `src/utils/jupiter.ts`:
+From `FEE_CONFIG` in `src/utils/jupiter.ts` (buy_bulk **25 bps / 0.25%**):
 
 | Operation | Fee | Recipient |
 |-----------|-----|-----------|
-| Buy | 0.5% of SOL budget | Dev wallet |
-| Sell | 0.5% of SOL received | Dev wallet |
+| Buy | 0.25% of SOL budget | Dev wallet |
+| Sell | 0.25% of SOL received | Dev wallet |
 | Close | 0.001 SOL × account closed | Dev wallet |
 
 Dev wallet: `3V3N5xh6vUUVU3CnbjMAXoyXendfXzXYKzTVEsFrLkgX`
 
-Raptor swaps also pass `feeAccount` / `feeBps` (50 bps) to Solana Tracker on bulk paths.
+Raptor swaps always pass `feeAccount` / `feeBps` (**25 bps**) to Solana Tracker — callers cannot lower or redirect the fee (`src/utils/buybulk-fee.ts`). RH parent Kyber swaps take the same 25 bps inside `BatchExecutor`.
 
 ---
 
