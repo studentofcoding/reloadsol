@@ -165,18 +165,22 @@ describe('isRhHeldToken + RPC skip', () => {
   })
 })
 
-describe('fetchBlockscoutErc20Tokens (live)', () => {
-  it(
-    'returns ERC-20 list for Parent wallet including WETH',
-    async () => {
-      const tokens = await fetchBlockscoutErc20Tokens(RH_PARENT_WALLET)
-      expect(tokens.length).toBeGreaterThanOrEqual(1)
-      expect(tokens.every((t) => t.uiAmount > 0)).toBe(true)
-      expect(tokens.every((t) => !t.isNFT)).toBe(true)
-      expect(tokens.some((t) => t.mintAddress === RH_WETH)).toBe(true)
-      // Smoke: symbols present for debugging empty UI
-      expect(tokens.some((t) => t.symbol === 'WETH')).toBe(true)
-    },
-    20_000,
-  )
-})
+/** Live Blockscout smoke: set RUN_LIVE_NETWORK_TESTS=1 to enable (skipped by default). */
+describe.skipIf(process.env.RUN_LIVE_NETWORK_TESTS !== '1')(
+  'fetchBlockscoutErc20Tokens (live)',
+  () => {
+    it(
+      'returns ERC-20 list for Parent wallet including WETH',
+      async () => {
+        const tokens = await fetchBlockscoutErc20Tokens(RH_PARENT_WALLET)
+        expect(tokens.length).toBeGreaterThanOrEqual(1)
+        expect(tokens.every((t) => t.uiAmount > 0)).toBe(true)
+        expect(tokens.every((t) => !t.isNFT)).toBe(true)
+        expect(tokens.some((t) => t.mintAddress === RH_WETH)).toBe(true)
+        // Smoke: symbols present for debugging empty UI
+        expect(tokens.some((t) => t.symbol === 'WETH')).toBe(true)
+      },
+      20_000,
+    )
+  },
+)
