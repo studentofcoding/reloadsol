@@ -5,9 +5,11 @@ const optimizedImageHosts = imageHosts.filter(
   (hostname) => !UNOPTIMIZED_IMAGE_HOSTS.includes(hostname),
 )
 
-// bigint-buffer-fixed (package.json override) is often nested under
-// @solana/buffer-layout-utils instead of hoisted. Webpack client alias
-// must not throw MODULE_NOT_FOUND when evaluating next.config.js.
+// npm override bigint-buffer → bigint-buffer-fixed@1.1.6 is not hoisted.
+// The package lives only under @solana/buffer-layout-utils/node_modules.
+// require.resolve('bigint-buffer/dist/browser') works when a top-level
+// install exists; the missing .js suffix is not the failure. Fall back to
+// the nested browser build and never throw MODULE_NOT_FOUND at config load.
 function resolveBigintBufferBrowser() {
   const tryResolve = (id, options) => {
     try {
@@ -19,10 +21,6 @@ function resolveBigintBufferBrowser() {
 
   return (
     tryResolve('bigint-buffer/dist/browser') ||
-    tryResolve('bigint-buffer/dist/browser.js') ||
-    tryResolve('bigint-buffer/dist/browser.js', {
-      paths: [path.join(__dirname, 'node_modules/@solana/buffer-layout-utils')],
-    }) ||
     tryResolve(
       path.join(
         __dirname,
