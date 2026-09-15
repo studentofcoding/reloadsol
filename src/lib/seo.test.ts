@@ -30,8 +30,9 @@ describe('public SEO helpers', () => {
       path: '/blog/a-post',
       type: 'article',
     })
-    expect(meta.openGraph?.type).toBe('article')
-    expect(meta.openGraph?.images).toEqual(
+    const og = meta.openGraph as { type?: string; images?: unknown } | undefined
+    expect(og?.type).toBe('article')
+    expect(og?.images).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ url: '/og-reload.png' }),
       ]),
