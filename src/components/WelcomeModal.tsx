@@ -37,21 +37,27 @@ export default function WelcomeModal({ isOpen, onClose }: WelcomeModalProps) {
 
   return (
     <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-      <div className="bg-gray-900 rounded-xl border border-gray-700 shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="welcome-modal-title"
+        className="bg-gray-900 rounded-xl border border-gray-700 shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto"
+      >
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-700">
           <div className="flex items-center justify-between">
-            <h2 className="text-2xl font-bold text-white mr-4">Welcome to reloadSOL</h2>
+            <h2 id="welcome-modal-title" className="text-2xl font-bold text-white mr-4">Welcome to reloadSOL</h2>
             <div className="bg-gradient-to-r from-purple-600 to-blue-600 px-4 py-2 rounded-full">
               <span className="text-white font-semibold text-sm">v2 Beta</span>
             </div>
           </div>
           <button
+            type="button"
             onClick={handleClose}
-            className="text-gray-400 hover:text-white transition-colors"
-            aria-label="Close modal"
+            className="inline-flex min-h-11 min-w-11 items-center justify-center text-gray-400 hover:text-white transition-colors"
+            aria-label="Close welcome"
           >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
@@ -124,8 +130,9 @@ export default function WelcomeModal({ isOpen, onClose }: WelcomeModalProps) {
           {/* Action Buttons */}
           <div className="flex space-x-3">
             <button
+              type="button"
               onClick={handleClose}
-              className="flex-1 px-4 py-3 bg-purple-600 hover:bg-purple-700 text-white font-medium rounded-lg transition-colors duration-200"
+              className="flex-1 min-h-11 px-4 py-3 bg-purple-600 hover:bg-purple-700 text-white font-medium rounded-lg transition-colors duration-200"
             >
               Let's Trade! 🚀
             </button>

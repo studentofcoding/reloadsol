@@ -56,10 +56,10 @@ export const chromeNetworkTabOff =
   'bg-transparent text-neutral-600 fine-hover:text-neutral-900'
 
 export const chromeConnect =
-  `inline-flex items-center justify-center rounded-full bg-neutral-900 px-3 py-1.5 text-xs font-semibold text-white ${insightPress} fine-hover:bg-neutral-800`
+  `inline-flex min-h-11 items-center justify-center rounded-full bg-neutral-900 px-3 py-1.5 text-xs font-semibold text-white ${insightPress} fine-hover:bg-neutral-800`
 
 export const chromeGhost =
-  `rounded-full px-2.5 py-1.5 text-xs font-semibold text-neutral-700 ${insightPress} fine-hover:bg-black/[0.06]`
+  `inline-flex min-h-11 items-center justify-center rounded-full px-2.5 py-1.5 text-xs font-semibold text-neutral-700 ${insightPress} fine-hover:bg-black/[0.06]`
 
 /** Nav sits under the floating header; no blur (not glass-on-glass). */
 export const navSticky =

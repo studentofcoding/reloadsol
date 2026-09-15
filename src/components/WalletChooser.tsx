@@ -48,11 +48,11 @@ export default function WalletChooser() {
       {/* Solana wallet */}
       <div className="bg-gray-900 rounded-xl p-6 border border-gray-700 flex flex-col items-center text-center">
         <div className="w-12 h-12 bg-gray-700 rounded-lg flex items-center justify-center mb-4">
-          <svg className="w-6 h-6 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="w-6 h-6 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 15a2 2 0 012-2h14a2 2 0 012 2 2 2 0 01-2 2H5a2 2 0 01-2-2zm0-6a2 2 0 012-2h14a2 2 0 012 2 2 2 0 01-2 2H5a2 2 0 01-2-2z" />
           </svg>
         </div>
-        <h3 className="text-lg font-semibold text-white mb-1">Solana Wallet</h3>
+        <h2 className="text-lg font-semibold text-white mb-1">Solana Wallet</h2>
         <p className="text-gray-400 text-sm mb-5">Connect your Solana wallet to buy/sell tokens.</p>
         {solConnected ? (
           <div className="bg-black text-white px-4 py-2 rounded-lg font-mono text-sm border border-gray-600">
@@ -64,7 +64,7 @@ export default function WalletChooser() {
             type="button"
             onClick={connectSolana}
             disabled={connecting}
-            className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-semibold border bg-white hover:bg-gray-100 text-black border-gray-300 disabled:opacity-50"
+            className="flex min-h-11 items-center justify-center gap-2 px-4 py-2 rounded-lg font-semibold border bg-white hover:bg-gray-100 text-black border-gray-300 disabled:opacity-50"
           >
             {connecting ? (
               <>
@@ -81,11 +81,11 @@ export default function WalletChooser() {
       {/* Robinhood wallet */}
       <div className="bg-gray-900 rounded-xl p-6 border border-gray-700 flex flex-col items-center text-center">
         <div className="w-12 h-12 bg-gray-700 rounded-lg flex items-center justify-center mb-4">
-          <svg className="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.055-.382-3.016z" />
           </svg>
         </div>
-        <h3 className="text-lg font-semibold text-white mb-1">Robinhood Wallet</h3>
+        <h2 className="text-lg font-semibold text-white mb-1">Robinhood Wallet</h2>
         <p className="text-gray-400 text-sm mb-5">Connect your Robinhood (Rabby) wallet to sell tokens.</p>
         {rh.address ? (
           <div className="bg-black text-white px-4 py-2 rounded-lg font-mono text-sm border border-gray-600">
@@ -99,7 +99,7 @@ export default function WalletChooser() {
               onClick={connectRobinhood}
               disabled={rh.connecting || !rh.hasProvider}
               className={`
-                flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-semibold border
+                flex min-h-11 items-center justify-center gap-2 px-4 py-2 rounded-lg font-semibold border
                 ${
                   !rh.hasProvider
                     ? "bg-gray-700 text-gray-400 cursor-not-allowed border-gray-600"

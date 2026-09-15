@@ -2,6 +2,14 @@ import type { Metadata } from 'next'
 
 export const SITE_URL = 'https://reloadsol.app'
 
+/** Shared social card — child openGraph/twitter replace the root, so keep images here. */
+export const OG_IMAGE = {
+  url: '/og-reload.png',
+  width: 1200,
+  height: 630,
+  alt: 'ReloadSOL — reload Solana from unused memecoins',
+} as const
+
 /** Wallet / token / internal surfaces — do not send crawlers. */
 export const noIndexRobots: Metadata['robots'] = {
   index: false,
@@ -19,10 +27,12 @@ export function publicPageMetadata({
   title,
   description,
   path,
+  type = 'website',
 }: {
   title: string
   description: string
   path: string
+  type?: 'website' | 'article'
 }): Metadata {
   const url = canonical(path)
   return {
@@ -35,12 +45,14 @@ export function publicPageMetadata({
       url,
       siteName: 'ReloadSOL',
       locale: 'en-US',
-      type: 'website',
+      type,
+      images: [OG_IMAGE],
     },
     twitter: {
       card: 'summary_large_image',
       title,
       description,
+      images: [OG_IMAGE.url],
     },
   }
 }

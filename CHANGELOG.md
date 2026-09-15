@@ -14,9 +14,14 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   keyboard (arrows) on network pills, 44px switch/toast-dismiss hits, labeled
   buy search + CTAs, toast `aria-live` region, dialog Escape, WCAG-friendlier
   climate chip contrast. Footer Discord is a real link.
+- Follow-up: sell page `h1`, chart-buy / welcome dialogs (Escape, labels,
+  44px close), home wallet CTAs, chart-buy amount `htmlFor`. Public metadata
+  keeps OG/Twitter images (child OG replaces root). `robots` disallows
+  `/search-token` (redirects into `/dev`). Blog posts use excerpt + `article`.
 - App Router `robots.ts` / `sitemap.ts`: index `/`, `/buy`, `/sell`, `/swap`,
-  `/blog`; **noindex** `/dev/*`, `/history`, `/pnl`, `/chart/*`, `/api`.
-  Canonical + Open Graph on public routes. Title template `%s · ReloadSOL`.
+  `/blog`; **noindex** `/dev/*`, `/history`, `/pnl`, `/chart/*`, `/api`,
+  `/search-token`. Canonical + Open Graph on public routes. Title template
+  `%s · ReloadSOL`.
 
 ### Changed — Kinetics springs + Kobra craft on live buy / insight chrome
 

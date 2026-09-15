@@ -2420,13 +2420,13 @@ export default function BulkTokenSeller({
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div className="flex justify-between items-center w-full">
-          <h2 className="text-3xl font-bold text-white">
+          <h1 className="text-3xl font-bold text-white">
             {compact
               ? effectiveChain === "robinhood"
                 ? "Reload to ETH"
                 : "Reload to SOL"
               : `Sell Bulk & Reload ${sellOut.symbol}`}
-          </h2>
+          </h1>
           {!compact && (
           <div className="shrink-0">
             {effectiveChain === "sol" ? <UniversalWalletButton /> : null}

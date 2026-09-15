@@ -504,6 +504,17 @@ export default function ChartBuyModal({
     rhHoldings,
   ]);
 
+  useEffect(() => {
+    if (!tokenAddress) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (isBuying) return;
+      onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [tokenAddress, isBuying, onClose]);
+
   const getRiskBadgeColor = (risk: "LOW" | "MEDIUM" | "HIGH") => {
     switch (risk) {
       case "LOW":
@@ -519,7 +530,12 @@ export default function ChartBuyModal({
 
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 overflow-y-auto">
-      <div className="bg-gray-900 rounded-xl w-full max-w-6xl max-h-[90vh] overflow-y-auto border border-gray-700 shadow-2xl">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="chart-buy-title"
+        className="bg-gray-900 rounded-xl w-full max-w-6xl max-h-[90vh] overflow-y-auto border border-gray-700 shadow-2xl"
+      >
         {/* Header */}
         <div className="bg-gray-800 p-4 sticky top-0 z-10 flex justify-between items-center border-b border-gray-700">
           <div className="flex items-center space-x-3">
@@ -531,7 +547,10 @@ export default function ChartBuyModal({
               />
             )}
             <div>
-              <h2 className="text-xl font-bold text-white flex items-center gap-2">
+              <h2
+                id="chart-buy-title"
+                className="text-xl font-bold text-white flex items-center gap-2"
+              >
                 {tokenInfo
                   ? `${tokenInfo.symbol} - ${tokenInfo.name}`
                   : "Loading..."}
@@ -552,10 +571,12 @@ export default function ChartBuyModal({
             {onNavigate && (
               <div className="flex bg-gray-700 rounded-lg p-1 mr-2">
                 <button
+                  type="button"
                   onClick={() => onNavigate("prev")}
                   disabled={!hasPrev}
-                  className="p-1 text-gray-400 hover:text-white hover:bg-gray-600 rounded disabled:opacity-30 disabled:hover:bg-transparent"
+                  className="inline-flex min-h-11 min-w-11 items-center justify-center p-1 text-gray-400 hover:text-white hover:bg-gray-600 rounded disabled:opacity-30 disabled:hover:bg-transparent"
                   title="Previous Token (Up Arrow)"
+                  aria-label="Previous token"
                 >
                   <svg
                     className="w-6 h-6"
@@ -572,10 +593,12 @@ export default function ChartBuyModal({
                   </svg>
                 </button>
                 <button
+                  type="button"
                   onClick={() => onNavigate("next")}
                   disabled={!hasNext}
-                  className="p-1 text-gray-400 hover:text-white hover:bg-gray-600 rounded disabled:opacity-30 disabled:hover:bg-transparent"
+                  className="inline-flex min-h-11 min-w-11 items-center justify-center p-1 text-gray-400 hover:text-white hover:bg-gray-600 rounded disabled:opacity-30 disabled:hover:bg-transparent"
                   title="Next Token (Down Arrow)"
+                  aria-label="Next token"
                 >
                   <svg
                     className="w-6 h-6"
@@ -594,8 +617,10 @@ export default function ChartBuyModal({
               </div>
             )}
             <button
+              type="button"
               onClick={onClose}
-              className="text-gray-400 hover:text-white text-2xl px-2"
+              aria-label="Close chart"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center text-gray-400 hover:text-white text-2xl px-2"
             >
               ×
             </button>
@@ -712,17 +737,19 @@ export default function ChartBuyModal({
               ) : (
                 <FocusRelay className="space-y-4">
                   <div className="space-y-2">
-                    <label className="text-xs text-gray-400">
+                    <label htmlFor="chartBuyAmount" className="text-xs text-gray-400">
                       Amount ({spendUnit})
                     </label>
                     <div className="flex gap-2">
                       <input
+                        id="chartBuyAmount"
                         type="number"
                         data-slot="input"
                         value={buyAmount}
                         onChange={(e) => setBuyAmount(e.target.value)}
                         className={`${fieldControl} py-2 tabular-nums`}
                         step="0.01"
+                        aria-label={`Buy amount in ${spendUnit}`}
                       />
                       <button
                         type="button"
@@ -742,8 +769,10 @@ export default function ChartBuyModal({
                   </div>
 
                   <button
+                    type="button"
                     onClick={() => setShowAdvanced(!showAdvanced)}
-                    className="text-xs text-gray-400 hover:text-white flex items-center gap-1"
+                    aria-expanded={showAdvanced}
+                    className="text-xs text-gray-400 hover:text-white flex items-center gap-1 min-h-11"
                   >
                     {showAdvanced ? "▼" : "▶"} Advanced Settings
                   </button>
@@ -751,10 +780,11 @@ export default function ChartBuyModal({
                   {showAdvanced && (
                     <div className="grid grid-cols-2 gap-2 bg-gray-700/30 p-2 rounded">
                       <div>
-                        <label className="text-xs text-gray-500">
+                        <label htmlFor="chartBuySlippage" className="text-xs text-gray-500">
                           Slippage
                         </label>
                         <select
+                          id="chartBuySlippage"
                           value={slippage}
                           onChange={(e) => setSlippage(Number(e.target.value))}
                           className="w-full bg-gray-700 border border-gray-600 rounded text-xs px-2 py-1 text-white"
@@ -768,10 +798,11 @@ export default function ChartBuyModal({
                       </div>
                       {!isRhToken ? (
                       <div>
-                        <label className="text-xs text-gray-500">
+                        <label htmlFor="chartBuyPriorityFee" className="text-xs text-gray-500">
                           Priority Fee
                         </label>
                         <select
+                          id="chartBuyPriorityFee"
                           value={priorityFee}
                           onChange={(e) =>
                             setPriorityFee(Number(e.target.value))
@@ -798,7 +829,12 @@ export default function ChartBuyModal({
                     data-variant="primary"
                     onClick={handleBuy}
                     disabled={isBuying || !tokenInfo}
-                    className={`w-full bg-green-600 fine-hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white py-3 rounded-lg font-bold text-lg ${ctaPress}`}
+                    aria-label={
+                      isBuying
+                        ? "Processing buy"
+                        : `Buy ${buyAmount} ${spendUnit}`
+                    }
+                    className={`w-full min-h-11 bg-green-600 fine-hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white py-3 rounded-lg font-bold text-lg ${ctaPress}`}
                   >
                     {isBuying ? "Processing..." : `Buy ${buyAmount} ${spendUnit}`}
                   </button>

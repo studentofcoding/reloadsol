@@ -15,6 +15,27 @@ describe('public SEO helpers', () => {
     })
     expect(meta.alternates?.canonical).toBe('/buy')
     expect(meta.openGraph?.url).toBe('https://reloadsol.app/buy')
+    expect(meta.openGraph?.images).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ url: '/og-reload.png' }),
+      ]),
+    )
+    expect(meta.twitter?.images).toEqual(['/og-reload.png'])
+  })
+
+  it('marks blog posts as articles without dropping the social image', () => {
+    const meta = publicPageMetadata({
+      title: 'A post',
+      description: 'Excerpt from the post.',
+      path: '/blog/a-post',
+      type: 'article',
+    })
+    expect(meta.openGraph?.type).toBe('article')
+    expect(meta.openGraph?.images).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ url: '/og-reload.png' }),
+      ]),
+    )
   })
 
   it('keeps private surfaces noindex', () => {
@@ -25,7 +46,14 @@ describe('public SEO helpers', () => {
     const body = robots()
     const rule = Array.isArray(body.rules) ? body.rules[0] : body.rules
     expect(rule.disallow).toEqual(
-      expect.arrayContaining(['/dev/', '/api/', '/history', '/pnl', '/chart/']),
+      expect.arrayContaining([
+        '/dev/',
+        '/api/',
+        '/history',
+        '/pnl',
+        '/chart/',
+        '/search-token',
+      ]),
     )
     expect(body.sitemap).toBe('https://reloadsol.app/sitemap.xml')
   })

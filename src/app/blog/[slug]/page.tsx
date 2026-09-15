@@ -17,8 +17,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     const post = await getCachedPostData(slug);
     return publicPageMetadata({
       title: post.title,
-      description: `A ReloadSOL post: ${post.title}`,
+      description: post.excerpt?.trim() || `A ReloadSOL post: ${post.title}`,
       path: `/blog/${slug}`,
+      type: 'article',
     });
   } catch {
     return {

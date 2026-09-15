@@ -35,10 +35,11 @@ export default function ConfirmTransportSelect({
   if (compact) {
     return (
       <div className="col-span-2">
-        <label className="text-xs text-yellow-500">
+        <label htmlFor="confirmTransportCompact" className="text-xs text-yellow-500">
           Confirm Transport (dev)
         </label>
         <select
+          id="confirmTransportCompact"
           value={transport}
           onChange={(e) => handleChange(e.target.value as ConfirmTransport)}
           className="w-full bg-gray-700 border border-yellow-600/40 rounded text-xs px-2 py-1 text-white"

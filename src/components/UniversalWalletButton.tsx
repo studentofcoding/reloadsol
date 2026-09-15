@@ -159,6 +159,7 @@ export default function UniversalWalletButton({
               onClick={() => void handleDisconnect()}
               disabled={disconnecting}
               title="Disconnect Solana wallet"
+              aria-label="Disconnect Solana wallet"
               className={
                 isChrome
                   ? `${chromeGhost} disabled:cursor-not-allowed disabled:opacity-50`
@@ -215,6 +216,7 @@ export default function UniversalWalletButton({
               onClick={() => void disconnectRh()}
               disabled={disconnecting}
               title="Disconnect Robinhood wallet"
+              aria-label="Disconnect Robinhood wallet"
               className={
                 isChrome
                   ? `${chromeGhost} disabled:cursor-not-allowed disabled:opacity-50`

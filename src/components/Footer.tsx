@@ -7,7 +7,7 @@ const DISCORD_URL = 'https://discord.gg/Z8fUwVJHjp'
 
 export default function Footer() {
   return (
-    <footer className="bg-black border-t border-gray-800 py-8 mt-16">
+    <footer aria-label="Site" className="bg-black border-t border-gray-800 py-8 mt-16">
       <div className="container mx-auto px-4">
         <div className="flex justify-center items-center space-x-6 mb-4">
           <Link href="/" className="text-gray-300 hover:text-white transition-colors duration-200">
