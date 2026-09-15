@@ -3,9 +3,9 @@
 #
 # Usage:
 #   bash scripts/deploy-tencent.sh setup     # check deps, npm install (registry.npmjs.org)
-#   bash scripts/deploy-tencent.sh db        # start reloadsol-db + reloadsol-bouncer (localhost :5432)
+#   bash scripts/deploy-tencent.sh db        # start reloadsol-db + reloadsol-bouncer (no host Postgres bind)
 #   bash scripts/deploy-tencent.sh schema    # apply db/init/*.sql (no Supabase; idempotent)
-#   bash scripts/deploy-tencent.sh migrate   # optional pgcopydb from Supabase (needs SOURCE_DATABASE_URL)
+#   bash scripts/deploy-tencent.sh migrate   # optional pgcopydb from Supabase (needs SOURCE_DATABASE_URL; host :5433)
 #   bash scripts/deploy-tencent.sh build     # Next.js host build for Dockerfile.web
 #   bash scripts/deploy-tencent.sh deploy              # full prod stack (web + cron + social-ingest)
 #   bash scripts/deploy-tencent.sh deploy web            # web + social only
@@ -20,6 +20,8 @@
 # Env (in .env):
 #   POSTGRES_PASSWORD, DATABASE_URL, DATABASE_URL_DIRECT
 #   SOURCE_DATABASE_URL — only for migrate (Supabase direct :5432, not pooler)
+#   Host psql/pgcopydb during migrate uses 127.0.0.1:5433 (migrate overlay).
+#   Steady-state does not publish reloadsol-db (Flowey keeps host 5432).
 
 set -euo pipefail
 
@@ -94,11 +96,11 @@ cmd_setup() {
 
 cmd_db() {
   ensure_env
-  log "Starting Postgres + PgBouncer (DB bound to 127.0.0.1:5432)..."
+  log "Starting Postgres + PgBouncer (internal only — not published on host 5432)..."
   bash scripts/start-db-stack.sh
-  docker compose -f docker-compose.yml -f docker-compose.migrate.yml ps reloadsol-db reloadsol-bouncer
+  docker compose -f docker-compose.yml -f docker-compose.prod.yml ps reloadsol-db reloadsol-bouncer
   log "DB ready. Apply schema: bash scripts/deploy-tencent.sh schema"
-  log "  Direct URL: postgresql://${POSTGRES_USER:-postgres}:****@127.0.0.1:5432/${POSTGRES_DB:-reloadsol_db}"
+  log "  Cutover host bind (only if you need psql from the host): docker-compose.migrate.yml → 127.0.0.1:5433"
 }
 
 cmd_schema() {
@@ -122,28 +124,44 @@ cmd_migrate() {
   [[ -n "${SOURCE_DATABASE_URL:-}" ]] || fail "Export SOURCE_DATABASE_URL (Supabase direct :5432)"
   bash scripts/validate-database-url.sh "$SOURCE_DATABASE_URL" "SOURCE_DATABASE_URL" \
     || fail "Fix SOURCE_DATABASE_URL — see Supabase Dashboard → Connect → Direct connection"
+  log "Publishing reloadsol-db on 127.0.0.1:5433 for host pgcopydb/psql (Flowey keeps 5432)..."
+  "${COMPOSE_DB[@]}" up -d reloadsol-db reloadsol-bouncer
   # Always build local target from .env (URL-encoded password; ignore pre-exported TARGET)
   export TARGET_DATABASE_URL="$(
     PGUSER="${POSTGRES_USER:-postgres}" \
     PGPASSWORD="${POSTGRES_PASSWORD}" \
     PGDATABASE="${POSTGRES_DB:-reloadsol_db}" \
-    PGHOST=127.0.0.1 PGPORT=5432 \
+    PGHOST=127.0.0.1 PGPORT=5433 \
     bash scripts/build-database-url.sh
   )"
   bash scripts/validate-database-url.sh "$TARGET_DATABASE_URL" "TARGET_DATABASE_URL"
-  log "Target: postgresql://${POSTGRES_USER:-postgres}:****@127.0.0.1:5432/${POSTGRES_DB:-reloadsol_db}"
+  log "Target: postgresql://${POSTGRES_USER:-postgres}:****@127.0.0.1:5433/${POSTGRES_DB:-reloadsol_db}"
   log "Stopping writers during migrate..."
   "${COMPOSE[@]}" stop cron social-ingest 2>/dev/null || true
   bash scripts/migrate-from-supabase.sh
+  log "Unpublishing host 5433 (steady-state does not bind Postgres)..."
+  "${COMPOSE[@]}" up -d reloadsol-db reloadsol-bouncer
   log "Migrate done. Run: bash scripts/deploy-tencent.sh deploy"
 }
 
 cmd_build() {
   ensure_env
+  if bash scripts/verify-standalone-build.sh; then
+    log "Valid .next/standalone present — skipping host next build"
+    return 0
+  fi
+  local total_mb=0
+  if command -v free >/dev/null 2>&1; then
+    total_mb="$(free -m | awk '/^Mem:/ {print $2}')"
+  fi
+  if [[ "${total_mb:-0}" -gt 0 && "${total_mb}" -lt 4096 && "${DEPLOY_ALLOW_HOST_BUILD:-}" != "1" ]]; then
+    fail "host RAM ${total_mb}MB < 4096MB — refusing host next build. Ship with scripts/ship-standalone-to-vps.sh or set DEPLOY_ALLOW_HOST_BUILD=1"
+  fi
   bash scripts/check-deploy-memory.sh
   bash scripts/install-build-deps.sh
   log "Building Next.js on host..."
   SKIP_BUILD_CHECKS=true NODE_OPTIONS="$(build_node_options)" npm run build
+  bash scripts/verify-standalone-build.sh
   log "Build OK (.next/standalone)"
 }
 
@@ -152,9 +170,7 @@ cmd_deploy() {
   ensure_env
   case "$target" in
     all)
-      if [[ ! -d .next/standalone ]]; then
-        cmd_build
-      fi
+      cmd_build
       log "Deploying production stack..."
       bash scripts/docker-deploy.sh --skip-pull --all
       ;;
@@ -275,7 +291,7 @@ cmd_all() {
 }
 
 usage() {
-  sed -n '3,16p' "$0" | sed 's/^# \?//'
+  sed -n '3,24p' "$0" | sed 's/^# \?//'
   exit 1
 }
 

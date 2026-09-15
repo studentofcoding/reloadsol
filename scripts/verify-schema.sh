@@ -6,18 +6,29 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 DATABASE_URL="${1:-}"
+USE_DOCKER_PSQL=false
 
 if [[ -z "$DATABASE_URL" ]]; then
   [[ -f .env ]] || { echo "[verify-schema] ERROR: Missing .env or DATABASE_URL arg" >&2; exit 1; }
   eval "$(bash scripts/load-env.sh)"
-  DATABASE_URL="$(
-    PGUSER="${POSTGRES_USER:-postgres}" \
-    PGPASSWORD="${POSTGRES_PASSWORD}" \
-    PGDATABASE="${POSTGRES_DB:-reloadsol_db}" \
-    PGHOST=127.0.0.1 PGPORT=5432 \
-    bash scripts/build-database-url.sh
-  )"
+  USE_DOCKER_PSQL=true
+  if ! docker inspect reloadsol-db >/dev/null 2>&1; then
+    echo "[verify-schema] ERROR: reloadsol-db is not running" >&2
+    exit 1
+  fi
 fi
+
+schema_tAc() {
+  local sql="$1"
+  if [[ "$USE_DOCKER_PSQL" == true ]]; then
+    docker exec \
+      -e PGPASSWORD="${POSTGRES_PASSWORD}" \
+      reloadsol-db \
+      psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-reloadsol_db}" -tAc "$sql"
+  else
+    psql "$DATABASE_URL" -tAc "$sql"
+  fi
+}
 
 TABLES=(
   token_operations
@@ -55,7 +66,7 @@ fail=0
 missing=()
 
 for table in "${TABLES[@]}"; do
-  regclass="$(psql "$DATABASE_URL" -tAc "SELECT to_regclass('public.${table}')" 2>/dev/null || echo "")"
+  regclass="$(schema_tAc "SELECT to_regclass('public.${table}')" 2>/dev/null || echo "")"
   regclass="${regclass// /}"
   if [[ -z "$regclass" || "$regclass" == "" ]]; then
     missing+=("$table")
@@ -73,7 +84,7 @@ if [[ "$fail" -ne 0 ]]; then
   exit 1
 fi
 
-fn_count="$(psql "$DATABASE_URL" -tAc "SELECT COUNT(*) FROM pg_proc WHERE proname = 'increment_operation_counts'" 2>/dev/null || echo 0)"
+fn_count="$(schema_tAc "SELECT COUNT(*) FROM pg_proc WHERE proname = 'increment_operation_counts'" 2>/dev/null || echo 0)"
 fn_count="${fn_count// /}"
 if [[ "$fn_count" == "0" ]]; then
   echo "WARN: function increment_operation_counts missing — re-run init-local-db.sh" >&2

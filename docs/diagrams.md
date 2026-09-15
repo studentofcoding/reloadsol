@@ -43,7 +43,4 @@ and ML shadow scoring (feedback loop).
 (`lgb+onnx+meta`) → web runtime shadow scores on sim-track opens, which re-label
 outcomes over time.
 
-**06 — Web deploy runbook.** `git pull` → host `next build`
-(`SKIP_BUILD_CHECKS=true`) → verify standalone + ONNX libs → build web image → recreate
-web (`--no-deps`, cron stays up) → health check; failure rolls back to the previous web
-image; success warms the cache.
+**06 — Web deploy runbook.** Prefer Mac/CI `scripts/ship-standalone-to-vps.sh` on the ~3.6Gi VPS. Otherwise `git pull` → skip host `next build` when standalone verifies (else refuse on &lt;4Gi unless `DEPLOY_ALLOW_HOST_BUILD=1`) → verify standalone + ONNX libs → build web image → recreate web (`--no-deps`, cron stays up) → health check; failure rolls back to the previous web image; success warms the cache.

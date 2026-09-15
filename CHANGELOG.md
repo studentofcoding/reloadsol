@@ -8,6 +8,13 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — low-RAM VPS deploys skip host `next build`
+
+- On hosts with **&lt;4Gi total RAM**, `scripts/docker-deploy.sh` (and `docker-up.sh` / `deploy-tencent.sh build`) **refuse** a host `next build` unless `DEPLOY_ALLOW_HOST_BUILD=1`. The escape hatch still stops web/cron/social first, keeps **Turbopack**, and uses `NODE_OPTIONS=1536`. Webpack is not re-enabled (ioredis dns / `node:diagnostics_channel`).
+- When `.next/standalone` + `.next/static` already verify (`scripts/verify-standalone-build.sh`), deploy **skips** the host build and only `compose build`s the web image.
+- New [`scripts/ship-standalone-to-vps.sh`](scripts/ship-standalone-to-vps.sh): Mac/CI Turbopack build → rsync standalone + static → remote `docker compose -f docker-compose.yml -f docker-compose.prod.yml build web && up -d --no-deps web`. See [PRODUCTION_DEPLOYMENT.md](PRODUCTION_DEPLOYMENT.md) “Low-RAM VPS”.
+- `docker-compose.migrate.yml` host bind is **`127.0.0.1:5433:5432`** (cutover only). Steady-state (`start-db-stack.sh`, `docker-deploy.sh`, `docker-up.sh`) never merges migrate.yml, so reloadsol-db does not clash with Flowey on host 5432.
+
 ### Changed — accessibility and SEO on public + buy/insight chrome
 
 - One root `<main id="main-content">` (no nested landmarks), skip link, tab
