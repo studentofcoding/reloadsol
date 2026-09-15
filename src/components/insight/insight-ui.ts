@@ -10,6 +10,10 @@
  *   named transition properties, ~100ms stagger, fine-pointer hover
  * - emil-design-eng (emilkowalski/skills) — cubic-bezier(0.23, 1, 0.32, 1)
  *   enters, UI <300ms, no scale(0) / ease-in / transition:all, @starting-style
+ * - Kinetics — spring pop / glide / overshoot / symmetric-glide curves;
+ *   one press recipe per control (0.96 chrome vs 0.88 primary CTA)
+ * - Kobra craft (ported, no @kobra/*) — data-slot parts, sliding tab pill,
+ *   toast deck enter, morphing focus relay, reduced-motion snaps
  */
 
 /** better-ui press: interruptible CSS, 150ms, scale(0.96) exactly. */
@@ -18,6 +22,17 @@ export const insightPress =
 
 export const insightPressQuiet =
   'transition-[background-color,color,box-shadow,opacity] duration-150 ease-out-strong motion-reduce:duration-100'
+
+/**
+ * Kinetics squish for primary CTAs only (buy/confirm). Press 0.88 / 80ms
+ * ease-out; release spring-pop. Do not stack with insightPress 0.96.
+ */
+export const ctaPress =
+  'cta-press origin-center disabled:active:scale-100 motion-reduce:active:scale-100'
+
+/** Named-property field chrome — never transition-all. */
+export const fieldControl =
+  'w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl text-white placeholder-gray-400 shadow-inner transition-[background-color,border-color,box-shadow] duration-300 ease-glide focus:bg-gray-700 focus:border-gray-400 motion-reduce:duration-100'
 
 /** Transparent sticky shell so content peeks around the floating bar. */
 export const chromeFloat =
@@ -31,12 +46,11 @@ export const chromePrimary =
   'chrome-primary mx-auto flex min-h-12 w-full max-w-4xl items-center justify-between gap-2 rounded-[22px] px-3 py-1.5 md:px-4'
 
 export const chromeNetworkSeg =
-  'chrome-network-seg inline-flex rounded-full p-0.5'
+  'chrome-network-seg relative inline-grid rounded-full p-0.5'
 
-export const chromeNetworkTab = `rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-[0.01em] ${insightPress}`
+export const chromeNetworkTab = `relative z-[1] rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-[0.01em] ${insightPressQuiet}`
 
-export const chromeNetworkTabOn =
-  'bg-white text-neutral-900 shadow-[0_1px_2px_rgba(0,0,0,0.12)]'
+export const chromeNetworkTabOn = 'text-neutral-900'
 
 export const chromeNetworkTabOff =
   'bg-transparent text-neutral-600 fine-hover:text-neutral-900'
@@ -70,9 +84,9 @@ export const insightCardInner = 'rounded-xl'
 export const insightRow =
   'material-tertiary rounded-xl px-3 py-2 transition-[background-color,box-shadow] duration-100 ease-out-strong motion-reduce:transition-[background-color] fine-hover:bg-white/[0.05]'
 
-export const insightSeg = 'material-tertiary inline-flex rounded-xl p-1'
+export const insightSeg = 'material-tertiary relative inline-grid rounded-xl p-1'
 
-export const insightSegTabBase = 'rounded-lg px-3 py-1.5 text-xs font-medium'
+export const insightSegTabBase = 'relative z-[1] rounded-lg px-3 py-1.5 text-xs font-medium'
 
 /** Trailing chevron: icon-side padding 2px tighter (better-ui optical). */
 export const insightLink = `inline-flex items-center gap-1 rounded-full ps-2.5 pe-2 py-1 text-xs font-medium text-sky-200 ${insightPress} shadow-elev fine-hover:bg-white/[0.06] fine-hover:text-sky-100`

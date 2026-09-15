@@ -26,7 +26,7 @@ const Header: FC<HeaderProps> = ({ onOpenDailyStreak }) => {
     '/';
 
   return (
-    <header className={chromeFloat} data-chrome="primary">
+    <header className={chromeFloat} data-chrome="primary" data-slot="chrome">
       <div className={chromePrimary}>
         <Link
           href={brandHref}

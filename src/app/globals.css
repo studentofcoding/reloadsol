@@ -30,6 +30,11 @@
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   /* better-ui exact curve — not interchangeable with --ease-out */
   --ease-out-ui: cubic-bezier(0.2, 0, 0, 1);
+  /* Kinetics springs — interruptible CSS, GPU transform/opacity */
+  --ease-spring-pop: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-glide: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-overshoot: cubic-bezier(0.18, 1.25, 0.4, 1);
+  --ease-symmetric: cubic-bezier(0.65, 0, 0.35, 1);
 }
 
 * {
@@ -292,6 +297,190 @@ dialog[role="dialog"] {
     scale: 1;
     filter: none;
   }
+
+  .cta-press:active:not(:disabled),
+  [data-slot="climate-chip"][data-pop="true"],
+  [data-slot="stepper-value"][data-bump="true"],
+  [data-slot="tabs-indicator"],
+  [data-slot="focus-ring"],
+  [data-slot="switch-thumb"],
+  [data-slot="toast"] {
+    transform: none;
+  }
+
+  [data-slot="toast"] {
+    animation: none;
+  }
+}
+
+/* Kinetics press: 0.88 / 80ms ease-out, spring-pop release. Primary CTAs only. */
+.cta-press {
+  transition-property: transform, background-color, color, box-shadow, opacity;
+  transition-duration: 0.5s;
+  transition-timing-function: var(--ease-spring-pop);
+}
+.cta-press:active:not(:disabled) {
+  transform: scale(0.88);
+  transition-duration: 0.08s;
+  transition-timing-function: ease-out;
+}
+
+/* Kobra tabs: equal-column sliding pill (symmetric glide). */
+[data-slot="tabs"] {
+  --tabs-pad: 0.25rem;
+  --tab-count: 2;
+  --tab-i: 0;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+}
+[data-slot="tabs"][data-variant="chrome"] {
+  --tabs-pad: 0.125rem;
+}
+[data-slot="tabs-indicator"] {
+  position: absolute;
+  z-index: 0;
+  top: var(--tabs-pad);
+  bottom: var(--tabs-pad);
+  left: var(--tabs-pad);
+  width: calc((100% - 2 * var(--tabs-pad)) / var(--tab-count));
+  transform: translateX(calc(var(--tab-i) * 100%));
+  pointer-events: none;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+  transition: transform 0.4s var(--ease-symmetric);
+}
+[data-slot="tabs"][data-variant="insight"] [data-slot="tabs-indicator"] {
+  border-radius: 0.5rem;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+[data-slot="tabs"][data-variant="chrome"] [data-slot="tabs-indicator"] {
+  border-radius: 999px;
+}
+
+/* Climate chip: spring pop on Safe / Not safe / Unknown change. */
+[data-slot="climate-chip"] {
+  transform-origin: center;
+  transition-property: transform, opacity, box-shadow, background-color, color;
+  transition-duration: 0.35s;
+  transition-timing-function: var(--ease-spring-pop);
+}
+[data-slot="climate-chip"][data-pop="true"] {
+  transform: scale(1.08);
+}
+
+/* Morphing focus relay — one ring, spring x/y/w/h. */
+[data-slot="focus-relay"] {
+  position: relative;
+}
+[data-slot="focus-ring"] {
+  position: absolute;
+  z-index: 2;
+  left: 0;
+  top: 0;
+  width: var(--w, 0px);
+  height: var(--h, 0px);
+  transform: translate(var(--x, 0px), var(--y, 0px));
+  border-radius: 12px;
+  pointer-events: none;
+  opacity: 0;
+  box-shadow: 0 0 0 2px var(--accent);
+  transition:
+    transform 0.4s var(--ease-spring-pop),
+    width 0.4s var(--ease-symmetric),
+    height 0.4s var(--ease-symmetric),
+    opacity 0.2s var(--ease-out);
+}
+[data-slot="focus-ring"][data-active="true"] {
+  opacity: 1;
+}
+[data-slot="focus-relay"] :is(input, select, textarea):focus {
+  outline: none;
+  --tw-ring-offset-shadow: 0 0 #0000;
+  --tw-ring-shadow: 0 0 #0000;
+  box-shadow: none;
+}
+
+/* Switch: knob spring-pop, track color 0.3s. */
+[data-slot="switch-control"] {
+  position: relative;
+  width: 2.25rem;
+  height: 1.375rem;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 0 0 1px oklch(1 0 0 / 0.08);
+  transition: background-color 0.3s var(--ease-glide);
+}
+[data-slot="switch-control"][data-state="on"] {
+  background: var(--accent);
+}
+[data-slot="switch-thumb"] {
+  position: absolute;
+  top: 0.125rem;
+  left: 0.125rem;
+  width: 1.125rem;
+  height: 1.125rem;
+  border-radius: 999px;
+  background: #fff;
+  transition: transform 0.45s var(--ease-spring-pop);
+}
+[data-slot="switch-control"][data-state="on"] [data-slot="switch-thumb"] {
+  transform: translateX(0.875rem);
+}
+
+/* Elastic stepper digit (amount % / live counts). */
+[data-slot="stepper-value"] {
+  display: inline-block;
+  font-variant-numeric: tabular-nums;
+  transform-origin: center bottom;
+  transition: transform 0.35s var(--ease-spring-pop);
+}
+[data-slot="stepper-value"][data-bump="true"] {
+  transform: scale(1.22) translateY(-4px);
+}
+
+/* Toast deck: soft-overshoot enter, depth scale, drain bar. */
+[data-slot="toast-viewport"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+[data-slot="toast"] {
+  --toast-scale: 1;
+  transform: scale(var(--toast-scale));
+  transform-origin: top right;
+  animation: toast-enter 0.55s var(--ease-overshoot) both;
+}
+@keyframes toast-enter {
+  from {
+    opacity: 0;
+    transform: translateX(28px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(var(--toast-scale, 1));
+  }
+}
+[data-slot="toast-lifetime"] {
+  display: block;
+  height: 2px;
+  margin-top: 0.75rem;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.35;
+  transform-origin: left center;
+  animation: toast-drain linear var(--toast-ms, 12s) both;
+}
+@keyframes toast-drain {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+[data-slot="toast-viewport"][data-paused="true"] [data-slot="toast-lifetime"] {
+  animation-play-state: paused;
 }
 
 /* Focus rings for accessibility */

@@ -8,6 +8,7 @@ import {
   getConfirmWsUrl,
   type ConfirmTransport,
 } from "@/utils/confirm-transport";
+import { fieldControl } from "@/components/insight/insight-ui";
 
 /** Dev-only selector for the swap confirmation transport (API polling vs WS). */
 export default function ConfirmTransportSelect({
@@ -62,7 +63,7 @@ export default function ConfirmTransportSelect({
         id="confirmTransport"
         value={transport}
         onChange={(e) => handleChange(e.target.value as ConfirmTransport)}
-        className="w-full px-4 py-3 bg-gray-800 border border-yellow-600/40 rounded-xl text-white focus:bg-gray-700 focus:border-yellow-400 transition-all duration-200"
+        className={`${fieldControl} border-yellow-600/40 focus:border-yellow-400`}
         disabled={disabled}
       >
         <option value="api" className="bg-gray-800">

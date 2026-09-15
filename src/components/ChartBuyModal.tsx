@@ -12,6 +12,8 @@ import UniversalWalletButton from "@/components/UniversalWalletButton";
 import RiskAnalysis from "@/components/RiskAnalysis";
 import ConfirmTransportSelect from "@/components/ConfirmTransportSelect";
 import TransactionResultModal from "@/components/TransactionResultModal";
+import { ctaPress, fieldControl, insightPress } from "@/components/insight/insight-ui";
+import FocusRelay from "@/components/ui/FocusRelay";
 import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import {
   executeBulkBuy,
@@ -708,7 +710,7 @@ export default function ChartBuyModal({
                   <UniversalWalletButton />
                 )
               ) : (
-                <>
+                <FocusRelay className="space-y-4">
                   <div className="space-y-2">
                     <label className="text-xs text-gray-400">
                       Amount ({spendUnit})
@@ -716,20 +718,23 @@ export default function ChartBuyModal({
                     <div className="flex gap-2">
                       <input
                         type="number"
+                        data-slot="input"
                         value={buyAmount}
                         onChange={(e) => setBuyAmount(e.target.value)}
-                        className="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white w-full"
+                        className={`${fieldControl} py-2 tabular-nums`}
                         step="0.01"
                       />
                       <button
+                        type="button"
                         onClick={() => setBuyAmount("0.1")}
-                        className="px-2 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-300"
+                        className={`px-2 bg-gray-700 rounded text-xs text-gray-300 ${insightPress} fine-hover:bg-gray-600`}
                       >
                         0.1
                       </button>
                       <button
+                        type="button"
                         onClick={() => setBuyAmount("0.5")}
-                        className="px-2 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-300"
+                        className={`px-2 bg-gray-700 rounded text-xs text-gray-300 ${insightPress} fine-hover:bg-gray-600`}
                       >
                         0.5
                       </button>
@@ -788,9 +793,12 @@ export default function ChartBuyModal({
                   )}
 
                   <button
+                    type="button"
+                    data-slot="button"
+                    data-variant="primary"
                     onClick={handleBuy}
                     disabled={isBuying || !tokenInfo}
-                    className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white py-3 rounded-lg font-bold text-lg transition-all active:scale-95"
+                    className={`w-full bg-green-600 fine-hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white py-3 rounded-lg font-bold text-lg ${ctaPress}`}
                   >
                     {isBuying ? "Processing..." : `Buy ${buyAmount} ${spendUnit}`}
                   </button>
@@ -800,7 +808,7 @@ export default function ChartBuyModal({
                       {error}
                     </div>
                   )}
-                </>
+                </FocusRelay>
               )}
             </div>
           </div>

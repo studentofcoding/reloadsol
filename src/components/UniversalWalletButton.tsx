@@ -14,12 +14,9 @@ import { chainSwitchTarget } from "@/utils/network-switch";
 import {
   chromeConnect,
   chromeGhost,
-  chromeNetworkSeg,
-  chromeNetworkTab,
-  chromeNetworkTabOff,
-  chromeNetworkTabOn,
   insightPress,
 } from "@/components/insight/insight-ui";
+import SegPillList from "@/components/ui/SegPillList";
 
 /** Path at click time — usePathname here would break static prerender of /chart/[token]. */
 function currentPath(): string {
@@ -74,75 +71,66 @@ export default function UniversalWalletButton({
 
   const networkToggle = showRhToggle ? (
     isChrome ? (
-      <div className={chromeNetworkSeg} role="tablist" aria-label="Network">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={network === "sol"}
-          onClick={() => {
-            setNetwork("sol");
-            router.push(chainSwitchTarget(currentPath(), "sol"));
-          }}
-          className={`${chromeNetworkTab} ${
-            network === "sol" ? chromeNetworkTabOn : chromeNetworkTabOff
-          }`}
-        >
-          <span className="md:hidden">Sol</span>
-          <span className="hidden md:inline">Solana</span>
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={network === "robinhood"}
-          onClick={() => {
-            setNetwork("robinhood", { skipCoerce: true });
-            void rh.connect().catch(() => {
-              /* rh.error surfaces below */
-            });
-            router.push(chainSwitchTarget(currentPath(), "robinhood"));
-          }}
-          className={`${chromeNetworkTab} ${
-            network === "robinhood" ? chromeNetworkTabOn : chromeNetworkTabOff
-          }`}
-        >
-          <span className="md:hidden">RH</span>
-          <span className="hidden md:inline">Robinhood</span>
-        </button>
-      </div>
+      <SegPillList
+        variant="chrome"
+        ariaLabel="Network"
+        value={network}
+        onSelect={(next) => {
+          if (next === 'sol') {
+            setNetwork('sol')
+            router.push(chainSwitchTarget(currentPath(), 'sol'))
+            return
+          }
+          setNetwork('robinhood', { skipCoerce: true })
+          void rh.connect().catch(() => {
+            /* rh.error surfaces below */
+          })
+          router.push(chainSwitchTarget(currentPath(), 'robinhood'))
+        }}
+        options={[
+          {
+            id: 'sol',
+            label: (
+              <>
+                <span className="md:hidden">Sol</span>
+                <span className="hidden md:inline">Solana</span>
+              </>
+            ),
+          },
+          {
+            id: 'robinhood',
+            label: (
+              <>
+                <span className="md:hidden">RH</span>
+                <span className="hidden md:inline">Robinhood</span>
+              </>
+            ),
+          },
+        ]}
+      />
     ) : (
-      <div className="flex overflow-hidden rounded-lg border border-gray-600 text-xs">
-        <button
-          type="button"
-          onClick={() => {
-            setNetwork("sol");
-            router.push(chainSwitchTarget(currentPath(), "sol"));
-          }}
-          className={`px-2.5 py-1 font-medium ${insightPress} ${
-            network === "sol"
-              ? "bg-white text-black"
-              : "bg-black text-gray-400 fine-hover:text-white"
-          }`}
-        >
-          Solana
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setNetwork("robinhood", { skipCoerce: true });
-            void rh.connect().catch(() => {
-              /* rh.error surfaces below */
-            });
-            router.push(chainSwitchTarget(currentPath(), "robinhood"));
-          }}
-          className={`border-l border-gray-600 px-2.5 py-1 font-medium ${insightPress} ${
-            network === "robinhood"
-              ? "bg-white text-black"
-              : "bg-black text-gray-400 fine-hover:text-white"
-          }`}
-        >
-          Robinhood
-        </button>
-      </div>
+      <SegPillList
+        variant="insight"
+        ariaLabel="Network"
+        className="overflow-hidden rounded-lg border border-gray-600 text-xs"
+        value={network}
+        onSelect={(next) => {
+          if (next === 'sol') {
+            setNetwork('sol')
+            router.push(chainSwitchTarget(currentPath(), 'sol'))
+            return
+          }
+          setNetwork('robinhood', { skipCoerce: true })
+          void rh.connect().catch(() => {
+            /* rh.error surfaces below */
+          })
+          router.push(chainSwitchTarget(currentPath(), 'robinhood'))
+        }}
+        options={[
+          { id: 'sol', label: 'Solana' },
+          { id: 'robinhood', label: 'Robinhood' },
+        ]}
+      />
     )
   ) : null;
 

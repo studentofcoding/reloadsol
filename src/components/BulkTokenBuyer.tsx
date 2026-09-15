@@ -4,7 +4,9 @@ import { OptimizedImage } from "@/components/OptimizedImage";
 import React, { useState, useCallback, useEffect, useRef, useMemo, useDeferredValue } from "react";
 import Link from "next/link";
 import { ChevronGlyph } from "@/components/insight/InsightIcons";
-import { insightLink } from "@/components/insight/insight-ui";
+import { ctaPress, fieldControl, insightLink } from "@/components/insight/insight-ui";
+import FocusRelay from "@/components/ui/FocusRelay";
+import SwitchControl from "@/components/ui/SwitchControl";
 import { tokenSearchDetailHref } from "@/components/signals/shared/token-search-href";
 import { useSearchParams } from "next/navigation";
 import {
@@ -1886,15 +1888,14 @@ export default function BulkTokenBuyer() {
           ) : null}
 
           {isDevUser && effectiveChain === "sol" && solGmgnSynced ? (
-            <label className="flex items-center gap-2 text-xs text-gray-300">
-              <input
-                type="checkbox"
-                checked={useGmgnOnSol}
-                onChange={(e) => setUseGmgnOnSol(e.target.checked)}
-              />
+            <SwitchControl
+              checked={useGmgnOnSol}
+              onCheckedChange={setUseGmgnOnSol}
+              className="text-xs text-gray-300"
+            >
               Use GMGN
               <span className="text-emerald-400">GMGN synced</span>
-            </label>
+            </SwitchControl>
           ) : null}
 
           {isRhChain ? (
@@ -1925,7 +1926,7 @@ export default function BulkTokenBuyer() {
           ) : null}
 
           {showTradeUi && (
-            <div className="space-y-8">
+            <FocusRelay className="space-y-8">
               {isDevUser && (rosterRecsQuery.data?.length ?? 0) > 0 ? (
                 <div className="space-y-2">
                   <div className="text-xs uppercase tracking-wide text-gray-400">
@@ -2564,7 +2565,7 @@ export default function BulkTokenBuyer() {
                     id="slippage"
                     value={slippage}
                     onChange={(e) => setSlippage(Number(e.target.value))}
-                    className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl text-white focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
+                    className={fieldControl}
                     disabled={isLoading}
                   >
                     {TRADE_SLIPPAGE_OPTIONS.map((option) => (
@@ -2596,7 +2597,7 @@ export default function BulkTokenBuyer() {
                       id="priorityFee"
                       value={priorityFee}
                       onChange={(e) => setPriorityFee(Number(e.target.value))}
-                      className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl text-white focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
+                      className={fieldControl}
                       disabled={isLoading}
                     >
                       {PRIORITY_FEE_OPTIONS.map((option) => (
@@ -2650,6 +2651,8 @@ export default function BulkTokenBuyer() {
 
               {/* Buy Button */}
               <button
+                data-slot="button"
+                data-variant="primary"
                 onClick={handleBulkBuy}
                 disabled={
                   isLoading ||
@@ -2658,14 +2661,14 @@ export default function BulkTokenBuyer() {
                   validMints.length === 0 ||
                   !meetsMinBuyUsd
                 }
-                className={`w-full py-4 px-6 rounded-xl font-semibold text-lg transition-all duration-200 ${
+                className={`w-full py-4 px-6 rounded-xl font-semibold text-lg ${ctaPress} ${
                   isLoading ||
                   !tradeReady ||
                   !solAmount ||
                   validMints.length === 0 ||
                   !meetsMinBuyUsd
                     ? "bg-gray-600 text-gray-400 cursor-not-allowed"
-                    : "bg-white hover:bg-gray-100 text-black shadow-lg hover:shadow-xl"
+                    : "bg-white fine-hover:bg-gray-100 text-black shadow-lg"
                 }`}
               >
                 {isLoading ? (
@@ -2717,7 +2720,7 @@ export default function BulkTokenBuyer() {
               )}
 
               <TradeOutcomeModal {...outcomeModalProps} />
-            </div>
+            </FocusRelay>
           )}
 
           {effectiveChain === "sol" && !connected && (
