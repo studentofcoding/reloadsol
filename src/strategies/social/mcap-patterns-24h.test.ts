@@ -11,9 +11,10 @@ function toPgTimestamptzParam(value: unknown, fallback: string): string {
 describe('mcap pattern timestamptz params', () => {
   it('serializes pg Date objects to ISO, not locale GMT+0700 strings', () => {
     const d = new Date('2026-07-05T01:49:00+07:00')
-    expect(String(d)).toMatch(/GMT\+0700/)
+    // Date#toString() is a locale offset (GMT+0700, GMT+0000, …), not ISO.
+    expect(String(d)).toMatch(/GMT[+-]\d{4}/)
     expect(toPgTimestamptzParam(d, 'fallback')).toBe('2026-07-04T18:49:00.000Z')
-    expect(toPgTimestamptzParam(d, 'fallback')).not.toContain('GMT+0700')
+    expect(toPgTimestamptzParam(d, 'fallback')).not.toMatch(/GMT[+-]\d{4}/)
   })
 
   it('passes through ISO strings unchanged', () => {
