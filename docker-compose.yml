@@ -9,6 +9,10 @@
 # Dev hot-reload:  npm run docker:dev        (web only)
 # Dev + cron:      npm run docker:dev:full
 # Production:      npm run docker:prod
+#
+# Postgres is internal-only (no host ports). This VPS co-hosts Flowey on
+# 127.0.0.1:5432. Cutover-only host access: docker-compose.migrate.yml →
+# 127.0.0.1:5433. Never merge migrate.yml into steady-state deploy.
 
 services:
   reloadsol-db:

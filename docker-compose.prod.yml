@@ -1,4 +1,5 @@
-# Production overrides — run detached with stricter restart policy
+# Production overrides — run detached with stricter restart policy.
+# Does not publish Postgres to the host (Flowey keeps 127.0.0.1:5432).
 # Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
 
 services:

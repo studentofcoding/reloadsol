@@ -5,7 +5,7 @@ set -euo pipefail
 #
 # Usage:
 #   SOURCE_DATABASE_URL='postgresql://postgres.[ref]:[pass]@db.[ref].supabase.co:5432/postgres' \
-#   TARGET_DATABASE_URL='postgresql://postgres:pass@127.0.0.1:5432/reloadsol_db' \
+#   TARGET_DATABASE_URL='postgresql://postgres:pass@127.0.0.1:5433/reloadsol_db' \
 #   bash scripts/migrate-from-supabase.sh
 #
 # Optional: USE_PGCOPYDB_DOCKER=1 runs pgcopydb via container on the compose network.

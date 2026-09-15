@@ -12,7 +12,7 @@ Production deployment uses **Docker Compose** (Next.js web + Go cron). PM2 scrip
 | **cron** | `reloadsol-cron` | `CRON_PORT` (8080) | Trending track, SL/TP, DLMM, signals, social rollup/wallet-poll |
 | **social-ingest** | `reloadsol-social-ingest` | (none) | Telethon → `POST /api/social/ingest` |
 
-Host build produces `.next/standalone` (avoids OOM in-container); [`Dockerfile.web`](Dockerfile.web) packages the pre-built bundle.
+Host build produces `.next/standalone` (avoids OOM in-container); [`Dockerfile.web`](Dockerfile.web) packages the pre-built bundle. On the ~3.6Gi VPS that co-hosts Flowey, **do not run `next build` on the host** — ship a Mac/CI Turbopack standalone with [`scripts/ship-standalone-to-vps.sh`](scripts/ship-standalone-to-vps.sh).
 
 ## Quick deploy
 
@@ -58,6 +58,23 @@ bash scripts/docker-scope.sh detect-working
 
 Frontend-only deploys use `docker compose up -d --no-deps web` so **reloadsol-cron keeps running** without rebuild; **social-ingest** is restarted after web is healthy (always-on).
 
+## Low-RAM VPS (Mac → rsync standalone)
+
+The production VPS is ~3.6Gi and co-hosts Flowey. Host `next build` OOMs and can thrash-lock SSH. Webpack (`next build --webpack`) is **not** the fallback: ioredis (dns) and `node:diagnostics_channel` break the client graph.
+
+**Recommended web deploy** from a Mac (or any machine with enough RAM):
+
+```bash
+# optional: VPS_HOST=flowey-vps VPS_DIR=/path/on/vps
+bash scripts/ship-standalone-to-vps.sh
+```
+
+That script: `npm run build` → `verify-standalone-build.sh` → rsync `.next/standalone/` + `.next/static/` → remote `docker compose -f docker-compose.yml -f docker-compose.prod.yml build web && up -d --no-deps web` → optional `/api/health` smoke.
+
+On the VPS, `scripts/docker-deploy.sh` **skips** host `next build` when that standalone already verifies. If it would need a host build and total RAM is &lt;4096MB, it **refuses** unless `DEPLOY_ALLOW_HOST_BUILD=1` (stops web/cron/social first; Turbopack; `NODE_OPTIONS=1536`).
+
+Reuse a local build: `SKIP_LOCAL_BUILD=1 bash scripts/ship-standalone-to-vps.sh`.
+
 ## Edge nginx (Cloudflare → `reloadsol-nginx` :80)
 
 Multi-app origin on this VPS: `reloadsol.app`, `terminal.reloadsol.app`, `flowey.space` / `vs.flowey.space`.
@@ -88,6 +105,8 @@ Push to `main` triggers [`.github/workflows/deploy_docker.yml`](.github/workflow
 bash scripts/docker-deploy.sh --skip-pull
 ```
 
+On the ~3.6Gi VPS runner this **skips** host `next build` when a verified standalone is already on disk (after `ship-standalone-to-vps.sh`). If standalone is missing, the job **refuses** unless `DEPLOY_ALLOW_HOST_BUILD=1` is set on the runner. Prefer shipping artifacts from Mac/CI with RAM, not building on the VPS.
+
 Optional post-pull hook:
 
 ```bash
@@ -99,7 +118,7 @@ npm run docker:deploy:hook
 ```bash
 cp .env.docker.example .env          # edit POSTGRES_PASSWORD + secrets
 bash scripts/deploy-tencent.sh setup # docker, npm (registry fix), deps
-bash scripts/deploy-tencent.sh db    # postgres + pgbouncer on 127.0.0.1:5432
+bash scripts/deploy-tencent.sh db    # postgres + pgbouncer (not published on host 5432)
 
 # Historical one-time migration from hosted Supabase (already done on prod):
 # export SOURCE_DATABASE_URL='...' && bash scripts/deploy-tencent.sh migrate
@@ -134,7 +153,7 @@ Each row should show `MEM USAGE / LIMIT` with its cap (e.g. `91MiB / 768MiB`), n
 
 If **reloadsol-web** restarts with OOM in `docker logs reloadsol-web` or `dmesg`, raise web to `896M` or `1G` and optionally lower db to `512M` in compose.
 
-**Deploy/build on &lt;4 GB RAM** still needs swap — run `sudo bash scripts/ensure-swap.sh` before first deploy. Container limits do not cover host-side `npm ci` / `next build`.
+**Deploy/build on &lt;4 GB RAM:** do **not** run host `next build` on the VPS. Ship artifacts with [`scripts/ship-standalone-to-vps.sh`](scripts/ship-standalone-to-vps.sh). Emergency host build (`DEPLOY_ALLOW_HOST_BUILD=1`) still needs swap — `sudo bash scripts/ensure-swap.sh`. Container limits do not cover host-side `npm ci` / `next build`.
 
 ## Environment variables
 
@@ -304,11 +323,14 @@ Look for `Ingest OK (200): N events`. After events exist, refresh rollups: `curl
 
 **Real trading halted:** check `bot_trading_state` in Postgres (`docker exec reloadsol-db psql -U reloadsol -d reloadsol_db -c 'SELECT * FROM bot_trading_state;'`); circuit breaker opens after `BOT_TRADING_FAILURE_THRESHOLD` failures.
 
-**Build OOM / deploy stops during `npm ci`:** on a **4 GB** VPS, `npm ci` + Puppeteer + `next build` can exceed RAM while the old web container is still running. Deploy mitigations in [`scripts/docker-deploy.sh`](scripts/docker-deploy.sh):
+**Build OOM / deploy stops during `npm ci`:** on a **~3.6Gi** VPS, `npm ci` + Puppeteer + `next build` can exceed RAM and lock SSH. Deploy policy in [`scripts/docker-deploy.sh`](scripts/docker-deploy.sh):
 
+- Skip host `next build` when `.next/standalone` + `.next/static` already verify
+- **Refuse** host `next build` when total RAM &lt; 4096MB unless `DEPLOY_ALLOW_HOST_BUILD=1`
+- Preferred path: [`scripts/ship-standalone-to-vps.sh`](scripts/ship-standalone-to-vps.sh) (Mac Turbopack → rsync → `compose build web && up -d --no-deps web`)
+- Escape hatch still stops web/cron/social first, keeps Turbopack (not webpack), `NODE_OPTIONS=1536`
 - `PUPPETEER_SKIP_DOWNLOAD=true` (env in deploy/docker scripts, not `.npmrc`) — skips Chromium download on the server
-- `npm ci --omit=dev` via [`scripts/npm-ci-sync.sh`](scripts/npm-ci-sync.sh) — smaller install footprint
-- `NODE_OPTIONS=--max-old-space-size=2048` — leaves headroom for OS + Docker
+- `npm ci --omit=dev` via [`scripts/npm-ci-sync.sh`](scripts/npm-ci-sync.sh) — smaller install footprint (host-build path only)
 - Live-streamed npm output + `free -h` on failure (check `dmesg | tail` for OOM killer)
 
 If the new web container fails health after swap, deploy **rolls back** to the previous image automatically (CI still exits non-zero).

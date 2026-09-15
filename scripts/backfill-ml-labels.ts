@@ -2,13 +2,13 @@
 /**
  * Backfill auto ML labels (skip/interesting + training_class 0–4) on strategy_outcomes.
  *
- * Host CLI needs Postgres on 127.0.0.1:5432 (migrate overlay) or DATABASE_URL_DIRECT
- * pointing at a reachable host. Prod steady-state compose does not bind :5432 — use one of:
+ * Host CLI needs Postgres on 127.0.0.1:5433 (migrate overlay) or DATABASE_URL_DIRECT
+ * pointing at a reachable host. Prod steady-state compose does not bind Postgres — use one of:
  *
  *   - Strategy Admin → Reports → Backfill auto labels (dev wallet session)
  *   - curl -X POST "http://127.0.0.1/api/strategies/ml/backfill-labels?dry_run=true&key=$TRENDING_TRACKER_SECRET"
  *   - docker compose -f docker-compose.yml -f docker-compose.migrate.yml up -d reloadsol-db
- *     then npm run ml:backfill-labels
+ *     (host 127.0.0.1:5433) then npm run ml:backfill-labels
  *
  *   npx tsx scripts/backfill-ml-labels.ts [--dry-run] [--domain=trending_bot] [--strategy-id=att]
  *   npm run ml:backfill-labels -- --dry-run
@@ -90,7 +90,7 @@ function printHostDbConnectionHint(err: unknown): void {
   if (code !== 'ECONNREFUSED') return
 
   console.error('')
-  console.error('Postgres is not reachable on the host (prod compose does not bind :5432).')
+  console.error('Postgres is not reachable on the host (prod compose does not bind Postgres; migrate overlay is :5433).')
   console.error('Options:')
   console.error('  1) Strategy Admin → Reports → Backfill auto labels (dev wallet session)')
   console.error(

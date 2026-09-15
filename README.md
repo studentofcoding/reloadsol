@@ -159,7 +159,8 @@ Use [`scripts/deploy-tencent.sh`](scripts/deploy-tencent.sh) or [`scripts/docker
 
 | Command | Rebuilds | Runs `npm run build`? |
 |---------|----------|------------------------|
-| `bash scripts/deploy-tencent.sh deploy web` | web (+ social) | Yes |
+| `bash scripts/ship-standalone-to-vps.sh` | web (on VPS from shipped `.next`) | On the **Mac/CI** machine, not the VPS |
+| `bash scripts/deploy-tencent.sh deploy web` | web (+ social) | Only if standalone is missing **and** RAM ≥4Gi or `DEPLOY_ALLOW_HOST_BUILD=1` |
 | `bash scripts/deploy-tencent.sh deploy cron` | cron | No |
 | `bash scripts/deploy-tencent.sh deploy db` | Postgres + PgBouncer | **No** |
 | `bash scripts/deploy-tencent.sh deploy infra` | nginx + redis | **No** |
@@ -181,7 +182,7 @@ Post-deploy, `scripts/warm-cache.sh` hits `/api/solprice`, `/api/trending`, `/ap
 | No home polling | Wallet on `/` or `/blog` — no `/api/trading/records` in Network tab |
 | Jupiter widget | `/swap` loads terminal; other routes do not fetch `terminal.jup.ag` |
 
-**How it works:** `scripts/docker-up.sh` runs `npm ci` first, then builds Next.js on the host for prod (`npm run build` → `.next/standalone`) and packages via `Dockerfile.web`. **`docker:deploy`** uses `scripts/docker-scope.sh` to rebuild only web or cron when possible (frontend-only changes do not restart cron). Dev default is **web only**; use `docker:dev:full` when you need cron locally. Cron calls the web service at `API_HOST=http://web:3000`.
+**How it works:** `scripts/docker-up.sh` runs `npm ci` first, then reuses a verified `.next/standalone` or builds Next.js on the host (`npm run build`) and packages via `Dockerfile.web`. Host `next build` is refused on &lt;4Gi RAM unless `DEPLOY_ALLOW_HOST_BUILD=1` — prefer [`scripts/ship-standalone-to-vps.sh`](scripts/ship-standalone-to-vps.sh). **`docker:deploy`** uses `scripts/docker-scope.sh` to rebuild only web or cron when possible (frontend-only changes do not restart cron). Dev default is **web only**; use `docker:dev:full` when you need cron locally. Cron calls the web service at `API_HOST=http://web:3000`.
 
 Named volumes: `postgres_data` (positions + worker runtime), `redis_data` (cache), `nginx_cache`. `docker compose down` keeps them; `down -v` wipes them.
 

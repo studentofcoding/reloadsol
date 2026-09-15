@@ -3,10 +3,15 @@
 # Production deploy for Docker stack (web + cron + social-ingest).
 #
 # Key idea: on hosts with enough RAM, build while the old container still
-# serves traffic. On hosts <4Gi total RAM, stop web (and cron/social in
-# scope) first so Turbopack `next build` has headroom; the previous web
-# image is kept for rollback. Do not use `next build --webpack` on low-RAM:
-# ioredis (dns) and node:diagnostics_channel break the client webpack graph.
+# serves traffic. On hosts <4Gi total RAM, do **not** run host `next build`
+# unless a verified `.next/standalone` + `.next/static` is already present
+# (Mac/CI artifact ship) or `DEPLOY_ALLOW_HOST_BUILD=1` is set. The escape
+# hatch still stops web/cron/social first, keeps Turbopack, and uses
+# NODE_OPTIONS=1536; the previous web image is kept for rollback.
+# Do not use `next build --webpack` on low-RAM: ioredis (dns) and
+# node:diagnostics_channel break the client webpack graph.
+# Steady-state compose is docker-compose.yml + docker-compose.prod.yml only
+# (never docker-compose.migrate.yml — that overlay is cutover-only, host :5433).
 # Only rebuild/recreate services that changed (or --web-only / --cron-only / --social-only / --all).
 #
 # Usage:
@@ -27,6 +32,7 @@
 #   SKIP_BUILD_CHECKS=true
 #   NEXT_BUILD_CMD='npm run build'          # override Next build command
 #   DEPLOY_USE_WEBPACK=1|0                  # force webpack (1) or Turbopack (0); default is Turbopack
+#   DEPLOY_ALLOW_HOST_BUILD=1               # emergency host next build on <4Gi RAM
 #   DEPLOY_LOCK=/tmp/reloadsol-deploy.lock
 
 set -euo pipefail
@@ -36,6 +42,30 @@ cd "$ROOT"
 
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+}
+
+# shellcheck source=scripts/verify-standalone-build.sh
+source "$ROOT/scripts/verify-standalone-build.sh"
+
+host_total_ram_mb() {
+  if command -v free >/dev/null 2>&1; then
+    free -m | awk '/^Mem:/ {print $2}'
+  else
+    echo "0"
+  fi
+}
+
+refuse_low_ram_host_build() {
+  local total_mb="$1"
+  log "ERROR: host RAM ${total_mb}MB < 4096MB — refusing host next build (OOM / SSH lock risk)."
+  log "Ship a Mac/CI Turbopack standalone instead:"
+  log "  bash scripts/ship-standalone-to-vps.sh"
+  log "  # or rsync .next/standalone/ and .next/static/ then:"
+  log "  # docker compose -f docker-compose.yml -f docker-compose.prod.yml build web && up -d --no-deps web"
+  log "Emergency host build (stops web/cron/social first; Turbopack; NODE_OPTIONS=1536):"
+  log "  DEPLOY_ALLOW_HOST_BUILD=1 bash scripts/docker-deploy.sh"
+  log "Do not use next build --webpack (ioredis dns / node:diagnostics_channel)."
+  exit 1
 }
 
 # Fail-fast: concurrent git-pull / post-merge deploys must not stack.
@@ -203,9 +233,9 @@ resolve_scope() {
 }
 
 deploy_db_stack() {
-  log "Restarting Postgres + PgBouncer ..."
+  log "Restarting Postgres + PgBouncer (no host Postgres publish) ..."
   "${COMPOSE[@]}" up -d reloadsol-db reloadsol-bouncer
-  docker compose -f docker-compose.yml -f docker-compose.migrate.yml ps reloadsol-db reloadsol-bouncer 2>/dev/null || true
+  "${COMPOSE[@]}" ps reloadsol-db reloadsol-bouncer 2>/dev/null || true
 }
 
 deploy_infra_stack() {
@@ -239,34 +269,6 @@ should_build_social() {
     return 0
   fi
   return 1
-}
-
-verify_standalone_build() {
-  local missing=false
-
-  for path in .next/standalone/server.js .next/static .next/standalone/.next/required-server-files.json; do
-    if [[ ! -e "$path" ]]; then
-      log "Build output missing: ${path}"
-      missing=true
-    fi
-  done
-
-  if [[ "$missing" == true ]]; then
-    log "Next.js standalone build is incomplete — fix build errors before deploying."
-    return 1
-  fi
-
-  if ! find .next/standalone/node_modules/onnxruntime-node/bin -name 'libonnxruntime.so*' -print -quit 2>/dev/null | grep -q .; then
-    log "Build output missing onnxruntime native libs — Pattern/entry ML will fail in Docker."
-    return 1
-  fi
-
-  if ! find .next/standalone/node_modules/onnxruntime-node/bin -name 'onnxruntime_binding.node' -print -quit 2>/dev/null | grep -q .; then
-    log "Build output missing onnxruntime_binding.node — Pattern/entry ML will fail in Docker."
-    return 1
-  fi
-
-  log "Standalone build verified (.next/standalone + .next/static + onnxruntime native libs)"
 }
 
 rollback_web_container() {
@@ -503,7 +505,7 @@ prepare_low_memory_deploy() {
   fi
 
   local total_mb avail_mb
-  total_mb="$(free -m | awk '/^Mem:/ {print $2}')"
+  total_mb="$(host_total_ram_mb)"
   avail_mb="$(free -m | awk '/^Mem:/ {print $7}')"
 
   # Always stop running app containers on <4Gi hosts before next build.
@@ -522,11 +524,9 @@ resolve_build_node_options() {
   if [[ -n "${NODE_OPTIONS:-}" ]]; then
     return 0
   fi
-  local total_mb=0
-  if command -v free >/dev/null 2>&1; then
-    total_mb="$(free -m | awk '/^Mem:/ {print $2}')"
-  fi
-  if [[ "${total_mb:-0}" -lt 4096 ]]; then
+  local total_mb
+  total_mb="$(host_total_ram_mb)"
+  if [[ "${total_mb:-0}" -gt 0 && "${total_mb}" -lt 4096 ]]; then
     export NODE_OPTIONS="--max-old-space-size=1536"
   else
     export NODE_OPTIONS="--max-old-space-size=2048"
@@ -559,12 +559,10 @@ resolve_next_build_cmd() {
       ;;
   esac
 
-  local total_mb=0
-  if command -v free >/dev/null 2>&1; then
-    total_mb="$(free -m | awk '/^Mem:/ {print $2}')"
-  fi
+  local total_mb
+  total_mb="$(host_total_ram_mb)"
   NEXT_BUILD_CMD_RESOLVED="npm run build"
-  if [[ "${total_mb:-0}" -lt 4096 ]]; then
+  if [[ "${total_mb:-0}" -gt 0 && "${total_mb}" -lt 4096 ]]; then
     NEXT_BUILD_REASON="host RAM ${total_mb}MB < 4096MB — Turbopack; webpack disabled (ioredis dns / node:diagnostics_channel break the client bundle)"
   else
     NEXT_BUILD_REASON="host RAM ${total_mb}MB >= 4096MB — default next build (Turbopack)"
@@ -572,7 +570,7 @@ resolve_next_build_cmd() {
 }
 
 start_db_stack() {
-  log "Starting Postgres + PgBouncer (db-first) ..."
+  log "Starting Postgres + PgBouncer (db-first, no host Postgres publish) ..."
   set +e
   bash scripts/start-db-stack.sh
   local db_status=$?
@@ -580,7 +578,7 @@ start_db_stack() {
   if [[ "$db_status" -ne 0 ]]; then
     log "WARN: DB stack start failed — check POSTGRES_PASSWORD in .env"
   else
-    docker compose -f docker-compose.yml -f docker-compose.migrate.yml ps reloadsol-db reloadsol-bouncer 2>/dev/null || true
+    "${COMPOSE[@]}" ps reloadsol-db reloadsol-bouncer 2>/dev/null || true
   fi
 }
 
@@ -648,34 +646,50 @@ if [[ "$CLEAN" == true ]]; then
 fi
 
 if [[ "$DEPLOY_WEB" == true ]]; then
-  prepare_low_memory_deploy
+  SKIP_HOST_NEXT_BUILD=false
+  if VERIFY_STANDALONE_QUIET=1 verify_standalone_build; then
+    SKIP_HOST_NEXT_BUILD=true
+    log "Valid .next/standalone + .next/static present — skipping host next build (artifact deploy)"
+  else
+    log "Host standalone is incomplete — a next build would be required"
+    host_ram_mb="$(host_total_ram_mb)"
+    if [[ "${host_ram_mb:-0}" -gt 0 && "${host_ram_mb}" -lt 4096 && "${DEPLOY_ALLOW_HOST_BUILD:-}" != "1" ]]; then
+      refuse_low_ram_host_build "$host_ram_mb"
+    fi
 
-  export PUPPETEER_SKIP_DOWNLOAD="${PUPPETEER_SKIP_DOWNLOAD:-true}"
-  export npm_config_fund=false
-  export npm_config_audit=false
-  export npm_config_jobs=1
-  export NPM_CI_OMIT_DEV="${NPM_CI_OMIT_DEV:-1}"
-  export NPM_CI_IGNORE_SCRIPTS=1
-  export SKIP_NATIVE_REBUILD=1
+    prepare_low_memory_deploy
 
-  bash scripts/npm-ci-sync.sh
+    export PUPPETEER_SKIP_DOWNLOAD="${PUPPETEER_SKIP_DOWNLOAD:-true}"
+    export npm_config_fund=false
+    export npm_config_audit=false
+    export npm_config_jobs=1
+    export NPM_CI_OMIT_DEV="${NPM_CI_OMIT_DEV:-1}"
+    export NPM_CI_IGNORE_SCRIPTS=1
+    export SKIP_NATIVE_REBUILD=1
 
-  unset SKIP_NATIVE_REBUILD NPM_CI_IGNORE_SCRIPTS
-  bash scripts/rebuild-native-deps.sh || true
-  bash scripts/install-build-deps.sh
+    bash scripts/npm-ci-sync.sh
 
-  log "Building Next.js on host ..."
-  # Low-RAM: Turbopack + stop app containers. Do not use --webpack:
-  # ioredis (dns) and node:diagnostics_channel break the client bundle.
-  export SKIP_BUILD_CHECKS="${SKIP_BUILD_CHECKS:-true}"
-  resolve_build_node_options
-  log "NODE_OPTIONS=${NODE_OPTIONS}"
-  resolve_next_build_cmd
-  log "Next.js build path: ${NEXT_BUILD_CMD_RESOLVED} (${NEXT_BUILD_REASON})"
-  bash -c "$NEXT_BUILD_CMD_RESOLVED"
-  verify_standalone_build
+    unset SKIP_NATIVE_REBUILD NPM_CI_IGNORE_SCRIPTS
+    bash scripts/rebuild-native-deps.sh || true
+    bash scripts/install-build-deps.sh
 
-  log "Building web image ..."
+    log "Building Next.js on host ..."
+    # Low-RAM escape hatch: Turbopack + stop app containers. Do not use --webpack:
+    # ioredis (dns) and node:diagnostics_channel break the client bundle.
+    export SKIP_BUILD_CHECKS="${SKIP_BUILD_CHECKS:-true}"
+    resolve_build_node_options
+    log "NODE_OPTIONS=${NODE_OPTIONS}"
+    resolve_next_build_cmd
+    log "Next.js build path: ${NEXT_BUILD_CMD_RESOLVED} (${NEXT_BUILD_REASON})"
+    bash -c "$NEXT_BUILD_CMD_RESOLVED"
+    verify_standalone_build
+  fi
+
+  if [[ "${SKIP_HOST_NEXT_BUILD:-false}" == true ]]; then
+    log "Building web image from existing standalone (no host next build) ..."
+  else
+    log "Building web image ..."
+  fi
   "${COMPOSE[@]}" build web
 fi
 
