@@ -3,10 +3,11 @@ import {
   climateChipLabel,
   formatClimateH,
   formatClimateRegimeDetail,
+  formatClimateRegimeTooltip,
   isClimateDisplayStale,
   toClimateChipPayload,
 } from '@/utils/climateDisplay'
-import { interpretClimate } from '@/utils/climateGate'
+import { interpretClimate, readClimateHumanCopy } from '@/utils/climateGate'
 
 function climateJson(overrides: Record<string, unknown> = {}) {
   return {
@@ -32,6 +33,7 @@ function fromInterpreted(
   } = {},
 ) {
   const parsed = interpretClimate(data)
+  const human = readClimateHumanCopy(data)
   const fetchedAt = extra.fetchedAt ?? 1_000
   return toClimateChipPayload(
     {
@@ -44,6 +46,9 @@ function fromInterpreted(
       cascadeVeto: parsed.cascadeVeto,
       sizeKind: parsed.sizeKind,
       scale: extra.scale ?? parsed.scale,
+      headline: human.headline,
+      detail: human.detail,
+      tone: human.tone,
     },
     { now: extra.now ?? fetchedAt },
   )
@@ -167,6 +172,54 @@ describe('climateChipLabel / toClimateChipPayload', () => {
     expect(payload.sizeKind).toBe('full')
     expect(payload.scale).toBe(1)
   })
+
+  it('passes terminal headline/detail/tone through without changing Safe/Not safe', () => {
+    const payload = fromInterpreted(
+      climateJson({
+        state: 'Range',
+        headline: 'Chop mode',
+        detail: "Range-bound — don't chase.",
+        tone: 'neutral',
+      }),
+    )
+    expect(payload.label).toBe('Safe')
+    expect(payload.headline).toBe('Chop mode')
+    expect(payload.detail).toBe("Range-bound — don't chase.")
+    expect(payload.tone).toBe('neutral')
+
+    const dumping = fromInterpreted(
+      climateJson({
+        state: 'Cash',
+        headline: 'BTC is dumping — beware',
+        detail: 'Stand down until the tape settles.',
+        tone: 'danger',
+      }),
+    )
+    expect(dumping.label).toBe('Not safe')
+    expect(dumping.headline).toBe('BTC is dumping — beware')
+    expect(dumping.tone).toBe('danger')
+  })
+
+  it('keeps Cash/De-risk/cascade/news as Not safe even when headline is present', () => {
+    expect(
+      fromInterpreted(
+        climateJson({
+          state: 'Hype',
+          cascade: { veto: true },
+          headline: 'Chop mode',
+        }),
+      ).label,
+    ).toBe('Not safe')
+    expect(
+      fromInterpreted(
+        climateJson({
+          state: 'Hype',
+          news: { shock: true },
+          headline: 'Mixed tape',
+        }),
+      ).label,
+    ).toBe('Not safe')
+  })
 })
 
 describe('formatClimateH / formatClimateRegimeDetail', () => {
@@ -177,7 +230,31 @@ describe('formatClimateH / formatClimateRegimeDetail', () => {
     expect(formatClimateH(Number.NaN)).toBeNull()
   })
 
-  it('formats regime detail as state · H for Safe, Not safe, and Unknown', () => {
+  it('prefers terminal headline over state · H', () => {
+    expect(
+      formatClimateRegimeDetail({
+        headline: 'Chop mode',
+        state: 'Range',
+        h: 0.52,
+      }),
+    ).toBe('Chop mode')
+    expect(
+      formatClimateRegimeDetail({
+        headline: 'BTC is dumping — beware',
+        state: 'Cash',
+        h: 0.2,
+      }),
+    ).toBe('BTC is dumping — beware')
+    expect(
+      formatClimateRegimeDetail({
+        headline: 'Mixed tape',
+        state: 'Mixed',
+        h: 0.4,
+      }),
+    ).toBe('Mixed tape')
+  })
+
+  it('falls back to state · H when headline is missing (old terminals)', () => {
     expect(formatClimateRegimeDetail({ state: 'De-risk', h: 0.48 })).toBe(
       'De-risk · H 0.5',
     )
@@ -189,5 +266,50 @@ describe('formatClimateH / formatClimateRegimeDetail', () => {
     )
     expect(formatClimateRegimeDetail({ state: null, h: 0.5 })).toBe('H 0.5')
     expect(formatClimateRegimeDetail({ state: '  ', h: null })).toBeNull()
+    expect(
+      formatClimateRegimeDetail({ headline: '  ', state: 'Range', h: 0.5 }),
+    ).toBe('Range · H 0.5')
+  })
+})
+
+describe('formatClimateRegimeTooltip', () => {
+  it('prefers terminal detail and keeps H in the tooltip', () => {
+    expect(
+      formatClimateRegimeTooltip({
+        label: 'Safe',
+        headline: 'Chop mode',
+        detail: "Range-bound — don't chase.",
+        state: 'Range',
+        h: 0.52,
+      }),
+    ).toBe("Safe. Range-bound — don't chase. (H 0.5). Display only.")
+    expect(
+      formatClimateRegimeTooltip({
+        label: 'Not safe',
+        headline: 'BTC is dumping — beware',
+        detail: 'Stand down until the tape settles.',
+        state: 'Cash',
+        h: 0.21,
+      }),
+    ).toBe(
+      'Not safe. Stand down until the tape settles. (H 0.2). Display only — does not block trades.',
+    )
+  })
+
+  it('falls back to chip subtitle when detail is missing', () => {
+    expect(
+      formatClimateRegimeTooltip({
+        label: 'Not safe',
+        state: 'De-risk',
+        h: 0.48,
+      }),
+    ).toBe('Not safe (De-risk · H 0.5). Display only — does not block trades.')
+    expect(
+      formatClimateRegimeTooltip({
+        label: 'Unknown',
+      }),
+    ).toBe(
+      'Regime climate unknown (fetch failed or stale). Display only — does not block trades.',
+    )
   })
 })

@@ -19,7 +19,10 @@ import { useClimateDisplay } from '@/hooks/useClimateDisplay'
 import { useDataPublicScout } from '@/hooks/useDataPublicScout'
 import { useBuybulkPaperNotches } from '@/hooks/useBuybulkPaperNotches'
 import { tokenSearchDetailHref } from '@/components/signals/shared/token-search-href'
-import { formatClimateRegimeDetail } from '@/utils/climateDisplay'
+import {
+  formatClimateRegimeDetail,
+  formatClimateRegimeTooltip,
+} from '@/utils/climateDisplay'
 import {
   canPaperNotchFromClimate,
   paperNotchDisabledTip,
@@ -89,15 +92,24 @@ export default function DataPublicObserveStrip({
 
   const climateLabel = climate.data?.label ?? 'Unknown'
   const regimeDetail = formatClimateRegimeDetail({
+    headline: climate.data?.headline,
     state: climate.data?.state,
     h: climate.data?.h,
   })
   const regimeLive = regimeDetail ? (
     <ClimateRegimeLiveDetail
+      headline={climate.data?.headline}
       state={climate.data?.state}
       h={climate.data?.h}
     />
   ) : null
+  const climateTip = formatClimateRegimeTooltip({
+    label: climateLabel,
+    headline: climate.data?.headline,
+    detail: climate.data?.detail,
+    state: climate.data?.state,
+    h: climate.data?.h,
+  })
   const paperAllowed = canPaperNotchFromClimate(climateLabel)
   const disabledTip = paperNotchDisabledTip(climateLabel)
 
@@ -172,7 +184,7 @@ export default function DataPublicObserveStrip({
             subtitle={regimeLive}
             isPending={climate.isPending}
             layout="inline"
-            title="Paper notes follow the Header climate display label. Live trade controls stay ungated."
+            title={`${climateTip} Paper notes follow the Header climate display label. Live trade controls stay ungated.`}
             ariaLabel={climateAria}
           />
           <span className="text-[10px] tabular-nums text-gray-500">

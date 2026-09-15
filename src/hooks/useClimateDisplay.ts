@@ -15,6 +15,9 @@ export type ClimateChipResponse = {
   scale?: number
   fetchedAt: number
   stale: boolean
+  headline?: string | null
+  detail?: string | null
+  tone?: string | null
 }
 
 const UNKNOWN: ClimateChipResponse = {

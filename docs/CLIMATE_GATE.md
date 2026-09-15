@@ -62,7 +62,8 @@ only). Mapping: [`src/utils/climateDisplay.ts`](../src/utils/climateDisplay.ts).
 
 `e4_depth` missing does **not** force Not safe. Fail-open climateGate `scale=1` on
 fetch error must **not** render as Safe/Hype — it is Unknown. Optional subtitle
-(state and/or H) is informational; the binary label is authoritative.
+prefers terminal `headline` (fallback `state · H` on older payloads); tooltip
+prefers `detail`. The binary label is authoritative.
 
 ## Ownership split
 

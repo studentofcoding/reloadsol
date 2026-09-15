@@ -4,6 +4,7 @@ import {
   fetchClimate,
   interpretClimate,
   readClimateComputedAt,
+  readClimateHumanCopy,
   resetClimateCache,
   sizeHint,
 } from '@/utils/climateGate'
@@ -71,6 +72,48 @@ describe('interpretClimate / sizeHint', () => {
     expect(() => interpretClimate(null)).toThrow(/not object/)
     expect(() => interpretClimate({ h: 1, c: 1, state: 'Moon' })).toThrow(/missing h\/c\/state/)
   })
+
+  it('does not let headline/detail/tone change sizeHint gating', () => {
+    const parsed = interpretClimate(
+      climateJson({
+        state: 'Range',
+        headline: 'Chop mode',
+        detail: "Range-bound — don't chase.",
+        tone: 'neutral',
+      }),
+    )
+    expect(sizeHint(parsed)).toBe(0.75)
+    expect(parsed.sizeKind).toBe('neutral')
+    expect(parsed.state).toBe('Range')
+  })
+})
+
+describe('readClimateHumanCopy', () => {
+  it('reads headline, detail, and tone from the terminal payload', () => {
+    expect(
+      readClimateHumanCopy(
+        climateJson({
+          headline: 'Chop mode',
+          detail: "Range-bound — don't chase.",
+          tone: 'neutral',
+        }),
+      ),
+    ).toEqual({
+      headline: 'Chop mode',
+      detail: "Range-bound — don't chase.",
+      tone: 'neutral',
+    })
+    expect(readClimateHumanCopy(climateJson())).toEqual({
+      headline: null,
+      detail: null,
+      tone: null,
+    })
+    expect(readClimateHumanCopy(climateJson({ tone: 'loud' }))).toEqual({
+      headline: null,
+      detail: null,
+      tone: null,
+    })
+  })
 })
 
 describe('readClimateComputedAt', () => {
@@ -105,6 +148,25 @@ describe('fetchClimate', () => {
     const gate = await fetchClimate({ fetchImpl, now: 1_700_000_010_000 })
     expect(gate.ok).toBe(true)
     expect(gate.computedAt).toBe(1_700_000_000_000)
+  })
+
+  it('passes through headline/detail/tone without changing scale', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(
+        climateJson({
+          state: 'Range',
+          headline: 'Chop mode',
+          detail: "Range-bound — don't chase.",
+          tone: 'neutral',
+        }),
+      ),
+    )
+    const gate = await fetchClimate({ fetchImpl, now: 1_000 })
+    expect(gate.ok).toBe(true)
+    expect(gate.scale).toBe(0.75)
+    expect(gate.headline).toBe('Chop mode')
+    expect(gate.detail).toBe("Range-bound — don't chase.")
+    expect(gate.tone).toBe('neutral')
   })
 
   it('fail-opens on fetch error unless fail-closed', async () => {

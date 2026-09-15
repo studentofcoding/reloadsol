@@ -46,9 +46,32 @@ describe('GET /api/regime/climate', () => {
     expect(body.ok).toBe(true)
     expect(body.stale).toBe(false)
     expect(body.state).toBe('Range')
+    expect(body.headline).toBeNull()
     expect(response.headers.get('cache-control')).toBe(
       'no-store, max-age=0, must-revalidate',
     )
+  })
+
+  it('returns terminal headline/detail on the chip payload without changing Safe', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse(
+          climateJson({
+            state: 'Range',
+            headline: 'Chop mode',
+            detail: "Range-bound — don't chase.",
+            tone: 'neutral',
+          }),
+        ),
+      ),
+    )
+    const body = await (await GET()).json()
+    expect(body.label).toBe('Safe')
+    expect(body.headline).toBe('Chop mode')
+    expect(body.detail).toBe("Range-bound — don't chase.")
+    expect(body.tone).toBe('neutral')
+    expect(body.state).toBe('Range')
   })
 
   it('returns Unknown on upstream fetch fail (fail-open scale is not Safe)', async () => {

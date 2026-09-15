@@ -2,7 +2,10 @@
 
 import type { ReactNode } from 'react';
 import { useClimateDisplay, type ClimateChipLabel } from '@/hooks/useClimateDisplay';
-import { formatClimateRegimeDetail } from '@/utils/climateDisplay';
+import {
+  formatClimateRegimeDetail,
+  formatClimateRegimeTooltip,
+} from '@/utils/climateDisplay';
 import LiveNumber, { LIVE_NUMBER_H } from '@/components/insight/LiveNumber';
 
 const CHIP_TONE_LIGHT: Record<ClimateChipLabel, string> = {
@@ -30,14 +33,18 @@ function ClimateDot({ label }: { label: ClimateChipLabel }) {
   );
 }
 
-/** Live H (and optional state) under the binary climate label. */
+/** Live headline (or fallback state · H) under the binary climate label. */
 export function ClimateRegimeLiveDetail({
+  headline,
   state,
   h,
 }: {
+  headline?: string | null
   state?: string | null
   h?: number | null
 }): ReactNode {
+  const headlineLabel = typeof headline === 'string' && headline.trim() ? headline.trim() : null
+  if (headlineLabel) return headlineLabel
   const stateLabel = typeof state === 'string' && state.trim() ? state.trim() : null
   const hasH = typeof h === 'number' && Number.isFinite(h)
   if (!stateLabel && !hasH) return null
@@ -77,7 +84,7 @@ export function ClimateChipView({
   return (
     <div
       className={`flex shrink-0 items-start gap-1.5 rounded-full px-2 py-0.5 leading-tight md:px-2.5 md:py-1 ${
-        compact ? 'max-w-[7.5rem] md:max-w-none' : ''
+        compact ? 'max-w-[12.5rem] md:max-w-none' : ''
       } ${tone[label]} ${
         isPending ? 'opacity-70' : 'opacity-100'
       } transition-[opacity,box-shadow,background-color,color] duration-150 ease-out-strong motion-reduce:transition-[opacity,background-color,color]`}
@@ -93,7 +100,7 @@ export function ClimateChipView({
         </span>
         {subtitle ? (
           <span
-            className={`whitespace-nowrap text-[9px] tabular-nums tracking-[0.01em] opacity-75 md:text-[10px] ${
+            className={`max-w-full truncate text-[9px] tracking-[0.01em] opacity-75 md:text-[10px] ${
               compact ? 'hidden sm:block' : ''
             }`}
           >
@@ -110,18 +117,24 @@ export default function ClimateChip() {
   const label: ClimateChipLabel =
     isError || !data ? 'Unknown' : data.label;
   const subtitleText = formatClimateRegimeDetail({
+    headline: data?.headline,
     state: data?.state,
     h: data?.h,
   });
   const subtitle = subtitleText ? (
-    <ClimateRegimeLiveDetail state={data?.state} h={data?.h} />
+    <ClimateRegimeLiveDetail
+      headline={data?.headline}
+      state={data?.state}
+      h={data?.h}
+    />
   ) : null;
-  const tip =
-    label === 'Unknown'
-      ? 'Regime climate unknown (fetch failed or stale). Display only — does not block trades.'
-      : label === 'Not safe'
-        ? `Not safe${subtitleText ? ` (${subtitleText})` : ''}. Display only — does not block trades.`
-        : `Safe${subtitleText ? ` (${subtitleText})` : ''}. Display only.`;
+  const tip = formatClimateRegimeTooltip({
+    label,
+    headline: data?.headline,
+    detail: data?.detail,
+    state: data?.state,
+    h: data?.h,
+  });
 
   return (
     <ClimateChipView
