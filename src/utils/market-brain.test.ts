@@ -7,7 +7,11 @@ import {
   fetchBrainRegimeParams,
   fetchBrainUnion,
   isMarketBrainConfigured,
+  isMarketBrainMcapEnabled,
+  isMarketBrainSignalsEnabled,
   isMarketBrainTrendingEnabled,
+  marketBrainMcapSkipReason,
+  marketBrainSignalsSkipReason,
   marketBrainTrendingSkipReason,
   parseBrainListPayload,
   parseLegoRecipe,
@@ -41,6 +45,22 @@ describe('market-brain config', () => {
     expect(isMarketBrainConfigured()).toBe(true)
     expect(isMarketBrainTrendingEnabled()).toBe(true)
     expect(marketBrainTrendingSkipReason()).toBeNull()
+  })
+
+  it('enables mcap and signals plugs only when each flag and token are set', () => {
+    vi.stubEnv('MARKET_BRAIN_TOKEN', '')
+    vi.stubEnv('MARKET_BRAIN_MCAP', '1')
+    vi.stubEnv('MARKET_BRAIN_SIGNALS', '1')
+    expect(isMarketBrainMcapEnabled()).toBe(false)
+    expect(marketBrainMcapSkipReason()).toMatch(/MARKET_BRAIN_TOKEN is not set/)
+    expect(isMarketBrainSignalsEnabled()).toBe(false)
+    expect(marketBrainSignalsSkipReason()).toMatch(/MARKET_BRAIN_TOKEN is not set/)
+
+    vi.stubEnv('MARKET_BRAIN_TOKEN', 'read-token')
+    expect(isMarketBrainMcapEnabled()).toBe(true)
+    expect(marketBrainMcapSkipReason()).toBeNull()
+    expect(isMarketBrainSignalsEnabled()).toBe(true)
+    expect(marketBrainSignalsSkipReason()).toBeNull()
   })
 })
 

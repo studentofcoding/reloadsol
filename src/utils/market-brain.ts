@@ -16,6 +16,8 @@
  * - MARKET_BRAIN_TOKEN — Bearer read token (never logged)
  * - MARKET_BRAIN_ADMIN_TOKEN — Bearer admin token for recipe writes (never logged)
  * - MARKET_BRAIN_TRENDING=1 — opt-in trending/assign universe from GET /union
+ * - MARKET_BRAIN_MCAP=1 — opt-in mcap sim-track membership from GET /union
+ * - MARKET_BRAIN_SIGNALS=1 — opt-in signals sim-track membership from GET /union
  *
  * Fail soft: fetchers return `{ ok: false, error }` instead of throwing.
  * Missing admin token: log once; do not throw (promote stays local).
@@ -235,6 +237,23 @@ export function isMarketBrainAdminConfigured(opts?: {
   return Boolean(marketBrainUrl(opts?.baseUrl) && marketBrainAdminToken(opts?.adminToken))
 }
 
+function domainPlugEnabled(
+  flag: string,
+  opts?: { baseUrl?: string; token?: string | null },
+): boolean {
+  return envFlag(flag, false) && isMarketBrainConfigured(opts)
+}
+
+function domainPlugSkipReason(
+  flag: string,
+  fallback: string,
+  opts?: { baseUrl?: string; token?: string | null },
+): string | null {
+  if (!envFlag(flag, false)) return null
+  if (isMarketBrainConfigured(opts)) return null
+  return fallback
+}
+
 /**
  * Opt-in trending/assign plug: requires MARKET_BRAIN_TRENDING=1 *and* a read token.
  * Missing token keeps the existing Jupiter toptrending path.
@@ -243,16 +262,62 @@ export function isMarketBrainTrendingEnabled(opts?: {
   baseUrl?: string
   token?: string | null
 }): boolean {
-  return envFlag('MARKET_BRAIN_TRENDING', false) && isMarketBrainConfigured(opts)
+  return domainPlugEnabled('MARKET_BRAIN_TRENDING', opts)
 }
 
 export function marketBrainTrendingSkipReason(opts?: {
   baseUrl?: string
   token?: string | null
 }): string | null {
-  if (!envFlag('MARKET_BRAIN_TRENDING', false)) return null
-  if (isMarketBrainConfigured(opts)) return null
-  return 'MARKET_BRAIN_TRENDING=1 but MARKET_BRAIN_TOKEN is not set; using Jupiter toptrending'
+  return domainPlugSkipReason(
+    'MARKET_BRAIN_TRENDING',
+    'MARKET_BRAIN_TRENDING=1 but MARKET_BRAIN_TOKEN is not set; using Jupiter toptrending',
+    opts,
+  )
+}
+
+/**
+ * Opt-in mcap sim-track plug: requires MARKET_BRAIN_MCAP=1 *and* a read token.
+ * Missing token keeps the existing tracker-candidate path. Does not change live execute.
+ */
+export function isMarketBrainMcapEnabled(opts?: {
+  baseUrl?: string
+  token?: string | null
+}): boolean {
+  return domainPlugEnabled('MARKET_BRAIN_MCAP', opts)
+}
+
+export function marketBrainMcapSkipReason(opts?: {
+  baseUrl?: string
+  token?: string | null
+}): string | null {
+  return domainPlugSkipReason(
+    'MARKET_BRAIN_MCAP',
+    'MARKET_BRAIN_MCAP=1 but MARKET_BRAIN_TOKEN is not set; using mcap tracker candidates',
+    opts,
+  )
+}
+
+/**
+ * Opt-in signals sim-track plug: requires MARKET_BRAIN_SIGNALS=1 *and* a read token.
+ * Missing token keeps the existing scored-candidate path.
+ */
+export function isMarketBrainSignalsEnabled(opts?: {
+  baseUrl?: string
+  token?: string | null
+}): boolean {
+  return domainPlugEnabled('MARKET_BRAIN_SIGNALS', opts)
+}
+
+export function marketBrainSignalsSkipReason(opts?: {
+  baseUrl?: string
+  token?: string | null
+}): string | null {
+  return domainPlugSkipReason(
+    'MARKET_BRAIN_SIGNALS',
+    'MARKET_BRAIN_SIGNALS=1 but MARKET_BRAIN_TOKEN is not set; using signals tracker candidates',
+    opts,
+  )
 }
 
 export function isBrainListName(value: unknown): value is BrainListName {
@@ -775,8 +840,8 @@ export async function dormantBrainRecipe(
 }
 
 /**
- * TODO(lego mcap): plug mcap tracker candidates through fetchBrainList + evaluateRecipeGates.
- * Helper only this slice — do not change mcap live/sim execute.
+ * Mcap sim-track facts from a brain list row (membership + default mcap/liq gates).
+ * Live execute is unchanged; callers opt in via MARKET_BRAIN_MCAP=1.
  */
 export function mcapFactsFromBrainToken(token: BrainListToken): {
   mint: string
@@ -791,8 +856,8 @@ export function mcapFactsFromBrainToken(token: BrainListToken): {
 }
 
 /**
- * TODO(lego signals): plug signals candidates through brain lists + evaluateRecipeGates.
- * Helper only this slice — do not change signals execute.
+ * Signals sim-track facts from a brain list row. score100 is for recipe opt-in
+ * bmScore only — default gates do not use it.
  */
 export function signalsFactsFromBrainToken(token: BrainListToken): {
   mint: string

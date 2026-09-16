@@ -1,4 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
+import {
+  applyBrainSignalsUniverse,
+  evaluateSignalsBrainOpen,
+} from '@/strategies/signals/brain-universe'
+import { toClimateChipPayload } from '@/utils/climateDisplay'
+import { fetchClimate } from '@/utils/climateGate'
 import { getActiveSignalsForSim } from '@/strategies/load-signals'
 import { openSignalsSimPosition, SIGNALS_SIM_WALLET } from '@/strategies/telegram-alpha-sim'
 import { scoreSignalsForStrategy } from '@/strategies/signals-pipeline'
@@ -292,14 +298,43 @@ async function runSimTrack(request: NextRequest) {
       const enterCandidates = scored.filter(
         (s) => s.decision === 'enter' && !openMintSet.has(s.token_address),
       )
-      const enterMints = enterCandidates.slice(0, Math.max(0, maxOpen - currentOpen)).map((s) => s.token_address)
+      const brainUniverse = await applyBrainSignalsUniverse(enterCandidates, {
+        recipeId: strategy.id,
+      })
+      if (brainUniverse.error && !brainUniverse.applied) {
+        console.warn(`🧠 market-brain signals universe skipped: ${brainUniverse.error}`)
+      } else if (brainUniverse.applied) {
+        console.log(
+          `🧠 market-brain /union membership: kept ${brainUniverse.kept}/${brainUniverse.total} signals candidates (${brainUniverse.unionSize} union mints)`,
+        )
+      }
+      let brainEnterCandidates = brainUniverse.items
+      if (brainUniverse.applied) {
+        const brainClimate = toClimateChipPayload(await fetchClimate())
+        const gated: typeof brainEnterCandidates = []
+        for (const signal of brainEnterCandidates) {
+          const gate = evaluateSignalsBrainOpen(signal, brainUniverse, {
+            climate: brainClimate,
+            recipeId: strategy.id,
+          })
+          if (!gate.pass) {
+            skipped.push(
+              `${signal.token_symbol}: brain_gate (${gate.rejectedBy.join(',')})`,
+            )
+            continue
+          }
+          gated.push(signal)
+        }
+        brainEnterCandidates = gated
+      }
+      const enterMints = brainEnterCandidates.slice(0, Math.max(0, maxOpen - currentOpen)).map((s) => s.token_address)
       const [entryPrices, socialCtxList] = await Promise.all([
         enterMints.length > 0 ? getOpenPositionPrices(enterMints, chain) : ({} as Record<string, number>),
         Promise.all(enterMints.map((m) => getSocialContext(m))),
       ])
       const socialCtxByMint = new Map(enterMints.map((m, i) => [m, socialCtxList[i]]))
 
-      for (const signal of enterCandidates) {
+      for (const signal of brainEnterCandidates) {
         if (currentOpen + opened >= maxOpen) {
           skipped.push(`${signal.token_symbol}: max positions`)
           break
