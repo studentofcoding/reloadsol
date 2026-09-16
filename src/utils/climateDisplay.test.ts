@@ -4,6 +4,7 @@ import {
   formatClimateH,
   formatClimateRegimeDetail,
   formatClimateRegimeTooltip,
+  isClimateChipSafe,
   isClimateDisplayStale,
   toClimateChipPayload,
 } from '@/utils/climateDisplay'
@@ -55,6 +56,13 @@ function fromInterpreted(
 }
 
 describe('climateChipLabel / toClimateChipPayload', () => {
+  it('isClimateChipSafe is true only for the Safe label', () => {
+    expect(isClimateChipSafe('Safe')).toBe(true)
+    expect(isClimateChipSafe('Not safe')).toBe(false)
+    expect(isClimateChipSafe('Unknown')).toBe(false)
+    expect(isClimateChipSafe(null)).toBe(false)
+  })
+
   it('maps Mixed, Range, and Hype to Safe when there is no cascade veto', () => {
     expect(fromInterpreted(climateJson({ state: 'Mixed' })).label).toBe('Safe')
     expect(fromInterpreted(climateJson({ state: 'Range' })).label).toBe('Safe')

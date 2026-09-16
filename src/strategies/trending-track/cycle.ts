@@ -30,6 +30,7 @@ import {
 } from '@/strategies/load-strategy'
 import { runTrendingBotRhSimCycle } from '@/strategies/trending-bot-rh-sim'
 import { resolveTrendingSimMode } from '@/utils/trending-execution-mode'
+import { applyBrainTrendingUniverse } from './brain-universe'
 import { TRACKER_TABLE, DISCORD_WEBHOOK_URL, DEBUG_LOG } from './constants'
 import {
   initializeStrategyTracking,
@@ -212,6 +213,18 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
     if (!Array.isArray(data?.pools)) {
       throw new Error('Invalid Jupiter trending response: missing pools array')
     }
+
+    // Opt-in: intersect Jupiter toptrending with market-brain /union (membership).
+    // Off by default; skipped when MARKET_BRAIN_TOKEN is missing. Does not change execute.
+    const brainUniverse = await applyBrainTrendingUniverse(data.pools)
+    if (brainUniverse.error && !brainUniverse.applied) {
+      console.warn(`🧠 market-brain trending universe skipped: ${brainUniverse.error}`)
+    } else if (brainUniverse.applied) {
+      console.log(
+        `🧠 market-brain /union membership: kept ${brainUniverse.kept}/${brainUniverse.total} Jupiter pools (${brainUniverse.unionSize} union mints)`,
+      )
+    }
+    data.pools = brainUniverse.pools
 
     // Enhanced filtering with comprehensive tracking
     console.log(`🔍 Starting enhanced token filtering for ${data.pools.length} tokens...`)
