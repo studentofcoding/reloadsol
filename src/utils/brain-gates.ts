@@ -23,8 +23,14 @@ import {
   type ClimateChipPayload,
 } from '@/utils/climateDisplay'
 import type { ClimateState } from '@/utils/climateGate'
-import type { BrainListToken } from '@/utils/market-brain'
-import { asFiniteNumber } from '@/utils/market-brain'
+import {
+  asFiniteNumber,
+  mcapFactsFromBrainToken,
+  signalsFactsFromBrainToken,
+  type BrainListToken,
+  type LegoDomain,
+  type LegoRecipe,
+} from '@/utils/market-brain'
 
 export const DEFAULT_GATE_IDS = ['membership', 'mcap', 'liquidity', 'climateSafe'] as const
 export const OPTIONAL_GATE_IDS = ['bmScore', 'bmFresh', 'bmTop10'] as const
@@ -373,4 +379,55 @@ export function evaluateRecipeGates(input: EvaluateRecipeGatesInput): GateEvalRe
     reasons,
     gates,
   }
+}
+
+export function pickLegoRecipe(
+  recipes: Iterable<LegoRecipe>,
+  opts: { recipeId?: string; domain?: LegoDomain } = {},
+): LegoRecipe | null {
+  const list = Array.isArray(recipes) ? recipes : [...recipes]
+  if (opts.recipeId) {
+    const exact = list.find((recipe) => recipe.id === opts.recipeId)
+    if (exact) return exact
+  }
+  if (opts.domain) {
+    return list.find((recipe) => recipe.domain === opts.domain && recipe.active) ?? null
+  }
+  return null
+}
+
+/**
+ * Default AND pack for brain-backed sim opens.
+ * Prefers brain list facts (`mcapFactsFromBrainToken` / `signalsFactsFromBrainToken`);
+ * local mcap fills in when the list row omits it. No bmScore unless the recipe opts in.
+ */
+export function evaluateBrainBackedOpen(params: {
+  mint: string
+  localMarketCap?: number | null
+  localLiquidity?: number | null
+  brainToken?: BrainListToken | null
+  universeMints: Iterable<string>
+  climate?: EvaluateRecipeGatesInput['climate']
+  gates?: unknown
+  recipe?: LegoRecipe | null
+}): GateEvalResult {
+  const mint = params.mint.trim()
+  const mcapFacts = params.brainToken
+    ? mcapFactsFromBrainToken(params.brainToken)
+    : { mint, marketCap: null as number | null, liquidity: null as number | null }
+  const signalFacts = params.brainToken ? signalsFactsFromBrainToken(params.brainToken) : null
+  const bm = params.brainToken ? brainTokenToGateFacts(params.brainToken) : null
+  return evaluateRecipeGates({
+    token: {
+      mint,
+      marketCap: mcapFacts.marketCap ?? params.localMarketCap ?? null,
+      liquidity: mcapFacts.liquidity ?? params.localLiquidity ?? null,
+      score100: signalFacts?.score100 ?? bm?.score100 ?? null,
+      freshWalletsPct: bm?.freshWalletsPct ?? null,
+      top10AdjustedPct: bm?.top10AdjustedPct ?? null,
+    },
+    universeMints: params.universeMints,
+    climate: params.climate,
+    gates: params.gates ?? params.recipe?.gates,
+  })
 }

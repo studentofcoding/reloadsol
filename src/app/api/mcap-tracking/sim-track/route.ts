@@ -15,6 +15,10 @@ import { getPatternPWinnerMin } from '@/strategies/entry-pattern-scorer'
 import { logMlGateCounterfactual } from '@/strategies/ml-shadow-log'
 import { logPatternGateCounterfactual } from '@/strategies/pattern-shadow-log'
 import { attachMlEntryShadow } from '@/strategies/ml-entry-shadow'
+import {
+  applyBrainMcapUniverse,
+  evaluateMcapBrainOpen,
+} from '@/strategies/mcap-track/brain-universe'
 import { mcapTrackerToCanonical } from '@/strategies/canonical-params'
 import { resolveExitOverlayForOpen } from '@/strategies/potential-exit-overlay'
 import type { McapTrackerStrategy, StrategyChain } from '@/strategies/types'
@@ -52,6 +56,8 @@ import { computeOpenTradeCycle } from '@/utils/simulation-trades'
 import { buildTradingRecord, insertTradingRecords } from '@/utils/trading-records-db'
 import type { TrackingRecord } from '@/utils/trading-tracker'
 import { getSolPriceUSD } from '@/utils/solana'
+import { toClimateChipPayload } from '@/utils/climateDisplay'
+import { fetchClimate } from '@/utils/climateGate'
 import { log } from '@/utils/unified-logger'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
 import {
@@ -705,6 +711,20 @@ async function runSimTrack(request: NextRequest) {
     })
     const trackingByMint = new Map(trackingRows.map((r) => [r.token_address, r]))
 
+    // Opt-in: intersect sim opens with market-brain /union (membership + default gates).
+    // Off by default; skipped when MARKET_BRAIN_TOKEN is missing. Does not change live execute.
+    const brainUniverse = await applyBrainMcapUniverse(trackingRows)
+    if (brainUniverse.error && !brainUniverse.applied) {
+      console.warn(`🧠 market-brain mcap universe skipped: ${brainUniverse.error}`)
+    } else if (brainUniverse.applied) {
+      console.log(
+        `🧠 market-brain /union membership: kept ${brainUniverse.kept}/${brainUniverse.total} mcap candidates (${brainUniverse.unionSize} union mints)`,
+      )
+    }
+    const brainClimate = brainUniverse.applied
+      ? toClimateChipPayload(await fetchClimate())
+      : null
+
     for (const strategy of strategies) {
       // Robinhood has no live execution path yet — every RH definition stays paper.
       const execMode =
@@ -878,7 +898,24 @@ async function runSimTrack(request: NextRequest) {
       ).length
       const maxOpen = strategy.config.execution.maxOpenPositions
 
-      for (const snapshot of trackingRows) {
+      const openRows =
+        execMode.isSimulated && brainUniverse.applied
+          ? brainUniverse.items
+          : trackingRows
+
+      for (const snapshot of openRows) {
+        if (execMode.isSimulated && brainUniverse.applied) {
+          const gate = evaluateMcapBrainOpen(snapshot, brainUniverse, {
+            climate: brainClimate,
+            recipeId: strategy.id,
+          })
+          if (!gate.pass) {
+            skipped.push(
+              `${snapshot.token_symbol}: brain_gate (${gate.rejectedBy.join(',')})`,
+            )
+            continue
+          }
+        }
         const skipReason = getMcapSimOpenSkipReason(
           strategy,
           snapshot,

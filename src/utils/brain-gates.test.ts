@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_LIQUIDITY_MIN_USD,
   DEFAULT_MCAP_MIN_USD,
+  evaluateBrainBackedOpen,
   evaluateRecipeGates,
   resolveClimateChipLabel,
   resolveRecipeGates,
@@ -262,5 +263,30 @@ describe('optional BM gates stay off by default', () => {
 describe('resolveClimateChipLabel', () => {
   it('reads payload.label', () => {
     expect(resolveClimateChipLabel({ label: 'Safe' })).toBe('Safe')
+  })
+})
+
+describe('evaluateBrainBackedOpen', () => {
+  it('uses brain list facts and keeps bmScore off unless the recipe opts in', () => {
+    const brainToken = {
+      mint: MINT,
+      symbol: 'X',
+      name: 'X',
+      marketCap: 80_000,
+      liquidity: 20_000,
+      score100: 10,
+      freshWalletsPct: 80,
+      top10AdjustedPct: 90,
+      raw: {},
+    }
+    const result = evaluateBrainBackedOpen({
+      mint: MINT,
+      localMarketCap: 1_000,
+      brainToken,
+      universeMints: [MINT],
+      climate: { label: 'Safe' },
+    })
+    expect(result.pass).toBe(true)
+    expect(result.gates.find((g) => g.id === 'bmScore')?.enabled).toBe(false)
   })
 })

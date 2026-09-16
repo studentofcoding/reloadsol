@@ -247,6 +247,8 @@ Read-only client for [market-brain](https://market-brain.yonathanevanchristy.wor
 | `MARKET_BRAIN_TOKEN` | — | Bearer read token (`BRAIN_READ_TOKEN`). Never logged. |
 | `MARKET_BRAIN_ADMIN_TOKEN` | — | Bearer admin token (`BRAIN_ADMIN_TOKEN`) for recipe writes (promote / deactivate / dormant / seed). Missing token is fail-soft: log once, local promote continues. Never logged. |
 | `MARKET_BRAIN_TRENDING` | off | `1` intersects trending-assign Jupiter `toptrending/1h` with `GET /union` (membership). Skipped if the token is missing. |
+| `MARKET_BRAIN_MCAP` | off | `1` intersects mcap sim-track opens with `GET /union` (membership) and default recipe gates (mcap≥50k, liq≥10k, climateSafe). Does not change live execute. Skipped if the token is missing. |
+| `MARKET_BRAIN_SIGNALS` | off | `1` intersects signals sim-track enter candidates with `GET /union` (or the matching signals recipe universe) and default recipe gates. Skipped if the token is missing. |
 
 Smoke: `GET /health` is public. Authenticated `GET /union` / `/jupiter` / `/bubble` / `/recipes` / `/regime/params?profile=default` need `Authorization: Bearer $MARKET_BRAIN_TOKEN`. Recipe writes need `Authorization: Bearer $MARKET_BRAIN_ADMIN_TOKEN`.
 
@@ -259,7 +261,17 @@ npx tsx scripts/seed-brain-recipes.ts --dry-run
 # optional: --activate=ID --deactivate=ID --dormant=ID
 ```
 
-Unit tests: `npx vitest run src/utils/brain-gates.test.ts src/utils/market-brain.test.ts src/utils/brain-recipe-sync.test.ts src/strategies/trending-track/brain-universe.test.ts`.
+Unit tests: `npx vitest run src/utils/brain-gates.test.ts src/utils/market-brain.test.ts src/utils/brain-recipe-sync.test.ts src/utils/brain-union-universe.test.ts src/strategies/trending-track/brain-universe.test.ts src/strategies/mcap-track/brain-universe.test.ts src/strategies/signals/brain-universe.test.ts`.
+
+Smoke (opt-in, fail-soft without a token):
+
+```bash
+export MARKET_BRAIN_TOKEN=          # same value as brain BRAIN_READ_TOKEN
+export MARKET_BRAIN_MCAP=1
+export MARKET_BRAIN_SIGNALS=1
+# sim-track logs: "market-brain /union membership: kept N/M … candidates"
+# missing token keeps the existing tracker path
+```
 
 ### Telegram (optional)
 
