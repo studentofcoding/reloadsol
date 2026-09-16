@@ -47,12 +47,13 @@ export function normalizeShyftBalance(
     return { raw, ui: balance };
   }
 
-  // Integer balance: treat as raw when dividing yields a plausible UI amount
-  if (uiFromRaw >= 0.000_001 && uiFromRaw <= 1e12) {
+  // Integer: treat as raw only when it encodes >= 1 whole token.
+  // ponytail: sub-1 raw integers (e.g. 0.5 USDC as 500000) read as UI;
+  // upgrade = trust a single Shyft unit if the API stops mixing.
+  if (uiFromRaw >= 1 && uiFromRaw <= 1e12) {
     return { raw: balance, ui: uiFromRaw };
   }
 
-  // Otherwise assume UI amount (e.g. small integer holdings)
   const raw = Math.round(balance * 10 ** decimals);
   return { raw, ui: balance };
 }

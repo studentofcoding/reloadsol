@@ -39,6 +39,12 @@ describe("normalizeShyftBalance", () => {
     expect(baby.raw).toBe(5 * 10 ** 9);
   });
 
+  it("treats 9-decimal thousands as UI, not raw dust", () => {
+    const stonk = normalizeShyftBalance(3000, 9);
+    expect(stonk.ui).toBe(3000);
+    expect(stonk.raw).toBe(3000 * 10 ** 9);
+  });
+
   it("returns zeros for non-finite or non-positive balances", () => {
     expect(normalizeShyftBalance(0, 6)).toEqual({ raw: 0, ui: 0 });
     expect(normalizeShyftBalance(Number.NaN, 6)).toEqual({ raw: 0, ui: 0 });
