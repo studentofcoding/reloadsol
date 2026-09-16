@@ -19,6 +19,15 @@ import {
   applyBrainMcapUniverse,
   evaluateMcapBrainOpen,
 } from '@/strategies/mcap-track/brain-universe'
+import {
+  applyBrainRiskToExit,
+  createBrainRiskSession,
+  frozenExitForSimOpen,
+  localBrainRisk,
+  scaleOpenSize,
+  stampBrainRisk,
+  type ResolvedBrainRisk,
+} from '@/utils/brain-regime-risk'
 import { mcapTrackerToCanonical } from '@/strategies/canonical-params'
 import { resolveExitOverlayForOpen } from '@/strategies/potential-exit-overlay'
 import type { McapTrackerStrategy, StrategyChain } from '@/strategies/types'
@@ -154,6 +163,7 @@ async function openSimPosition(params: {
   socialCtx?: SocialContext | null
   scoredEntryFeatures?: Record<string, unknown> | null
   strategy: McapTrackerStrategy
+  brainRisk?: ResolvedBrainRisk
   /** REL-20: records are collected and bulk-inserted by the route per phase. */
   collect: (record: TrackingRecord) => void
 }): Promise<void> {
@@ -213,7 +223,11 @@ async function openSimPosition(params: {
     scoredEntryFeatures = ml.features
   }
 
-  const baseExit = mcapTrackerToCanonical(params.strategy).exit
+  const brainRisk = params.brainRisk ?? localBrainRisk()
+  const baseExit = applyBrainRiskToExit(
+    mcapTrackerToCanonical(params.strategy).exit,
+    brainRisk,
+  )
   const overlayResult = await resolveExitOverlayForOpen({
     baseExit,
     features: scoredEntryFeatures,
@@ -221,7 +235,14 @@ async function openSimPosition(params: {
     strategyId: params.strategyId,
     persistEffectiveExit: true,
   })
-  scoredEntryFeatures = overlayResult.features
+  scoredEntryFeatures = stampBrainRisk(overlayResult.features, brainRisk, {
+    sizedSol: params.solAmount,
+  })
+  const effectiveExit = frozenExitForSimOpen(
+    overlayResult.effectiveExit,
+    baseExit,
+    brainRisk,
+  )
 
   const record = buildTradingRecord({
     walletAddress: simWallet,
@@ -253,9 +274,7 @@ async function openSimPosition(params: {
       strategy_id: params.strategyId,
       entry_at: params.entryAt,
       entry_features: scoredEntryFeatures,
-      ...(overlayResult.effectiveExit
-        ? { effective_exit: overlayResult.effectiveExit }
-        : {}),
+      ...(effectiveExit ? { effective_exit: effectiveExit } : {}),
     },
   })
 
@@ -686,6 +705,7 @@ async function runSimTrack(request: NextRequest) {
 
   try {
     const liveAvailable = isMcapLiveTradingAvailable()
+    const brainRiskSession = createBrainRiskSession()
     const results: Array<{
       strategyId: string
       chain: StrategyChain
@@ -903,7 +923,16 @@ async function runSimTrack(request: NextRequest) {
           ? brainUniverse.items
           : trackingRows
 
-      for (const snapshot of openRows) {
+      const brainRisk = execMode.isSimulated
+        ? await brainRiskSession.resolve({
+            strategyId: strategy.id,
+            domain: 'mcap',
+            climateState: brainClimate?.state ?? undefined,
+          })
+        : localBrainRisk()
+      if (execMode.isSimulated && brainRisk.standDown) {
+        skipped.push('brain_risk_stand_down')
+      } else for (const snapshot of openRows) {
         if (execMode.isSimulated && brainUniverse.applied) {
           const gate = evaluateMcapBrainOpen(snapshot, brainUniverse, {
             climate: brainClimate,
@@ -1069,12 +1098,17 @@ async function runSimTrack(request: NextRequest) {
             await releaseTradeLock(snapshot.token_address, strategy.id)
           }
         } else {
+          const simSol = scaleOpenSize(sized.sol, brainRisk)
+          if (simSol <= 0) {
+            skipped.push(`${snapshot.token_symbol}: brain_risk_stand_down`)
+            continue
+          }
           await openSimPosition({
             strategyId: strategy.id,
             chain,
             mintAddress: snapshot.token_address,
             symbol: snapshot.token_symbol,
-            solAmount: sized.sol,
+            solAmount: simSol,
             entryMcap: entry.entryMcap,
             entryTemplate: strategy.config.entryTemplate,
             entryAt: entry.entryAt,
@@ -1082,6 +1116,7 @@ async function runSimTrack(request: NextRequest) {
             socialCtx,
             scoredEntryFeatures: sizedFeatures,
             strategy,
+            brainRisk,
             collect,
           })
         }

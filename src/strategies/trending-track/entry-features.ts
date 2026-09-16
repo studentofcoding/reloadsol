@@ -1,6 +1,12 @@
 // Buy-entry feature snapshot attachment extracted from src/app/api/trending/track/route.ts (REL-19).
 import { buildFullEntryFeatureSnapshot } from '@/strategies/resolve-entry-snapshot'
 import { getCurrentBotStrategySync, resolveTradingStrategy } from '@/strategies/load-strategy'
+import {
+  applyBrainRiskToExit,
+  frozenExitForSimOpen,
+  stampBrainRisk,
+  type ResolvedBrainRisk,
+} from '@/utils/brain-regime-risk'
 import type { TradingSimulation } from './types'
 
 export async function attachBuyEntryFeatures(
@@ -14,6 +20,7 @@ export async function attachBuyEntryFeatures(
     volume_5m?: number | null
     pool_created_at?: string | null
   },
+  opts?: { brainRisk?: ResolvedBrainRisk },
 ): Promise<void> {
   const entryFeatures = await buildFullEntryFeatureSnapshot(token.token_address, {
     entryAt: simulation.simulation_started_at,
@@ -53,27 +60,42 @@ export async function attachBuyEntryFeatures(
         : getCurrentBotStrategySync()
     const strategy = resolveTradingStrategy(strategyId)
     const canonical = trendingBotToCanonical(strategy)
+    const brainRisk = opts?.brainRisk
+    const baseExit =
+      simulation.is_simulated && brainRisk
+        ? applyBrainRiskToExit(canonical.exit, brainRisk)
+        : canonical.exit
     const overlayResult = await resolveExitOverlayForOpen({
-      baseExit: canonical.exit,
+      baseExit,
       features,
       mintAddress: token.token_address,
       strategyId: strategy.id,
       persistEffectiveExit: simulation.is_simulated === true,
     })
     features = overlayResult.features
+    if (brainRisk) {
+      features = stampBrainRisk(features, brainRisk)
+    }
 
-    if (overlayResult.effectiveExit && simulation.is_simulated) {
-      const exit = overlayResult.overlay.effective
-      const ladder = exit.takeProfitLadder
-      const tp1 = exit.takeProfitPct
+    const frozen =
+      simulation.is_simulated && brainRisk
+        ? frozenExitForSimOpen(overlayResult.effectiveExit, baseExit, brainRisk)
+        : overlayResult.effectiveExit
+
+    if (frozen && simulation.is_simulated) {
+      const exit = overlayResult.effectiveExit
+        ? overlayResult.overlay.effective
+        : baseExit
+      const ladder = 'takeProfitLadder' in exit ? exit.takeProfitLadder : undefined
+      const tp1 = frozen.takeProfitPct
       const baseTp1 = simulation.take_profit_levels.tp1_percentage
       const tp2 =
         ladder && ladder.length > 1
           ? ladder[1]
           : simulation.take_profit_levels.tp2_percentage *
             (tp1 / Math.max(baseTp1, 1))
-      simulation.stop_loss_percentage = exit.stopLossPct
-      simulation.max_hold_hours = exit.maxHoldHours
+      simulation.stop_loss_percentage = frozen.stopLossPct
+      simulation.max_hold_hours = frozen.maxHoldHours
       simulation.take_profit_levels = {
         ...simulation.take_profit_levels,
         tp1_percentage: tp1,
@@ -82,7 +104,7 @@ export async function attachBuyEntryFeatures(
           ? { tp3_percentage: ladder[2] }
           : {}),
       }
-      simRec.effective_exit = overlayResult.effectiveExit
+      simRec.effective_exit = frozen
     }
   } catch {
     /* overlay optional */

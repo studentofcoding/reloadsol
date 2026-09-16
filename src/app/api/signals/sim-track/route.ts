@@ -3,6 +3,12 @@ import {
   applyBrainSignalsUniverse,
   evaluateSignalsBrainOpen,
 } from '@/strategies/signals/brain-universe'
+import {
+  applyBrainRiskToExit,
+  createBrainRiskSession,
+  scaleOpenSize,
+  stampBrainRisk,
+} from '@/utils/brain-regime-risk'
 import { toClimateChipPayload } from '@/utils/climateDisplay'
 import { fetchClimate } from '@/utils/climateGate'
 import { getActiveSignalsForSim } from '@/strategies/load-signals'
@@ -207,6 +213,7 @@ async function runSimTrack(request: NextRequest) {
       closed: number
       skipped: string[]
     }> = []
+    const brainRiskSession = createBrainRiskSession()
 
     for (const chain of STRATEGY_CHAINS) {
     const strategies = await getActiveSignalsForSim(chain)
@@ -309,8 +316,9 @@ async function runSimTrack(request: NextRequest) {
         )
       }
       let brainEnterCandidates = brainUniverse.items
+      let brainClimate: ReturnType<typeof toClimateChipPayload> | null = null
       if (brainUniverse.applied) {
-        const brainClimate = toClimateChipPayload(await fetchClimate())
+        brainClimate = toClimateChipPayload(await fetchClimate())
         const gated: typeof brainEnterCandidates = []
         for (const signal of brainEnterCandidates) {
           const gate = evaluateSignalsBrainOpen(signal, brainUniverse, {
@@ -326,6 +334,15 @@ async function runSimTrack(request: NextRequest) {
           gated.push(signal)
         }
         brainEnterCandidates = gated
+      }
+      const brainRisk = await brainRiskSession.resolve({
+        strategyId: strategy.id,
+        domain: 'signals',
+        climateState: brainClimate?.state ?? undefined,
+      })
+      if (brainRisk.standDown) {
+        skipped.push('brain_risk_stand_down')
+        brainEnterCandidates = []
       }
       const enterMints = brainEnterCandidates.slice(0, Math.max(0, maxOpen - currentOpen)).map((s) => s.token_address)
       const [entryPrices, socialCtxList] = await Promise.all([
@@ -396,7 +413,7 @@ async function runSimTrack(request: NextRequest) {
           '@/strategies/potential-exit-overlay'
         )
         const overlayResult = await resolveExitOverlayForOpen({
-          baseExit: signalsToCanonical(strategy).exit,
+          baseExit: applyBrainRiskToExit(signalsToCanonical(strategy).exit, brainRisk),
           features: ml.features,
           mintAddress: signal.token_address,
           strategyId: strategy.id,
@@ -406,18 +423,27 @@ async function runSimTrack(request: NextRequest) {
         const baseSol =
           strategy.config.execution.simBuyNative ?? strategy.config.execution.simBuySol
         const sized = softMlSize(baseSol, { pBad: ml.pBad })
+        const simSol = scaleOpenSize(sized.sol, brainRisk)
+        if (simSol <= 0) {
+          skipped.push(`${symbol}: brain_risk_stand_down`)
+          continue
+        }
 
         await openSignalsSimPosition({
           strategyId: strategy.id,
           chain,
           mintAddress: signal.token_address,
           symbol,
-          solAmount: sized.sol,
+          solAmount: simSol,
           priceUsd,
-          entryFeatures: stampMlSize(overlayResult.features, sized, {
-            pBad: ml.pBad,
-            pWinner: ml.pWinner,
-          }),
+          entryFeatures: stampBrainRisk(
+            stampMlSize(overlayResult.features, sized, {
+              pBad: ml.pBad,
+              pWinner: ml.pWinner,
+            }),
+            brainRisk,
+            { sizedSol: simSol },
+          ),
           collect,
         })
         opened++

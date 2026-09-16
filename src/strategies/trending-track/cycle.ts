@@ -31,6 +31,12 @@ import {
 import { runTrendingBotRhSimCycle } from '@/strategies/trending-bot-rh-sim'
 import { resolveTrendingSimMode } from '@/utils/trending-execution-mode'
 import { applyBrainTrendingUniverse } from './brain-universe'
+import { getBuyAmountForStrategy } from './strategy-params'
+import {
+  createBrainRiskSession,
+  scaleOpenSize,
+  type ResolvedBrainRisk,
+} from '@/utils/brain-regime-risk'
 import { TRACKER_TABLE, DISCORD_WEBHOOK_URL, DEBUG_LOG } from './constants'
 import {
   initializeStrategyTracking,
@@ -56,6 +62,19 @@ import {
 } from './trade-ops'
 import { isWithinTradingHours } from './schedule'
 import type { TrackedToken, TradingSimulation, PriceRecord, PriceTracking } from './types'
+
+async function simBrainBuyPlan(
+  session: ReturnType<typeof createBrainRiskSession>,
+  strategyId: string,
+  isSimulated: boolean,
+): Promise<{ skip: boolean; buyAmountSol?: number; risk?: ResolvedBrainRisk }> {
+  if (!isSimulated) return { skip: false }
+  const risk = await session.resolve({ strategyId, domain: 'trending' })
+  if (risk.standDown) return { skip: true, risk }
+  const sized = scaleOpenSize(getBuyAmountForStrategy(strategyId), risk)
+  if (sized <= 0) return { skip: true, risk }
+  return { skip: false, buyAmountSol: sized, risk }
+}
 
 export async function internalTrackPost(request: NextRequest, logger: any) {
   const requestStartTime = Date.now()
@@ -225,6 +244,7 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
       )
     }
     data.pools = brainUniverse.pools
+    const brainRiskSession = createBrainRiskSession()
 
     // Enhanced filtering with comprehensive tracking
     console.log(`🔍 Starting enhanced token filtering for ${data.pools.length} tokens...`)
@@ -732,6 +752,16 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
                 `⏭️ Skipping buy for ${token.token_symbol} (${assignedStrategy}): ${simMode.reason}`,
               )
             } else {
+            const brainPlan = await simBrainBuyPlan(
+              brainRiskSession,
+              assignedStrategy,
+              simMode.isSimulated,
+            )
+            if (brainPlan.skip) {
+              console.warn(
+                `⏭️ Skipping buy for ${token.token_symbol} (${assignedStrategy}): brain_risk_stand_down`,
+              )
+            } else {
             const useRealTrading = !simMode.isSimulated
 
             // Create initial simulation configuration (use detected trading mode)
@@ -748,7 +778,8 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
               token,
               assignedStrategy,
               useRealTrading ? 'real' : 'simulation',
-              initialSimulation
+              initialSimulation,
+              simMode.isSimulated ? brainPlan.buyAmountSol : undefined,
             )
 
             if (buyOperation) {
@@ -758,7 +789,9 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
               initialSimulation.initial_token_amount = buyOperation.token_amount_received
               ;(initialSimulation as unknown as Record<string, unknown>).strategy_id = assignedStrategy
               ;(initialSimulation as unknown as Record<string, unknown>).entry_market_cap = token.market_cap
-              await attachBuyEntryFeatures(initialSimulation, token)
+              await attachBuyEntryFeatures(initialSimulation, token, {
+                brainRisk: simMode.isSimulated ? brainPlan.risk : undefined,
+              })
               tradingSimulation = initialSimulation
 
               console.log(`💰 Buy operation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens (${initialSimulation.is_simulated ? 'simulated' : 'real'}) using ${assignedStrategy} strategy`)
@@ -791,6 +824,7 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
               }
             } else {
               console.warn(`❌ Buy operation failed for ${token.token_symbol}`)
+            }
             }
             }
           } catch (error) {
@@ -1010,6 +1044,16 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
                   `⏭️ Skipping dip buy for ${token.token_symbol} (${assignedStrategy}): ${dipSimMode.reason}`,
                 )
               } else {
+              const brainPlan = await simBrainBuyPlan(
+                brainRiskSession,
+                assignedStrategy,
+                dipSimMode.isSimulated,
+              )
+              if (brainPlan.skip) {
+                console.warn(
+                  `⏭️ Skipping dip buy for ${token.token_symbol} (${assignedStrategy}): brain_risk_stand_down`,
+                )
+              } else {
               const useRealTrading = !dipSimMode.isSimulated
 
               // Create initial simulation configuration (use detected trading mode)
@@ -1029,7 +1073,8 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
                 token,
                 assignedStrategy,
                 useRealTrading ? 'real' : 'simulation',
-                initialSimulation
+                initialSimulation,
+                dipSimMode.isSimulated ? brainPlan.buyAmountSol : undefined,
               )
 
               if (buyOperation) {
@@ -1039,7 +1084,9 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
                 initialSimulation.initial_token_amount = buyOperation.token_amount_received
                 ;(initialSimulation as unknown as Record<string, unknown>).strategy_id = assignedStrategy
                 ;(initialSimulation as unknown as Record<string, unknown>).entry_market_cap = token.market_cap
-                await attachBuyEntryFeatures(initialSimulation, token)
+                await attachBuyEntryFeatures(initialSimulation, token, {
+                  brainRisk: dipSimMode.isSimulated ? brainPlan.risk : undefined,
+                })
 
                 console.log(`💰 Buy operation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens (${initialSimulation.is_simulated ? 'simulated' : 'real'}) using ${assignedStrategy} strategy`)
 
@@ -1109,6 +1156,7 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
                 // Keep in waiting status for next attempt
                 // REL-20: collected for batched flush
                 waitingPriceTouch.add([token.current_price, existingToken.id])
+              }
               }
               }
             } catch (error) {

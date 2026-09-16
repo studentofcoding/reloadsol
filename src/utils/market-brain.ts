@@ -19,6 +19,9 @@
  * - MARKET_BRAIN_MCAP=1 — opt-in mcap sim-track membership from GET /union
  * - MARKET_BRAIN_SIGNALS=1 — opt-in signals sim-track membership from GET /union
  *
+ * First-cut sim opens also resolve risk from GET /regime/params (live wins) then
+ * recipe.riskGrid[state], even when the universe flags above are off.
+ *
  * Fail soft: fetchers return `{ ok: false, error }` instead of throwing.
  * Missing admin token: log once; do not throw (promote stays local).
  * Do not log secrets. Do not change live execute from this module.
