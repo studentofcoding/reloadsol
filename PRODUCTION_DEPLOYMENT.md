@@ -58,6 +58,14 @@ bash scripts/docker-scope.sh detect-working
 
 Frontend-only deploys use `docker compose up -d --no-deps web` so **reloadsol-cron keeps running** without rebuild; **social-ingest** is restarted after web is healthy (always-on).
 
+## Stale standalone / ChunkLoadError after git pull
+
+`docker-deploy.sh` only skips host `next build` when `.next/standalone` + `.next/static` exist **and** both carry a `.deploy-git-sha` matching `git rev-parse HEAD`. After `git pull`, a missing/stale stamp forces a rebuild so the browser does not request old Turbopack chunk hashes (404 → React #418 / ChunkLoadError).
+
+On &lt;4Gi hosts set `DEPLOY_ALLOW_HOST_BUILD=1` for that rebuild (or ship a fresh Mac/CI standalone).
+
+Stamp helper: `scripts/standalone-git-stamp.sh`.
+
 ## Low-RAM VPS (Mac → rsync standalone)
 
 The production VPS is ~3.6Gi and co-hosts Flowey. Host `next build` OOMs and can thrash-lock SSH. Webpack (`next build --webpack`) is **not** the fallback: ioredis (dns) and `node:diagnostics_channel` break the client graph.

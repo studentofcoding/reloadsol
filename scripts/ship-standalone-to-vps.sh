@@ -33,6 +33,7 @@ cd "$ROOT"
 
 # shellcheck source=scripts/verify-standalone-build.sh
 source "$ROOT/scripts/verify-standalone-build.sh"
+source "$ROOT/scripts/standalone-git-stamp.sh"
 
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ship-standalone] $*"
@@ -97,6 +98,8 @@ log "Remote app dir: ${VPS_HOST}:${VPS_DIR}"
 
 ssh_vps "test -f '${VPS_DIR}/docker-compose.yml' && test -f '${VPS_DIR}/Dockerfile.web'" \
   || fail "Remote ${VPS_DIR} is missing docker-compose.yml or Dockerfile.web"
+
+stamp_standalone_git_sha
 
 log "Ensuring remote .next directories ..."
 ssh_vps "mkdir -p '${VPS_DIR}/.next/standalone' '${VPS_DIR}/.next/static'"

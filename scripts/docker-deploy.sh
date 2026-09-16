@@ -647,10 +647,16 @@ fi
 
 if [[ "$DEPLOY_WEB" == true ]]; then
   SKIP_HOST_NEXT_BUILD=false
-  if VERIFY_STANDALONE_QUIET=1 verify_standalone_build; then
+  # shellcheck source=scripts/standalone-git-stamp.sh
+  source "$ROOT/scripts/standalone-git-stamp.sh"
+  if VERIFY_STANDALONE_QUIET=1 verify_standalone_build \
+    && VERIFY_STANDALONE_QUIET=1 standalone_git_sha_matches_head; then
     SKIP_HOST_NEXT_BUILD=true
-    log "Valid .next/standalone + .next/static present — skipping host next build (artifact deploy)"
+    log "Valid .next/standalone + .next/static present and matches git HEAD — skipping host next build (artifact deploy)"
   else
+    if VERIFY_STANDALONE_QUIET=1 verify_standalone_build; then
+      log "Standalone files exist but git stamp is missing/stale (ChunkLoadError risk after git pull) — rebuilding"
+    fi
     log "Host standalone is incomplete — a next build would be required"
     host_ram_mb="$(host_total_ram_mb)"
     if [[ "${host_ram_mb:-0}" -gt 0 && "${host_ram_mb}" -lt 4096 && "${DEPLOY_ALLOW_HOST_BUILD:-}" != "1" ]]; then
@@ -683,6 +689,7 @@ if [[ "$DEPLOY_WEB" == true ]]; then
     log "Next.js build path: ${NEXT_BUILD_CMD_RESOLVED} (${NEXT_BUILD_REASON})"
     bash -c "$NEXT_BUILD_CMD_RESOLVED"
     verify_standalone_build
+    stamp_standalone_git_sha
   fi
 
   if [[ "${SKIP_HOST_NEXT_BUILD:-false}" == true ]]; then
