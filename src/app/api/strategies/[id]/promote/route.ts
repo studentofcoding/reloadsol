@@ -20,6 +20,7 @@ import {
 import { computeStrategyFitness } from '@/strategies/strategy-fitness'
 import { updateAgentConfig } from '@/utils/dlmm/db'
 import { isSearchStrategyId } from '@/strategies/strategy-search-bandit'
+import { promoteLegoRecipe } from '@/utils/brain-recipe-sync'
 import type { ExecutionMode, StrategyDomain } from '@/strategies/types'
 
 
@@ -175,11 +176,19 @@ export async function POST(
       ? 'Global live flags updated where applicable (DLMM dry_run=false when domain=dlmm). Trending bot isSimulated and signals manual buys still require separate toggles.'
       : 'Config copied to live slot. Set confirm_live=true to also flip DLMM dry_run off. Trending/signals global sim flags unchanged.'
 
+    const brainSynced = await promoteLegoRecipe(targetId, {
+      domain: targetResolved.domain,
+    })
+    const brain_recipe = brainSynced.ok
+      ? { ok: true as const, id: brainSynced.data.id }
+      : { ok: false as const, error: brainSynced.error }
+
     return NextResponse.json({
       success: true,
       source_id: sourceId,
       target_id: targetId,
       message: liveFlipNote,
+      brain_recipe,
     })
   } catch (error) {
     return NextResponse.json(
