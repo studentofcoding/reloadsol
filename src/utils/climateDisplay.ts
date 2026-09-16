@@ -82,6 +82,13 @@ export function climateChipLabel(input: {
   return 'Unknown'
 }
 
+/** True only for the binary chip label `Safe` (not Not safe / Unknown / missing). */
+export function isClimateChipSafe(
+  label: ClimateChipLabel | string | null | undefined,
+): boolean {
+  return label === 'Safe'
+}
+
 function trimCopy(value: string | null | undefined): string | null {
   if (typeof value !== 'string') return null
   const trimmed = value.trim()

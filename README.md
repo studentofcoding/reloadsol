@@ -237,6 +237,18 @@ Copy from [`.env.docker.example`](.env.docker.example). Key groups:
 | `DATA_PUBLIC_FEED_URL` | public feed | Optional override for the buy-bulk observe BFF ([docs/DATA_PUBLIC_SCOUT.md](docs/DATA_PUBLIC_SCOUT.md)); no secrets |
 | `TRADING_KEYPAIR_JSON` | — | `[1,2,3,...]` array for live trading |
 
+### Market-brain (optional)
+
+Read-only client for [market-brain](https://market-brain.yonathanevanchristy.workers.dev) lists + recipes + `/regime/params`. Default off. Does not change live execute.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MARKET_BRAIN_URL` | `https://market-brain.yonathanevanchristy.workers.dev` | Optional base override |
+| `MARKET_BRAIN_TOKEN` | — | Bearer read token (`BRAIN_READ_TOKEN`). Never logged. |
+| `MARKET_BRAIN_TRENDING` | off | `1` intersects trending-assign Jupiter `toptrending/1h` with `GET /union` (membership). Skipped if the token is missing. |
+
+Smoke: `GET /health` is public. Authenticated `GET /union` / `/jupiter` / `/bubble` / `/recipes` / `/regime/params?profile=default` need `Authorization: Bearer $MARKET_BRAIN_TOKEN`. Unit tests: `npx vitest run src/utils/brain-gates.test.ts src/utils/market-brain.test.ts src/strategies/trending-track/brain-universe.test.ts`.
+
 ### Telegram (optional)
 
 ```bash
