@@ -45,10 +45,10 @@ build_next_if_needed() {
 
   local total_mb
   total_mb="$(host_total_ram_mb)"
-  if [[ "${total_mb:-0}" -gt 0 && "${total_mb}" -lt 4096 && "${DEPLOY_ALLOW_HOST_BUILD:-}" != "1" ]]; then
+  if [[ "${total_mb:-0}" -gt 0 && "${total_mb}" -lt 4096 && ! ( "${DEPLOY_ALLOW_HOST_BUILD:-}" == "1" && "${DEPLOY_FORCE_LOW_RAM_BUILD:-}" == "1" ) ]]; then
     echo "ERROR: host RAM ${total_mb}MB < 4096MB — refusing host next build (OOM / SSH lock risk)."
     echo "Ship a Mac/CI standalone: bash scripts/ship-standalone-to-vps.sh"
-    echo "Emergency: DEPLOY_ALLOW_HOST_BUILD=1 npm run docker:up"
+    echo "Emergency: DEPLOY_ALLOW_HOST_BUILD=1 DEPLOY_FORCE_LOW_RAM_BUILD=1 npm run docker:up"
     echo "Do not use next build --webpack (ioredis dns / node:diagnostics_channel)."
     exit 1
   fi

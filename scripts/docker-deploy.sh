@@ -5,9 +5,8 @@
 # Key idea: on hosts with enough RAM, build while the old container still
 # serves traffic. On hosts <4Gi total RAM, do **not** run host `next build`
 # unless a verified `.next/standalone` + `.next/static` is already present
-# (Mac/CI artifact ship) or `DEPLOY_ALLOW_HOST_BUILD=1` is set. The escape
-# hatch still stops web/cron/social first, keeps Turbopack, and uses
-# NODE_OPTIONS=1536; the previous web image is kept for rollback.
+# (Mac/CI artifact ship). Emergency: DEPLOY_ALLOW_HOST_BUILD=1 and
+# DEPLOY_FORCE_LOW_RAM_BUILD=1 (ALLOW alone will not host-build on <4Gi).
 # Do not use `next build --webpack` on low-RAM: ioredis (dns) and
 # node:diagnostics_channel break the client webpack graph.
 # Steady-state compose is docker-compose.yml + docker-compose.prod.yml only
@@ -32,7 +31,8 @@
 #   SKIP_BUILD_CHECKS=true
 #   NEXT_BUILD_CMD='npm run build'          # override Next build command
 #   DEPLOY_USE_WEBPACK=1|0                  # force webpack (1) or Turbopack (0); default is Turbopack
-#   DEPLOY_ALLOW_HOST_BUILD=1               # emergency host next build on <4Gi RAM
+#   DEPLOY_ALLOW_HOST_BUILD=1               # required with FORCE for emergency <4Gi host build
+#   DEPLOY_FORCE_LOW_RAM_BUILD=1            # second key; ALLOW alone will not host-build on <4Gi
 #   DEPLOY_LOCK=/tmp/reloadsol-deploy.lock
 
 set -euo pipefail
@@ -63,7 +63,7 @@ refuse_low_ram_host_build() {
   log "  # or rsync .next/standalone/ and .next/static/ then:"
   log "  # docker compose -f docker-compose.yml -f docker-compose.prod.yml build web && up -d --no-deps web"
   log "Emergency host build (stops web/cron/social first; Turbopack; NODE_OPTIONS=1536):"
-  log "  DEPLOY_ALLOW_HOST_BUILD=1 bash scripts/docker-deploy.sh"
+  log "  DEPLOY_ALLOW_HOST_BUILD=1 DEPLOY_FORCE_LOW_RAM_BUILD=1 bash scripts/docker-deploy.sh"
   log "Do not use next build --webpack (ioredis dns / node:diagnostics_channel)."
   exit 1
 }
@@ -659,8 +659,12 @@ if [[ "$DEPLOY_WEB" == true ]]; then
     fi
     log "Host standalone is incomplete — a next build would be required"
     host_ram_mb="$(host_total_ram_mb)"
-    if [[ "${host_ram_mb:-0}" -gt 0 && "${host_ram_mb}" -lt 4096 && "${DEPLOY_ALLOW_HOST_BUILD:-}" != "1" ]]; then
-      refuse_low_ram_host_build "$host_ram_mb"
+    if [[ "${host_ram_mb:-0}" -gt 0 && "${host_ram_mb}" -lt 4096 ]]; then
+      if [[ "${DEPLOY_ALLOW_HOST_BUILD:-}" == "1" && "${DEPLOY_FORCE_LOW_RAM_BUILD:-}" == "1" ]]; then
+        log "WARN: forcing host next build on ${host_ram_mb}MB RAM (DEPLOY_FORCE_LOW_RAM_BUILD=1)"
+      else
+        refuse_low_ram_host_build "$host_ram_mb"
+      fi
     fi
 
     prepare_low_memory_deploy

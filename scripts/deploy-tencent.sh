@@ -154,8 +154,8 @@ cmd_build() {
   if command -v free >/dev/null 2>&1; then
     total_mb="$(free -m | awk '/^Mem:/ {print $2}')"
   fi
-  if [[ "${total_mb:-0}" -gt 0 && "${total_mb}" -lt 4096 && "${DEPLOY_ALLOW_HOST_BUILD:-}" != "1" ]]; then
-    fail "host RAM ${total_mb}MB < 4096MB — refusing host next build. Ship with scripts/ship-standalone-to-vps.sh or set DEPLOY_ALLOW_HOST_BUILD=1"
+  if [[ "${total_mb:-0}" -gt 0 && "${total_mb}" -lt 4096 && ! ( "${DEPLOY_ALLOW_HOST_BUILD:-}" == "1" && "${DEPLOY_FORCE_LOW_RAM_BUILD:-}" == "1" ) ]]; then
+    fail "host RAM ${total_mb}MB < 4096MB — refusing host next build. Ship with scripts/ship-standalone-to-vps.sh or set DEPLOY_ALLOW_HOST_BUILD=1 DEPLOY_FORCE_LOW_RAM_BUILD=1"
   fi
   bash scripts/check-deploy-memory.sh
   bash scripts/install-build-deps.sh
