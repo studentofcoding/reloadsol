@@ -96,7 +96,7 @@ function gateIdFromUnknown(value: unknown): GateId | null {
   if (isGateId(value)) return value
   const obj = asObject(value)
   if (!obj) return null
-  for (const key of ['id', 'name', 'type', 'gate']) {
+  for (const key of ['id', 'kind', 'name', 'type', 'gate']) {
     if (isGateId(obj[key])) return obj[key] as GateId
   }
   return null
@@ -111,7 +111,7 @@ function parseSpec(value: unknown): GateSpec | null {
   const enabled =
     obj.enabled === false || obj.on === false || obj.off === true ? false : true
   const min = asFiniteNumber(obj.min ?? obj.n ?? obj.threshold)
-  const max = asFiniteNumber(obj.max)
+  const max = asFiniteNumber(obj.max ?? (id === 'bmFresh' || id === 'bmTop10' ? obj.n : null))
   return {
     id,
     enabled,

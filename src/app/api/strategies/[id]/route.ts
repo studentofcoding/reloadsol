@@ -21,6 +21,7 @@ import {
 } from '@/strategies/close-on-deactivate'
 import { updateAgentConfig } from '@/utils/dlmm/db'
 import { mergeStrategyConfigPatch } from '@/strategies/merge-strategy-config-patch'
+import { deactivateLegoRecipe } from '@/utils/brain-recipe-sync'
 import type {
   ExecutionMode,
   StrategyChain,
@@ -73,6 +74,7 @@ async function closeIfDeactivating(params: {
   nextActive: boolean | undefined
 }): Promise<CloseOnDeactivateResult | undefined> {
   if (params.nextActive !== false || !params.wasActive) return undefined
+  void deactivateLegoRecipe(params.strategyId, { domain: params.domain })
   try {
     return await closeOpenPositionsForStrategy({
       strategyId: params.strategyId,

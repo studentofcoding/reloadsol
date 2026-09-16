@@ -29,6 +29,10 @@ import { invalidateGmgnCache } from '@/strategies/load-gmgn'
 import { invalidateMcapTrackerCache } from '@/strategies/load-mcap-tracker'
 import { invalidateSignalsCache } from '@/strategies/load-signals'
 import type { StrategyDomain, StrategyOutcomeRow } from '@/strategies/types'
+import {
+  dormantZeroTradeLegoRecipes,
+  promoteLegoRecipe,
+} from '@/utils/brain-recipe-sync'
 
 export const SEARCH_CYCLE_DOMAINS: StrategyDomain[] = ['mcap_tracker', 'gmgn', 'signals']
 
@@ -225,6 +229,7 @@ export async function maybeReplaceCanonicalSim(params: {
   })
   if (!result.ok) return { replaced: null, from: best.id, reason: result.error }
   invalidate(params.domain)
+  await promoteLegoRecipe(targetId, { domain: params.domain })
   return { replaced: targetId, from: best.id }
 }
 
@@ -234,6 +239,7 @@ export type SearchCycleResult = {
   spawned: Array<{ id: string; ok: boolean; error?: string }>
   candidates: number
   canonical: { replaced: string | null; from?: string; reason?: string }
+  dormant: Array<{ id: string; ok: boolean; error?: string }>
 }
 
 export async function runStrategySearchCycle(
@@ -257,12 +263,22 @@ export async function runStrategySearchCycle(
     onlyBeatsBaseline: true,
   })
   const canonical = await maybeReplaceCanonicalSim({ domain, outcomes: rows })
+  const byStrategy = computeFitnessByStrategy(rows)
+  const closesByStrategy = new Map(
+    [...byStrategy].map(([id, fit]) => [id, fit.closes]),
+  )
+  const dormant = await dormantZeroTradeLegoRecipes({
+    domain,
+    closesByStrategy,
+    skipIds: canonical.replaced ? [canonical.replaced] : [],
+  })
   return {
     domain,
     pruned,
     spawned,
     candidates: candidates.length,
     canonical,
+    dormant,
   }
 }
 

@@ -54,6 +54,23 @@ describe('resolveRecipeGates', () => {
       min: 50,
     })
   })
+
+  it('accepts brain-native { kind, n } gate objects', () => {
+    const gates = resolveRecipeGates([
+      { kind: 'membership' },
+      { kind: 'mcap', n: 50_000 },
+      { kind: 'liquidity', n: 10_000 },
+      { kind: 'climateSafe' },
+    ])
+    expect(gates.filter((g) => g.enabled).map((g) => g.id)).toEqual([
+      'membership',
+      'mcap',
+      'liquidity',
+      'climateSafe',
+    ])
+    expect(gates.find((g) => g.id === 'mcap')?.min).toBe(50_000)
+    expect(gates.find((g) => g.id === 'bmScore')?.enabled).toBe(false)
+  })
 })
 
 describe('evaluateRecipeGates default AND pack', () => {

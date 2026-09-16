@@ -194,3 +194,119 @@ describe('fetchBrainJson fail-soft', () => {
     expect(one.data.id).toBe('r1')
   })
 })
+
+describe('market-brain admin writes', () => {
+  it('fails soft when MARKET_BRAIN_ADMIN_TOKEN is missing', async () => {
+    vi.stubEnv('MARKET_BRAIN_ADMIN_TOKEN', '')
+    const { putBrainRecipe, isMarketBrainAdminConfigured } = await import('@/utils/market-brain')
+    expect(isMarketBrainAdminConfigured()).toBe(false)
+    const result = await putBrainRecipe({
+      id: 'mcap_enter_first_seen',
+      active: true,
+      domain: 'mcap',
+      universe: ['union'],
+      gates: [{ kind: 'membership' }],
+      profileId: 'default',
+      riskGrid: {
+        Cash: { sizeScale: 0, takeProfitPct: null, stopLossPct: null, holdHours: null },
+        'De-risk': { sizeScale: 0.25, takeProfitPct: 8, stopLossPct: 6, holdHours: 4 },
+        Mixed: { sizeScale: 0.5, takeProfitPct: 12, stopLossPct: 8, holdHours: 8 },
+        Range: { sizeScale: 0.75, takeProfitPct: 15, stopLossPct: 10, holdHours: 12 },
+        Hype: { sizeScale: 1, takeProfitPct: 20, stopLossPct: 12, holdHours: 24 },
+      },
+    })
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('expected failure')
+    expect(result.error).toMatch(/MARKET_BRAIN_ADMIN_TOKEN is not set/)
+  })
+
+  it('PUTs a recipe and POSTs activate/deactivate/dormant with the admin bearer', async () => {
+    const admin = 'super-secret-admin-token'
+    const recipe = {
+      id: 'mcap_enter_first_seen',
+      active: true,
+      dormant: false,
+      domain: 'mcap',
+      universe: ['union'],
+      gates: [{ kind: 'membership' }],
+      profileId: 'default',
+    }
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const href = String(url)
+      expect(init?.headers).toMatchObject({
+        Authorization: `Bearer ${admin}`,
+      })
+      if (init?.method === 'PUT' && href.endsWith('/recipes/mcap_enter_first_seen')) {
+        expect(JSON.parse(String(init.body))).toMatchObject({ id: 'mcap_enter_first_seen', active: true })
+        return jsonResponse({ ok: true, recipe })
+      }
+      if (init?.method === 'POST' && href.endsWith('/activate')) {
+        return jsonResponse({ ok: true, recipe: { ...recipe, active: true, dormant: false } })
+      }
+      if (init?.method === 'POST' && href.endsWith('/deactivate')) {
+        return jsonResponse({ ok: true, recipe: { ...recipe, active: false } })
+      }
+      if (init?.method === 'POST' && href.endsWith('/dormant')) {
+        return jsonResponse({ ok: true, recipe: { ...recipe, active: false, dormant: true } })
+      }
+      return jsonResponse({ error: 'not found' }, 404)
+    })
+    const {
+      putBrainRecipe,
+      activateBrainRecipe,
+      deactivateBrainRecipe,
+      dormantBrainRecipe,
+    } = await import('@/utils/market-brain')
+
+    const put = await putBrainRecipe(
+      {
+        id: 'mcap_enter_first_seen',
+        active: true,
+        domain: 'mcap',
+        universe: ['union'],
+        gates: [{ kind: 'membership' }],
+        profileId: 'default',
+        riskGrid: {
+          Cash: { sizeScale: 0, takeProfitPct: null, stopLossPct: null, holdHours: null },
+          'De-risk': { sizeScale: 0.25, takeProfitPct: 8, stopLossPct: 6, holdHours: 4 },
+          Mixed: { sizeScale: 0.5, takeProfitPct: 12, stopLossPct: 8, holdHours: 8 },
+          Range: { sizeScale: 0.75, takeProfitPct: 15, stopLossPct: 10, holdHours: 12 },
+          Hype: { sizeScale: 1, takeProfitPct: 20, stopLossPct: 12, holdHours: 24 },
+        },
+      },
+      { adminToken: admin, fetchImpl },
+    )
+    const activated = await activateBrainRecipe('mcap_enter_first_seen', { adminToken: admin, fetchImpl })
+    const deactivated = await deactivateBrainRecipe('mcap_enter_first_seen', {
+      adminToken: admin,
+      fetchImpl,
+    })
+    const dormant = await dormantBrainRecipe('mcap_enter_first_seen', { adminToken: admin, fetchImpl })
+
+    expect(put.ok).toBe(true)
+    expect(activated.ok).toBe(true)
+    expect(deactivated.ok).toBe(true)
+    expect(dormant.ok).toBe(true)
+    if (!put.ok || !activated.ok || !deactivated.ok || !dormant.ok) throw new Error('expected ok')
+    expect(put.data.id).toBe('mcap_enter_first_seen')
+    expect(deactivated.data.active).toBe(false)
+    expect(dormant.data.dormant).toBe(true)
+    expect(fetchImpl).toHaveBeenCalledTimes(4)
+    for (const result of [put, activated, deactivated, dormant]) {
+      if (!result.ok) continue
+      expect(JSON.stringify(result)).not.toContain(admin)
+    }
+  })
+
+  it('does not put the admin token in error text on HTTP 401', async () => {
+    const admin = 'super-secret-admin-token'
+    const fetchImpl = vi.fn(async () => jsonResponse({ error: 'unauthorized' }, 401))
+    const { activateBrainRecipe } = await import('@/utils/market-brain')
+    const result = await activateBrainRecipe('mcap_enter_first_seen', { adminToken: admin, fetchImpl })
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('expected failure')
+    expect(result.error).toMatch(/unauthorized/)
+    expect(result.error).not.toContain(admin)
+    expect(result.status).toBe(401)
+  })
+})

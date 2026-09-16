@@ -7,13 +7,18 @@
  * - Lists (Bearer MARKET_BRAIN_TOKEN = BRAIN_READ_TOKEN): GET /bubble /jupiter /union
  * - Regime: GET /regime/params?profile=default (Bearer read)
  * - Recipes read: GET /recipes, GET /recipes/:id (Bearer read)
+ * - Recipes write: PUT /recipes/:id, POST /recipes,
+ *   POST /recipes/:id/{activate,deactivate,dormant}
+ *   (Bearer MARKET_BRAIN_ADMIN_TOKEN = BRAIN_ADMIN_TOKEN)
  *
  * Env:
  * - MARKET_BRAIN_URL — optional base override (no trailing slash required)
  * - MARKET_BRAIN_TOKEN — Bearer read token (never logged)
+ * - MARKET_BRAIN_ADMIN_TOKEN — Bearer admin token for recipe writes (never logged)
  * - MARKET_BRAIN_TRENDING=1 — opt-in trending/assign universe from GET /union
  *
  * Fail soft: fetchers return `{ ok: false, error }` instead of throwing.
+ * Missing admin token: log once; do not throw (promote stays local).
  * Do not log secrets. Do not change live execute from this module.
  */
 
@@ -76,6 +81,33 @@ export type LegoRecipeSoftHints = {
   sortKey?: string
 }
 
+export type BrainGateKind =
+  | 'membership'
+  | 'mcap'
+  | 'liquidity'
+  | 'climateSafe'
+  | 'bmScore'
+  | 'bmFresh'
+  | 'bmTop10'
+
+export type BrainGateWrite = {
+  kind: BrainGateKind
+  enabled?: boolean
+  n?: number
+}
+
+export type LegoRecipeWrite = {
+  id: string
+  active: boolean
+  dormant?: boolean
+  domain: LegoDomain
+  universe: BrainListName[]
+  gates: BrainGateWrite[]
+  profileId: string
+  softHints?: LegoRecipeSoftHints
+  riskGrid: Record<BrainClimateState, RegimeRiskCell | null>
+}
+
 export type LegoRecipe = {
   id: string
   active: boolean
@@ -89,9 +121,13 @@ export type LegoRecipe = {
   raw: Record<string, unknown>
 }
 
+export type BrainRecipeAction = 'activate' | 'deactivate' | 'dormant'
+
 export type MarketBrainFetchOpts = {
   baseUrl?: string
   token?: string | null
+  /** Admin write token; never log. Overrides MARKET_BRAIN_ADMIN_TOKEN when passed. */
+  adminToken?: string | null
   fetchImpl?: typeof fetch
   timeoutMs?: number
   /** Extra query string (already encoded), e.g. `profile=default`. */
@@ -99,6 +135,22 @@ export type MarketBrainFetchOpts = {
 }
 
 const DEFAULT_TIMEOUT_MS = 8_000
+const MISSING_ADMIN_TOKEN_ERROR = 'MARKET_BRAIN_ADMIN_TOKEN is not set'
+
+let missingAdminTokenLogged = false
+
+/** Test-only: allow the missing-admin log-once latch to fire again. */
+export function resetMarketBrainAdminWarnForTests(): void {
+  missingAdminTokenLogged = false
+}
+
+export function warnMissingBrainAdminTokenOnce(context: string): void {
+  if (missingAdminTokenLogged) return
+  missingAdminTokenLogged = true
+  console.warn(
+    `[market-brain] ${MISSING_ADMIN_TOKEN_ERROR}; skipping recipe write (${context})`,
+  )
+}
 
 function envFlag(key: string, fallback = false): boolean {
   const v = process.env[key]
@@ -159,11 +211,28 @@ export function marketBrainToken(override?: string | null): string | null {
   return env ? env : null
 }
 
+/** Admin write token; never log the return value. */
+export function marketBrainAdminToken(override?: string | null): string | null {
+  if (override !== undefined) {
+    const trimmed = override?.trim() ?? ''
+    return trimmed ? trimmed : null
+  }
+  const env = process.env.MARKET_BRAIN_ADMIN_TOKEN?.trim() ?? ''
+  return env ? env : null
+}
+
 export function isMarketBrainConfigured(opts?: {
   baseUrl?: string
   token?: string | null
 }): boolean {
   return Boolean(marketBrainUrl(opts?.baseUrl) && marketBrainToken(opts?.token))
+}
+
+export function isMarketBrainAdminConfigured(opts?: {
+  baseUrl?: string
+  adminToken?: string | null
+}): boolean {
+  return Boolean(marketBrainUrl(opts?.baseUrl) && marketBrainAdminToken(opts?.adminToken))
 }
 
 /**
@@ -376,14 +445,22 @@ function collectRecipeValues(body: unknown): unknown[] {
   if (Array.isArray(body)) return body
   const obj = asObject(body)
   if (!obj) return []
+  const nestedRecipe = asObject(obj.recipe)
+  if (nestedRecipe && firstString(nestedRecipe, ['id', 'recipeId', 'recipe_id'])) {
+    return [nestedRecipe]
+  }
   for (const key of ['recipes', 'items', 'data']) {
     const value = obj[key]
     if (Array.isArray(value)) return value
     const nested = asObject(value)
     if (nested && Array.isArray(nested.recipes)) return nested.recipes
   }
-  if (firstString(obj, ['id'])) return [obj]
+  if (firstString(obj, ['id', 'recipeId', 'recipe_id'])) return [obj]
   return []
+}
+
+export function parseLegoRecipeFromWriteBody(body: unknown): LegoRecipe | null {
+  return parseLegoRecipe(asObject(body)?.recipe) ?? parseLegoRecipes(body)[0] ?? null
 }
 
 export function parseLegoRecipes(body: unknown): LegoRecipe[] {
@@ -551,6 +628,150 @@ export async function fetchBrainRecipe(
     })
   }
   return { ok: true, status: raw.status, data: parsed }
+}
+
+export type MarketBrainWriteOpts = MarketBrainFetchOpts & {
+  method: 'POST' | 'PUT'
+  body?: unknown
+}
+
+/**
+ * Admin write fetch (PUT/POST). Fail-soft when MARKET_BRAIN_ADMIN_TOKEN is missing.
+ * Never logs the token.
+ */
+export async function fetchBrainAdminJson<T = unknown>(
+  path: string,
+  opts: MarketBrainWriteOpts,
+): Promise<BrainResult<T>> {
+  const base = marketBrainUrl(opts.baseUrl)
+  const token = marketBrainAdminToken(opts.adminToken)
+  const suffix = path.startsWith('/') ? path : `/${path}`
+  const query = opts.query?.replace(/^\?/, '')
+  const url = `${base}${suffix}${query ? `?${query}` : ''}`
+  if (!token) {
+    return fail(MISSING_ADMIN_TOKEN_ERROR, { path: suffix })
+  }
+
+  const fetchImpl = opts.fetchImpl ?? fetch
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    Authorization: `Bearer ${token}`,
+    'User-Agent': 'reloadsol-buybulk-brain/1.0',
+  }
+  let body: string | undefined
+  if (opts.body !== undefined) {
+    headers['Content-Type'] = 'application/json'
+    body = JSON.stringify(opts.body)
+  }
+  try {
+    const res = await fetchImpl(url, {
+      method: opts.method,
+      headers,
+      body,
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+    const status = res.status
+    let json: unknown
+    try {
+      json = await res.json()
+    } catch {
+      return fail(`market-brain ${suffix}: invalid JSON (HTTP ${status})`, {
+        status,
+        path: suffix,
+      })
+    }
+    if (!res.ok) {
+      const obj = asObject(json)
+      const msg =
+        trimString(obj?.error) ||
+        trimString(obj?.message) ||
+        `HTTP ${status}`
+      return fail(`market-brain ${suffix}: ${msg}`, { status, path: suffix })
+    }
+    return { ok: true, data: json as T, status }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error)
+    return fail(`market-brain ${suffix}: ${msg}`, { path: suffix })
+  }
+}
+
+function recipeWriteResult(
+  raw: BrainResult<unknown>,
+  path: string,
+): BrainResult<LegoRecipe> {
+  if (!raw.ok) return raw
+  const parsed = parseLegoRecipeFromWriteBody(raw.data)
+  if (!parsed) {
+    return fail(`market-brain ${path}: missing recipe id`, {
+      status: raw.status,
+      path,
+    })
+  }
+  return { ok: true, status: raw.status, data: parsed }
+}
+
+/** Idempotent upsert (brain PUT /recipes/:id). */
+export async function putBrainRecipe(
+  recipe: LegoRecipeWrite,
+  opts: MarketBrainFetchOpts = {},
+): Promise<BrainResult<LegoRecipe>> {
+  const encoded = encodeURIComponent(recipe.id)
+  const path = `/recipes/${encoded}`
+  const raw = await fetchBrainAdminJson(path, {
+    ...opts,
+    method: 'PUT',
+    body: recipe,
+  })
+  return recipeWriteResult(raw, path)
+}
+
+/** Create-only (brain POST /recipes). 409 if the id already exists. */
+export async function postBrainRecipe(
+  recipe: LegoRecipeWrite,
+  opts: MarketBrainFetchOpts = {},
+): Promise<BrainResult<LegoRecipe>> {
+  const raw = await fetchBrainAdminJson('/recipes', {
+    ...opts,
+    method: 'POST',
+    body: recipe,
+  })
+  return recipeWriteResult(raw, '/recipes')
+}
+
+export async function postBrainRecipeAction(
+  id: string,
+  action: BrainRecipeAction,
+  opts: MarketBrainFetchOpts = {},
+): Promise<BrainResult<LegoRecipe>> {
+  const encoded = encodeURIComponent(id)
+  const path = `/recipes/${encoded}/${action}`
+  const raw = await fetchBrainAdminJson(path, {
+    ...opts,
+    method: 'POST',
+  })
+  return recipeWriteResult(raw, path)
+}
+
+export async function activateBrainRecipe(
+  id: string,
+  opts: MarketBrainFetchOpts = {},
+): Promise<BrainResult<LegoRecipe>> {
+  return postBrainRecipeAction(id, 'activate', opts)
+}
+
+export async function deactivateBrainRecipe(
+  id: string,
+  opts: MarketBrainFetchOpts = {},
+): Promise<BrainResult<LegoRecipe>> {
+  return postBrainRecipeAction(id, 'deactivate', opts)
+}
+
+export async function dormantBrainRecipe(
+  id: string,
+  opts: MarketBrainFetchOpts = {},
+): Promise<BrainResult<LegoRecipe>> {
+  return postBrainRecipeAction(id, 'dormant', opts)
 }
 
 /**

@@ -245,9 +245,21 @@ Read-only client for [market-brain](https://market-brain.yonathanevanchristy.wor
 |----------|---------|-------------|
 | `MARKET_BRAIN_URL` | `https://market-brain.yonathanevanchristy.workers.dev` | Optional base override |
 | `MARKET_BRAIN_TOKEN` | — | Bearer read token (`BRAIN_READ_TOKEN`). Never logged. |
+| `MARKET_BRAIN_ADMIN_TOKEN` | — | Bearer admin token (`BRAIN_ADMIN_TOKEN`) for recipe writes (promote / deactivate / dormant / seed). Missing token is fail-soft: log once, local promote continues. Never logged. |
 | `MARKET_BRAIN_TRENDING` | off | `1` intersects trending-assign Jupiter `toptrending/1h` with `GET /union` (membership). Skipped if the token is missing. |
 
-Smoke: `GET /health` is public. Authenticated `GET /union` / `/jupiter` / `/bubble` / `/recipes` / `/regime/params?profile=default` need `Authorization: Bearer $MARKET_BRAIN_TOKEN`. Unit tests: `npx vitest run src/utils/brain-gates.test.ts src/utils/market-brain.test.ts src/strategies/trending-track/brain-universe.test.ts`.
+Smoke: `GET /health` is public. Authenticated `GET /union` / `/jupiter` / `/bubble` / `/recipes` / `/regime/params?profile=default` need `Authorization: Bearer $MARKET_BRAIN_TOKEN`. Recipe writes need `Authorization: Bearer $MARKET_BRAIN_ADMIN_TOKEN`.
+
+Seed known-winner recipes (`mcap_enter_first_seen`, `mcap_enter_at_80`, `signals_sell_over_100`) as active fat payloads (union universe, default gates, `profileId: default`, embedded risk grid, **no bmScore**):
+
+```bash
+export MARKET_BRAIN_ADMIN_TOKEN=   # same value as brain BRAIN_ADMIN_TOKEN
+npx tsx scripts/seed-brain-recipes.ts            # idempotent PUT
+npx tsx scripts/seed-brain-recipes.ts --dry-run
+# optional: --activate=ID --deactivate=ID --dormant=ID
+```
+
+Unit tests: `npx vitest run src/utils/brain-gates.test.ts src/utils/market-brain.test.ts src/utils/brain-recipe-sync.test.ts src/strategies/trending-track/brain-universe.test.ts`.
 
 ### Telegram (optional)
 
