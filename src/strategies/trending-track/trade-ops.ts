@@ -34,7 +34,8 @@ export async function executeBuyOperationWithStrategy(
   token: any,
   strategyId: string,
   operationType: 'simulation' | 'real' = 'simulation',
-  simulation: TradingSimulation
+  simulation: TradingSimulation,
+  buyAmountSol?: number,
 ): Promise<BuyOperation | null> {
   const strategy = resolveTradingStrategy(strategyId)
   console.log(`🎯 Executing buy operation for ${token.token_symbol} using ${strategy.name} strategy`)
@@ -56,7 +57,13 @@ export async function executeBuyOperationWithStrategy(
 
     // SOL mint address and trading parameters
     const SOL_MINT = 'So11111111111111111111111111111111111111112'
-    let BUY_AMOUNT_SOL = getBuyAmountForStrategy(strategyId) // Dynamic based on strategy
+    let BUY_AMOUNT_SOL =
+      operationType === 'simulation' &&
+      buyAmountSol != null &&
+      Number.isFinite(buyAmountSol) &&
+      buyAmountSol > 0
+        ? buyAmountSol
+        : getBuyAmountForStrategy(strategyId)
     let PRIORITY_FEE_LAMPORTS = getPriorityFeeForStrategy(strategyId)
 
     let isRebuy = false
