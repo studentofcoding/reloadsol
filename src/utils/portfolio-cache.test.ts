@@ -8,12 +8,13 @@ import {
 
 const cacheGet = vi.hoisted(() => vi.fn())
 const cacheSet = vi.hoisted(() => vi.fn())
+const cacheDel = vi.hoisted(() => vi.fn())
 const cacheDelByPrefix = vi.hoisted(() => vi.fn())
 
 vi.mock('@/utils/redis-cache', () => ({
   cacheGet: cacheGet,
   cacheSet: cacheSet,
-  cacheDel: vi.fn(),
+  cacheDel: cacheDel,
   cacheDelByPrefix: cacheDelByPrefix,
 }))
 
@@ -21,6 +22,7 @@ describe('fetchWithCache', () => {
   beforeEach(() => {
     cacheGet.mockReset()
     cacheSet.mockReset()
+    cacheDel.mockReset()
     cacheDelByPrefix.mockReset()
   })
 
@@ -79,7 +81,11 @@ describe('fetchWithCache', () => {
     const upstream = vi.fn().mockResolvedValue({ totalValue: 1 })
     const result = await fetchWithCache({ ...base, fetch: upstream, skipCache: true })
 
-    expect(cacheDelByPrefix).toHaveBeenCalledWith('pf:sol:wallet:holdings:')
+    expect(cacheDel).toHaveBeenCalledWith([
+      'pf:sol:wallet:holdings',
+      'pf:sol:wallet:holdings:stale',
+    ])
+    expect(cacheDelByPrefix).not.toHaveBeenCalled()
     expect(cacheGet).not.toHaveBeenCalled()
     expect(cacheSet).not.toHaveBeenCalled()
     expect(result).toEqual({ data: { totalValue: 1 }, origin: 'miss' })
@@ -105,10 +111,10 @@ describe('portfolio cache keys', () => {
       `pf:sol:${wallet.toLowerCase()}:holdings`,
     )
     expect(shyftAllTokensKey(wallet)).toBe(
-      `pf:sol:${wallet.toLowerCase()}:all_tokens:mainnet-beta`,
+      `pf:sol:${wallet.toLowerCase()}:all_tokens:v2:mainnet-beta`,
     )
     expect(shyftAllTokensKey(` ${wallet} `, 'Devnet')).toBe(
-      `pf:sol:${wallet.toLowerCase()}:all_tokens:devnet`,
+      `pf:sol:${wallet.toLowerCase()}:all_tokens:v2:devnet`,
     )
   })
 

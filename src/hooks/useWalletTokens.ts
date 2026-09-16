@@ -17,7 +17,7 @@ export type WalletTokensData = {
   meta: TokenFetchMeta;
 };
 
-export const WALLET_TOKENS_SOURCE = "shyft-all-tokens" as const;
+export const WALLET_TOKENS_SOURCE = "shyft-all-tokens-v2" as const;
 
 export function walletTokensQueryKey(
   walletAddress: string | null,

@@ -17,7 +17,10 @@ export type ShyftWalletTokenInfo = {
 
 export type ShyftWalletToken = {
   address: string;
+  /** Raw integer amount. Server-normalized before Redis/HTTP. */
   balance: number;
+  /** UI amount when the proxy already normalized. */
+  uiAmount?: number;
   associated_account?: string;
   info?: ShyftWalletTokenInfo;
 };
@@ -58,9 +61,26 @@ export function normalizeShyftBalance(
   return { raw, ui: balance };
 }
 
-export function mapShyftTokenToUserToken(token: ShyftWalletToken): UserToken {
+export function normalizeShyftWalletToken(
+  token: ShyftWalletToken,
+): ShyftWalletToken {
   const decimals = token.info?.decimals ?? 6;
   const { raw, ui } = normalizeShyftBalance(token.balance, decimals);
+  return { ...token, balance: raw, uiAmount: ui };
+}
+
+export function normalizeShyftWalletTokens(
+  tokens: ShyftWalletToken[],
+): ShyftWalletToken[] {
+  return tokens.map(normalizeShyftWalletToken);
+}
+
+export function mapShyftTokenToUserToken(token: ShyftWalletToken): UserToken {
+  const decimals = token.info?.decimals ?? 6;
+  const cachedUi = token.uiAmount;
+  const { raw, ui } = Number.isFinite(cachedUi)
+    ? { raw: token.balance, ui: cachedUi }
+    : normalizeShyftBalance(token.balance, decimals);
 
   return {
     mintAddress: token.address,
@@ -237,9 +257,10 @@ export async function fetchShyftAllTokensDirect(
     { timeoutMs: SHYFT_FETCH_TIMEOUT_MS },
   );
 
+  const tokens = normalizeShyftWalletTokens(result ?? []);
   return {
-    tokens: result ?? [],
-    tokenCount: result?.length ?? 0,
+    tokens,
+    tokenCount: tokens.length,
     latencyMs,
   };
 }

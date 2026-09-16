@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  mapShyftTokenToUserToken,
   mapShyftTokensToUserTokens,
   normalizeShyftBalance,
+  normalizeShyftWalletToken,
   SOL_MINT,
   type ShyftWalletToken,
 } from "@/utils/shyft-wallet";
@@ -45,6 +47,16 @@ describe("normalizeShyftBalance", () => {
     expect(stonk.raw).toBe(3000 * 10 ** 9);
   });
 
+  it("writes raw balance + uiAmount for a Shyft UI integer", () => {
+    const token = normalizeShyftWalletToken({
+      address: "6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx",
+      balance: 3000,
+      info: { decimals: 9, name: "STONK", symbol: "STONK" },
+    });
+    expect(token.uiAmount).toBe(3000);
+    expect(token.balance).toBe(3000 * 10 ** 9);
+  });
+
   it("returns zeros for non-finite or non-positive balances", () => {
     expect(normalizeShyftBalance(0, 6)).toEqual({ raw: 0, ui: 0 });
     expect(normalizeShyftBalance(Number.NaN, 6)).toEqual({ raw: 0, ui: 0 });
@@ -64,6 +76,18 @@ describe("mapShyftTokensToUserTokens", () => {
     const tokens = mapShyftTokensToUserTokens(SAMPLE, { includeSol: true });
     expect(tokens.some((t) => t.mintAddress === SOL_MINT)).toBe(true);
   });
+
+  it("does not re-divide a server-normalized STONK payload", () => {
+    const raw = 3000 * 10 ** 9;
+    const mapped = mapShyftTokenToUserToken({
+      address: "6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx",
+      balance: raw,
+      uiAmount: 3000,
+      info: { decimals: 9, name: "STONK", symbol: "STONK" },
+    });
+    expect(mapped.uiAmount).toBe(3000);
+    expect(mapped.balance).toBe(raw);
+  });
 });
 
 describe("shyft all_tokens cache key", () => {
@@ -71,6 +95,6 @@ describe("shyft all_tokens cache key", () => {
     const a = shyftAllTokensKey("WalletABC", "mainnet-beta");
     const b = shyftAllTokensKey("walletabc", "MAINNET-BETA");
     expect(a).toBe(b);
-    expect(a).toContain(":all_tokens:mainnet-beta");
+    expect(a).toContain(":all_tokens:v2:mainnet-beta");
   });
 });

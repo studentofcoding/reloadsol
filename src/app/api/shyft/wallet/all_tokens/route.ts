@@ -52,7 +52,7 @@ export async function GET(request: NextRequest) {
       },
       {
         headers: {
-          "Cache-Control": "private, max-age=15",
+          "Cache-Control": "no-store",
           "X-Cache-Status":
             result.origin === "hit"
               ? "HIT"

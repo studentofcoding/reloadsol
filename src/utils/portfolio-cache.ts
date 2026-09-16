@@ -1,4 +1,4 @@
-import { cacheGet, cacheSet, cacheDelByPrefix } from '@/utils/redis-cache'
+import { cacheGet, cacheSet, cacheDel, cacheDelByPrefix } from '@/utils/redis-cache'
 
 export type CacheOrigin = 'hit' | 'miss' | 'stale'
 
@@ -43,7 +43,7 @@ export async function fetchWithCache<T>(
   } = opts
 
   if (skipCache) {
-    await cacheDelByPrefix(`${key}:`)
+    await cacheDel([key, staleKey])
   }
 
   if (!skipCache) {
@@ -90,7 +90,7 @@ export function shyftAllTokensKey(
   network = 'mainnet-beta',
 ): string {
   const n = network.trim().toLowerCase() || 'mainnet-beta'
-  return `${portfolioWalletPrefix('sol', wallet)}all_tokens:${n}`
+  return `${portfolioWalletPrefix('sol', wallet)}all_tokens:v2:${n}`
 }
 
 /** Expire a wallet's portfolio cache (call after a buy/sell to force refresh). */
