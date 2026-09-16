@@ -267,7 +267,20 @@ export MARKET_BRAIN_ADMIN_TOKEN=   # same value as brain BRAIN_ADMIN_TOKEN
 npx tsx scripts/seed-brain-recipes.ts            # idempotent PUT
 npx tsx scripts/seed-brain-recipes.ts --dry-run
 # optional: --activate=ID --deactivate=ID --dormant=ID
+npx tsx scripts/seed-brain-recipes.ts --tidy            # deactivate thin/losing; dormant n=0
+npx tsx scripts/seed-brain-recipes.ts --tidy --dry-run  # plan only (needs local outcomes)
 ```
+
+**Recipe tidy rules** (same ladder as `passesLegoPromoteGate` in `src/utils/brain-recipe-sync.ts`; never hard-delete):
+
+| Condition | Action |
+|-----------|--------|
+| n ≥ 10 and avg PnL > 0 | keep active (promote path activates) |
+| active and (n < 10 or avg PnL ≤ 0) | deactivate (remove from active assign; params stay) |
+| n = 0 (zero-trade) | dormant (params kept) |
+| already dormant | leave dormant (do not drop from store) |
+
+`strategy_search` runs this tidy each cycle (skips a canonical id just promoted). Stats `n` / avg PnL are the same 28-day fitness window the search cycle already uses (`closes` / `expectancyPct`).
 
 Unit tests: `npx vitest run src/utils/brain-gates.test.ts src/utils/market-brain.test.ts src/utils/brain-recipe-sync.test.ts src/utils/brain-union-universe.test.ts src/utils/brain-regime-risk.test.ts src/strategies/trending-track/brain-universe.test.ts src/strategies/mcap-track/brain-universe.test.ts src/strategies/signals/brain-universe.test.ts`.
 

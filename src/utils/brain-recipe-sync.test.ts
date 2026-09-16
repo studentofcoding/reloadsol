@@ -6,14 +6,19 @@ import {
   DEFAULT_LEGO_UNIVERSE,
   dormantZeroTradeLegoRecipes,
   fatLegoRecipeForStrategy,
+  firstCutLegoStrategyIds,
   knownWinnerRecipes,
   KNOWN_WINNER_STRATEGY_IDS,
+  LEGO_PROMOTE_MIN_N,
   legoDomainForStrategy,
   legoRecipeActionForEvent,
+  legoTidyDecision,
   passesLegoPromoteGate,
+  planLegoRecipeTidy,
   promoteLegoRecipe,
   seedKnownWinnerRecipes,
   syncLegoRecipe,
+  tidyLegoRecipes,
 } from '@/utils/brain-recipe-sync'
 import {
   DEFAULT_MARKET_BRAIN_URL,
@@ -42,9 +47,11 @@ describe('promote → recipe mapping', () => {
   })
 
   it('uses avgPnL>0 and n≥10 as the lego promote gate', () => {
+    expect(LEGO_PROMOTE_MIN_N).toBe(10)
     expect(passesLegoPromoteGate({ avgPnl: 1, n: 10 })).toBe(true)
     expect(passesLegoPromoteGate({ avgPnl: 0, n: 10 })).toBe(false)
     expect(passesLegoPromoteGate({ avgPnl: 5, n: 9 })).toBe(false)
+    expect(passesLegoPromoteGate({ avgPnl: -1, n: 20 })).toBe(false)
   })
 
   it('maps first-cut strategy ids onto lego domains', () => {
@@ -232,5 +239,212 @@ describe('promote/deactivate/dormant write client', () => {
     })
     expect(result).toEqual([])
     expect(fetchImpl).not.toHaveBeenCalled()
+  })
+})
+
+describe('lego tidy decision thresholds', () => {
+  it('keeps n≥10 with positive avg PnL (promote gate)', () => {
+    expect(legoTidyDecision({ n: 10, avgPnl: 0.01, active: true })).toEqual({
+      action: 'keep',
+      reason: 'passes-promote-gate',
+    })
+    expect(legoTidyDecision({ n: 20, avgPnl: 3, active: true }).action).toBe('keep')
+  })
+
+  it('deactivates thin active samples (0 < n < 10)', () => {
+    expect(legoTidyDecision({ n: 1, avgPnl: 50, active: true })).toEqual({
+      action: 'deactivate',
+      reason: 'thin-sample',
+    })
+    expect(legoTidyDecision({ n: 9, avgPnl: 50, active: true })).toEqual({
+      action: 'deactivate',
+      reason: 'thin-sample',
+    })
+    expect(legoTidyDecision({ n: 9, avgPnl: -5, active: true }).reason).toBe('thin-sample')
+  })
+
+  it('deactivates losing active recipes (n≥10 and avg PnL ≤ 0)', () => {
+    expect(legoTidyDecision({ n: 10, avgPnl: 0, active: true })).toEqual({
+      action: 'deactivate',
+      reason: 'losing',
+    })
+    expect(legoTidyDecision({ n: 25, avgPnl: -0.01, active: true })).toEqual({
+      action: 'deactivate',
+      reason: 'losing',
+    })
+  })
+
+  it('parks zero-trade as dormant and never deletes dormant params', () => {
+    expect(legoTidyDecision({ n: 0, avgPnl: 0, active: true })).toEqual({
+      action: 'dormant',
+      reason: 'zero-trade',
+    })
+    expect(legoTidyDecision({ n: 0, avgPnl: 0, active: false })).toEqual({
+      action: 'dormant',
+      reason: 'zero-trade',
+    })
+    expect(legoTidyDecision({ n: 0, avgPnl: 0, dormant: true })).toEqual({
+      action: 'leave-dormant',
+      reason: 'already-dormant',
+    })
+    expect(legoTidyDecision({ n: 40, avgPnl: -8, dormant: true, active: false })).toEqual({
+      action: 'leave-dormant',
+      reason: 'already-dormant',
+    })
+  })
+
+  it('leaves already-inactive thin/losing recipes stored (no delete)', () => {
+    expect(legoTidyDecision({ n: 4, avgPnl: 2, active: false })).toEqual({
+      action: 'keep',
+      reason: 'already-inactive',
+    })
+    expect(legoTidyDecision({ n: 12, avgPnl: -1, active: false })).toEqual({
+      action: 'keep',
+      reason: 'already-inactive',
+    })
+  })
+
+  it('plans first-cut ids plus in-domain snapshots and skips just-promoted', () => {
+    expect(firstCutLegoStrategyIds('mcap_tracker')).toEqual([
+      'mcap_enter_first_seen',
+      'mcap_enter_at_80',
+    ])
+    const plan = planLegoRecipeTidy({
+      domain: 'mcap_tracker',
+      statsByStrategy: new Map([
+        ['mcap_enter_first_seen', { n: 12, avgPnl: 4 }],
+        ['mcap_enter_at_80', { n: 8, avgPnl: 9 }],
+        ['signals_sell_over_100', { n: 0, avgPnl: 0 }],
+      ]),
+      recipes: [
+        { id: 'mcap_enter_at_80', active: true, dormant: false },
+        { id: 'mcap_custom_thin', active: true, dormant: false },
+        { id: 'signals_sell_over_100', active: true },
+      ],
+      skipIds: ['mcap_enter_first_seen'],
+    })
+    expect(plan.find((r) => r.id === 'mcap_enter_first_seen')).toBeUndefined()
+    expect(plan.find((r) => r.id === 'mcap_enter_at_80')).toEqual({
+      id: 'mcap_enter_at_80',
+      action: 'deactivate',
+      reason: 'thin-sample',
+    })
+    expect(plan.find((r) => r.id === 'mcap_custom_thin')).toEqual({
+      id: 'mcap_custom_thin',
+      action: 'dormant',
+      reason: 'zero-trade',
+    })
+    expect(plan.some((r) => r.id === 'signals_sell_over_100')).toBe(false)
+  })
+})
+
+describe('tidyLegoRecipes write client', () => {
+  it('deactivates thin and losing active recipes; dormants zero-trade; leaves dormant stored', async () => {
+    const admin = 'admin-secret'
+    const calls: string[] = []
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const href = String(url)
+      calls.push(`${init?.method ?? 'GET'} ${href}`)
+      expect(init?.method).toBe('POST')
+      const id = href.split('/recipes/')[1]?.split('/')[0]
+      const dormant = href.endsWith('/dormant')
+      return jsonResponse({
+        ok: true,
+        recipe: { id, active: false, dormant, domain: 'mcap', universe: ['union'] },
+      })
+    })
+    const result = await tidyLegoRecipes({
+      domain: 'mcap_tracker',
+      statsByStrategy: new Map([
+        ['mcap_enter_first_seen', { n: 4, avgPnl: 12 }],
+        ['mcap_enter_at_80', { n: 15, avgPnl: -2 }],
+        ['mcap_parked', { n: 0, avgPnl: 0 }],
+        ['mcap_dormant_keep', { n: 30, avgPnl: -9 }],
+      ]),
+      recipes: [
+        { id: 'mcap_enter_first_seen', active: true },
+        { id: 'mcap_enter_at_80', active: true },
+        { id: 'mcap_parked', active: true },
+        { id: 'mcap_dormant_keep', active: false, dormant: true },
+      ],
+      opts: { adminToken: admin, fetchImpl },
+    })
+    expect(result.deactivated.map((r) => ({ id: r.id, reason: r.reason, ok: r.ok }))).toEqual([
+      { id: 'mcap_enter_first_seen', reason: 'thin-sample', ok: true },
+      { id: 'mcap_enter_at_80', reason: 'losing', ok: true },
+    ])
+    expect(result.dormant).toEqual([{ id: 'mcap_parked', reason: 'zero-trade', ok: true }])
+    expect(result.preserved).toEqual([
+      { id: 'mcap_dormant_keep', action: 'leave-dormant', reason: 'already-dormant' },
+    ])
+    expect(calls).toEqual([
+      `POST ${DEFAULT_MARKET_BRAIN_URL}/recipes/mcap_enter_first_seen/deactivate`,
+      `POST ${DEFAULT_MARKET_BRAIN_URL}/recipes/mcap_enter_at_80/deactivate`,
+      `POST ${DEFAULT_MARKET_BRAIN_URL}/recipes/mcap_parked/dormant`,
+    ])
+    expect(calls.some((c) => c.includes('DELETE') || c.includes('/delete'))).toBe(false)
+    expect(JSON.stringify(result)).not.toContain(admin)
+  })
+
+  it('dry-run returns the plan without writing', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ ok: true, recipe: { id: 'x' } }))
+    const result = await tidyLegoRecipes({
+      domain: 'signals',
+      statsByStrategy: new Map([['signals_sell_over_100', { n: 3, avgPnl: -1 }]]),
+      recipes: [{ id: 'signals_sell_over_100', active: true }],
+      dryRun: true,
+      opts: { adminToken: 'admin', fetchImpl },
+    })
+    expect(result.deactivated).toEqual([
+      { id: 'signals_sell_over_100', reason: 'thin-sample', ok: true },
+    ])
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('loads GET /recipes and does not tidy other domains or skipped ids', async () => {
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const href = String(url)
+      const method = init?.method ?? 'GET'
+      if (method === 'GET' && href.endsWith('/recipes')) {
+        return jsonResponse({
+          recipes: [
+            {
+              id: 'mcap_enter_first_seen',
+              active: true,
+              domain: 'mcap',
+              universe: ['union'],
+              profileId: 'default',
+            },
+            {
+              id: 'signals_sell_over_100',
+              active: true,
+              domain: 'signals',
+              universe: ['union'],
+              profileId: 'default',
+            },
+          ],
+        })
+      }
+      return jsonResponse({
+        ok: true,
+        recipe: { id: 'mcap_enter_at_80', active: false, domain: 'mcap', universe: ['union'] },
+      })
+    })
+    const result = await tidyLegoRecipes({
+      domain: 'mcap_tracker',
+      statsByStrategy: new Map([
+        ['mcap_enter_first_seen', { n: 20, avgPnl: 4 }],
+        ['mcap_enter_at_80', { n: 11, avgPnl: 0 }],
+        ['signals_sell_over_100', { n: 2, avgPnl: 1 }],
+      ]),
+      skipIds: ['mcap_enter_first_seen'],
+      opts: { adminToken: 'admin', token: 'read-token', fetchImpl },
+    })
+    expect(result.deactivated.map((r) => r.id)).toEqual(['mcap_enter_at_80'])
+    expect(result.deactivated[0]?.reason).toBe('losing')
+    expect(result.preserved.some((r) => r.id === 'mcap_enter_first_seen')).toBe(false)
+    expect(fetchImpl.mock.calls.some((call) => String(call[0]).includes('signals_sell_over_100'))).toBe(
+      false,
+    )
   })
 })
