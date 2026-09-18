@@ -30,7 +30,7 @@ import { invalidateMcapTrackerCache } from '@/strategies/load-mcap-tracker'
 import { invalidateSignalsCache } from '@/strategies/load-signals'
 import type { StrategyDomain, StrategyOutcomeRow } from '@/strategies/types'
 import {
-  dormantZeroTradeLegoRecipes,
+  tidyLegoRecipes,
   promoteLegoRecipe,
 } from '@/utils/brain-recipe-sync'
 
@@ -239,7 +239,8 @@ export type SearchCycleResult = {
   spawned: Array<{ id: string; ok: boolean; error?: string }>
   candidates: number
   canonical: { replaced: string | null; from?: string; reason?: string }
-  dormant: Array<{ id: string; ok: boolean; error?: string }>
+  dormant: Array<{ id: string; ok: boolean; error?: string; reason?: string }>
+  deactivated: Array<{ id: string; ok: boolean; error?: string; reason?: string }>
 }
 
 export async function runStrategySearchCycle(
@@ -264,12 +265,14 @@ export async function runStrategySearchCycle(
   })
   const canonical = await maybeReplaceCanonicalSim({ domain, outcomes: rows })
   const byStrategy = computeFitnessByStrategy(rows)
-  const closesByStrategy = new Map(
-    [...byStrategy].map(([id, fit]) => [id, fit.closes]),
+  const statsByStrategy = new Map(
+    [...byStrategy].map(([id, fit]) => [id, { n: fit.closes, avgPnl: fit.expectancyPct }]),
   )
-  const dormant = await dormantZeroTradeLegoRecipes({
+  // Lego tidy: deactivate thin (n<10) / losing (avg PnL ≤ 0) active recipes;
+  // park n=0 as dormant (keep params). Skip a canonical id just promoted this cycle.
+  const tidy = await tidyLegoRecipes({
     domain,
-    closesByStrategy,
+    statsByStrategy,
     skipIds: canonical.replaced ? [canonical.replaced] : [],
   })
   return {
@@ -278,7 +281,8 @@ export async function runStrategySearchCycle(
     spawned,
     candidates: candidates.length,
     canonical,
-    dormant,
+    dormant: tidy.dormant,
+    deactivated: tidy.deactivated,
   }
 }
 
