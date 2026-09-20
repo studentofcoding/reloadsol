@@ -1,5 +1,9 @@
 import type { EnrichedTokenData } from '@/utils/data-aggregation'
 import type { McapTrackingData } from '@/hooks/useMCapTracker'
+import {
+  ZScoreAnomalyDetector,
+  type AnomalyResult,
+} from '@/utils/algo/anomaly-detection'
 
 export type RiskLabel = 'Low' | 'Med' | 'High' | 'Unknown'
 export type DataQuality = 'ok' | 'thin'
@@ -26,6 +30,8 @@ export type TrackerTokenInsights = {
   liquidityLabel: string
   zScoreAvailable: boolean
   zScore: number | null
+  /** null when Z is unavailable — do not invent `neutral` for the Anomaly filter */
+  anomalyType: 'positive' | 'negative' | 'neutral' | null
   timelineInconsistent: boolean
   rugSignal: boolean
 }
@@ -75,7 +81,15 @@ export function isThinMarketData(
   return !hasUsablePrice(price) && !hasUsableVolume(volume)
 }
 
-function categorizeMomentum(growthPercent: number): string {
+export type TrackerMomentumLabel =
+  | 'explosive'
+  | 'strong'
+  | 'moderate'
+  | 'weak'
+  | 'negative'
+  | 'unknown'
+
+export function categorizeMomentum(growthPercent: number): TrackerMomentumLabel {
   if (!Number.isFinite(growthPercent)) return 'unknown'
   if (growthPercent >= 1000) return 'explosive'
   if (growthPercent >= 500) return 'strong'
@@ -270,6 +284,10 @@ export function deriveTrackerTokenInsights(
       analytics?.z_score_available && typeof analytics.z_score === 'number'
         ? analytics.z_score
         : null,
+    anomalyType:
+      analytics?.z_score_available === true && analytics.anomaly_type
+        ? analytics.anomaly_type
+        : null,
     timelineInconsistent: isTrackingTimelineInconsistentClient(token),
     rugSignal,
   }
@@ -292,3 +310,155 @@ export function sortCatchTrainRows<
     )
   })
 }
+
+export type TrackerZPreset =
+  | 'any'
+  | 'abs_2_5'
+  | 'abs_1_5'
+  | 'pos_2_5'
+  | 'neg_2_5'
+  | 'unavailable'
+
+export type TrackerAnomalyType = 'positive' | 'negative' | 'neutral'
+
+export type TrackerAnalyticsFilters = {
+  zPreset: TrackerZPreset
+  anomalyTypes: TrackerAnomalyType[]
+  momentumLabels: TrackerMomentumLabel[]
+  riskLabels: Array<RiskLabel>
+  minRisk: string
+  maxRisk: string
+}
+
+export const DEFAULT_TRACKER_ANALYTICS_FILTERS: TrackerAnalyticsFilters = {
+  zPreset: 'any',
+  anomalyTypes: [],
+  momentumLabels: [],
+  riskLabels: [],
+  minRisk: '',
+  maxRisk: '',
+}
+
+const pageCohortDetector = new ZScoreAnomalyDetector()
+
+/** Page-local Z / Anomaly fallback (min 3 finite peers). Jupiter not required. */
+export function pageCohortAnomalies(
+  tokens: Array<{
+    token_address: string
+    mcap_growth_percent?: number | null
+    current_mcap?: number | null
+  }>,
+): Map<string, AnomalyResult> {
+  return pageCohortDetector.detectCrossSectionAnomalies(
+    tokens.map((token) => ({
+      address: token.token_address,
+      marketCap: token.current_mcap || 0,
+      volume24h: 0,
+      timestamp: 0,
+      priceChange24h: 0,
+      mcapGrowthPercent: token.mcap_growth_percent ?? undefined,
+    })),
+  )
+}
+
+/**
+ * Prefer POST analytics Z; if unavailable, overlay page-cohort Z/Anomaly
+ * so filters work without waiting on price.
+ */
+export function overlayPageCohortAnalytics(
+  token: McapTrackingData,
+  analytics: EnrichedTokenData | undefined,
+  cohort: Map<string, AnomalyResult>,
+): EnrichedTokenData | undefined {
+  if (analytics?.z_score_available === true) return analytics
+  const row = cohort.get(token.token_address)
+  if (!row?.zScoreAvailable) return analytics
+  const base: EnrichedTokenData = analytics ?? {
+    token_address: token.token_address,
+    token_symbol: token.token_symbol,
+    first_mcap: token.first_mcap,
+    current_mcap: token.current_mcap,
+    mcap_growth_percent: token.mcap_growth_percent,
+    first_seen_at: token.first_seen_at,
+    last_updated_at: token.last_updated_at,
+    current_price_usd: 0,
+  }
+  return {
+    ...base,
+    z_score: row.zScore,
+    z_score_available: true,
+    anomaly_type: row.anomalyType,
+  }
+}
+
+export function resolveFilterMomentum(
+  token: McapTrackingData,
+  analytics?: EnrichedTokenData,
+): TrackerMomentumLabel {
+  const cat = analytics?.momentum_category
+  if (
+    cat === 'explosive' ||
+    cat === 'strong' ||
+    cat === 'moderate' ||
+    cat === 'weak' ||
+    cat === 'negative'
+  ) {
+    return cat
+  }
+  return categorizeMomentum(token.mcap_growth_percent)
+}
+
+export function matchesTrackerAnalyticsFilters(
+  row: {
+    token: McapTrackingData
+    analytics?: EnrichedTokenData
+    insights: TrackerTokenInsights
+  },
+  filters: TrackerAnalyticsFilters,
+): boolean {
+  const { insights, token, analytics } = row
+  const zAvailable = insights.zScoreAvailable && insights.zScore != null
+
+  if (filters.zPreset === 'unavailable') {
+    if (zAvailable) return false
+  } else if (filters.zPreset !== 'any') {
+    if (!zAvailable) return false
+    const z = insights.zScore as number
+    if (filters.zPreset === 'abs_2_5' && Math.abs(z) < 2.5) return false
+    if (filters.zPreset === 'abs_1_5' && Math.abs(z) < 1.5) return false
+    if (filters.zPreset === 'pos_2_5' && z < 2.5) return false
+    if (filters.zPreset === 'neg_2_5' && z > -2.5) return false
+  }
+
+  if (filters.anomalyTypes.length > 0) {
+    if (insights.anomalyType == null) return false
+    if (!filters.anomalyTypes.includes(insights.anomalyType)) return false
+  }
+
+  if (filters.momentumLabels.length > 0) {
+    const momentum = resolveFilterMomentum(token, analytics)
+    if (!filters.momentumLabels.includes(momentum)) return false
+  }
+
+  const minRisk = filters.minRisk.trim() === '' ? null : Number(filters.minRisk)
+  const maxRisk = filters.maxRisk.trim() === '' ? null : Number(filters.maxRisk)
+  const hasRiskRange =
+    (minRisk != null && Number.isFinite(minRisk)) ||
+    (maxRisk != null && Number.isFinite(maxRisk))
+
+  if (filters.riskLabels.length > 0) {
+    if (!filters.riskLabels.includes(insights.riskLabel)) return false
+  }
+  if (hasRiskRange) {
+    if (insights.riskScore == null || !Number.isFinite(insights.riskScore)) return false
+    if (minRisk != null && Number.isFinite(minRisk) && insights.riskScore < minRisk) {
+      return false
+    }
+    if (maxRisk != null && Number.isFinite(maxRisk) && insights.riskScore > maxRisk) {
+      return false
+    }
+  }
+
+  return true
+}
+

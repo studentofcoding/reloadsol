@@ -5,7 +5,12 @@ import {
   formatScore0To100,
   formatTrackerDecisionLine,
   formatTrackingAge,
+  matchesTrackerAnalyticsFilters,
+  overlayPageCohortAnalytics,
+  pageCohortAnomalies,
+  resolveFilterMomentum,
   riskLabelFromScore,
+  DEFAULT_TRACKER_ANALYTICS_FILTERS,
 } from './tracker-insights'
 import type { McapTrackingData } from '@/hooks/useMCapTracker'
 import type { EnrichedTokenData } from '@/utils/data-aggregation'
@@ -174,3 +179,97 @@ describe('deriveTrackerTokenInsights decisions', () => {
     expect(insights.liquidityLabel).toBe('unknown')
   })
 })
+
+describe('Tracker analytics filters', () => {
+  it('defaults show every row', () => {
+    const token = baseToken({ mcap_growth_percent: 20 })
+    const insights = deriveTrackerTokenInsights(token)
+    expect(
+      matchesTrackerAnalyticsFilters(
+        { token, insights },
+        DEFAULT_TRACKER_ANALYTICS_FILTERS,
+      ),
+    ).toBe(true)
+  })
+
+  it('momentum explosive hides weak list rows using growth only', () => {
+    const explosive = baseToken({
+      token_address: 'exp',
+      mcap_growth_percent: 1200,
+    })
+    const weak = baseToken({ token_address: 'weak', mcap_growth_percent: 20 })
+    const filters = {
+      ...DEFAULT_TRACKER_ANALYTICS_FILTERS,
+      momentumLabels: ['explosive' as const],
+    }
+    expect(
+      matchesTrackerAnalyticsFilters(
+        { token: explosive, insights: deriveTrackerTokenInsights(explosive) },
+        filters,
+      ),
+    ).toBe(true)
+    expect(
+      matchesTrackerAnalyticsFilters(
+        { token: weak, insights: deriveTrackerTokenInsights(weak) },
+        filters,
+      ),
+    ).toBe(false)
+    expect(resolveFilterMomentum(weak)).toBe('weak')
+  })
+
+  it('Z |z| ≥ 2.5 keeps only finite matching Z', () => {
+    const token = baseToken()
+    const withZ = deriveTrackerTokenInsights(token, {
+      z_score: 3.1,
+      z_score_available: true,
+      anomaly_type: 'positive',
+      current_price_usd: 0.01,
+    } as EnrichedTokenData)
+    const noZ = deriveTrackerTokenInsights(token)
+    const filters = {
+      ...DEFAULT_TRACKER_ANALYTICS_FILTERS,
+      zPreset: 'abs_2_5' as const,
+    }
+    expect(matchesTrackerAnalyticsFilters({ token, insights: withZ }, filters)).toBe(
+      true,
+    )
+    expect(matchesTrackerAnalyticsFilters({ token, insights: noZ }, filters)).toBe(
+      false,
+    )
+  })
+
+  it('Risk Unknown keeps thin-data rows', () => {
+    const token = baseToken()
+    const insights = deriveTrackerTokenInsights(token)
+    expect(insights.riskLabel).toBe('Unknown')
+    expect(
+      matchesTrackerAnalyticsFilters(
+        { token, insights },
+        { ...DEFAULT_TRACKER_ANALYTICS_FILTERS, riskLabels: ['Unknown'] },
+      ),
+    ).toBe(true)
+    expect(
+      matchesTrackerAnalyticsFilters(
+        { token, insights },
+        { ...DEFAULT_TRACKER_ANALYTICS_FILTERS, riskLabels: ['High'] },
+      ),
+    ).toBe(false)
+  })
+
+  it('page-cohort Z unblocks filters when analytics POST is missing', () => {
+    const tokens = [
+      baseToken({ token_address: 'a', mcap_growth_percent: 10 }),
+      baseToken({ token_address: 'b', mcap_growth_percent: 12 }),
+      baseToken({ token_address: 'c', mcap_growth_percent: 11 }),
+      baseToken({ token_address: 'd', mcap_growth_percent: 9 }),
+      baseToken({ token_address: 'e', mcap_growth_percent: 400 }),
+    ]
+    const cohort = pageCohortAnomalies(tokens)
+    const outlier = overlayPageCohortAnalytics(tokens[4], undefined, cohort)
+    expect(outlier?.z_score_available).toBe(true)
+    const insights = deriveTrackerTokenInsights(tokens[4], outlier)
+    expect(insights.zScoreAvailable).toBe(true)
+    expect(insights.anomalyType).not.toBeNull()
+  })
+})
+

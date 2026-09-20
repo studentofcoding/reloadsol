@@ -3,6 +3,11 @@ import type { AppNetwork } from '@/utils/app-network'
 import { parseDbChain } from '@/utils/app-network-db'
 import { formatMcapUsd } from '@/utils/telegram'
 import { formatPatternShadowLabel } from './signals-early-pattern-cache'
+import {
+  getEarlyEnterMlMin,
+  isEarlyEnterMlSoftGateEnabled,
+  passesEarlyEnterMlSoftGate,
+} from './signals-early-ml-gate'
 import type { ScoredSignal } from './signals-pipeline'
 
 export type SignalsEarlyAlert = {
@@ -21,6 +26,9 @@ export type SignalsEarlyAlert = {
   pWinner: number | null
   predicted: 'winner' | 'loser' | null
   mlReason: string | null
+  /** Closed-loop score that passed the soft gate (display optional) */
+  mlClosedLoopScore: number | null
+  mlClosedLoopVersion: string | null
 }
 
 const DEDUP_WINDOW_MS = 24 * 60 * 60 * 1000
@@ -70,6 +78,8 @@ export function recordSignalsEarlyAlert(params: {
   pWinner?: number | null
   predicted?: 'winner' | 'loser' | null
   mlReason?: string | null
+  mlClosedLoopScore?: number | null
+  mlClosedLoopVersion?: string | null
 }): SignalsEarlyAlert | null {
   const now = Date.now()
   pruneRecentKeys(now)
@@ -96,6 +106,11 @@ export function recordSignalsEarlyAlert(params: {
     pWinner: params.pWinner ?? null,
     predicted: params.predicted ?? null,
     mlReason: params.mlReason ?? null,
+    mlClosedLoopScore:
+      params.mlClosedLoopScore != null && Number.isFinite(params.mlClosedLoopScore)
+        ? params.mlClosedLoopScore
+        : null,
+    mlClosedLoopVersion: params.mlClosedLoopVersion ?? null,
   }
 
   pending.push(alert)
@@ -128,12 +143,16 @@ export function buildSignalsEarlyToast(alert: SignalsEarlyAlert): McapToast {
     alert.pWinner != null && Number.isFinite(alert.pWinner)
       ? ` · ML ${mlLabel}`
       : ' · ML n/a'
+  const clSnippet =
+    alert.mlClosedLoopScore != null && Number.isFinite(alert.mlClosedLoopScore)
+      ? ` · cl ${alert.mlClosedLoopScore.toFixed(2)}`
+      : ''
 
   return {
     type: 'info',
     category: 'signals_enter',
     title: 'Early Enter',
-    message: `${alert.tokenSymbol} ${growthLabel} @ ${mcapLabel} — score ${alert.score.toFixed(0)}${mlSnippet}`,
+    message: `${alert.tokenSymbol} ${growthLabel} @ ${mcapLabel} — score ${alert.score.toFixed(0)}${mlSnippet}${clSnippet}`,
     key: signalsEnterDedupKey(alert.tokenAddress, alert.chain),
     items: [
       {
@@ -171,10 +190,22 @@ export function discardPendingSignalsEarlyToasts(tokenAddresses: string[]): void
 export function emitSignalsEarlyAlertsFromScored(
   signals: ScoredSignal[],
   chain: AppNetwork = 'sol',
+  opts?: { mlSoftGateEnabled?: boolean; mlMin?: number },
 ): SignalsEarlyAlert[] {
+  const gateEnabled = opts?.mlSoftGateEnabled ?? isEarlyEnterMlSoftGateEnabled()
+  const mlMin = opts?.mlMin ?? getEarlyEnterMlMin()
   const recorded: SignalsEarlyAlert[] = []
   for (const signal of signals) {
     if (!shouldEmitSignalsEarlyAlert(signal)) continue
+    // Soft gate before record so a suppress does not burn the 24h dedup key.
+    if (
+      !passesEarlyEnterMlSoftGate(signal.ml_closed_loop_score, {
+        enabled: gateEnabled,
+        min: mlMin,
+      })
+    ) {
+      continue
+    }
     const alert = recordSignalsEarlyAlert({
       tokenAddress: signal.token_address,
       tokenSymbol: signal.token_symbol,
@@ -185,6 +216,8 @@ export function emitSignalsEarlyAlertsFromScored(
       entryAt: signal.last_updated_at || signal.first_seen_at,
       pWinner: signal.ml_pattern_p_winner ?? null,
       predicted: signal.ml_pattern_predicted ?? null,
+      mlClosedLoopScore: signal.ml_closed_loop_score ?? null,
+      mlClosedLoopVersion: signal.ml_closed_loop_version ?? null,
       chain,
     })
     if (alert) recorded.push(alert)
