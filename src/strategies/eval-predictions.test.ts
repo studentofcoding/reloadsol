@@ -64,6 +64,30 @@ describe('prediction helpers', () => {
     expect(buildPredictionFromDecision('run-1', decision)).toBeNull()
   })
 
+  it('persists shadow predictions for low-score and not-eligible decisions', () => {
+    const low = buildEvalDecision(
+      { mint: 'MintA', strategyId: 'mcap_enter_at_80', combined: 0.1, mlScore: 0.2 },
+      { env: { ML_CLOSED_LOOP: '1' } },
+    )
+    expect(low.action).toBe('shadow_predict')
+    expect(low.reason).toBe('low_combined')
+    const lowPred = buildPredictionFromDecision('run-1', low)
+    expect(lowPred?.predictedMlWin).toBe(false)
+    expect(lowPred?.predictedScore).toBe(0.2)
+
+    const ineligible = buildEvalDecision({
+      mint: 'MintB',
+      strategyId: 'mcap_enter_at_80',
+      combined: 0.6,
+      mlScore: 0.8,
+      eligible: false,
+      eligibilityReason: 'out_of_range',
+    })
+    expect(ineligible.action).toBe('shadow_predict')
+    expect(ineligible.reason).toBe('out_of_range')
+    expect(buildPredictionFromDecision('run-1', ineligible)?.predictedMlWin).toBe(true)
+  })
+
   it('rolls accuracy when actuals land', () => {
     const winPred = applyActualToPrediction(true, true)
     const missPred = applyActualToPrediction(true, false)

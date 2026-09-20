@@ -41,25 +41,37 @@ describe('decideEvalAction', () => {
     mlScore: 0.7,
   }
 
-  it('skips below combined or ml thresholds', () => {
+  it('shadow-predicts below combined or ml thresholds and keeps the reason', () => {
     expect(
       decideEvalAction(
         { ...base, combined: 0.2 },
         { env: { ML_CLOSED_LOOP: '1' } },
-      ).reason,
-    ).toBe('low_combined')
+      ),
+    ).toEqual({ action: 'shadow_predict', reason: 'low_combined', mode: 'paper' })
     expect(
       decideEvalAction(
         { ...base, mlScore: 0.2 },
         { env: { ML_CLOSED_LOOP: '1' } },
-      ).reason,
-    ).toBe('low_ml')
+      ),
+    ).toEqual({ action: 'shadow_predict', reason: 'low_ml', mode: 'paper' })
     expect(
       decideEvalAction(
         { ...base, mlScore: 0.2 },
         { env: { ML_CLOSED_LOOP: '0', EVAL_ENGINE: '1', EVAL_SHADOW: '0' } },
       ).action,
     ).toBe('paper_open')
+    expect(
+      decideEvalAction(
+        { ...base, combined: 0.2 },
+        { env: { ML_CLOSED_LOOP: '1', EVAL_ENGINE: '1', EVAL_SHADOW: '0' } },
+      ),
+    ).toEqual({ action: 'skip', reason: 'low_combined', mode: 'paper' })
+    expect(
+      decideEvalAction(
+        { ...base, mlScore: 0.2 },
+        { env: { ML_CLOSED_LOOP: '1', EVAL_ENGINE: '1', EVAL_SHADOW: '0' } },
+      ),
+    ).toEqual({ action: 'skip', reason: 'low_ml', mode: 'paper' })
   })
 
   it('ignores ml threshold when mlScore is null', () => {
@@ -70,16 +82,56 @@ describe('decideEvalAction', () => {
     expect(decided.action).toBe('paper_open')
   })
 
-  it('attaches a shadow prediction to already-open / already-closed', () => {
-    expect(decideEvalAction({ ...base, alreadyOpen: true }).action).toBe('shadow_predict')
-    expect(decideEvalAction({ ...base, alreadyOpen: true }).reason).toBe('already_open')
-    expect(decideEvalAction({ ...base, alreadyClosed: true }).action).toBe('shadow_predict')
+  it('attaches a shadow prediction to already-open / already-closed / not-eligible', () => {
+    expect(decideEvalAction({ ...base, alreadyOpen: true })).toEqual({
+      action: 'shadow_predict',
+      reason: 'already_open',
+      mode: 'paper',
+    })
+    expect(decideEvalAction({ ...base, alreadyClosed: true })).toEqual({
+      action: 'shadow_predict',
+      reason: 'already_closed',
+      mode: 'paper',
+    })
     expect(
-      decideEvalAction({ ...base, eligible: false, eligibilityReason: 'rugged' }).reason,
-    ).toBe('rugged')
+      decideEvalAction({ ...base, eligible: false, eligibilityReason: 'rugged' }),
+    ).toEqual({ action: 'shadow_predict', reason: 'rugged', mode: 'paper' })
+    expect(
+      decideEvalAction({ ...base, eligible: false }),
+    ).toEqual({ action: 'shadow_predict', reason: 'not_eligible', mode: 'paper' })
     expect(
       decideEvalAction({ ...base, alreadyOpen: true }, { env: { EVAL_SHADOW: '0' } }).action,
     ).toBe('skip')
+    expect(
+      decideEvalAction(
+        { ...base, eligible: false, eligibilityReason: 'rugged' },
+        { env: { EVAL_SHADOW: '0' } },
+      ).action,
+    ).toBe('skip')
+  })
+
+  it('hard-skips only not_principal or when no scores exist', () => {
+    expect(
+      decideEvalAction({ ...base, strategyId: 'other' }),
+    ).toEqual({ action: 'skip', reason: 'not_principal', mode: 'paper' })
+    expect(
+      decideEvalAction({
+        ...base,
+        combined: null,
+        mlScore: null,
+        eligible: false,
+        eligibilityReason: 'rugged',
+      }),
+    ).toEqual({ action: 'skip', reason: 'rugged', mode: 'paper' })
+    expect(
+      decideEvalAction({ ...base, combined: null, mlScore: null }),
+    ).toEqual({ action: 'skip', reason: 'no_combined', mode: 'paper' })
+    expect(
+      decideEvalAction({ ...base, combined: Number.NaN, mlScore: Number.NaN }),
+    ).toEqual({ action: 'skip', reason: 'no_combined', mode: 'paper' })
+    expect(
+      decideEvalAction({ ...base, combined: null, mlScore: 0.8 }),
+    ).toEqual({ action: 'shadow_predict', reason: 'no_combined', mode: 'paper' })
   })
 
   it('shadow-predicts by default and only opens when shadow is off', () => {

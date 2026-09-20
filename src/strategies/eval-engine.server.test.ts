@@ -130,4 +130,84 @@ describe('runEvalScan', () => {
     expect(second.decisions[0].reason).toBe('already_open')
     expect(second.summary.paperOpened).toBe(0)
   })
+
+  it('shadow-predicts low-score and ineligible candidates when scores exist', async () => {
+    const result = await runEvalScan({
+      env: { EVAL_ENGINE: '1', ML_CLOSED_LOOP: '1', EVAL_SHADOW: '1' },
+      persist: async () => {},
+      loadCombinedScore: async ({ address }) => {
+        if (address === 'MintNone') return score(Number.NaN, null)
+        if (address === 'MintLow') return score(0.1, 0.2)
+        return score(0.7, 0.8)
+      },
+      listCandidates: async () => [
+        {
+          mint: 'MintLow',
+          strategyId: 'mcap_enter_at_80',
+          chain: 'sol',
+          alreadyOpen: false,
+          alreadyClosed: false,
+          eligible: true,
+          eligibilityReason: null,
+        },
+        {
+          mint: 'MintSkip',
+          strategyId: 'mcap_enter_at_80',
+          chain: 'sol',
+          alreadyOpen: false,
+          alreadyClosed: false,
+          eligible: false,
+          eligibilityReason: 'out_of_range',
+        },
+        {
+          mint: 'MintOpen',
+          strategyId: 'mcap_enter_at_80',
+          chain: 'sol',
+          alreadyOpen: true,
+          alreadyClosed: false,
+          eligible: false,
+          eligibilityReason: 'already_open',
+        },
+        {
+          mint: 'MintClosed',
+          strategyId: 'mcap_enter_at_80',
+          chain: 'sol',
+          alreadyOpen: false,
+          alreadyClosed: true,
+          eligible: false,
+          eligibilityReason: 'already_closed',
+        },
+        {
+          mint: 'MintNone',
+          strategyId: 'mcap_enter_at_80',
+          chain: 'sol',
+          alreadyOpen: false,
+          alreadyClosed: false,
+          eligible: true,
+          eligibilityReason: null,
+        },
+        {
+          mint: 'MintOther',
+          strategyId: 'other',
+          chain: 'sol',
+          alreadyOpen: false,
+          alreadyClosed: false,
+          eligible: true,
+          eligibilityReason: null,
+        },
+      ],
+    })
+    expect(result.decisions.map((d) => [d.mint, d.action, d.reason])).toEqual([
+      ['MintLow', 'shadow_predict', 'low_combined'],
+      ['MintSkip', 'shadow_predict', 'out_of_range'],
+      ['MintOpen', 'shadow_predict', 'already_open'],
+      ['MintClosed', 'shadow_predict', 'already_closed'],
+      ['MintNone', 'skip', 'no_combined'],
+      ['MintOther', 'skip', 'not_principal'],
+    ])
+    expect(result.summary.scanned).toBe(6)
+    expect(result.summary.skipped).toBe(2)
+    expect(result.summary.predictCount).toBe(4)
+    expect(result.summary.paperOpened).toBe(0)
+  })
 })

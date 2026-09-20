@@ -2,6 +2,9 @@
  * Phase 4 eval engine — decide skip | shadow_predict | paper_open | live_open.
  *
  * Shadow is the default: score + log predictions, never auto-open.
+ * With EVAL_SHADOW on, a finite combined and/or mlScore becomes
+ * shadow_predict (reason kept) for low_combined / low_ml / not_eligible /
+ * already_open / already_closed. Hard-skip only for not_principal or no scores.
  * Paper opens (EVAL_SHADOW=0 + EVAL_ENGINE=1) go through PaperExecutionAdapter
  * (sim-track + score→risk). Live is a stub: both EVAL_EXEC_MODE=live and
  * LIVE_TRADE_ENABLED=1 required, and even then v1 does not call a broker.
@@ -110,32 +113,31 @@ export function decideEvalAction(
     return { action: 'skip', reason: 'not_principal', mode }
   }
   if (input.alreadyOpen) {
-    if (isEvalShadowEnabled(env) && hasDecisionScore(input)) {
-      return { action: 'shadow_predict', reason: 'already_open', mode }
-    }
-    return { action: 'skip', reason: 'already_open', mode }
+    return shadowPredictOrSkip(input, 'already_open', mode, env)
   }
   if (input.alreadyClosed) {
-    if (isEvalShadowEnabled(env) && hasDecisionScore(input)) {
-      return { action: 'shadow_predict', reason: 'already_closed', mode }
-    }
-    return { action: 'skip', reason: 'already_closed', mode }
+    return shadowPredictOrSkip(input, 'already_closed', mode, env)
   }
   if (input.eligible === false) {
-    return { action: 'skip', reason: input.eligibilityReason ?? 'not_eligible', mode }
+    return shadowPredictOrSkip(
+      input,
+      input.eligibilityReason ?? 'not_eligible',
+      mode,
+      env,
+    )
   }
 
   const combined = input.combined
   if (combined == null || !Number.isFinite(combined)) {
-    return { action: 'skip', reason: 'no_combined', mode }
+    return shadowPredictOrSkip(input, 'no_combined', mode, env)
   }
   if (combined < minCombined) {
-    return { action: 'skip', reason: 'low_combined', mode }
+    return shadowPredictOrSkip(input, 'low_combined', mode, env)
   }
 
   const mlOn = isMlClosedLoopEnabled(env)
   if (mlOn && input.mlScore != null && Number.isFinite(input.mlScore) && input.mlScore < minMl) {
-    return { action: 'skip', reason: 'low_ml', mode }
+    return shadowPredictOrSkip(input, 'low_ml', mode, env)
   }
 
   if (mode === 'live') {
@@ -154,6 +156,19 @@ function shadowOrOpen(
     return { action: 'shadow_predict', reason: 'predicted', mode }
   }
   return { action, reason, mode }
+}
+
+/** Shadow persists a prediction whenever a score exists; otherwise hard-skip. */
+function shadowPredictOrSkip(
+  input: EvalDecideInput,
+  reason: string,
+  mode: EvalExecMode,
+  env: NodeJS.ProcessEnv,
+): Pick<EvalDecision, 'action' | 'reason' | 'mode'> {
+  if (isEvalShadowEnabled(env) && hasDecisionScore(input)) {
+    return { action: 'shadow_predict', reason, mode }
+  }
+  return { action: 'skip', reason, mode }
 }
 
 function hasDecisionScore(input: EvalDecideInput): boolean {
