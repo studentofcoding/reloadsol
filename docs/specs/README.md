@@ -6,3 +6,4 @@ Implementable handoffs. Code PRs should follow these rather than re-litigating p
 |---|---|
 | [SPEC-rug-filter-v1.md](./SPEC-rug-filter-v1.md) | To-spec (docs only). Bubblemaps + Jupiter organic rug filter for buy_bulk / reloadsol |
 | [SPEC-tracker-catch-train-v1.md](./SPEC-tracker-catch-train-v1.md) | Implementing. Tracker social join + decision-useful risk + catch-train strip |
+| [SPEC-early-enter-soft-gate-v1.md](./SPEC-early-enter-soft-gate-v1.md) | To-spec (docs only). Early Enter closed-loop soft gate + Tracker Z/Anomaly/Momentum/Risk filters + Analytics minimal+price |
