@@ -16,6 +16,7 @@ import {
   sortTrendingTokens,
   type TrendingSort,
 } from '@/utils/trending-token-sort'
+import { socialUrl } from '@/utils/social-url'
 
 interface TrendingToken {
   token_symbol: string
@@ -63,15 +64,6 @@ interface RiskIndicators {
   concentrationRisk: 'LOW' | 'MEDIUM' | 'HIGH'
   feeRisk: 'LOW' | 'MEDIUM' | 'HIGH'
   overallRisk: 'LOW' | 'MEDIUM' | 'HIGH'
-}
-
-function socialUrl(raw: string | undefined, kind: 'twitter' | 'telegram' | 'website'): string | null {
-  const v = raw?.trim()
-  if (!v) return null
-  if (v.startsWith('http://') || v.startsWith('https://')) return v
-  if (kind === 'twitter') return `https://x.com/${v.replace(/^@/, '')}`
-  if (kind === 'telegram') return `https://t.me/${v.replace(/^@/, '').replace(/^https?:\/\/t\.me\//, '')}`
-  return `https://${v}`
 }
 
 export default function TrendingTokens({

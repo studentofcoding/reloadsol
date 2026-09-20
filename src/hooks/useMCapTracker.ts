@@ -40,8 +40,16 @@ export interface McapTrackingData {
   finished_at?: string | null;
   is_tracking_stuck?: boolean;
   _live_refresh?: boolean;
+  _live_price_usd?: number;
   pattern_p_winner?: number | null;
   pattern_predicted?: 'winner' | 'loser' | null;
+  social?: {
+    twitter?: string;
+    telegram?: string;
+    website?: string;
+  };
+  organic_score?: number | null;
+  logo_url?: string | null;
 }
 
 export interface McapTrackerResponse {

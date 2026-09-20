@@ -11,6 +11,9 @@ import {
   scanListForPredictiveAlerts,
   type McapToast,
 } from '@/app/api/mcap-tracking/mcap-toasts'
+import { isTrackerSocialJoinEnabled } from '@/utils/tracker-flags'
+import { loadTrackerSocialJoinMap } from '@/app/api/mcap-tracking/join-trending-social'
+import type { TrendingSocialFields } from '@/utils/tracker-social-join'
 
 const LIST_SORT_COLUMNS = new Set([
   'last_updated_at', 'first_seen_at', 'mcap_growth_percent',
@@ -595,7 +598,15 @@ export async function GET(request: NextRequest) {
       }
 
       // Optionally fetch live trending data to refresh current mcap/price for dynamic PnL
-      let liveTrendingMap = new Map<string, { mcap: number; price: number }>()
+      let liveTrendingMap = new Map<string, {
+        mcap: number
+        price: number
+        twitter?: string
+        telegram?: string
+        website?: string
+        organic_score?: number
+        logo_url?: string
+      }>()
       try {
         const baseUrl = process.env.API_HOST || process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
         const trendingResp = await fetch(`${baseUrl}/api/trending?cache=off&nocache=true`, {
@@ -610,7 +621,15 @@ export async function GET(request: NextRequest) {
               // Ensure numeric values
               const mcap = typeof t.mcap === 'number' ? t.mcap : 0
               const price = typeof t.price === 'number' ? t.price : 0
-              liveTrendingMap.set(t.token_address, { mcap, price })
+              liveTrendingMap.set(t.token_address, {
+                mcap,
+                price,
+                twitter: typeof t.twitter === 'string' ? t.twitter : undefined,
+                telegram: typeof t.telegram === 'string' ? t.telegram : undefined,
+                website: typeof t.website === 'string' ? t.website : undefined,
+                organic_score: typeof t.organic_score === 'number' ? t.organic_score : undefined,
+                logo_url: typeof t.logo_url === 'string' ? t.logo_url : undefined,
+              })
             }
           }
         } else {
@@ -618,6 +637,32 @@ export async function GET(request: NextRequest) {
         }
       } catch (e) {
         console.warn('Failed to fetch live trending data for PnL refresh:', e)
+      }
+
+      let socialJoin = new Map<string, {
+        social?: { twitter?: string; telegram?: string; website?: string }
+        organic_score?: number | null
+        logo_url?: string | null
+      }>()
+      if (isTrackerSocialJoinEnabled()) {
+        try {
+          const jupiterTokens: TrendingSocialFields[] = [...liveTrendingMap.entries()].map(
+            ([token_address, row]) => ({
+              token_address,
+              twitter: row.twitter,
+              telegram: row.telegram,
+              website: row.website,
+              organic_score: row.organic_score,
+              logo_url: row.logo_url,
+            }),
+          )
+          socialJoin = await loadTrackerSocialJoinMap({
+            chain: parseStrategyChain(searchParams.get('chain')),
+            jupiterTokens,
+          })
+        } catch (e) {
+          console.warn('Failed to join trending social onto mcap list:', e)
+        }
       }
 
       // Add SOL per token calculations to the data (prefer live mcap if available)
@@ -638,6 +683,7 @@ export async function GET(request: NextRequest) {
         const ageMs = nowMs - firstSeenMs
         const isFinished = ageMs >= MAX_TRACKING_AGE_MS
         const finishedAt = isFinished ? new Date(firstSeenMs + MAX_TRACKING_AGE_MS).toISOString() : null
+        const social = socialJoin.get(token.token_address)
         return {
           ...token,
           // Prefer refreshed values when available
@@ -652,7 +698,14 @@ export async function GET(request: NextRequest) {
           },
           // Inform consumers that this snapshot may include live refresh
           _live_refresh: Boolean(live),
-          _live_price_usd: currentPrice
+          _live_price_usd: currentPrice,
+          ...(social
+            ? {
+                social: social.social,
+                organic_score: social.organic_score ?? null,
+                logo_url: social.logo_url ?? null,
+              }
+            : {}),
         }
       })
 
