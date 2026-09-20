@@ -237,7 +237,7 @@ Re-export after new sim closes. Do not change entry/exit rules mid-collection. C
 
 Lightweight TS logistic (heuristic fallback when n &lt; 8) trained on **closed principal** outcomes (`mcap_enter_first_seen`, `mcap_enter_at_80` + RH). Infer `mlScore` feeds the optional combined-score `ml` weight so phase-3 `/risk/from-score` sees it.
 
-The **eval engine is a shadow system**. `eval-scan` scores candidates and writes `strategy_ml_predictions` (`action=shadow_predict`). It does **not** `paper_open` / `live_open` unless you explicitly set `EVAL_SHADOW=0` **and** `EVAL_ENGINE=1`. Paper opens stay on the existing sim-track / principals path; shadow predictions attach to those opens when they close, or sit on candidates without opening. Live trade is a stub.
+The **eval engine is a shadow system**. `eval-scan` scores candidates and writes `strategy_ml_predictions` (`action=shadow_predict`) whenever a finite `combined` and/or `mlScore` exists — including `low_combined`, `low_ml`, `not_eligible`, and already-open/closed (reason is kept). Hard `skip` only when there is nothing to score (`not_principal`, or no combined **and** no mlScore). It does **not** `paper_open` / `live_open` unless you explicitly set `EVAL_SHADOW=0` **and** `EVAL_ENGINE=1`. Paper opens stay on the existing sim-track / principals path; shadow predictions attach to those opens when they close, or sit on candidates without opening. Live trade is a stub.
 
 ### How to enable (shadow — default)
 
@@ -265,6 +265,8 @@ export LIVE_TRADE_ENABLED=0
 # optional: ML_PAPER_MIN_COMBINED=0.35 ML_PAPER_MIN_ML=0.5
 npm run ml:eval-scan -- --dry-run
 npm run ml:eval-scan
+# After this fix, expect predictCount > 0 whenever candidates have scores
+# (even if they are already closed or below ML_PAPER_MIN_*).
 # Per-run accuracy (resolved n, correct n, %, avg score wins vs losses):
 # GET /api/strategies/ml/eval-report?days=7
 # GET /api/strategies/ml/eval-report?run_id=<uuid>

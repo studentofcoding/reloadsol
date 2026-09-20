@@ -10,6 +10,7 @@ import {
   isEvalEngineEnabled,
   isEvalShadowEnabled,
   allowsEvalOpens,
+  selectDiverseEvalCandidates,
 } from './eval-engine'
 import { LiveExecutionAdapter } from './eval-execution'
 
@@ -41,25 +42,60 @@ describe('decideEvalAction', () => {
     mlScore: 0.7,
   }
 
-  it('skips below combined or ml thresholds', () => {
+  it('shadow-predicts below combined or ml thresholds (keeps reason)', () => {
+    const lowCombined = decideEvalAction(
+      { ...base, combined: 0.2 },
+      { env: { ML_CLOSED_LOOP: '1' } },
+    )
+    expect(lowCombined.action).toBe('shadow_predict')
+    expect(lowCombined.reason).toBe('low_combined')
+    const lowMl = decideEvalAction(
+      { ...base, mlScore: 0.2 },
+      { env: { ML_CLOSED_LOOP: '1' } },
+    )
+    expect(lowMl.action).toBe('shadow_predict')
+    expect(lowMl.reason).toBe('low_ml')
     expect(
       decideEvalAction(
         { ...base, combined: 0.2 },
-        { env: { ML_CLOSED_LOOP: '1' } },
-      ).reason,
-    ).toBe('low_combined')
-    expect(
-      decideEvalAction(
-        { ...base, mlScore: 0.2 },
-        { env: { ML_CLOSED_LOOP: '1' } },
-      ).reason,
-    ).toBe('low_ml')
+        { env: { EVAL_ENGINE: '1', EVAL_SHADOW: '0', ML_CLOSED_LOOP: '1' } },
+      ).action,
+    ).toBe('skip')
     expect(
       decideEvalAction(
         { ...base, mlScore: 0.2 },
         { env: { ML_CLOSED_LOOP: '0', EVAL_ENGINE: '1', EVAL_SHADOW: '0' } },
       ).action,
     ).toBe('paper_open')
+  })
+
+  it('shadow-predicts not_eligible when scores exist', () => {
+    const decided = decideEvalAction({
+      ...base,
+      eligible: false,
+      eligibilityReason: 'rugged',
+    })
+    expect(decided.action).toBe('shadow_predict')
+    expect(decided.reason).toBe('rugged')
+  })
+
+  it('hard-skips when there is nothing to score', () => {
+    expect(decideEvalAction({ ...base, strategyId: 'other' }).action).toBe('skip')
+    expect(decideEvalAction({ ...base, strategyId: 'other' }).reason).toBe('not_principal')
+    const noScores = decideEvalAction({
+      ...base,
+      combined: null,
+      mlScore: null,
+    })
+    expect(noScores.action).toBe('skip')
+    expect(noScores.reason).toBe('no_combined')
+    const mlOnly = decideEvalAction({
+      ...base,
+      combined: null,
+      mlScore: 0.6,
+    })
+    expect(mlOnly.action).toBe('shadow_predict')
+    expect(mlOnly.reason).toBe('no_combined')
   })
 
   it('ignores ml threshold when mlScore is null', () => {
@@ -74,9 +110,6 @@ describe('decideEvalAction', () => {
     expect(decideEvalAction({ ...base, alreadyOpen: true }).action).toBe('shadow_predict')
     expect(decideEvalAction({ ...base, alreadyOpen: true }).reason).toBe('already_open')
     expect(decideEvalAction({ ...base, alreadyClosed: true }).action).toBe('shadow_predict')
-    expect(
-      decideEvalAction({ ...base, eligible: false, eligibilityReason: 'rugged' }).reason,
-    ).toBe('rugged')
     expect(
       decideEvalAction({ ...base, alreadyOpen: true }, { env: { EVAL_SHADOW: '0' } }).action,
     ).toBe('skip')
@@ -99,6 +132,24 @@ describe('decideEvalAction', () => {
     expect(decision.mint).toBe('MintA')
     expect(decision.action).toBe('shadow_predict')
     expect(decision.reason).toBe('predicted')
+  })
+})
+
+describe('selectDiverseEvalCandidates', () => {
+  it('interleaves eligible with the rest so one bucket cannot fill the limit', () => {
+    const candidates = [
+      { id: 'c1', eligible: false },
+      { id: 'c2', eligible: false },
+      { id: 'c3', eligible: false },
+      { id: 'e1', eligible: true },
+      { id: 'e2', eligible: true },
+    ]
+    expect(selectDiverseEvalCandidates(candidates, 4).map((c) => c.id)).toEqual([
+      'e1',
+      'c1',
+      'e2',
+      'c2',
+    ])
   })
 })
 
