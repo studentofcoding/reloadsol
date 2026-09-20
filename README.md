@@ -297,6 +297,26 @@ export MARKET_BRAIN_SIGNALS=1
 # missing token keeps the existing tracker path
 ```
 
+### ML closed loop + eval engine (optional)
+
+Closed-loop `mlScore` is an adjuster on combined score (so phase-3 TP/SL can see it). The eval engine can paper-open principal candidates in real time. **Live trade is stubbed.** Full how-to: [ml/README.md](ml/README.md#closed-loop--eval-engine-phase-4).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ML_CLOSED_LOOP` | off | Enable `mlScore` infer + combined-score `ml` weight |
+| `ML_CLOSED_LOOP_ARTIFACT` | `data/ml-closed-loop/model.json` | Persisted model version |
+| `EVAL_ENGINE` | off | Candidate scan / decision logging / paper opens |
+| `EVAL_EXEC_MODE` | `paper` | `paper` or `live` adapter |
+| `LIVE_TRADE_ENABLED` | `0` | Hard gate; live adapter refuses without it |
+| `ML_PAPER_MIN_COMBINED` | `0.35` | Skip paper open below this combined |
+| `ML_PAPER_MIN_ML` | `0.5` | Skip when ML is on and `mlScore` is below this |
+
+```bash
+npm run ml:backfill-labels -- --principals
+npm run ml:train-closed-loop
+export ML_CLOSED_LOOP=1 EVAL_ENGINE=1 EVAL_EXEC_MODE=paper LIVE_TRADE_ENABLED=0
+```
+
 ### Telegram (optional)
 
 ```bash

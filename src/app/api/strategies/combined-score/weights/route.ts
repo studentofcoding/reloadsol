@@ -17,7 +17,7 @@ export async function GET() {
         defaults: { ...COMBINED_SCORE_WEIGHTS },
         source: live.source,
         rule:
-          'Each weight must be a finite number ≥ 0 and the set must sum to more than 0. Saved values are renormalized to sum 1 (0.55/0.20/0.15/0.10 and 55/20/15/10 both work). Invalid stored rows fall back to defaults when scoring.',
+          'Each of principal, adjusterPresence, jaccard, ohlcPattern must be a finite number ≥ 0 and the set must sum to more than 0. Optional ml (5th key) renormalizes when present. Saved values are renormalized to sum 1. Invalid stored rows fall back to defaults when scoring.',
       },
       { headers: { 'Cache-Control': 'no-store' } },
     )

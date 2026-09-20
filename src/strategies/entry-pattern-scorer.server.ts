@@ -171,3 +171,5 @@ export async function evaluatePatternEnforce(
 }
 
 export { resetPatternScorerCache } from './entry-pattern-scorer-cache'
+export { scoreClosedLoopFromCombined } from './combined-score-load'
+export { loadClosedLoopModel } from './closed-loop-ml-cache'

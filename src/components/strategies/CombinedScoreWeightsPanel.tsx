@@ -21,11 +21,12 @@ type Props = {
   onNotify?: (kind: 'success' | 'error', title: string, detail?: string) => void
 }
 
-const FIELDS: { key: keyof CombinedScoreWeights; label: string }[] = [
+const FIELDS: { key: keyof CombinedScoreWeights; label: string; optional?: boolean }[] = [
   { key: 'principal', label: 'Principal (mcap first_seen / at_80)' },
   { key: 'adjusterPresence', label: 'Adjuster presence' },
   { key: 'jaccard', label: 'Jaccard overlap' },
   { key: 'ohlcPattern', label: 'OHLC rug patterns' },
+  { key: 'ml', label: 'ML closed-loop (optional)', optional: true },
 ]
 
 function toDraft(weights: CombinedScoreWeights): Record<keyof CombinedScoreWeights, string> {
@@ -34,6 +35,7 @@ function toDraft(weights: CombinedScoreWeights): Record<keyof CombinedScoreWeigh
     adjusterPresence: String(weights.adjusterPresence),
     jaccard: String(weights.jaccard),
     ohlcPattern: String(weights.ohlcPattern),
+    ml: weights.ml == null ? '' : String(weights.ml),
   }
 }
 
@@ -41,10 +43,12 @@ function parseDraft(
   draft: Record<keyof CombinedScoreWeights, string>,
 ): CombinedScoreWeights | null {
   const out = {} as CombinedScoreWeights
-  for (const { key } of FIELDS) {
-    const n = Number(draft[key])
+  for (const field of FIELDS) {
+    const raw = draft[field.key]
+    if (field.optional && (raw == null || raw.trim() === '')) continue
+    const n = Number(raw)
     if (!Number.isFinite(n)) return null
-    out[key] = n
+    out[field.key] = n
   }
   return out
 }
@@ -85,7 +89,11 @@ export default function CombinedScoreWeightsPanel({ onNotify }: Props) {
 
   const parsed = useMemo(() => (draft ? parseDraft(draft) : null), [draft])
   const draftSum = parsed
-    ? parsed.principal + parsed.adjusterPresence + parsed.jaccard + parsed.ohlcPattern
+    ? parsed.principal +
+      parsed.adjusterPresence +
+      parsed.jaccard +
+      parsed.ohlcPattern +
+      (parsed.ml ?? 0)
     : null
   const preview =
     parsed && draftSum != null && draftSum > 0
@@ -94,6 +102,7 @@ export default function CombinedScoreWeightsPanel({ onNotify }: Props) {
           adjusterPresence: parsed.adjusterPresence / draftSum,
           jaccard: parsed.jaccard / draftSum,
           ohlcPattern: parsed.ohlcPattern / draftSum,
+          ...(parsed.ml != null ? { ml: parsed.ml / draftSum } : {}),
         }
       : null
 
@@ -147,7 +156,8 @@ export default function CombinedScoreWeightsPanel({ onNotify }: Props) {
           Feeds Freeview <span className="text-gray-300">Combined score</span> and{' '}
           <code className="text-xs">GET /api/strategies/combined-score</code>. Defaults{' '}
           <span className="font-mono text-gray-300">0.55 / 0.20 / 0.15 / 0.10</span>.
-          Each weight must be ≥ 0; save renormalizes so they sum to 1.
+          Optional <span className="font-mono text-gray-300">ml</span> 5th key
+          renormalizes when set. Each weight must be ≥ 0; save renormalizes so they sum to 1.
         </p>
         <p className="text-xs text-gray-500 mt-1">
           Source:{' '}
@@ -169,8 +179,8 @@ export default function CombinedScoreWeightsPanel({ onNotify }: Props) {
           <NumberField
             key={field.key}
             label={
-              preview
-                ? `${field.label} → ${preview[field.key].toFixed(3)}`
+              preview && preview[field.key] != null
+                ? `${field.label} → ${preview[field.key]!.toFixed(3)}`
                 : field.label
             }
             value={draft[field.key]}

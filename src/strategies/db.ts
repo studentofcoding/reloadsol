@@ -141,6 +141,7 @@ function getTrackerTableName(): string {
 
 type OutcomeFilterParams = {
   strategyId?: string
+  strategyIds?: string[]
   domain?: StrategyDomain
   chain?: StrategyChain
   isSimulated?: boolean
@@ -162,7 +163,10 @@ function buildOutcomeWhereClause(params: OutcomeFilterParams): {
   const conditions: string[] = []
   const values: unknown[] = []
 
-  if (params.strategyId) {
+  if (params.strategyIds && params.strategyIds.length > 0) {
+    values.push(params.strategyIds)
+    conditions.push(`strategy_id = ANY($${values.length}::text[])`)
+  } else if (params.strategyId) {
     values.push(params.strategyId)
     conditions.push(`strategy_id = $${values.length}`)
   }
@@ -736,10 +740,12 @@ export async function listRecentStrategyTokens(
 export async function loadOutcomesForMlDataset(params?: {
   domain?: StrategyDomain
   strategyId?: string
+  strategyIds?: string[]
 }): Promise<StrategyOutcomeRow[]> {
   const { sql: whereSql, values } = buildOutcomeWhereClause({
     domain: params?.domain,
     strategyId: params?.strategyId,
+    strategyIds: params?.strategyIds,
   })
 
   let rows: StrategyOutcomeRow[]
@@ -763,6 +769,7 @@ export async function loadOutcomesForMlDataset(params?: {
 export async function backfillOutcomeLabels(params?: {
   domain?: StrategyDomain
   strategyId?: string
+  strategyIds?: string[]
   dryRun?: boolean
 }): Promise<{
   updated: number
@@ -772,6 +779,7 @@ export async function backfillOutcomeLabels(params?: {
   const rows = await loadOutcomesForMlDataset({
     domain: params?.domain,
     strategyId: params?.strategyId,
+    strategyIds: params?.strategyIds,
   })
 
   const preview: Record<'0' | '1' | '2' | '3' | '4' | 'null', number> = {

@@ -32,6 +32,7 @@ import OutcomeReviewModal, {
   OutcomePotentialMlBadge,
 } from "@/components/strategies/OutcomeReviewModal";
 import CombinedScoreWeightsPanel from "@/components/strategies/CombinedScoreWeightsPanel";
+import EvalEnginePanel from "@/components/strategies/EvalEnginePanel";
 import Ml2ExitOverlayPanel from "@/components/strategies/Ml2ExitOverlayPanel";
 import StrategyReviewPanel from "@/components/strategies/StrategyReviewPanel";
 import ScrollableMenuRow from "@/components/ScrollableMenuRow";
@@ -3265,6 +3266,9 @@ function StrategyConfigTab({
   return (
     <>
       <CombinedScoreWeightsPanel
+        onNotify={(kind, title, detail) => onToast(kind, title, detail ?? "")}
+      />
+      <EvalEnginePanel
         onNotify={(kind, title, detail) => onToast(kind, title, detail ?? "")}
       />
       <Ml2ExitOverlayPanel

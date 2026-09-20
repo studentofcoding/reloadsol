@@ -133,6 +133,12 @@ export function applyAutoOutcomeLabels(
     ...(trainingClass != null ? { training_class: trainingClass } : {}),
     ...(mlLabel ? { ml_label: mlLabel } : {}),
     ...(mlCondition ? { ml_condition: mlCondition } : {}),
+    ...(trainingClass != null
+      ? {
+          ml_win: trainingClass >= 1 ? 1 : 0,
+          ml_r_bucket: trainingClass,
+        }
+      : {}),
     ml_note: mlNote,
   }
 }

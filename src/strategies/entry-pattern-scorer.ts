@@ -44,6 +44,26 @@ export function patternFeatureVectorToTensorInput(
   return arr
 }
 
+/** Logistic sigmoid used by the closed-loop entry-pattern model (phase 4). */
+export function scoreClosedLoopLogistic(
+  vector: ArrayLike<number>,
+  weights: readonly number[],
+  bias: number,
+): number {
+  let z = Number.isFinite(bias) ? bias : 0
+  const n = Math.min(vector.length, weights.length)
+  for (let i = 0; i < n; i++) {
+    const x = vector[i]
+    const w = weights[i]
+    if (typeof x === 'number' && Number.isFinite(x) && typeof w === 'number' && Number.isFinite(w)) {
+      z += x * w
+    }
+  }
+  if (z >= 20) return 1
+  if (z <= -20) return 0
+  return 1 / (1 + Math.exp(-z))
+}
+
 export function scorePatternBinary(
   data: Float32Array,
   threshold = 0.5,

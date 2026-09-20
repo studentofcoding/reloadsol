@@ -35,5 +35,9 @@ contracts/out/
 # Rendered Goldsky configs (secrets-free but machine-specific)
 goldsky/.rendered/
 
+# Closed-loop model artifacts (train locally / on host)
+/data/ml-closed-loop/model.json
+/data/ml-closed-loop/last-run.json
+
 # macOS
 .DS_Store

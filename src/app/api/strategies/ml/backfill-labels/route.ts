@@ -1,36 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { backfillOutcomeLabels } from '@/strategies/db'
-import { requireDevSession } from '@/utils/api-auth'
-import { isAuthorizedRequest } from '@/utils/dlmm/config'
+import { CLOSED_LOOP_PRINCIPAL_IDS } from '@/strategies/closed-loop-ml'
+import { isMlRouteAuthorized } from '@/strategies/ml-api-auth'
 import type { StrategyDomain } from '@/strategies/types'
 
-
-function getMlSecret(): string {
-  return (
-    process.env.MCAP_TRACKER_SIM_TRACK_SECRET ||
-    process.env.SIGNALS_SIM_TRACK_SECRET ||
-    process.env.TRENDING_TRACKER_SECRET ||
-    'r3l0ads0l-trending'
-  )
-}
-
-function isBackfillAuthorized(request: NextRequest): NextResponse | null {
-  const key = request.nextUrl.searchParams.get('key')
-  if (process.env.NODE_ENV === 'development' && !key) {
-    return null
-  }
-  if (isAuthorizedRequest(key, getMlSecret())) {
-    return null
-  }
-  const devAuth = requireDevSession(request)
-  if (devAuth instanceof NextResponse) {
-    return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
-  }
-  return null
-}
-
 export async function POST(request: NextRequest) {
-  const authError = isBackfillAuthorized(request)
+  const authError = isMlRouteAuthorized(request)
   if (authError) {
     return authError
   }
@@ -40,16 +15,19 @@ export async function POST(request: NextRequest) {
     const domain = searchParams.get('domain') as StrategyDomain | null
     const strategyId = searchParams.get('strategyId') ?? undefined
     const dryRun = searchParams.get('dry_run') === 'true'
+    const principals = searchParams.get('principals') === 'true'
 
     const result = await backfillOutcomeLabels({
       domain: domain ?? undefined,
-      strategyId,
+      strategyId: principals ? undefined : strategyId,
+      strategyIds: principals ? [...CLOSED_LOOP_PRINCIPAL_IDS] : undefined,
       dryRun,
     })
 
     return NextResponse.json({
       success: true,
       dry_run: dryRun,
+      principals,
       ...result,
     })
   } catch (error) {

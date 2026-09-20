@@ -230,3 +230,43 @@ Entry volume sources (runtime): local/monitor → Jupiter `stats5m→1h→6h→2
 ## Retrain
 
 Re-export after new sim closes. Do not change entry/exit rules mid-collection. Compare both `v2-gate` and `v2-potential` meta before enforce mode.
+
+---
+
+## Closed loop + eval engine (phase 4)
+
+Lightweight TS logistic (heuristic fallback when n &lt; 8) trained on **closed principal** outcomes (`mcap_enter_first_seen`, `mcap_enter_at_80` + RH). Infer `mlScore` feeds the optional combined-score `ml` weight so phase-3 `/risk/from-score` sees it. The **eval engine** scores **open** candidates in real time and can `paper_open` via sim-track. Live trade is a stub.
+
+### How to enable (paper)
+
+```bash
+# 1) Labels (win/loss + R-bucket) on closed principals
+npm run ml:backfill-labels -- --principals --dry-run
+npm run ml:backfill-labels -- --principals
+# or Strategy Admin → Reports → Backfill auto labels
+# or POST /api/strategies/ml/backfill-labels?principals=true&key=$TRENDING_TRACKER_SECRET
+
+# 2) Train once (writes data/ml-closed-loop/model.json)
+npm run ml:train-closed-loop -- --dry-run
+npm run ml:train-closed-loop
+# or POST /api/strategies/ml/train?key=$TRENDING_TRACKER_SECRET
+
+# 3) Infer adjuster (missing model → mlScore null, no hard fail)
+export ML_CLOSED_LOOP=1
+# GET /api/strategies/ml/score?address=<mint> → { mlScore, modelVersion }
+
+# 4) Live paper via eval engine (default mode=paper)
+export EVAL_ENGINE=1
+export EVAL_EXEC_MODE=paper
+export LIVE_TRADE_ENABLED=0
+# optional: ML_PAPER_MIN_COMBINED=0.35 ML_PAPER_MIN_ML=0.5
+npm run ml:eval-scan -- --dry-run
+npm run ml:eval-scan
+# GET /api/strategies/ml/eval-report?days=7
+```
+
+### Live trade stub
+
+`LiveExecutionAdapter` never talks to a wallet or broker. It returns `LIVE_NOT_ENABLED` unless **both** `EVAL_EXEC_MODE=live` **and** `LIVE_TRADE_ENABLED=1`. Even then v1 returns `LIVE_STUB_NO_BROKER`.
+
+Artifact path: `data/ml-closed-loop/model.json` (override `ML_CLOSED_LOOP_ARTIFACT`). Docker mounts `./data/ml-closed-loop`.
