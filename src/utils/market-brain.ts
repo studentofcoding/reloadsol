@@ -1,5 +1,5 @@
 /**
- * buy_bulk client for live market-brain (lists + recipes + regime params).
+ * buy_bulk client for live market-brain (lists + recipes + regime params + OHLC).
  *
  * CONNECT (read):
  * - Base: https://market-brain.yonathanevanchristy.workers.dev
@@ -7,6 +7,7 @@
  * - Lists (Bearer MARKET_BRAIN_TOKEN = BRAIN_READ_TOKEN): GET /bubble /jupiter /union
  * - Regime: GET /regime/params?profile=default (Bearer read)
  * - Recipes read: GET /recipes, GET /recipes/:id (Bearer read)
+ * - OHLC: GET /ohlc, GET /ohlc/patterns (Bearer read)
  * - Recipes write: PUT /recipes/:id, POST /recipes,
  *   POST /recipes/:id/{activate,deactivate,dormant}
  *   (Bearer MARKET_BRAIN_ADMIN_TOKEN = BRAIN_ADMIN_TOKEN)
@@ -18,6 +19,8 @@
  * - MARKET_BRAIN_TRENDING=1 — opt-in trending/assign universe from GET /union
  * - MARKET_BRAIN_MCAP=1 — opt-in mcap sim-track membership from GET /union
  * - MARKET_BRAIN_SIGNALS=1 — opt-in signals sim-track membership from GET /union
+ * - MARKET_BRAIN_OHLC — prefer GET /ohlc (default on when a read token is set;
+ *   set `0`/`false` to force today's SolanaTracker/GMGN path)
  *
  * First-cut sim opens also resolve risk from GET /regime/params (live wins) then
  * recipe.riskGrid[state], even when the universe flags above are off.
@@ -321,6 +324,278 @@ export function marketBrainSignalsSkipReason(opts?: {
     'MARKET_BRAIN_SIGNALS=1 but MARKET_BRAIN_TOKEN is not set; using signals tracker candidates',
     opts,
   )
+}
+
+export const BRAIN_OHLC_INTERVALS = ['1m', '5m', '15m', '1h'] as const
+export type BrainOhlcInterval = (typeof BRAIN_OHLC_INTERVALS)[number]
+export type BrainOhlcChain = 'sol' | 'robinhood'
+
+/**
+ * Prefer brain GET /ohlc when a read token is set. Default ON when configured
+ * (unlike TRENDING/MCAP/SIGNALS, which stay opt-in). Set MARKET_BRAIN_OHLC=0
+ * to keep today's SolanaTracker/GMGN path.
+ */
+export function isMarketBrainOhlcEnabled(opts?: {
+  baseUrl?: string
+  token?: string | null
+}): boolean {
+  if (!isMarketBrainConfigured(opts)) return false
+  const v = process.env.MARKET_BRAIN_OHLC
+  if (v === undefined || v === '') return true
+  if (v === '0' || v === 'false') return false
+  return v === '1' || v === 'true'
+}
+
+export function marketBrainOhlcSkipReason(opts?: {
+  baseUrl?: string
+  token?: string | null
+}): string | null {
+  return domainPlugSkipReason(
+    'MARKET_BRAIN_OHLC',
+    'MARKET_BRAIN_OHLC=1 but MARKET_BRAIN_TOKEN is not set; using SolanaTracker/GMGN',
+    opts,
+  )
+}
+
+export type BrainOhlcBar = {
+  time: number
+  open: number
+  high: number
+  low: number
+  close: number
+  volume?: number
+}
+
+export type BrainOhlcRugHit = {
+  id: string
+  label: string
+  value: number | null
+  threshold: number
+  passed: boolean
+}
+
+export type BrainOhlcRugFeatures = {
+  n: number
+  dumpPct: number | null
+  avgUpperWick: number | null
+  wickTripBars: number
+  volDeathRatio: number | null
+}
+
+export type BrainOhlcPatternSummary = {
+  rug: {
+    trip: boolean
+    features: BrainOhlcRugFeatures
+    hits: BrainOhlcRugHit[]
+  }
+  tags?: string[]
+}
+
+export type BrainOhlcResponse = {
+  mint: string
+  chain: BrainOhlcChain | string
+  interval: string
+  from: number
+  to: number
+  source: string
+  candles: BrainOhlcBar[]
+  generatedAt: string | null
+  etag?: string
+  patterns?: BrainOhlcPatternSummary
+}
+
+export type BrainOhlcQuery = {
+  mint: string
+  chain?: BrainOhlcChain | string
+  interval?: string
+  hours?: number
+  from?: number
+  to?: number
+  includePatterns?: boolean
+}
+
+/** Prefix so Freeview/source labels can tell brain-served bars from direct ST/GMGN. */
+export function brainOhlcSourceLabel(source: string | null | undefined): string {
+  const trimmed = source?.trim() ?? ''
+  if (!trimmed) return 'brain'
+  return trimmed.startsWith('brain') ? trimmed : `brain:${trimmed}`
+}
+
+export function inferBrainOhlcChain(
+  mint: string,
+  chain?: string | null,
+): BrainOhlcChain {
+  if (chain === 'robinhood' || chain === 'sol') return chain
+  return /^0x[a-fA-F0-9]{40}$/i.test(mint) ? 'robinhood' : 'sol'
+}
+
+function toUnixBarTime(v: number): number {
+  return v > 1e12 ? Math.floor(v / 1000) : Math.floor(v)
+}
+
+export function parseBrainOhlcBar(value: unknown): BrainOhlcBar | null {
+  const obj = asObject(value)
+  if (!obj) return null
+  const timeRaw = firstNumber(obj, ['time', 'timestamp', 't'])
+  const open = firstNumber(obj, ['open', 'o'])
+  const high = firstNumber(obj, ['high', 'h'])
+  const low = firstNumber(obj, ['low', 'l'])
+  const close = firstNumber(obj, ['close', 'c'])
+  if (
+    timeRaw == null ||
+    open == null ||
+    high == null ||
+    low == null ||
+    close == null
+  ) {
+    return null
+  }
+  const volume = firstNumber(obj, ['volume', 'v'])
+  return {
+    time: toUnixBarTime(timeRaw),
+    open,
+    high,
+    low,
+    close,
+    ...(volume != null ? { volume } : {}),
+  }
+}
+
+function collectOhlcBars(body: unknown): unknown[] {
+  if (Array.isArray(body)) return body
+  const obj = asObject(body)
+  if (!obj) return []
+  for (const key of ['candles', 'ohlcv', 'oclhv', 'list', 'bars', 'kline']) {
+    if (Array.isArray(obj[key])) return obj[key] as unknown[]
+  }
+  const nested = asObject(obj.data)
+  if (nested) {
+    for (const key of ['candles', 'ohlcv', 'oclhv', 'list', 'bars']) {
+      if (Array.isArray(nested[key])) return nested[key] as unknown[]
+    }
+  }
+  return []
+}
+
+function parseBrainOhlcRugHit(value: unknown): BrainOhlcRugHit | null {
+  const obj = asObject(value)
+  if (!obj) return null
+  const id = firstString(obj, ['id'])
+  const label = firstString(obj, ['label'])
+  if (!id || !label) return null
+  return {
+    id,
+    label,
+    value: asFiniteNumber(obj.value),
+    threshold: asFiniteNumber(obj.threshold) ?? 0,
+    passed: obj.passed === true,
+  }
+}
+
+export function parseBrainOhlcPatterns(
+  value: unknown,
+): BrainOhlcPatternSummary | undefined {
+  const obj = asObject(value)
+  if (!obj) return undefined
+  const rugObj = asObject(obj.rug)
+  if (!rugObj) return undefined
+  const featuresObj = asObject(rugObj.features) ?? {}
+  const hitsRaw = Array.isArray(rugObj.hits) ? rugObj.hits : []
+  const hits: BrainOhlcRugHit[] = []
+  for (const row of hitsRaw) {
+    const hit = parseBrainOhlcRugHit(row)
+    if (hit) hits.push(hit)
+  }
+  const tags = Array.isArray(obj.tags)
+    ? obj.tags.filter((t): t is string => typeof t === 'string' && t.trim() !== '')
+    : undefined
+  return {
+    rug: {
+      trip: rugObj.trip === true,
+      features: {
+        n: asFiniteNumber(featuresObj.n) ?? 0,
+        dumpPct: asFiniteNumber(featuresObj.dumpPct ?? featuresObj.dump_pct),
+        avgUpperWick: asFiniteNumber(
+          featuresObj.avgUpperWick ?? featuresObj.avg_upper_wick,
+        ),
+        wickTripBars: asFiniteNumber(
+          featuresObj.wickTripBars ?? featuresObj.wick_trip_bars,
+        ) ?? 0,
+        volDeathRatio: asFiniteNumber(
+          featuresObj.volDeathRatio ?? featuresObj.vol_death_ratio,
+        ),
+      },
+      hits,
+    },
+    ...(tags && tags.length > 0 ? { tags } : {}),
+  }
+}
+
+export function parseBrainOhlcResponse(
+  body: unknown,
+  fallbackMint?: string,
+): BrainOhlcResponse | null {
+  const obj = asObject(body)
+  const inner = asObject(obj?.data) ?? obj
+  if (!inner) return null
+  const mint =
+    firstString(inner, ['mint', 'tokenAddress', 'token_address', 'address']) ??
+    fallbackMint?.trim() ??
+    null
+  if (!mint) return null
+  const candles: BrainOhlcBar[] = []
+  for (const row of collectOhlcBars(inner)) {
+    const bar = parseBrainOhlcBar(row)
+    if (bar) candles.push(bar)
+  }
+  candles.sort((a, b) => a.time - b.time)
+  const from = firstNumber(inner, ['from', 'timeFrom', 'time_from']) ?? 0
+  const to = firstNumber(inner, ['to', 'timeTo', 'time_to']) ?? 0
+  const patterns = parseBrainOhlcPatterns(inner.patterns)
+  const etag = firstString(inner, ['etag', 'ETag']) ?? undefined
+  return {
+    mint,
+    chain: inferBrainOhlcChain(
+      mint,
+      firstString(inner, ['chain']) ?? undefined,
+    ),
+    interval: firstString(inner, ['interval', 'type', 'resolution']) ?? '',
+    from,
+    to,
+    source: firstString(inner, ['source']) ?? 'brain',
+    candles,
+    generatedAt: firstString(inner, ['generatedAt', 'generated_at']) ?? null,
+    ...(etag ? { etag } : {}),
+    ...(patterns ? { patterns } : {}),
+  }
+}
+
+export function buildBrainOhlcQuery(query: BrainOhlcQuery): string {
+  const p = new URLSearchParams()
+  p.set('mint', query.mint.trim())
+  const chain = query.chain?.trim()
+  if (chain) p.set('chain', chain)
+  const interval = query.interval?.trim()
+  if (interval) p.set('interval', interval)
+  if (query.hours != null && Number.isFinite(query.hours)) {
+    p.set('hours', String(Math.min(Math.max(Math.round(query.hours), 1), 168)))
+  }
+  if (query.from != null && Number.isFinite(query.from)) {
+    p.set('from', String(Math.floor(query.from)))
+  }
+  if (query.to != null && Number.isFinite(query.to)) {
+    p.set('to', String(Math.floor(query.to)))
+  }
+  if (query.includePatterns) p.set('include', 'patterns')
+  return p.toString()
+}
+
+/** Fallback on any brain miss (5xx/timeout/4xx/empty) so Freeview does not blank. */
+export function shouldFallbackBrainOhlc(
+  result: BrainResult<{ candles: unknown[] }>,
+): boolean {
+  if (!result.ok) return true
+  return result.data.candles.length === 0
 }
 
 export function isBrainListName(value: unknown): value is BrainListName {
@@ -693,6 +968,59 @@ export async function fetchBrainRecipe(
     return fail(`market-brain /recipes/${encoded}: missing recipe id`, {
       status: raw.status,
       path: `/recipes/${encoded}`,
+    })
+  }
+  return { ok: true, status: raw.status, data: parsed }
+}
+
+export async function fetchBrainOhlc(
+  query: BrainOhlcQuery,
+  opts: MarketBrainFetchOpts = {},
+): Promise<BrainResult<BrainOhlcResponse>> {
+  const mint = query.mint.trim()
+  if (!mint) {
+    return fail('market-brain /ohlc: mint is required', { path: '/ohlc' })
+  }
+  const raw = await fetchBrainJson('/ohlc', {
+    ...opts,
+    query: buildBrainOhlcQuery({ ...query, mint }),
+  })
+  if (!raw.ok) return raw
+  const parsed = parseBrainOhlcResponse(raw.data, mint)
+  if (!parsed) {
+    return fail('market-brain /ohlc: invalid payload', {
+      status: raw.status,
+      path: '/ohlc',
+    })
+  }
+  return { ok: true, status: raw.status, data: parsed }
+}
+
+export async function fetchBrainOhlcPatterns(
+  query: BrainOhlcQuery,
+  opts: MarketBrainFetchOpts = {},
+): Promise<BrainResult<BrainOhlcPatternSummary>> {
+  const mint = query.mint.trim()
+  if (!mint) {
+    return fail('market-brain /ohlc/patterns: mint is required', {
+      path: '/ohlc/patterns',
+    })
+  }
+  const raw = await fetchBrainJson('/ohlc/patterns', {
+    ...opts,
+    query: buildBrainOhlcQuery({ ...query, mint, includePatterns: false }),
+  })
+  if (!raw.ok) return raw
+  const obj = asObject(raw.data)
+  const parsed =
+    parseBrainOhlcPatterns(obj) ??
+    parseBrainOhlcPatterns(asObject(obj?.data)) ??
+    parseBrainOhlcResponse(raw.data, mint)?.patterns ??
+    null
+  if (!parsed) {
+    return fail('market-brain /ohlc/patterns: invalid payload', {
+      status: raw.status,
+      path: '/ohlc/patterns',
     })
   }
   return { ok: true, status: raw.status, data: parsed }

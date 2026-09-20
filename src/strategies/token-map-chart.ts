@@ -8,6 +8,14 @@ import type { TokenMapDomain } from '@/strategies/token-map-types'
 import type { OhlcRugBar } from '@/strategies/ohlc-rug-rules'
 import { tokenKline } from '@/utils/gmgn-api'
 import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
+import {
+  brainOhlcSourceLabel,
+  fetchBrainOhlc,
+  inferBrainOhlcChain,
+  isMarketBrainOhlcEnabled,
+  shouldFallbackBrainOhlc,
+  type MarketBrainFetchOpts,
+} from '@/utils/market-brain'
 import { cacheGet, cacheSet } from '@/utils/redis-cache'
 
 /** ponytail: 90s collapses Telegram + Freeview + label capture bursts; upgrade = longer TTL + stampede lock */
@@ -226,7 +234,7 @@ function ohlcWindow(params: {
   return { timeFrom, timeTo, type }
 }
 
-/** Live OHLCV: Solana Tracker on sol, GMGN kline on robinhood / 0x. */
+/** Live OHLCV: prefer market-brain, then Solana Tracker on sol / GMGN on 0x. */
 export async function fetchTokenOhlc(params: {
   tokenAddress: string
   hours?: number
@@ -235,20 +243,63 @@ export async function fetchTokenOhlc(params: {
   /** Unix seconds — when set with timeTo, overrides hours window. */
   timeFrom?: number
   timeTo?: number
+  /** Test / override hook for the brain client. */
+  brain?: MarketBrainFetchOpts
 }): Promise<{ candles: TokenOhlcBar[]; source: string }> {
   const { timeFrom, timeTo, type } = ohlcWindow(params)
   const gmgnChain: GmgnTradeChain =
     params.chain ??
     (/^0x[a-fA-F0-9]{40}$/i.test(params.tokenAddress) ? 'robinhood' : 'sol')
-  if (wantsGmgnOhlc(gmgnChain, params.tokenAddress)) {
+
+  // ponytail: brain GET /ohlc first; ST/GMGN stay the fallback on 5xx/timeout
+  if (isMarketBrainOhlcEnabled(params.brain)) {
+    const explicitWindow = params.timeFrom != null || params.timeTo != null
+    const hours = explicitWindow
+      ? undefined
+      : Math.min(Math.max(params.hours ?? 24, 1), 168)
+    const brain = await fetchBrainOhlc(
+      {
+        mint: params.tokenAddress,
+        chain: inferBrainOhlcChain(params.tokenAddress, gmgnChain),
+        interval: type,
+        ...(hours != null ? { hours } : {}),
+        ...(explicitWindow ? { from: timeFrom, to: timeTo } : {}),
+      },
+      params.brain,
+    )
+    if (!shouldFallbackBrainOhlc(brain) && brain.ok) {
+      return {
+        candles: brain.data.candles,
+        source: brainOhlcSourceLabel(brain.data.source),
+      }
+    }
+  }
+
+  return fetchTokenOhlcUpstream({
+    tokenAddress: params.tokenAddress,
+    timeFrom,
+    timeTo,
+    type,
+    gmgnChain,
+  })
+}
+
+async function fetchTokenOhlcUpstream(params: {
+  tokenAddress: string
+  timeFrom: number
+  timeTo: number
+  type: string
+  gmgnChain: GmgnTradeChain
+}): Promise<{ candles: TokenOhlcBar[]; source: string }> {
+  if (wantsGmgnOhlc(params.gmgnChain, params.tokenAddress)) {
     try {
       // GMGN token_kline expects from/to in milliseconds (candle `time` is ms).
       const raw = await tokenKline({
-        chain: gmgnChain,
+        chain: params.gmgnChain,
         address: params.tokenAddress,
-        resolution: type,
-        from: timeFrom * 1000,
-        to: timeTo * 1000,
+        resolution: params.type,
+        from: params.timeFrom * 1000,
+        to: params.timeTo * 1000,
       })
       const candles = mapGmgnKlineBars(raw)
       if (candles.length === 0) return { candles: [], source: 'none' }
@@ -265,9 +316,9 @@ export async function fetchTokenOhlc(params: {
     const url = new URL(
       `${ST_CHART_BASE}/${encodeURIComponent(params.tokenAddress)}`,
     )
-    url.searchParams.set('type', type)
-    url.searchParams.set('time_from', String(timeFrom))
-    url.searchParams.set('time_to', String(timeTo))
+    url.searchParams.set('type', params.type)
+    url.searchParams.set('time_from', String(params.timeFrom))
+    url.searchParams.set('time_to', String(params.timeTo))
     url.searchParams.set('currency', 'usd')
 
     try {
@@ -292,9 +343,9 @@ export async function fetchTokenOhlc(params: {
     const raw = await tokenKline({
       chain: 'sol',
       address: params.tokenAddress,
-      resolution: type,
-      from: timeFrom * 1000,
-      to: timeTo * 1000,
+      resolution: params.type,
+      from: params.timeFrom * 1000,
+      to: params.timeTo * 1000,
     })
     const candles = mapGmgnKlineBars(raw)
     if (candles.length === 0) return { candles: [], source: 'none' }
@@ -316,7 +367,8 @@ export function tokenOhlcToRugBars(candles: TokenOhlcBar[]): OhlcRugBar[] {
 }
 
 /**
- * Canonical last-24h × 1m series (cached). Telegram / rug-10 / signal_ohlc_labels derive from this.
+ * Canonical last-24h × 1m series (cached). Telegram / rug-10 / signal_ohlc_labels
+ * derive from this. Goes through fetchTokenOhlc (brain first when flag on).
  */
 export async function getCachedTokenOhlc24h1m(
   tokenAddress: string,

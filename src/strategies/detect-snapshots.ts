@@ -70,6 +70,7 @@ export type DetectSnapshotRow = {
   updated_at: string
 }
 
+/** Last N 1m bars from the shared 24h cache (brain GET /ohlc when flag on). */
 export async function fetchLastOhlcRugBars(
   tokenAddress: string,
   n = OHLC_RUG_MAX_BARS,
