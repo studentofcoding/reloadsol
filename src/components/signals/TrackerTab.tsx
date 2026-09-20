@@ -4,6 +4,7 @@ import React, { useState, useMemo } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
 import { formatAppDateTime } from "@/utils/datetime";
+import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import ChartBuyModal from "@/components/ChartBuyModal";
 import DlmmChartActions from "@/components/dlmm/DlmmChartActions";
 import TokenSearchLink from "@/components/signals/shared/TokenSearchLink";
@@ -12,7 +13,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   useMCapTracker,
   FilterOptions,
-  McapTrackingData,
 } from "@/hooks/useMCapTracker";
 import { useTokenAnalytics } from "@/hooks/useTokenAnalytics";
 import { useAppNetwork } from "@/contexts/AppNetworkContext";
@@ -20,8 +20,28 @@ import type { EnrichedTokenData } from "@/utils/data-aggregation";
 import {
   deriveTrackerTokenInsights,
   formatScore0To100,
+  formatTrackerDecisionLine,
   formatTrackingAge,
+  hasUsablePrice,
+  sortCatchTrainRows,
 } from "@/components/signals/tracker-insights";
+import { TrackerSocialLinks } from "@/components/signals/TrackerSocialLinks";
+import { TrackerCatchTrainStrip } from "@/components/signals/TrackerCatchTrainStrip";
+import { TrackerHoldingChip } from "@/components/signals/TrackerHoldingChip";
+import {
+  formatHoldingUsd,
+  lookupHolding,
+  mapUserTokensToHoldings,
+  sumHeldCatchUsd,
+} from "@/components/signals/tracker-holdings";
+import { useTrackerScoreBadges } from "@/hooks/useTrackerScoreBadges";
+import { useWalletTokens } from "@/hooks/useWalletTokens";
+import { useRhWalletTokens } from "@/hooks/useRhWalletTokens";
+import {
+  isTrackerCatchTrainEnabled,
+  isTrackerScoreBadgesEnabled,
+  isTrackerSocialJoinEnabled,
+} from "@/utils/tracker-flags";
 
 // Interfaces imported from hook
 
@@ -142,6 +162,9 @@ export default function TrackerTab() {
   const urlSearch = searchParams.get("search")?.trim() ?? "";
   const queryClient = useQueryClient();
   const { network } = useAppNetwork();
+  const { connection } = useConnection();
+  const { publicKey, connected } = useWallet();
+  const walletAddress = connected && publicKey ? publicKey.toString() : null;
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(100);
   const [refetchingTokens, setRefetchingTokens] = useState<Set<string>>(
@@ -172,6 +195,11 @@ export default function TrackerTab() {
   };
 
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
+  const [catchTrainSort, setCatchTrainSort] = useState(false);
+  const [catchOnly, setCatchOnly] = useState(false);
+  const catchTrainEnabled = isTrackerCatchTrainEnabled();
+  const scoreBadgesEnabled = isTrackerScoreBadgesEnabled();
+  const socialJoinEnabled = isTrackerSocialJoinEnabled();
 
   const updateSearch = (value: string) => {
     setPage(1);
@@ -233,6 +261,70 @@ export default function TrackerTab() {
   const analyticsQuery = useTokenAnalytics(tokenAddresses);
   const analyticsData = analyticsQuery.data ?? {};
   const analyticsLoading = analyticsQuery.isFetching;
+  const scoreQuery = useTrackerScoreBadges(tokenAddresses, {
+    enabled: scoreBadgesEnabled,
+    chain: network,
+  });
+  const scoreBadges = scoreQuery.data ?? {};
+
+  const isRhNetwork = network === "robinhood";
+  const solHoldings = useWalletTokens({
+    connection,
+    publicKey,
+    walletAddress,
+    enabled: !isRhNetwork && connected && !!publicKey,
+    includeZeroBalance: false,
+  });
+  const rhHoldings = useRhWalletTokens();
+  const holdingsByMint = useMemo(() => {
+    try {
+      const list = isRhNetwork ? rhHoldings.tokens : solHoldings.allTokens;
+      return mapUserTokensToHoldings(list);
+    } catch {
+      return {};
+    }
+  }, [isRhNetwork, rhHoldings.tokens, solHoldings.allTokens]);
+
+  const tokenRows = useMemo(() => {
+    return tokens.map((token) => {
+      const analytics = analyticsData[token.token_address] as
+        | EnrichedTokenData
+        | undefined;
+      const scores = scoreBadges[token.token_address];
+      const insights = deriveTrackerTokenInsights(token, analytics, {
+        combined: scores?.combined,
+        mlScore: scores?.mlScore,
+      });
+      return { token, analytics, insights, scores };
+    });
+  }, [tokens, analyticsData, scoreBadges]);
+
+  const displayedRows = useMemo(() => {
+    let rows = tokenRows;
+    if (catchTrainEnabled && catchOnly) {
+      rows = rows.filter((row) => row.insights.decision === "catch");
+    }
+    if (catchTrainEnabled && catchTrainSort) {
+      rows = sortCatchTrainRows(rows);
+    }
+    return rows;
+  }, [tokenRows, catchOnly, catchTrainSort, catchTrainEnabled]);
+
+  const catchCount = useMemo(
+    () => tokenRows.filter((row) => row.insights.decision === "catch").length,
+    [tokenRows],
+  );
+  const heldCatch = useMemo(() => {
+    const mints = tokenRows
+      .filter((row) => row.insights.decision === "catch")
+      .map((row) => row.token.token_address);
+    return sumHeldCatchUsd(mints, holdingsByMint);
+  }, [tokenRows, holdingsByMint]);
+
+  const displayTokens = useMemo(
+    () => displayedRows.map((row) => row.token),
+    [displayedRows],
+  );
   const stats = apiResponse?.stats || null;
   const pagination = apiResponse?.pagination || {
     page: 1,
@@ -333,7 +425,7 @@ export default function TrackerTab() {
     return "text-gray-400";
   };
 
-  const getRiskColor = (riskScore?: number) => {
+  const getRiskColor = (riskScore?: number | null) => {
     if (riskScore === undefined || riskScore === null || !Number.isFinite(riskScore))
       return "text-gray-400";
     if (riskScore >= 70) return "text-red-400";
@@ -563,24 +655,24 @@ export default function TrackerTab() {
           tokenAddress={modalTokenAddress}
           onClose={() => setModalTokenAddress(null)}
           onNavigate={(direction) => {
-            if (!tokens.length) return;
-            const currentIndex = tokens.findIndex(
+            if (!displayTokens.length) return;
+            const currentIndex = displayTokens.findIndex(
               (t) => t.token_address === modalTokenAddress,
             );
             if (currentIndex === -1) return;
 
             const nextIndex =
               direction === "next" ? currentIndex + 1 : currentIndex - 1;
-            if (nextIndex >= 0 && nextIndex < tokens.length) {
-              setModalTokenAddress(tokens[nextIndex].token_address);
+            if (nextIndex >= 0 && nextIndex < displayTokens.length) {
+              setModalTokenAddress(displayTokens[nextIndex].token_address);
             }
           }}
           hasPrev={
-            tokens.findIndex((t) => t.token_address === modalTokenAddress) > 0
+            displayTokens.findIndex((t) => t.token_address === modalTokenAddress) > 0
           }
           hasNext={
-            tokens.findIndex((t) => t.token_address === modalTokenAddress) <
-            tokens.length - 1
+            displayTokens.findIndex((t) => t.token_address === modalTokenAddress) <
+            displayTokens.length - 1
           }
         />
       )}
@@ -1913,9 +2005,10 @@ export default function TrackerTab() {
             <label className="block text-sm font-medium mb-2">Sort By</label>
             <select
               value={filters.sortBy}
-              onChange={(e) =>
-                setFilters((prev) => ({ ...prev, sortBy: e.target.value }))
-              }
+              onChange={(e) => {
+                setCatchTrainSort(false);
+                setFilters((prev) => ({ ...prev, sortBy: e.target.value }));
+              }}
               className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="last_updated_at">Last Updated</option>
@@ -1931,12 +2024,13 @@ export default function TrackerTab() {
             <label className="block text-sm font-medium mb-2">Order</label>
             <select
               value={filters.sortOrder}
-              onChange={(e) =>
+              onChange={(e) => {
+                setCatchTrainSort(false);
                 setFilters((prev) => ({
                   ...prev,
                   sortOrder: e.target.value as "asc" | "desc",
-                }))
-              }
+                }));
+              }}
               className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="desc">Descending</option>
@@ -2070,6 +2164,27 @@ export default function TrackerTab() {
         </div>
       )}
 
+      {catchTrainEnabled && (
+        <TrackerCatchTrainStrip
+          catchCount={catchCount}
+          catchOnly={catchOnly}
+          onToggleCatchOnly={() => setCatchOnly((prev) => !prev)}
+          catchTrainSort={catchTrainSort}
+          onCatchTrainSort={() => {
+            setCatchTrainSort(true);
+            setFilters((prev) => ({
+              ...prev,
+              sortBy: "first_seen_at",
+              sortOrder: "desc",
+            }));
+          }}
+          heldCatchCount={heldCatch.count}
+          heldCatchUsdLabel={
+            heldCatch.count > 0 ? formatHoldingUsd(heldCatch.usd) : undefined
+          }
+        />
+      )}
+
       {/* Token List */}
       <div className="space-y-4 mb-8">
         {loading && tokens.length > 0 && (
@@ -2079,24 +2194,32 @@ export default function TrackerTab() {
           </div>
         )}
 
-        {tokens.map((token) => {
-          const analytics = analyticsData[token.token_address] as
-            | EnrichedTokenData
-            | undefined;
-          const insights = deriveTrackerTokenInsights(token, analytics);
-
+        {displayedRows.map(({ token, analytics, insights, scores }) => {
+          const holding = lookupHolding(holdingsByMint, token.token_address);
           return (
           <div
             key={token.token_address}
-            className="bg-gray-800 rounded-lg p-6 hover:bg-gray-750 transition-colors"
+            className={`bg-gray-800 rounded-lg p-6 hover:bg-gray-750 transition-colors ${
+              catchTrainEnabled && insights.decision === "catch"
+                ? "border border-emerald-500/70 ring-1 ring-emerald-400/30"
+                : "border border-transparent"
+            }`}
           >
             <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between">
               {/* Token Header */}
               <div className="flex items-center space-x-4 mb-4 lg:mb-0">
                 <div className="flex-shrink-0">
-                  <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-bold text-lg">
-                    {token.token_symbol.charAt(0)}
-                  </div>
+                  {token.logo_url ? (
+                    <img
+                      src={token.logo_url}
+                      alt=""
+                      className="w-12 h-12 rounded-full object-cover bg-gray-700"
+                    />
+                  ) : (
+                    <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-bold text-lg">
+                      {token.token_symbol.charAt(0)}
+                    </div>
+                  )}
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center space-x-2">
@@ -2183,6 +2306,12 @@ export default function TrackerTab() {
                     <span className="truncate">{token.token_address}</span>
                     <TokenSearchLink address={token.token_address} />
                   </p>
+                  {socialJoinEnabled && (
+                    <TrackerSocialLinks
+                      social={token.social}
+                      organicScore={token.organic_score}
+                    />
+                  )}
                 </div>
               </div>
 
@@ -2229,6 +2358,7 @@ export default function TrackerTab() {
             </div>
 
             <div className="mt-3 flex flex-wrap gap-2 text-xs">
+              <TrackerHoldingChip holding={holding} />
               <span className="rounded bg-gray-700 px-2 py-1 text-gray-200">
                 Risk: {formatScore0To100(insights.riskScore)} {insights.riskLabel}
               </span>
@@ -2247,12 +2377,40 @@ export default function TrackerTab() {
                   ? `Vol/MCap ${insights.volToMcapPct.toFixed(1)}% (${insights.liquidityLabel})`
                   : insights.liquidityLabel}
               </span>
+              {insights.rugSignal && (
+                <span className="rounded bg-red-900/60 border border-red-600 px-2 py-1 text-red-200">
+                  Rug signal
+                </span>
+              )}
               {insights.timelineInconsistent && (
                 <span className="rounded bg-amber-900/60 border border-amber-600 px-2 py-1 text-amber-200">
                   Timeline inconsistent
                 </span>
               )}
+              {scoreBadgesEnabled && scores?.combined != null && (
+                <span className="rounded bg-indigo-900/50 border border-indigo-600 px-2 py-1 text-indigo-200">
+                  combined {scores.combined.toFixed(2)}
+                </span>
+              )}
+              {scoreBadgesEnabled && scores?.mlScore != null && (
+                <span className="rounded bg-violet-900/50 border border-violet-600 px-2 py-1 text-violet-200">
+                  ml {scores.mlScore.toFixed(2)}
+                </span>
+              )}
             </div>
+            {catchTrainEnabled && (
+              <div
+                className={`mt-2 text-sm ${
+                  insights.decision === "catch"
+                    ? "text-emerald-300"
+                    : insights.decision === "skip"
+                      ? "text-red-300"
+                      : "text-gray-300"
+                }`}
+              >
+                {formatTrackerDecisionLine(insights)}
+              </div>
+            )}
 
             {/* Additional Information */}
             <div className="mt-4 pt-4 border-t border-gray-700">
@@ -2474,16 +2632,16 @@ export default function TrackerTab() {
                       )}
 
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                        {analytics.current_price_usd != null && (
-                          <div className="bg-gray-800 rounded-lg p-3">
-                            <div className="text-xs text-gray-400 mb-1">
-                              Current Price
-                            </div>
-                            <div className="text-sm text-white">
-                              ${analytics.current_price_usd.toFixed(6)}
-                            </div>
+                        <div className="bg-gray-800 rounded-lg p-3">
+                          <div className="text-xs text-gray-400 mb-1">
+                            Current Price
                           </div>
-                        )}
+                          <div className="text-sm text-white">
+                            {hasUsablePrice(analytics.current_price_usd)
+                              ? `$${analytics.current_price_usd.toFixed(6)}`
+                              : "Price unavailable"}
+                          </div>
+                        </div>
 
                         <div className="bg-gray-800 rounded-lg p-3">
                           <div className="text-xs text-gray-400 mb-1">
@@ -2539,7 +2697,7 @@ export default function TrackerTab() {
           );
         })}
 
-        {tokens.length === 0 && !loading && (
+        {displayedRows.length === 0 && !loading && (
           <div className="text-center py-12">
             <div className="text-gray-400 text-lg">
               No tokens found matching your criteria

@@ -1,25 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import {
+  computeRiskScore,
   deriveTrackerTokenInsights,
   formatScore0To100,
+  formatTrackerDecisionLine,
   formatTrackingAge,
   riskLabelFromScore,
 } from './tracker-insights'
 import type { McapTrackingData } from '@/hooks/useMCapTracker'
+import type { EnrichedTokenData } from '@/utils/data-aggregation'
 
-describe('formatScore0To100', () => {
-  it('formats 0-100 without percent suffix', () => {
-    expect(formatScore0To100(72)).toBe('72/100')
-    expect(formatScore0To100(8000)).toBe('100/100')
-  })
-
-  it('returns dash for invalid', () => {
-    expect(formatScore0To100(null)).toBe('—')
-  })
-})
-
-describe('deriveTrackerTokenInsights', () => {
-  const token: McapTrackingData = {
+function baseToken(overrides: Partial<McapTrackingData> = {}): McapTrackingData {
+  return {
     token_address: 'a',
     token_symbol: 'ALONE',
     first_mcap: 35_000,
@@ -31,10 +23,132 @@ describe('deriveTrackerTokenInsights', () => {
     when_reach_120pct: new Date(Date.now() - 20 * 60_000).toISOString(),
     when_reach_200pct: null,
     solPerToken: { first: 1, current: 2, growth: 100 },
+    ...overrides,
   }
+}
+
+describe('formatScore0To100', () => {
+  it('formats 0-100 without percent suffix', () => {
+    expect(formatScore0To100(72)).toBe('72/100')
+    expect(formatScore0To100(8000)).toBe('100/100')
+  })
+
+  it('returns dash-per-100 for invalid / thin', () => {
+    expect(formatScore0To100(null)).toBe('—/100')
+  })
+})
+
+describe('computeRiskScore / thin data', () => {
+  it('thin data (no price or volume) → Unknown, not High 100', () => {
+    const token = baseToken({ current_mcap: 20_000 })
+    expect(computeRiskScore(token)).toBeNull()
+    const insights = deriveTrackerTokenInsights(token)
+    expect(insights.dataQuality).toBe('thin')
+    expect(insights.riskScore).toBeNull()
+    expect(insights.riskLabel).toBe('Unknown')
+    expect(insights.riskLabel).not.toBe('High')
+    expect(formatScore0To100(insights.riskScore)).toBe('—/100')
+  })
+
+  it('does not treat low mcap alone as High when price/volume missing', () => {
+    const token = baseToken({ current_mcap: 8_000, _live_price_usd: 0 })
+    const analytics = {
+      token_address: 'a',
+      token_symbol: 'ALONE',
+      first_mcap: 8_000,
+      current_mcap: 8_000,
+      mcap_growth_percent: 0,
+      first_seen_at: token.first_seen_at,
+      last_updated_at: token.last_updated_at,
+      current_price_usd: 0,
+    } as EnrichedTokenData
+    const insights = deriveTrackerTokenInsights(token, analytics)
+    expect(insights.dataQuality).toBe('thin')
+    expect(insights.riskScore).toBeNull()
+    expect(insights.riskLabel).toBe('Unknown')
+  })
+
+  it('low mcap adds risk only when price or volume is present', () => {
+    const token = baseToken({ current_mcap: 20_000, mcap_growth_percent: 10 })
+    const withPrice = deriveTrackerTokenInsights(token, {
+      current_price_usd: 0.00012,
+    } as EnrichedTokenData)
+    expect(withPrice.dataQuality).toBe('ok')
+    expect(withPrice.riskScore).not.toBeNull()
+    expect(withPrice.riskScore as number).toBeGreaterThanOrEqual(70)
+    expect(withPrice.riskLabel).toBe('High')
+
+    const withVolOnly = deriveTrackerTokenInsights(token, {
+      current_price_usd: 0,
+      volume_24h: 5_000,
+    } as EnrichedTokenData)
+    expect(withVolOnly.dataQuality).toBe('ok')
+    expect(withVolOnly.riskScore).not.toBeNull()
+  })
+})
+
+describe('deriveTrackerTokenInsights decisions', () => {
+  const nowMs = Date.parse('2026-09-21T12:00:00.000Z')
+
+  it('drop stamp → skip', () => {
+    const insights = deriveTrackerTokenInsights(
+      baseToken({
+        when_drop_40pct: '2026-09-21T11:50:00.000Z',
+        first_seen_at: '2026-09-21T11:40:00.000Z',
+      }),
+      { current_price_usd: 0.01 } as EnrichedTokenData,
+      { combined: 0.9, nowMs },
+    )
+    expect(insights.decision).toBe('skip')
+    expect(insights.reason).toContain('dropped −40%')
+    expect(insights.rugSignal).toBe(true)
+    expect(insights.milestoneLabels).toContain('-40%')
+  })
+
+  it('age ≤45m + combined 0.5 → catch', () => {
+    const insights = deriveTrackerTokenInsights(
+      baseToken({
+        first_seen_at: '2026-09-21T11:40:00.000Z',
+        when_drop_40pct: null,
+        when_drop_80pct: null,
+        mcap_growth_percent: 20,
+      }),
+      { current_price_usd: 0.01 } as EnrichedTokenData,
+      { combined: 0.5, nowMs },
+    )
+    expect(insights.trackingAgeHours * 60).toBeLessThanOrEqual(45)
+    expect(insights.decision).toBe('catch')
+    expect(formatTrackerDecisionLine(insights)).toMatch(
+      /Decision: catch — first_seen \d+m · combined 0\.50/,
+    )
+  })
+
+  it('thin data + age > 30m → skip', () => {
+    const insights = deriveTrackerTokenInsights(
+      baseToken({ first_seen_at: '2026-09-21T11:00:00.000Z' }),
+      undefined,
+      { nowMs },
+    )
+    expect(insights.dataQuality).toBe('thin')
+    expect(insights.decision).toBe('skip')
+    expect(insights.reason).toMatch(/thin data/)
+  })
+
+  it('combined < 0.25 when score available → skip', () => {
+    const insights = deriveTrackerTokenInsights(
+      baseToken({
+        first_seen_at: '2026-09-21T11:40:00.000Z',
+        when_drop_40pct: null,
+      }),
+      { current_price_usd: 0.01 } as EnrichedTokenData,
+      { combined: 0.18, nowMs },
+    )
+    expect(insights.decision).toBe('skip')
+    expect(insights.reason).toBe('combined 0.18')
+  })
 
   it('counts milestones only when growth supports them', () => {
-    const insights = deriveTrackerTokenInsights(token)
+    const insights = deriveTrackerTokenInsights(baseToken())
     expect(insights.milestonesReached).toBe(2)
     expect(insights.riskLabel).toBe(riskLabelFromScore(insights.riskScore))
     expect(formatTrackingAge(insights.trackingAgeHours)).toMatch(/h|m/)
@@ -42,12 +156,21 @@ describe('deriveTrackerTokenInsights', () => {
 
   it('includes drop and peak labels in milestone list', () => {
     const insights = deriveTrackerTokenInsights({
-      ...token,
+      ...baseToken(),
       when_drop_40pct: new Date().toISOString(),
       peak_growth_percent: 150,
       peak_seen_at: new Date().toISOString(),
     })
     expect(insights.milestoneLabels).toContain('-40%')
     expect(insights.milestoneLabels.some((l) => l.startsWith('peak'))).toBe(true)
+  })
+
+  it('shows momentum unknown when analytics are thin, not negative', () => {
+    const insights = deriveTrackerTokenInsights(
+      baseToken({ mcap_growth_percent: -40 }),
+    )
+    expect(insights.dataQuality).toBe('thin')
+    expect(insights.momentumLabel).toBe('unknown')
+    expect(insights.liquidityLabel).toBe('unknown')
   })
 })
