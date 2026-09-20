@@ -51,7 +51,9 @@ export function logOhlcRugCounterfactual(input: {
 
 /**
  * OHLC rug hard-rules as first-check shadow on entry features.
+ * Bars come from getCachedTokenOhlc24h1m (brain 1m when MARKET_BRAIN_OHLC is on).
  * Default enforce=false — never blocks. Flip enforce later to hard-reject.
+ * Correlation / Freeview outcome paint stays on buy_bulk.
  */
 export async function attachOhlcRugShadow(
   tokenAddress: string,

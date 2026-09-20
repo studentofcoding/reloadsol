@@ -239,7 +239,7 @@ Copy from [`.env.docker.example`](.env.docker.example). Key groups:
 
 ### Market-brain (optional)
 
-Read-only client for [market-brain](https://market-brain.yonathanevanchristy.workers.dev) lists + recipes + `/regime/params`. Universe plugs default off. Sim-open **risk** (sizeScale / TP / SL / hold) still resolves when a read token is set — independent of `MARKET_BRAIN_*` membership flags when an active recipe exists. Does not change live execute.
+Read-only client for [market-brain](https://market-brain.yonathanevanchristy.workers.dev) lists + recipes + `/regime/params` + `/ohlc`. Universe plugs default off. OHLC prefers brain when a read token is set (set `MARKET_BRAIN_OHLC=0` to keep SolanaTracker/GMGN). Sim-open **risk** (sizeScale / TP / SL / hold) still resolves when a read token is set — independent of `MARKET_BRAIN_*` membership flags when an active recipe exists. Does not change live execute.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -249,6 +249,7 @@ Read-only client for [market-brain](https://market-brain.yonathanevanchristy.wor
 | `MARKET_BRAIN_TRENDING` | off | `1` intersects trending-assign Jupiter `toptrending/1h` with `GET /union` (membership). Skipped if the token is missing. |
 | `MARKET_BRAIN_MCAP` | off | `1` intersects mcap sim-track opens with `GET /union` (membership) and default recipe gates (mcap≥50k, liq≥10k, climateSafe). Does not change live execute. Skipped if the token is missing. |
 | `MARKET_BRAIN_SIGNALS` | off | `1` intersects signals sim-track enter candidates with `GET /union` (or the matching signals recipe universe) and default recipe gates. Skipped if the token is missing. |
+| `MARKET_BRAIN_OHLC` | on when token set | Prefer `GET /ohlc` (Bearer) for Freeview / token-chart / rug-shadow 1m bars. Falls back to SolanaTracker/GMGN on 5xx/timeout. Set `0` to force the local path. |
 
 **Sim-open risk order** (first-cut mcap / trending-assign / signals):
 
@@ -258,7 +259,7 @@ Read-only client for [market-brain](https://market-brain.yonathanevanchristy.wor
 
 `sizeScale` multiplies size; `0` is stand-down (skip new sim opens).
 
-Smoke: `GET /health` is public. Authenticated `GET /union` / `/jupiter` / `/bubble` / `/recipes` / `/regime/params?profile=default` need `Authorization: Bearer $MARKET_BRAIN_TOKEN`. Recipe writes need `Authorization: Bearer $MARKET_BRAIN_ADMIN_TOKEN`.
+Smoke: `GET /health` is public. Authenticated `GET /union` / `/jupiter` / `/bubble` / `/recipes` / `/regime/params?profile=default` / `/ohlc` / `/ohlc/patterns` need `Authorization: Bearer $MARKET_BRAIN_TOKEN`. Recipe writes need `Authorization: Bearer $MARKET_BRAIN_ADMIN_TOKEN`.
 
 Seed known-winner recipes (`mcap_enter_first_seen`, `mcap_enter_at_80`, `signals_sell_over_100`) as active fat payloads (union universe, default gates, `profileId: default`, embedded risk grid, **no bmScore**):
 
@@ -282,7 +283,7 @@ npx tsx scripts/seed-brain-recipes.ts --tidy --dry-run  # plan only (needs local
 
 `strategy_search` runs this tidy each cycle (skips a canonical id just promoted). Stats `n` / avg PnL are the same 28-day fitness window the search cycle already uses (`closes` / `expectancyPct`).
 
-Unit tests: `npx vitest run src/utils/brain-gates.test.ts src/utils/market-brain.test.ts src/utils/brain-recipe-sync.test.ts src/utils/brain-union-universe.test.ts src/utils/brain-regime-risk.test.ts src/strategies/trending-track/brain-universe.test.ts src/strategies/mcap-track/brain-universe.test.ts src/strategies/signals/brain-universe.test.ts`.
+Unit tests: `npx vitest run src/utils/brain-gates.test.ts src/utils/market-brain.test.ts src/utils/brain-recipe-sync.test.ts src/utils/brain-union-universe.test.ts src/utils/brain-regime-risk.test.ts src/strategies/token-map-chart.test.ts src/strategies/trending-track/brain-universe.test.ts src/strategies/mcap-track/brain-universe.test.ts src/strategies/signals/brain-universe.test.ts`.
 
 Smoke (opt-in, fail-soft without a token):
 

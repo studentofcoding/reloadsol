@@ -1,21 +1,29 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_MARKET_BRAIN_URL,
+  brainOhlcSourceLabel,
+  buildBrainOhlcQuery,
   fetchBrainJson,
+  fetchBrainOhlc,
+  fetchBrainOhlcPatterns,
   fetchBrainRecipe,
   fetchBrainRecipes,
   fetchBrainRegimeParams,
   fetchBrainUnion,
   isMarketBrainConfigured,
   isMarketBrainMcapEnabled,
+  isMarketBrainOhlcEnabled,
   isMarketBrainSignalsEnabled,
   isMarketBrainTrendingEnabled,
   marketBrainMcapSkipReason,
+  marketBrainOhlcSkipReason,
   marketBrainSignalsSkipReason,
   marketBrainTrendingSkipReason,
   parseBrainListPayload,
+  parseBrainOhlcResponse,
   parseLegoRecipe,
   parseRegimeParams,
+  shouldFallbackBrainOhlc,
 } from '@/utils/market-brain'
 
 afterEach(() => {
@@ -61,6 +69,29 @@ describe('market-brain config', () => {
     expect(marketBrainMcapSkipReason()).toBeNull()
     expect(isMarketBrainSignalsEnabled()).toBe(true)
     expect(marketBrainSignalsSkipReason()).toBeNull()
+  })
+
+  it('enables OHLC by default when a read token is set', () => {
+    vi.stubEnv('MARKET_BRAIN_TOKEN', '')
+    vi.stubEnv('MARKET_BRAIN_OHLC', '')
+    expect(isMarketBrainOhlcEnabled()).toBe(false)
+    expect(marketBrainOhlcSkipReason()).toBeNull()
+
+    vi.stubEnv('MARKET_BRAIN_TOKEN', 'read-token')
+    expect(isMarketBrainOhlcEnabled()).toBe(true)
+
+    vi.stubEnv('MARKET_BRAIN_OHLC', '0')
+    expect(isMarketBrainOhlcEnabled()).toBe(false)
+
+    vi.stubEnv('MARKET_BRAIN_OHLC', '1')
+    expect(isMarketBrainOhlcEnabled()).toBe(true)
+  })
+
+  it('reports OHLC skip reason only when the flag is explicit and token is missing', () => {
+    vi.stubEnv('MARKET_BRAIN_TOKEN', '')
+    vi.stubEnv('MARKET_BRAIN_OHLC', '1')
+    expect(isMarketBrainOhlcEnabled()).toBe(false)
+    expect(marketBrainOhlcSkipReason()).toMatch(/MARKET_BRAIN_TOKEN is not set/)
   })
 })
 
@@ -212,6 +243,146 @@ describe('fetchBrainJson fail-soft', () => {
     if (!list.ok || !one.ok) throw new Error('expected ok')
     expect(list.data[0]?.id).toBe('r1')
     expect(one.data.id).toBe('r1')
+  })
+})
+
+describe('brain OHLC client', () => {
+  it('parses TokenOhlcBar-shaped candles and ms timestamps', () => {
+    const parsed = parseBrainOhlcResponse({
+      mint: 'MintA',
+      chain: 'sol',
+      interval: '1m',
+      from: 1,
+      to: 2,
+      source: 'solanatracker',
+      generatedAt: '2026-09-20T00:00:00.000Z',
+      candles: [
+        { time: 1_700_000_000_000, open: 1, high: 2, low: 0.5, close: 1.5, volume: 9 },
+        { t: 1_700_000_060, o: 1.5, h: 2, l: 1, c: 1.2 },
+      ],
+    })
+    expect(parsed).toMatchObject({
+      mint: 'MintA',
+      chain: 'sol',
+      interval: '1m',
+      source: 'solanatracker',
+    })
+    expect(parsed?.candles).toEqual([
+      { time: 1_700_000_000, open: 1, high: 2, low: 0.5, close: 1.5, volume: 9 },
+      { time: 1_700_000_060, open: 1.5, high: 2, low: 1, close: 1.2 },
+    ])
+    expect(brainOhlcSourceLabel(parsed?.source)).toBe('brain:solanatracker')
+  })
+
+  it('builds hours vs from/to query strings', () => {
+    expect(buildBrainOhlcQuery({ mint: 'MintA', chain: 'sol', interval: '1m', hours: 24 })).toBe(
+      'mint=MintA&chain=sol&interval=1m&hours=24',
+    )
+    expect(
+      buildBrainOhlcQuery({
+        mint: 'MintA',
+        interval: '1m',
+        from: 10,
+        to: 20,
+        includePatterns: true,
+      }),
+    ).toBe('mint=MintA&interval=1m&from=10&to=20&include=patterns')
+  })
+
+  it('falls back on 5xx, timeout-shaped errors, and empty candles', () => {
+    expect(
+      shouldFallbackBrainOhlc({ ok: false, error: 'timeout', path: '/ohlc' }),
+    ).toBe(true)
+    expect(
+      shouldFallbackBrainOhlc({
+        ok: false,
+        error: 'HTTP 502',
+        status: 502,
+        path: '/ohlc',
+      }),
+    ).toBe(true)
+    expect(
+      shouldFallbackBrainOhlc({
+        ok: true,
+        status: 200,
+        data: { candles: [] },
+      }),
+    ).toBe(true)
+    expect(
+      shouldFallbackBrainOhlc({
+        ok: true,
+        status: 200,
+        data: { candles: [{ time: 1 }] },
+      }),
+    ).toBe(false)
+  })
+
+  it('GETs /ohlc with bearer and parses candles', async () => {
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      expect(String(url)).toBe(
+        `${DEFAULT_MARKET_BRAIN_URL}/ohlc?mint=MintA&chain=sol&interval=1m&hours=24`,
+      )
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer t' })
+      return jsonResponse({
+        mint: 'MintA',
+        chain: 'sol',
+        interval: '1m',
+        source: 'cache',
+        candles: [{ time: 10, open: 1, high: 1, low: 1, close: 1 }],
+      })
+    })
+    const result = await fetchBrainOhlc(
+      { mint: 'MintA', chain: 'sol', interval: '1m', hours: 24 },
+      { token: 't', fetchImpl },
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('expected ok')
+    expect(result.data.candles).toHaveLength(1)
+    expect(result.data.source).toBe('cache')
+  })
+
+  it('GETs /ohlc/patterns and maps rug features', async () => {
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      expect(String(url)).toContain('/ohlc/patterns?mint=MintA')
+      return jsonResponse({
+        rug: {
+          trip: true,
+          features: {
+            n: 2,
+            dumpPct: 0.5,
+            avgUpperWick: 0.1,
+            wickTripBars: 0,
+            volDeathRatio: null,
+          },
+          hits: [
+            {
+              id: 'dump_10m',
+              label: 'Dump',
+              value: 0.5,
+              threshold: 0.4,
+              passed: true,
+            },
+          ],
+        },
+      })
+    })
+    const result = await fetchBrainOhlcPatterns({ mint: 'MintA' }, { token: 't', fetchImpl })
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('expected ok')
+    expect(result.data.rug.trip).toBe(true)
+    expect(result.data.rug.features.dumpPct).toBe(0.5)
+    expect(result.data.rug.hits[0]?.id).toBe('dump_10m')
+  })
+
+  it('does not put the bearer token in /ohlc error text', async () => {
+    const token = 'super-secret-ohlc-token'
+    const fetchImpl = vi.fn(async () => jsonResponse({ error: 'unauthorized' }, 401))
+    const result = await fetchBrainOhlc({ mint: 'MintA' }, { token, fetchImpl })
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('expected failure')
+    expect(result.error).toMatch(/unauthorized/)
+    expect(result.error).not.toContain(token)
+    expect(result.status).toBe(401)
   })
 })
 
