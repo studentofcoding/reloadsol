@@ -53,6 +53,7 @@ type CliArgs = {
   dryRun: boolean
   domain?: string
   strategyId?: string
+  principals?: boolean
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -64,6 +65,8 @@ function parseArgs(argv: string[]): CliArgs {
       args.domain = arg.slice('--domain='.length)
     } else if (arg.startsWith('--strategy-id=')) {
       args.strategyId = arg.slice('--strategy-id='.length)
+    } else if (arg === '--principals') {
+      args.principals = true
     } else if (arg === '--help' || arg === '-h') {
       console.log(`Usage: npx tsx scripts/backfill-ml-labels.ts [options]
 
@@ -71,6 +74,7 @@ Options:
   --dry-run              Preview class counts without writing
   --domain=DOMAIN        Filter by strategy domain (e.g. trending_bot)
   --strategy-id=ID       Filter by strategy id (e.g. att)
+  --principals           Only mcap_enter_first_seen / mcap_enter_at_80 (+ RH)
   -h, --help             Show this help
 `)
       process.exit(0)
@@ -112,9 +116,11 @@ async function main(): Promise<void> {
   console.log(`  mode: ${args.dryRun ? 'dry-run (preview only)' : 'persist'}`)
   console.log('')
 
+  const { CLOSED_LOOP_PRINCIPAL_IDS } = await import('../src/strategies/closed-loop-ml')
   const result = await backfillOutcomeLabels({
     domain: args.domain as import('../src/strategies/types').StrategyDomain | undefined,
-    strategyId: args.strategyId,
+    strategyId: args.principals ? undefined : args.strategyId,
+    strategyIds: args.principals ? [...CLOSED_LOOP_PRINCIPAL_IDS] : undefined,
     dryRun: args.dryRun,
   })
 

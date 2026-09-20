@@ -76,6 +76,8 @@ describe('applyAutoOutcomeLabels', () => {
       'won',
     )
     expect(result.training_class).toBe(1)
+    expect(result.ml_win).toBe(1)
+    expect(result.ml_r_bucket).toBe(1)
     expect(result.ml_label).toBe('interesting')
     expect(typeof result.ml_note).toBe('string')
     expect(result.ml_note).toContain('class=1')
@@ -84,6 +86,8 @@ describe('applyAutoOutcomeLabels', () => {
   it('sets class 0 for skip tier', () => {
     const result = applyAutoOutcomeLabels({}, -10, 'lost')
     expect(result.training_class).toBe(0)
+    expect(result.ml_win).toBe(0)
+    expect(result.ml_r_bucket).toBe(0)
     expect(result.ml_label).toBe('skip')
   })
 

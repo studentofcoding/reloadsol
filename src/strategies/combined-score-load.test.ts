@@ -204,4 +204,36 @@ describe('loadCombinedScore', () => {
     expect(payload.weights.principal).toBe(1)
     expect(payload.combined).toBeCloseTo(0.3)
   })
+
+  it('leaves combined unchanged when ML_CLOSED_LOOP is off', async () => {
+    delete process.env.ML_CLOSED_LOOP
+    const scoreClosedLoop = vi.fn(async () => ({ mlScore: 0.99, modelVersion: 'x' }))
+    const payload = await loadCombinedScore({
+      address: MINT,
+      chain: 'sol',
+      hours: 24,
+      deps: {
+        nowMs: NOW,
+        locateTokenByAddress: vi.fn(async () => locateWithMcap()),
+        loadTokenMapChart: vi.fn(async () => emptyChart()),
+        fetchBrainOhlcPatterns: vi.fn(async () => ({
+          ok: false as const,
+          error: 'down',
+          path: '/ohlc/patterns',
+        })),
+        fetchBrainOhlc: vi.fn(async () => ({
+          ok: false as const,
+          error: 'down',
+          path: '/ohlc',
+        })),
+        loadCombinedScoreWeights: weightsDep(),
+        scoreClosedLoop,
+      },
+    })
+    expect(scoreClosedLoop).not.toHaveBeenCalled()
+    expect(payload.mlScore).toBeNull()
+    expect(payload.combined).toBeCloseTo(
+      0.55 * 0.3 + 0.2 * 0 + 0.15 * 0 + 0.1 * 0.5,
+    )
+  })
 })

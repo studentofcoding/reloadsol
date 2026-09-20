@@ -24,6 +24,7 @@ import {
   parseOptionalFloat,
 } from "@/components/strategies/StrategyConfigFields";
 import OutcomeReviewModal, {
+  OutcomeClosedLoopPredictBadge,
   OutcomeExitOverlayBadge,
   OutcomeGateMlBadge,
   OutcomeMlBadge,
@@ -32,6 +33,7 @@ import OutcomeReviewModal, {
   OutcomePotentialMlBadge,
 } from "@/components/strategies/OutcomeReviewModal";
 import CombinedScoreWeightsPanel from "@/components/strategies/CombinedScoreWeightsPanel";
+import EvalEnginePanel from "@/components/strategies/EvalEnginePanel";
 import Ml2ExitOverlayPanel from "@/components/strategies/Ml2ExitOverlayPanel";
 import StrategyReviewPanel from "@/components/strategies/StrategyReviewPanel";
 import ScrollableMenuRow from "@/components/ScrollableMenuRow";
@@ -1702,6 +1704,9 @@ export default function StrategyAdminHub() {
                         <th className="p-2">PnL%</th>
                         <th className="p-2">Status</th>
                         <th className="p-2">ML</th>
+                        <th className="p-2" title="Closed-loop shadow prediction vs actual label">
+                          Predict
+                        </th>
                         <th className="p-2" title="Pattern-gate shadow score at entry">
                           Pattern ML
                         </th>
@@ -1807,6 +1812,12 @@ export default function StrategyAdminHub() {
                                 <span className="inline-block w-3 h-3 border border-gray-400 border-t-transparent rounded-full animate-spin" />
                               )}
                             </div>
+                          </td>
+                          <td className="p-2">
+                            <OutcomeClosedLoopPredictBadge
+                              features={o.features}
+                              prediction={o.ml_prediction}
+                            />
                           </td>
                           <td className="p-2">
                             <OutcomePatternMlBadge features={o.features} />
@@ -3265,6 +3276,9 @@ function StrategyConfigTab({
   return (
     <>
       <CombinedScoreWeightsPanel
+        onNotify={(kind, title, detail) => onToast(kind, title, detail ?? "")}
+      />
+      <EvalEnginePanel
         onNotify={(kind, title, detail) => onToast(kind, title, detail ?? "")}
       />
       <Ml2ExitOverlayPanel

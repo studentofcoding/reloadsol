@@ -17,6 +17,12 @@ import {
 } from '@/strategies/combined-score'
 import { loadCombinedScoreWeights } from '@/strategies/combined-score-weights'
 import {
+  extractClosedLoopFeaturesFromSnapshot,
+  inferClosedLoopScore,
+  isMlClosedLoopEnabled,
+} from '@/strategies/closed-loop-ml'
+import { loadClosedLoopModel } from '@/strategies/closed-loop-ml-cache'
+import {
   fetchBrainOhlc,
   fetchBrainOhlcPatterns,
   type BrainOhlcPatternSummary,
@@ -29,6 +35,13 @@ export type CombinedScoreLoadDeps = {
   fetchBrainOhlcPatterns?: typeof fetchBrainOhlcPatterns
   fetchBrainOhlc?: typeof fetchBrainOhlc
   loadCombinedScoreWeights?: typeof loadCombinedScoreWeights
+  scoreClosedLoop?: (input: {
+    parts: CombinedScoreResponse['parts']
+    adjusters: CombinedScoreResponse['adjusters']
+    principals: CombinedScoreResponse['principals']
+    combined: number
+    rugTrip?: boolean
+  }) => Promise<{ mlScore: number | null; modelVersion: string | null }>
   nowMs?: number
 }
 
@@ -137,7 +150,7 @@ export async function loadCombinedScore(params: {
     weights = { ...COMBINED_SCORE_WEIGHTS }
   }
 
-  return assembleCombinedScore({
+  const base = assembleCombinedScore({
     mint: params.address,
     chain: params.chain,
     hours: params.hours,
@@ -149,4 +162,67 @@ export async function loadCombinedScore(params: {
     ohlcSource: ohlc.source,
     weights,
   })
+
+  if (!isMlClosedLoopEnabled()) {
+    return { ...base, mlScore: null, modelVersion: null }
+  }
+
+  let mlScore: number | null = null
+  let modelVersion: string | null = null
+  try {
+    const scored = deps.scoreClosedLoop
+      ? await deps.scoreClosedLoop({
+          parts: base.parts,
+          adjusters: base.adjusters,
+          principals: base.principals,
+          combined: base.combined,
+          rugTrip: base.rugTrip,
+        })
+      : scoreClosedLoopFromCombined(base)
+    mlScore = scored.mlScore
+    modelVersion = scored.modelVersion
+  } catch {
+    mlScore = null
+    modelVersion = null
+  }
+
+  return assembleCombinedScore({
+    mint: params.address,
+    chain: params.chain,
+    hours: params.hours,
+    nowMs,
+    locate,
+    outcomes,
+    ohlcPatterns: ohlc.patterns,
+    ohlcFailed: ohlc.failed,
+    ohlcSource: ohlc.source,
+    weights,
+    mlScore,
+    modelVersion,
+    generatedAt: base.generatedAt,
+  })
+}
+
+export function scoreClosedLoopFromCombined(
+  payload: Pick<
+    CombinedScoreResponse,
+    'parts' | 'adjusters' | 'principals' | 'combined' | 'rugTrip'
+  >,
+): { mlScore: number | null; modelVersion: string | null } {
+  const model = loadClosedLoopModel()
+  if (!model) return { mlScore: null, modelVersion: null }
+  const milestone80 = payload.principals.some(
+    (row) => row.strategyId === 'mcap_enter_at_80' && row.present,
+  )
+  const features = extractClosedLoopFeaturesFromSnapshot({
+    parts: payload.parts,
+    combinedBase: payload.combined,
+    rugTrip: payload.rugTrip,
+    adjusters: payload.adjusters,
+    milestone80,
+  })
+  return {
+    mlScore: inferClosedLoopScore(features, model),
+    modelVersion: model.version,
+  }
 }

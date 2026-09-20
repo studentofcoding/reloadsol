@@ -141,6 +141,7 @@ function getTrackerTableName(): string {
 
 type OutcomeFilterParams = {
   strategyId?: string
+  strategyIds?: string[]
   domain?: StrategyDomain
   chain?: StrategyChain
   isSimulated?: boolean
@@ -162,7 +163,10 @@ function buildOutcomeWhereClause(params: OutcomeFilterParams): {
   const conditions: string[] = []
   const values: unknown[] = []
 
-  if (params.strategyId) {
+  if (params.strategyIds && params.strategyIds.length > 0) {
+    values.push(params.strategyIds)
+    conditions.push(`strategy_id = ANY($${values.length}::text[])`)
+  } else if (params.strategyId) {
     values.push(params.strategyId)
     conditions.push(`strategy_id = $${values.length}`)
   }
@@ -585,6 +589,22 @@ export async function insertStrategyOutcome(params: {
     if (params.token_address && outcomeId) {
       const { scheduleEpisodeFinalize } = await import('@/strategies/strategy-episodes')
       scheduleEpisodeFinalize(params.token_address, outcomeId)
+      try {
+        const { resolvePredictionsForClosedOutcome } = await import('./eval-engine-db')
+        await resolvePredictionsForClosedOutcome({
+          outcomeId,
+          mint: params.token_address,
+          strategyId: params.strategy_id,
+          features,
+          pnlPct: params.pnl_pct ?? null,
+          status: params.status ?? null,
+        })
+      } catch (error) {
+        console.warn(
+          '[strategies/db] resolve ML predictions failed:',
+          errorMessage(error),
+        )
+      }
     }
   } catch (error) {
     if (isMissingSchemaError(error)) {
@@ -666,7 +686,13 @@ export async function listStrategyOutcomes(params: {
   )
   const page = deduped.slice(offset, offset + limit)
   const enriched = await enrichOutcomeSymbols(page)
-  return { rows: enriched, total }
+  try {
+    const { attachMlPredictionsToOutcomes } = await import('./eval-engine-db')
+    const withPreds = await attachMlPredictionsToOutcomes(enriched)
+    return { rows: withPreds, total }
+  } catch {
+    return { rows: enriched, total }
+  }
 }
 
 export type RecentStrategyToken = {
@@ -736,10 +762,12 @@ export async function listRecentStrategyTokens(
 export async function loadOutcomesForMlDataset(params?: {
   domain?: StrategyDomain
   strategyId?: string
+  strategyIds?: string[]
 }): Promise<StrategyOutcomeRow[]> {
   const { sql: whereSql, values } = buildOutcomeWhereClause({
     domain: params?.domain,
     strategyId: params?.strategyId,
+    strategyIds: params?.strategyIds,
   })
 
   let rows: StrategyOutcomeRow[]
@@ -763,6 +791,7 @@ export async function loadOutcomesForMlDataset(params?: {
 export async function backfillOutcomeLabels(params?: {
   domain?: StrategyDomain
   strategyId?: string
+  strategyIds?: string[]
   dryRun?: boolean
 }): Promise<{
   updated: number
@@ -772,6 +801,7 @@ export async function backfillOutcomeLabels(params?: {
   const rows = await loadOutcomesForMlDataset({
     domain: params?.domain,
     strategyId: params?.strategyId,
+    strategyIds: params?.strategyIds,
   })
 
   const preview: Record<'0' | '1' | '2' | '3' | '4' | 'null', number> = {
@@ -807,6 +837,24 @@ export async function backfillOutcomeLabels(params?: {
         [row.id, JSON.stringify(nextFeatures)],
       )
       updated += 1
+      if (row.token_address) {
+        try {
+          const { resolvePredictionsForClosedOutcome } = await import('./eval-engine-db')
+          await resolvePredictionsForClosedOutcome({
+            outcomeId: row.id,
+            mint: row.token_address,
+            strategyId: row.strategy_id,
+            features: nextFeatures,
+            pnlPct: row.pnl_pct,
+            status: row.status,
+          })
+        } catch (error) {
+          console.warn(
+            '[strategies/db] resolve ML predictions on backfill failed:',
+            errorMessage(error),
+          )
+        }
+      }
     } catch (error) {
       console.warn(
         '[strategies/db] backfillOutcomeLabels update failed:',

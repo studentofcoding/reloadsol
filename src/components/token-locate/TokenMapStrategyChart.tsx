@@ -181,6 +181,7 @@ export default function TokenMapStrategyChart({
   const [lastPrice, setLastPrice] = useState<number | null>(null)
   const [corr, setCorr] = useState<number | null>(null)
   const [combined, setCombined] = useState<number | null>(null)
+  const [mlScore, setMlScore] = useState<number | null>(null)
   const [enabledDomains, setEnabledDomains] = useState<Set<TokenMapDomain>>(
     () => new Set(TOGGLE_DOMAINS),
   )
@@ -434,9 +435,14 @@ export default function TokenMapStrategyChart({
     })
     if (chain) qs.set('chain', chain)
     const ac = new AbortController()
+    setMlScore(null)
     void fetch(`/api/strategies/combined-score?${qs}`, { signal: ac.signal })
       .then(async (res) => {
-        const json = (await res.json()) as { success?: boolean; combined?: number }
+        const json = (await res.json()) as {
+          success?: boolean
+          combined?: number
+          mlScore?: number | null
+        }
         if (
           res.ok &&
           json.success &&
@@ -444,6 +450,11 @@ export default function TokenMapStrategyChart({
           Number.isFinite(json.combined)
         ) {
           setCombined(json.combined)
+        }
+        if (res.ok && json.success && typeof json.mlScore === 'number' && Number.isFinite(json.mlScore)) {
+          setMlScore(json.mlScore)
+        } else {
+          setMlScore(null)
         }
       })
       .catch(() => {
@@ -477,6 +488,14 @@ export default function TokenMapStrategyChart({
               title="Principal + adjuster combined score"
             >
               Combined score {combined.toFixed(2)}
+            </span>
+          ) : null}
+          {mlScore != null ? (
+            <span
+              className="text-xs text-sky-300/90 shrink-0"
+              title="Closed-loop entry-pattern mlScore"
+            >
+              mlScore {mlScore.toFixed(2)}
             </span>
           ) : null}
         </div>

@@ -9,6 +9,7 @@ import {
   combineParts,
   jaccardScoreForFormula,
   parseCombinedScoreWeights,
+  resolveCombinedScoreWeights,
   scoreAdjusterPresence,
   scoreOhlcPattern,
   scorePrincipal,
@@ -97,6 +98,27 @@ describe('validateCombinedScoreWeights', () => {
       result.weights.adjusterPresence +
       result.weights.jaccard +
       result.weights.ohlcPattern
+    expect(sum).toBeCloseTo(1)
+  })
+
+  it('accepts an optional ml key and renormalizes five weights', () => {
+    const result = validateCombinedScoreWeights({
+      principal: 0.55,
+      adjusterPresence: 0.2,
+      jaccard: 0.15,
+      ohlcPattern: 0.1,
+      ml: 0.1,
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('expected ok')
+    expect(result.renormalized).toBe(true)
+    expect(result.weights.ml).toBeCloseTo(0.1 / 1.1)
+    const sum =
+      result.weights.principal +
+      result.weights.adjusterPresence +
+      result.weights.jaccard +
+      result.weights.ohlcPattern +
+      (result.weights.ml ?? 0)
     expect(sum).toBeCloseTo(1)
   })
 
@@ -263,6 +285,22 @@ describe('scorePrincipal', () => {
   })
 })
 
+describe('resolveCombinedScoreWeights', () => {
+  it('leaves the four-key formula unchanged when mlScore is missing', () => {
+    const resolved = resolveCombinedScoreWeights(
+      { ...COMBINED_SCORE_WEIGHTS, ml: 0.25 },
+      null,
+    )
+    expect(resolved.ml).toBeUndefined()
+    expect(resolved.principal).toBeCloseTo(0.55)
+  })
+
+  it('applies the default ml weight when a score exists and ml was omitted', () => {
+    const resolved = resolveCombinedScoreWeights({ ...COMBINED_SCORE_WEIGHTS }, 0.8)
+    expect(resolved.ml).toBeCloseTo(0.1 / 1.1)
+  })
+})
+
 describe('combineParts / assembleCombinedScore', () => {
   it('uses stored weights when they are provided', () => {
     const payload = assembleCombinedScore({
@@ -298,6 +336,75 @@ describe('combineParts / assembleCombinedScore', () => {
       jaccard: 0,
       ohlcPattern: 0,
     })
+  })
+
+  it('leaves combined unchanged when mlScore is missing', () => {
+    const without = assembleCombinedScore({
+      mint: 'MintA',
+      chain: 'sol',
+      hours: 24,
+      nowMs: NOW,
+      locate: {
+        strategyPresence: [],
+        locations: {
+          trending: null,
+          mcap: { present: true },
+          signals: null,
+          social: null,
+        },
+      },
+      outcomes: [],
+      ohlcPatterns: null,
+      ohlcFailed: true,
+    })
+    const withNull = assembleCombinedScore({
+      mint: 'MintA',
+      chain: 'sol',
+      hours: 24,
+      nowMs: NOW,
+      locate: {
+        strategyPresence: [],
+        locations: {
+          trending: null,
+          mcap: { present: true },
+          signals: null,
+          social: null,
+        },
+      },
+      outcomes: [],
+      ohlcPatterns: null,
+      ohlcFailed: true,
+      mlScore: null,
+    })
+    expect(withNull.combined).toBe(without.combined)
+    expect(withNull.mlScore).toBeNull()
+  })
+
+  it('feeds mlScore into combined when present', () => {
+    const payload = assembleCombinedScore({
+      mint: 'MintA',
+      chain: 'sol',
+      hours: 24,
+      nowMs: NOW,
+      locate: {
+        strategyPresence: [],
+        locations: {
+          trending: null,
+          mcap: { present: true },
+          signals: null,
+          social: null,
+        },
+      },
+      outcomes: [],
+      ohlcPatterns: null,
+      ohlcFailed: true,
+      mlScore: 1,
+      modelVersion: 'cl-test',
+    })
+    expect(payload.mlScore).toBe(1)
+    expect(payload.modelVersion).toBe('cl-test')
+    expect(payload.weights.ml).toBeGreaterThan(0)
+    expect(payload.combined).toBeGreaterThan(0.2)
   })
 
   it('uses 0 for a null Jaccard in the weighted formula', () => {

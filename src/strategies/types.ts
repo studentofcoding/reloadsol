@@ -471,6 +471,16 @@ export interface StrategyOutcomeRow {
   is_simulated: boolean
   features: Record<string, unknown> | null
   created_at: string
+  /** Latest closed-loop shadow prediction for this mint/strategy, if any. */
+  ml_prediction?: {
+    predicted_label: 'win' | 'loss' | null
+    predicted_score: number | null
+    predicted_ml_win: boolean | null
+    model_version: string | null
+    actual_ml_win: boolean | null
+    correct: boolean | null
+    run_id: string | null
+  } | null
 }
 
 export type OutcomeMlLabel = 'skip' | 'interesting' | 'anomaly'

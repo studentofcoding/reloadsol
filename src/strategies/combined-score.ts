@@ -23,6 +23,9 @@ export const COMBINED_SCORE_WEIGHTS = {
   ohlcPattern: 0.1,
 } as const
 
+/** Applied only when a live mlScore exists and the operator did not set `ml`. */
+export const DEFAULT_ML_WEIGHT = 0.1
+
 export const PRINCIPAL_STRATEGY_IDS = [
   'mcap_enter_first_seen',
   'mcap_enter_at_80',
@@ -59,6 +62,8 @@ export type CombinedScoreWeights = {
   adjusterPresence: number
   jaccard: number
   ohlcPattern: number
+  /** Optional 5th key. Omitted in v1 defaults; renormalizes when present. */
+  ml?: number
 }
 
 export type CombinedScoreParts = {
@@ -91,6 +96,8 @@ export type CombinedScoreResponse = {
   adjusters: CombinedScoreAdjuster[]
   ohlcSource?: string
   rugTrip?: boolean
+  mlScore?: number | null
+  modelVersion?: string | null
   generatedAt: string
 }
 
@@ -117,15 +124,23 @@ export type CombinedScoreAssembleInput = {
   ohlcSource?: string
   /** Live operator weights; defaults when omitted. */
   weights?: CombinedScoreWeights
+  mlScore?: number | null
+  modelVersion?: string | null
 }
 
-export const COMBINED_SCORE_WEIGHT_KEYS = [
+export const COMBINED_SCORE_CORE_WEIGHT_KEYS = [
   'principal',
   'adjusterPresence',
   'jaccard',
   'ohlcPattern',
 ] as const
 
+export const COMBINED_SCORE_WEIGHT_KEYS = [
+  ...COMBINED_SCORE_CORE_WEIGHT_KEYS,
+  'ml',
+] as const
+
+export type CombinedScoreCoreWeightKey = (typeof COMBINED_SCORE_CORE_WEIGHT_KEYS)[number]
 export type CombinedScoreWeightKey = (typeof COMBINED_SCORE_WEIGHT_KEYS)[number]
 
 const WEIGHT_ALIASES: Record<CombinedScoreWeightKey, string[]> = {
@@ -133,6 +148,7 @@ const WEIGHT_ALIASES: Record<CombinedScoreWeightKey, string[]> = {
   adjusterPresence: ['adjusterPresence', 'adjuster_presence'],
   jaccard: ['jaccard'],
   ohlcPattern: ['ohlcPattern', 'ohlc_pattern'],
+  ml: ['ml', 'mlPattern', 'ml_pattern'],
 }
 
 const WEIGHT_SUM_EPS = 1e-9
@@ -182,7 +198,7 @@ export function validateCombinedScoreWeights(
   }
   const obj = raw as Record<string, unknown>
   const parsed = {} as CombinedScoreWeights
-  for (const key of COMBINED_SCORE_WEIGHT_KEYS) {
+  for (const key of COMBINED_SCORE_CORE_WEIGHT_KEYS) {
     const n = readCombinedScoreWeight(obj, key)
     if (n == null) {
       return { ok: false, error: `${key} must be a finite number ≥ 0` }
@@ -192,8 +208,17 @@ export function validateCombinedScoreWeights(
     }
     parsed[key] = n
   }
+  const mlRaw = readCombinedScoreWeight(obj, 'ml')
+  if (mlRaw != null) {
+    if (mlRaw < 0) return { ok: false, error: 'ml must be ≥ 0' }
+    parsed.ml = mlRaw
+  }
   const sumBefore =
-    parsed.principal + parsed.adjusterPresence + parsed.jaccard + parsed.ohlcPattern
+    parsed.principal +
+    parsed.adjusterPresence +
+    parsed.jaccard +
+    parsed.ohlcPattern +
+    (parsed.ml ?? 0)
   if (!(sumBefore > 0)) {
     return { ok: false, error: 'weights must sum to more than 0' }
   }
@@ -203,8 +228,34 @@ export function validateCombinedScoreWeights(
     adjusterPresence: parsed.adjusterPresence / sumBefore,
     jaccard: parsed.jaccard / sumBefore,
     ohlcPattern: parsed.ohlcPattern / sumBefore,
+    ...(parsed.ml != null ? { ml: parsed.ml / sumBefore } : {}),
   }
   return { ok: true, weights, renormalized, sumBefore }
+}
+
+/**
+ * When mlScore is missing, drop `ml` and renormalize the four core keys so
+ * combined is unchanged. When mlScore is present and `ml` was omitted, apply
+ * DEFAULT_ML_WEIGHT and renormalize. Explicit `ml: 0` keeps the four-key formula.
+ */
+export function resolveCombinedScoreWeights(
+  weights: CombinedScoreWeights,
+  mlScore: number | null | undefined,
+): CombinedScoreWeights {
+  const hasScore = mlScore != null && Number.isFinite(mlScore)
+  const core = {
+    principal: weights.principal,
+    adjusterPresence: weights.adjusterPresence,
+    jaccard: weights.jaccard,
+    ohlcPattern: weights.ohlcPattern,
+  }
+  if (!hasScore) {
+    return parseCombinedScoreWeights(core)
+  }
+  const ml =
+    weights.ml != null && Number.isFinite(weights.ml) ? weights.ml : DEFAULT_ML_WEIGHT
+  if (ml <= 0) return parseCombinedScoreWeights(core)
+  return parseCombinedScoreWeights({ ...core, ml })
 }
 
 /** Fail-soft parse for scoring: invalid / missing → v1 defaults. */
@@ -413,12 +464,19 @@ export function scoreOhlcPattern(
 export function combineParts(
   parts: CombinedScoreParts,
   weights: CombinedScoreWeights = COMBINED_SCORE_WEIGHTS,
+  mlScore?: number | null,
 ): number {
+  const mlW = weights.ml
+  const mlTerm =
+    mlW != null && mlW > 0 && mlScore != null && Number.isFinite(mlScore)
+      ? mlW * clamp01(mlScore)
+      : 0
   return roundScore(
     weights.principal * parts.principalScore +
       weights.adjusterPresence * parts.adjusterPresenceScore +
       weights.jaccard * jaccardScoreForFormula(parts.jaccardScore) +
-      weights.ohlcPattern * parts.ohlcPatternScore,
+      weights.ohlcPattern * parts.ohlcPatternScore +
+      mlTerm,
   )
 }
 
@@ -480,20 +538,25 @@ export function assembleCombinedScore(
   const rugTrip = input.ohlcFailed || input.ohlcPatterns == null
     ? undefined
     : input.ohlcPatterns.rug.trip
-  const weights = input.weights ?? { ...COMBINED_SCORE_WEIGHTS }
+  const storedWeights = input.weights ?? { ...COMBINED_SCORE_WEIGHTS }
+  const mlScore =
+    input.mlScore != null && Number.isFinite(input.mlScore) ? clamp01(input.mlScore) : null
+  const weights = resolveCombinedScoreWeights(storedWeights, mlScore)
 
   return {
     success: true,
     mint: input.mint,
     chain: input.chain,
     hours,
-    combined: combineParts(parts, weights),
+    combined: combineParts(parts, weights, mlScore),
     weights,
     parts,
     principals,
     adjusters,
     ...(input.ohlcSource ? { ohlcSource: input.ohlcSource } : {}),
     ...(rugTrip != null ? { rugTrip } : {}),
+    mlScore,
+    modelVersion: input.modelVersion ?? null,
     generatedAt: input.generatedAt ?? new Date(nowMs).toISOString(),
   }
 }

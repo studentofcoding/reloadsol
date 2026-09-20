@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { resolvePatternDecisionThreshold, scorePatternBinary } from './entry-pattern-scorer'
+import {
+  resolvePatternDecisionThreshold,
+  scoreClosedLoopLogistic,
+  scorePatternBinary,
+} from './entry-pattern-scorer'
 
 describe('scorePatternBinary', () => {
   it('reads p_winner from two-class output', () => {
@@ -16,6 +20,10 @@ describe('scorePatternBinary', () => {
   it('uses custom decision threshold for predicted label', () => {
     const result = scorePatternBinary(new Float32Array([0.8, 0.4]), 0.35)
     expect(result.predicted).toBe('winner')
+  })
+
+  it('scores a closed-loop logistic at 0.5 for a zero logit', () => {
+    expect(scoreClosedLoopLogistic([0, 0], [0.2, -0.1], 0)).toBeCloseTo(0.5)
   })
 
   it('reads decision_threshold from model meta', () => {
