@@ -24,6 +24,9 @@ export type ScoredSignal = SignalScoringItem & {
   /** Pattern ML shadow (Stage-1 display); never gates decision */
   ml_pattern_p_winner?: number | null
   ml_pattern_predicted?: 'winner' | 'loser' | null
+  /** Closed-loop mlScore (cl-*); Early Enter soft gate only — not Pattern */
+  ml_closed_loop_score?: number | null
+  ml_closed_loop_version?: string | null
 }
 
 type McapTrackingRow = {

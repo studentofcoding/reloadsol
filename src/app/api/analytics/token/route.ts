@@ -4,6 +4,14 @@ import { query } from '@/utils/db';
 import { ZScoreAnomalyDetector } from '@/utils/algo/anomaly-detection';
 import { EnhancedMomentumAnalyzer } from '@/utils/algo/momentum-analysis';
 import type { EnrichedTokenData } from '@/utils/data-aggregation';
+import { getUsdPrices } from '@/utils/usd-prices';
+import {
+  buildMcapAnalyticsSql,
+  classifyAnalyticsMissing,
+  resolveAnalyticsMaxAge,
+  usdPricesToAnalyticsMap,
+  type AnalyticsMissingMint,
+} from './analytics-helpers';
 
 // Force dynamic rendering for this route
 
@@ -15,23 +23,13 @@ interface TokenAnalyticsRequest {
 interface TokenAnalyticsResponse {
     success: boolean;
     data?: EnrichedTokenData[];
+    missing?: AnalyticsMissingMint[];
     error?: string;
 }
 
 // Initialize analyzers
 const zScoreDetector = new ZScoreAnomalyDetector();
 const momentumAnalyzer = new EnhancedMomentumAnalyzer();
-
-// Jupiter API setup with better error handling
-let jupiterAPI: any = null;
-try {
-    if (typeof window === 'undefined') {
-        // Use dynamic import instead of require for better error handling
-        jupiterAPI = true; // We'll use fetch API directly
-    }
-} catch (error) {
-    console.warn('Jupiter API setup warning:', error instanceof Error ? error.message : 'Unknown error');
-}
 
 // Helper function to safely get error message
 function getErrorMessage(error: unknown): string {
@@ -69,7 +67,8 @@ export const POST = withUnifiedLogging(async (request: NextRequest, logger) => {
             } as TokenAnalyticsResponse, { status: 400 });
         }
 
-        const { tokenAddresses, maxAge = 60 } = body;
+        const { tokenAddresses } = body;
+        const maxAge = resolveAnalyticsMaxAge(body.maxAge);
 
         // Validate input
         if (!validateTokenAddresses(tokenAddresses)) {
@@ -115,27 +114,16 @@ export const POST = withUnifiedLogging(async (request: NextRequest, logger) => {
             } as TokenAnalyticsResponse, { status: 500 });
         }
 
-        if (mcapData.length === 0) {
-            logger.info('api_request', 'No MCap data found for provided tokens', {
-                tokenAddresses: tokenAddresses.slice(0, 5), // Log first 5 for debugging
-                totalRequested: tokenAddresses.length
-            });
-            return NextResponse.json({
-                success: false,
-                error: 'No market cap data found for provided token addresses'
-            } as TokenAnalyticsResponse, { status: 404 });
-        }
-
-        // Fetch Jupiter price data
-        let priceData;
+        // Fetch price via getUsdPrices (Jupiter Price V3). Thin price must not fail the batch.
+        let priceData: Record<string, { price: number }> = {};
         try {
-            priceData = await fetchJupiterPriceData(tokenAddresses, logger);
+            priceData = await fetchAnalyticsPriceData(tokenAddresses, logger);
         } catch (priceError) {
             logger.warn('api_request', 'Failed to fetch price data, continuing without it', {
                 error: getErrorMessage(priceError),
                 tokenCount: tokenAddresses.length
             });
-            priceData = {}; // Continue without price data
+            priceData = {};
         }
 
         // Enrich token data with analytics
@@ -153,16 +141,30 @@ export const POST = withUnifiedLogging(async (request: NextRequest, logger) => {
             } as TokenAnalyticsResponse, { status: 500 });
         }
 
+        const leftoverRows = await fetchMissingMcapRows(
+            tokenAddresses,
+            mcapData.map((row: { token_address: string }) => row.token_address),
+            logger,
+        )
+        const missing = classifyAnalyticsMissing(
+            tokenAddresses,
+            [...mcapData, ...leftoverRows],
+            enrichedTokens.map((token) => token.token_address),
+            maxAge,
+        )
+
         const processingTime = Date.now() - startTime;
         logger.info('api_request', 'Token analytics completed successfully', {
             processedTokens: enrichedTokens.length,
+            missingCount: missing.length,
             processingTimeMs: processingTime,
             requestId: logger.getRequestId()
         });
 
         return NextResponse.json({
             success: true,
-            data: enrichedTokens
+            data: enrichedTokens,
+            missing,
         } as TokenAnalyticsResponse);
 
     } catch (error) {
@@ -183,18 +185,11 @@ export const POST = withUnifiedLogging(async (request: NextRequest, logger) => {
 // Server-side MCap data fetching with improved error handling
 async function fetchMcapTrackingData(tokenAddresses: string[], maxAge: number, logger: any) {
     try {
+        const { sql, hasCutoff } = buildMcapAnalyticsSql(maxAge);
         const params: unknown[] = [tokenAddresses];
-        let sql = `
-            SELECT * FROM token_mcap_tracking
-            WHERE token_address = ANY($1::text[])`;
-
-        if (maxAge && maxAge > 0) {
-            const cutoffTime = new Date(Date.now() - maxAge * 60 * 1000).toISOString();
-            sql += ` AND last_updated_at >= $2`;
-            params.push(cutoffTime);
+        if (hasCutoff) {
+            params.push(new Date(Date.now() - maxAge * 60 * 1000).toISOString());
         }
-
-        sql += ` ORDER BY last_updated_at DESC`;
 
         const { rows } = await query(sql, params);
 
@@ -212,69 +207,54 @@ async function fetchMcapTrackingData(tokenAddresses: string[], maxAge: number, l
     }
 }
 
-// Jupiter price data fetching with improved error handling
-async function fetchJupiterPriceData(
+async function fetchMissingMcapRows(
+    requested: string[],
+    foundAddresses: string[],
+    logger: any,
+): Promise<Array<{ token_address: string; last_updated_at?: string }>> {
+    const found = new Set(foundAddresses)
+    const leftover = requested.filter((address) => !found.has(address))
+    if (leftover.length === 0) return []
+    try {
+        const { rows } = await query(
+            `SELECT token_address, last_updated_at FROM token_mcap_tracking
+             WHERE token_address = ANY($1::text[])`,
+            [leftover],
+        )
+        return rows as Array<{ token_address: string; last_updated_at?: string }>
+    } catch (error) {
+        logger.warn('api_request', 'Missing-mint classification query failed', {
+            error: getErrorMessage(error),
+            leftoverCount: leftover.length,
+        })
+        return []
+    }
+}
+
+/** Jupiter Price V3 via getUsdPrices. Soft-fail → {}; never throw to the POST. */
+async function fetchAnalyticsPriceData(
     tokenAddresses: string[],
     logger: any
-): Promise<Record<string, { price: number; volume24h?: number }>> {
-    if (!jupiterAPI || tokenAddresses.length === 0) {
-        logger.debug('api_request', 'Skipping Jupiter price fetch', {
-            reason: !jupiterAPI ? 'Jupiter API not available' : 'No token addresses',
-            tokenCount: tokenAddresses.length
-        });
-        return {};
-    }
+): Promise<Record<string, { price: number }>> {
+    if (tokenAddresses.length === 0) return {};
 
     try {
-        const url = `https://price.jup.ag/v4/price?ids=${tokenAddresses.join(',')}`;
-        logger.debug('api_request', 'Fetching Jupiter price data', {
-            url: url.substring(0, 100) + '...', // Truncate for logging
-            tokenCount: tokenAddresses.length
-        });
+        const { prices } = await getUsdPrices(tokenAddresses);
+        const priceData = usdPricesToAnalyticsMap(prices);
 
-        const response = await fetch(url, {
-            method: 'GET',
-            headers: {
-                'Accept': 'application/json',
-                'User-Agent': 'TokenAnalytics/1.0'
-            },
-            // Add timeout
-            signal: AbortSignal.timeout(10000) // 10 second timeout
-        });
-
-        if (!response.ok) {
-            throw new Error(`Jupiter API responded with status ${response.status}: ${response.statusText}`);
-        }
-
-        const data = await response.json();
-        const priceData: Record<string, { price: number; volume24h?: number }> = {};
-
-        if (data && typeof data === 'object' && 'data' in data) {
-            for (const [address, info] of Object.entries(data.data || {})) {
-                if (typeof info === 'object' && info !== null && 'price' in info) {
-                    const priceInfo = info as any;
-                    if (typeof priceInfo.price === 'number' && priceInfo.price > 0) {
-                        priceData[address] = {
-                            price: priceInfo.price,
-                            volume24h: typeof priceInfo.volume24h === 'number' ? priceInfo.volume24h : undefined
-                        };
-                    }
-                }
-            }
-        }
-
-        logger.debug('api_request', 'Jupiter price data processed', {
+        logger.debug('api_request', 'USD price data processed', {
             requestedTokens: tokenAddresses.length,
-            pricesFound: Object.keys(priceData).length
+            pricesFound: Object.keys(priceData).length,
+            source: 'getUsdPrices',
         });
 
         return priceData;
     } catch (error) {
-        logger.warn('api_request', 'Jupiter price fetch failed', {
+        logger.warn('api_request', 'USD price fetch failed', {
             error: getErrorMessage(error),
             tokenCount: tokenAddresses.length
         });
-        return {}; // Return empty object instead of throwing
+        return {};
     }
 }
 

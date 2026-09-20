@@ -6,6 +6,8 @@ import {
   emitSignalsEarlyAlertsFromScored,
   shouldEmitSignalsEarlyAlert,
 } from '@/strategies/signals-early-alerts'
+import { attachClosedLoopScoresToSignals } from '@/strategies/signals-early-closed-loop'
+import { isEarlyEnterMlSoftGateEnabled } from '@/strategies/signals-early-ml-gate'
 import {
   getCachedStage1PatternScore,
   scoreStage1PatternBatch,
@@ -78,9 +80,13 @@ export async function GET(request: NextRequest) {
     const rawSignals = await fetchAndScoreSignals(strategyConfig, { chain })
 
     // Pattern ML shadow on Stage-1 candidates (display only; never gates enter)
-    const signals = await enrichSignalsWithPatternShadow(rawSignals)
+    const withPattern = await enrichSignalsWithPatternShadow(rawSignals)
+    const signals = isEarlyEnterMlSoftGateEnabled()
+      ? await attachClosedLoopScoresToSignals(withPattern, { chain })
+      : withPattern
 
     // Stage-1 copy-trade alerts: enter + growth < 100% (24h dedup; safe on UI + worker polls)
+    // Soft gate (closed-loop mlScore ≥ 0.55) runs inside emit, before record.
     const earlyAlerts = emitSignalsEarlyAlertsFromScored(signals, chain)
     if (earlyAlerts.length > 0) {
       const { sendSignalsEarlyEnterAlert } = await import('@/utils/telegram')

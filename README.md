@@ -311,6 +311,8 @@ Closed-loop `mlScore` is an adjuster on combined score (so phase-3 TP/SL can see
 | `LIVE_TRADE_ENABLED` | `0` | Hard gate; live adapter refuses without it |
 | `ML_PAPER_MIN_COMBINED` | `0.35` | Skip predict/open below this combined |
 | `ML_PAPER_MIN_ML` | `0.5` | Skip when ML is on and `mlScore` is below this |
+| `EARLY_ENTER_ML_SOFT_GATE` | **on** | Toast+Telegram emit only when closed-loop `mlScore` (`cl-*`) is finite and ≥ `EARLY_ENTER_ML_MIN`. `0`/`false` restores pre-SPEC emit. Does **not** change paper / sim-open. |
+| `EARLY_ENTER_ML_MIN` | `0.55` | Closed-loop cut for the Early Enter soft gate |
 
 ```bash
 npm run ml:backfill-labels -- --principals

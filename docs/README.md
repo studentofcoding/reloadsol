@@ -17,7 +17,7 @@ this folder remain authoritative references.
 | — | [DATA_PUBLIC_SCOUT.md](./DATA_PUBLIC_SCOUT.md) | `/dev/insight` data-public scout + Safe-gated paper notes (no live exec) |
 | — | [STRATEGY_SCOUT.md](./STRATEGY_SCOUT.md) | `buybulk-datapublic-scout` vs `rhtape-datapublic-scout` — separate strategies |
 | — | [SPEC-rug-filter-v1.md](./specs/SPEC-rug-filter-v1.md) | To-spec: Bubblemaps + Jupiter organic AND rug filter (discovery soft, pre-entry hard). Not implemented yet |
-| — | [SPEC-early-enter-soft-gate-v1.md](./specs/SPEC-early-enter-soft-gate-v1.md) | To-spec: Early Enter cl-* soft gate (toast+Telegram) + Tracker filters + Analytics minimal+price. Not implemented yet |
+| — | [SPEC-early-enter-soft-gate-v1.md](./specs/SPEC-early-enter-soft-gate-v1.md) | Implementing: Early Enter cl-* soft gate (toast+Telegram) + Tracker filters + Analytics minimal+price |
 
 ## Diagrams
 
@@ -34,6 +34,6 @@ this folder remain authoritative references.
 
 - Product/flows: `whole_process.md`, `SWAP_AND_CLOSE_FLOW.md`, `Overview.md`, `trending_tracker.md`, `mcap-tracker.md`
 - Architecture: `ARCHITECTURE_SUMMARY.md`, `architecture.md`, `API_ARCHITECTURE_SUMMARY.md`
-- Strategies: `DECISION_MACHINE.md` (Solana + RH algo current state), `algo_overview.md`, `STRATEGY_ARCHITECTURE.md`, `reloadsol_engine_strategies_and_ml.md`, `GMGN_STRATEGY.md`, `sol_arbitrations.md`, `MCAP_RANGE_RISK_REWARD.md`, `HOW_WE_GET_THE_SIGNALS.md`, `FIX_STATUS_CONSTRAINT_README.md`, [CLIMATE_GATE.md](./CLIMATE_GATE.md) (optional DLMM paper climate), [DATA_PUBLIC_SCOUT.md](./DATA_PUBLIC_SCOUT.md) (`/dev/insight` scout + paper notes), [STRATEGY_SCOUT.md](./STRATEGY_SCOUT.md) (`buybulk-datapublic-scout` vs rh-tape), [SPEC-rug-filter-v1.md](./specs/SPEC-rug-filter-v1.md) (Bubblemaps + Jupiter organic AND rug filter — to-spec, not implemented), [SPEC-early-enter-soft-gate-v1.md](./specs/SPEC-early-enter-soft-gate-v1.md) (Early Enter soft gate + Tracker filters + Analytics minimal+price — to-spec, not implemented)
+- Strategies: `DECISION_MACHINE.md` (Solana + RH algo current state), `algo_overview.md`, `STRATEGY_ARCHITECTURE.md`, `reloadsol_engine_strategies_and_ml.md`, `GMGN_STRATEGY.md`, `sol_arbitrations.md`, `MCAP_RANGE_RISK_REWARD.md`, `HOW_WE_GET_THE_SIGNALS.md`, `FIX_STATUS_CONSTRAINT_README.md`, [CLIMATE_GATE.md](./CLIMATE_GATE.md) (optional DLMM paper climate), [DATA_PUBLIC_SCOUT.md](./DATA_PUBLIC_SCOUT.md) (`/dev/insight` scout + paper notes), [STRATEGY_SCOUT.md](./STRATEGY_SCOUT.md) (`buybulk-datapublic-scout` vs rh-tape), [SPEC-rug-filter-v1.md](./specs/SPEC-rug-filter-v1.md) (Bubblemaps + Jupiter organic AND rug filter — to-spec, not implemented), [SPEC-early-enter-soft-gate-v1.md](./specs/SPEC-early-enter-soft-gate-v1.md) (Early Enter soft gate + Tracker filters + Analytics minimal+price — implementing)
 - ML: `deep_dive_ml.md`, `ML_GATE_PLAN.md`, `OPERATOR_STATE.md`
 - Deprecated/superseded docs moved to [`_archive/`](./_archive/) — kept for history only.

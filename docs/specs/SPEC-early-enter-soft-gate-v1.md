@@ -1,6 +1,6 @@
 # SPEC — Early Enter soft gate + Tracker filters + Analytics minimal+price v1
 
-**Status:** to-spec  
+**Status:** implement
 **Date:** 2026-09-21  
 **Surface:** `reloadsol` Early Enter toast + Telegram; `/dev/signals?tab=tracker` (`TrackerTab`) filters + analytics panel  
 **Lane:** autotrade & algo  
@@ -8,7 +8,7 @@
 
 **Provenance:** Wayfinder map *early-enter-ml-gate* (locked 2026-09-21). Implement from this document; do not reopen grilling unless a lock is contradicted by production data after ship.
 
-This PR is **documentation only**. No product code.
+Implementation is in progress on this SPEC. Soft gate, Tracker filters, and Analytics minimal+price land together.
 
 ---
 

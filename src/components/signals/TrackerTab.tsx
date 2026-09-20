@@ -14,16 +14,28 @@ import {
   useMCapTracker,
   FilterOptions,
 } from "@/hooks/useMCapTracker";
-import { useTokenAnalytics } from "@/hooks/useTokenAnalytics";
+import {
+  analyticsMaxAgeFromTimeFilter,
+  useTokenAnalytics,
+  type AnalyticsMissingMint,
+} from "@/hooks/useTokenAnalytics";
 import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import type { EnrichedTokenData } from "@/utils/data-aggregation";
 import {
+  DEFAULT_TRACKER_ANALYTICS_FILTERS,
   deriveTrackerTokenInsights,
   formatScore0To100,
   formatTrackerDecisionLine,
   formatTrackingAge,
   hasUsablePrice,
+  matchesTrackerAnalyticsFilters,
+  overlayPageCohortAnalytics,
+  pageCohortAnomalies,
   sortCatchTrainRows,
+  type TrackerAnalyticsFilters,
+  type TrackerAnomalyType,
+  type TrackerMomentumLabel,
+  type RiskLabel,
 } from "@/components/signals/tracker-insights";
 import { TrackerSocialLinks } from "@/components/signals/TrackerSocialLinks";
 import { TrackerCatchTrainStrip } from "@/components/signals/TrackerCatchTrainStrip";
@@ -195,6 +207,8 @@ export default function TrackerTab() {
   };
 
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
+  const [analyticsFilters, setAnalyticsFilters] =
+    useState<TrackerAnalyticsFilters>(DEFAULT_TRACKER_ANALYTICS_FILTERS);
   const [catchTrainSort, setCatchTrainSort] = useState(false);
   const [catchOnly, setCatchOnly] = useState(false);
   const catchTrainEnabled = isTrackerCatchTrainEnabled();
@@ -258,8 +272,21 @@ export default function TrackerTab() {
     () => tokens.map((t) => t.token_address),
     [tokens],
   );
-  const analyticsQuery = useTokenAnalytics(tokenAddresses);
-  const analyticsData = analyticsQuery.data ?? {};
+  const analyticsMaxAgeMinutes = analyticsMaxAgeFromTimeFilter(
+    filters.timeFilter,
+  );
+  const analyticsQuery = useTokenAnalytics(tokenAddresses, {
+    maxAgeMinutes: analyticsMaxAgeMinutes,
+  });
+  const analyticsData = analyticsQuery.data?.data ?? {};
+  const analyticsMissing = analyticsQuery.data?.missing ?? [];
+  const analyticsMissingByMint = useMemo(() => {
+    const map: Record<string, AnalyticsMissingMint> = {};
+    for (const row of analyticsMissing) {
+      map[row.token_address] = row;
+    }
+    return map;
+  }, [analyticsMissing]);
   const analyticsLoading = analyticsQuery.isFetching;
   const scoreQuery = useTrackerScoreBadges(tokenAddresses, {
     enabled: scoreBadgesEnabled,
@@ -286,21 +313,41 @@ export default function TrackerTab() {
   }, [isRhNetwork, rhHoldings.tokens, solHoldings.allTokens]);
 
   const tokenRows = useMemo(() => {
+    const cohort = pageCohortAnomalies(tokens);
     return tokens.map((token) => {
       const analytics = analyticsData[token.token_address] as
         | EnrichedTokenData
         | undefined;
       const scores = scoreBadges[token.token_address];
-      const insights = deriveTrackerTokenInsights(token, analytics, {
+      const insightsAnalytics = overlayPageCohortAnalytics(
+        token,
+        analytics,
+        cohort,
+      );
+      const insights = deriveTrackerTokenInsights(token, insightsAnalytics, {
         combined: scores?.combined,
         mlScore: scores?.mlScore,
       });
-      return { token, analytics, insights, scores };
+      return {
+        token,
+        analytics,
+        insights,
+        scores,
+        missing: analyticsMissingByMint[token.token_address],
+      };
     });
-  }, [tokens, analyticsData, scoreBadges]);
+  }, [tokens, analyticsData, scoreBadges, analyticsMissingByMint]);
+
+  const analyticsFilteredRows = useMemo(
+    () =>
+      tokenRows.filter((row) =>
+        matchesTrackerAnalyticsFilters(row, analyticsFilters),
+      ),
+    [tokenRows, analyticsFilters],
+  );
 
   const displayedRows = useMemo(() => {
-    let rows = tokenRows;
+    let rows = analyticsFilteredRows;
     if (catchTrainEnabled && catchOnly) {
       rows = rows.filter((row) => row.insights.decision === "catch");
     }
@@ -308,18 +355,25 @@ export default function TrackerTab() {
       rows = sortCatchTrainRows(rows);
     }
     return rows;
-  }, [tokenRows, catchOnly, catchTrainSort, catchTrainEnabled]);
+  }, [
+    analyticsFilteredRows,
+    catchOnly,
+    catchTrainSort,
+    catchTrainEnabled,
+  ]);
 
   const catchCount = useMemo(
-    () => tokenRows.filter((row) => row.insights.decision === "catch").length,
-    [tokenRows],
+    () =>
+      analyticsFilteredRows.filter((row) => row.insights.decision === "catch")
+        .length,
+    [analyticsFilteredRows],
   );
   const heldCatch = useMemo(() => {
-    const mints = tokenRows
+    const mints = analyticsFilteredRows
       .filter((row) => row.insights.decision === "catch")
       .map((row) => row.token.token_address);
     return sumHeldCatchUsd(mints, holdingsByMint);
-  }, [tokenRows, holdingsByMint]);
+  }, [analyticsFilteredRows, holdingsByMint]);
 
   const displayTokens = useMemo(
     () => displayedRows.map((row) => row.token),
@@ -2155,6 +2209,165 @@ export default function TrackerTab() {
             </select>
           </div>
         </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
+          <div>
+            <label className="block text-sm font-medium mb-2">Z-Score</label>
+            <select
+              value={analyticsFilters.zPreset}
+              onChange={(e) =>
+                setAnalyticsFilters((prev) => ({
+                  ...prev,
+                  zPreset: e.target.value as TrackerAnalyticsFilters["zPreset"],
+                }))
+              }
+              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="any">Any</option>
+              <option value="abs_2_5">|z| ≥ 2.5</option>
+              <option value="abs_1_5">|z| ≥ 1.5</option>
+              <option value="pos_2_5">z ≥ 2.5</option>
+              <option value="neg_2_5">z ≤ −2.5</option>
+              <option value="unavailable">Unavailable</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-2">Anomaly Type</label>
+            <div className="flex flex-wrap gap-2">
+              {(["positive", "negative", "neutral"] as TrackerAnomalyType[]).map(
+                (type) => {
+                  const on = analyticsFilters.anomalyTypes.includes(type);
+                  return (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() =>
+                        setAnalyticsFilters((prev) => ({
+                          ...prev,
+                          anomalyTypes: on
+                            ? prev.anomalyTypes.filter((v) => v !== type)
+                            : [...prev.anomalyTypes, type],
+                        }))
+                      }
+                      className={`px-2 py-1 rounded text-xs capitalize ${
+                        on
+                          ? "bg-blue-600 text-white"
+                          : "bg-gray-700 text-gray-200 hover:bg-gray-600"
+                      }`}
+                    >
+                      {type}
+                    </button>
+                  );
+                },
+              )}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-2">Momentum</label>
+            <div className="flex flex-wrap gap-2">
+              {(
+                [
+                  "explosive",
+                  "strong",
+                  "moderate",
+                  "weak",
+                  "negative",
+                  "unknown",
+                ] as TrackerMomentumLabel[]
+              ).map((label) => {
+                const on = analyticsFilters.momentumLabels.includes(label);
+                return (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() =>
+                      setAnalyticsFilters((prev) => ({
+                        ...prev,
+                        momentumLabels: on
+                          ? prev.momentumLabels.filter((v) => v !== label)
+                          : [...prev.momentumLabels, label],
+                      }))
+                    }
+                    className={`px-2 py-1 rounded text-xs capitalize ${
+                      on
+                        ? "bg-blue-600 text-white"
+                        : "bg-gray-700 text-gray-200 hover:bg-gray-600"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <label
+              className="block text-sm font-medium mb-2"
+              title="Danger heuristic — not an entry signal."
+            >
+              Risk Score
+            </label>
+            <div className="flex flex-wrap gap-2 mb-2">
+              {(["Unknown", "Low", "Med", "High"] as RiskLabel[]).map((label) => {
+                const on = analyticsFilters.riskLabels.includes(label);
+                return (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() =>
+                      setAnalyticsFilters((prev) => ({
+                        ...prev,
+                        riskLabels: on
+                          ? prev.riskLabels.filter((v) => v !== label)
+                          : [...prev.riskLabels, label],
+                      }))
+                    }
+                    className={`px-2 py-1 rounded text-xs ${
+                      on
+                        ? "bg-blue-600 text-white"
+                        : "bg-gray-700 text-gray-200 hover:bg-gray-600"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                type="number"
+                min={0}
+                max={100}
+                placeholder="minRisk"
+                value={analyticsFilters.minRisk}
+                onChange={(e) =>
+                  setAnalyticsFilters((prev) => ({
+                    ...prev,
+                    minRisk: e.target.value,
+                  }))
+                }
+                className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded-md text-white text-xs placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <input
+                type="number"
+                min={0}
+                max={100}
+                placeholder="maxRisk"
+                value={analyticsFilters.maxRisk}
+                onChange={(e) =>
+                  setAnalyticsFilters((prev) => ({
+                    ...prev,
+                    maxRisk: e.target.value,
+                  }))
+                }
+                className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded-md text-white text-xs placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Error Display */}
@@ -2194,7 +2407,7 @@ export default function TrackerTab() {
           </div>
         )}
 
-        {displayedRows.map(({ token, analytics, insights, scores }) => {
+        {displayedRows.map(({ token, analytics, insights, scores, missing }) => {
           const holding = lookupHolding(holdingsByMint, token.token_address);
           return (
           <div
@@ -2550,7 +2763,28 @@ export default function TrackerTab() {
 
               {expandedAnalytics[token.token_address] && (
                 <div className="mt-4 space-y-3 bg-gray-750 rounded-lg p-4">
-                  {analytics ? (
+                  {analyticsQuery.isFetching && !analytics && !analyticsQuery.isError ? (
+                    <div className="text-center py-4 text-gray-400 text-sm">
+                      Loading analytics…
+                    </div>
+                  ) : analyticsQuery.isError ? (
+                    <div className="text-center py-4">
+                      <div className="text-red-300">
+                        Analytics request failed
+                      </div>
+                      <div className="text-xs text-gray-400 mt-1">
+                        {analyticsQuery.error instanceof Error
+                          ? analyticsQuery.error.message
+                          : "Request failed"}
+                      </div>
+                      <button
+                        onClick={() => void analyticsQuery.refetch()}
+                        className="mt-2 px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-sm transition-colors"
+                      >
+                        Retry Analytics
+                      </button>
+                    </div>
+                  ) : analytics ? (
                     <>
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                         <div className="bg-gray-800 rounded-lg p-3">
@@ -2579,9 +2813,11 @@ export default function TrackerTab() {
                             Anomaly Type
                           </div>
                           <div
-                            className={`text-sm font-medium capitalize ${getAnomalyColor(analytics.anomaly_type)}`}
+                            className={`text-sm font-medium capitalize ${getAnomalyColor(insights.anomalyType ?? analytics.anomaly_type)}`}
                           >
-                            {analytics.anomaly_type || "neutral"}
+                            {insights.anomalyType ||
+                              analytics.anomaly_type ||
+                              "neutral"}
                           </div>
                         </div>
 
@@ -2679,15 +2915,39 @@ export default function TrackerTab() {
                     </>
                   ) : (
                     <div className="text-center py-4">
-                      <div className="text-gray-400">
-                        Analytics data not available
-                      </div>
-                      <button
-                        onClick={() => void analyticsQuery.refetch()}
-                        className="mt-2 px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-sm transition-colors"
-                      >
-                        Retry Analytics
-                      </button>
+                      {missing?.reason === "stale" ? (
+                        <>
+                          <div className="text-amber-300">
+                            Stale vs list filter
+                          </div>
+                          <div className="text-xs text-gray-400 mt-1">
+                            Not in analytics window (older than list freshness).
+                          </div>
+                          <button
+                            onClick={() => void analyticsQuery.refetch()}
+                            className="mt-2 px-3 py-1 bg-gray-600 hover:bg-gray-500 rounded text-sm transition-colors"
+                          >
+                            Refetch
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <div className="text-gray-300">
+                            No analytics row for this mint.
+                          </div>
+                          <div className="text-xs text-gray-500 mt-1">
+                            {missing?.reason === "dropped"
+                              ? "Row was dropped during enrich."
+                              : "Mint is not in the analytics map."}
+                          </div>
+                          <button
+                            onClick={() => void analyticsQuery.refetch()}
+                            className="mt-2 px-3 py-1 bg-gray-600 hover:bg-gray-500 rounded text-sm transition-colors"
+                          >
+                            Refetch
+                          </button>
+                        </>
+                      )}
                     </div>
                   )}
                 </div>

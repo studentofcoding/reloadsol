@@ -9,6 +9,7 @@ import {
   shouldEmitSignalsEarlyAlert,
   signalsEnterDedupKey,
 } from './signals-early-alerts'
+import type { SignalsEarlyAlert } from './signals-early-alerts'
 import type { ScoredSignal } from './signals-pipeline'
 
 afterEach(() => {
@@ -127,25 +128,44 @@ describe('signals-early-alerts', () => {
   })
 
   it('emitSignalsEarlyAlertsFromScored filters and records eligible signals', () => {
-    const recorded = emitSignalsEarlyAlertsFromScored([
-      scored({ token_address: 'A', decision: 'enter', mcap_growth_percent: 35 }),
-      scored({ token_address: 'B', decision: 'enter', mcap_growth_percent: 150 }),
-      scored({ token_address: 'C', decision: 'exit', mcap_growth_percent: 20 }),
-      scored({ token_address: 'D', decision: 'enter', mcap_growth_percent: 80 }),
-    ])
+    const recorded = emitSignalsEarlyAlertsFromScored(
+      [
+        scored({
+          token_address: 'A',
+          decision: 'enter',
+          mcap_growth_percent: 35,
+          ml_closed_loop_score: 0.7,
+        }),
+        scored({ token_address: 'B', decision: 'enter', mcap_growth_percent: 150 }),
+        scored({ token_address: 'C', decision: 'exit', mcap_growth_percent: 20 }),
+        scored({
+          token_address: 'D',
+          decision: 'enter',
+          mcap_growth_percent: 80,
+          ml_closed_loop_score: 0.55,
+        }),
+      ],
+      'sol',
+      { mlSoftGateEnabled: true },
+    )
     expect(recorded.map((a) => a.tokenAddress).sort()).toEqual(['A', 'D'])
   })
 
   it('still records when Pattern ML predicts loser (shadow never gates)', () => {
-    const recorded = emitSignalsEarlyAlertsFromScored([
-      scored({
-        token_address: 'LoserMint',
-        decision: 'enter',
-        mcap_growth_percent: 40,
-        ml_pattern_p_winner: 0.12,
-        ml_pattern_predicted: 'loser',
-      }),
-    ])
+    const recorded = emitSignalsEarlyAlertsFromScored(
+      [
+        scored({
+          token_address: 'LoserMint',
+          decision: 'enter',
+          mcap_growth_percent: 40,
+          ml_pattern_p_winner: 0.12,
+          ml_pattern_predicted: 'loser',
+          ml_closed_loop_score: 0.7,
+        }),
+      ],
+      'sol',
+      { mlSoftGateEnabled: true },
+    )
     expect(recorded).toHaveLength(1)
     expect(recorded[0].pWinner).toBe(0.12)
     expect(recorded[0].predicted).toBe('loser')
@@ -167,12 +187,15 @@ describe('signals-early-alerts', () => {
       pWinner: 0.42,
       predicted: 'loser',
       mlReason: null,
+      mlClosedLoopScore: 0.62,
+      mlClosedLoopVersion: 'cl-test',
     })
     expect(toast.message).toContain('FOO')
     expect(toast.message).toContain('+42.5%')
     expect(toast.message).toContain('$85.0K')
     expect(toast.message).toContain('62')
     expect(toast.message).toContain('ML pW 0.42 → loser')
+    expect(toast.message).toContain('cl 0.62')
     expect(toast.items?.[0]?.pWinner).toBe(0.42)
     expect(toast.items?.[0]?.predicted).toBe('loser')
   })
@@ -195,3 +218,87 @@ describe('signals-early-alerts', () => {
     expect(alert!.predicted).toBe('winner')
   })
 })
+
+describe('Early Enter closed-loop soft gate', () => {
+  const gateOn = { mlSoftGateEnabled: true as const, mlMin: 0.55 }
+
+  it('records at mlScore 0.55 and suppresses 0.549', () => {
+    const pass = emitSignalsEarlyAlertsFromScored(
+      [scored({ token_address: 'CutPass', ml_closed_loop_score: 0.55 })],
+      'sol',
+      gateOn,
+    )
+    expect(pass).toHaveLength(1)
+
+    const miss = emitSignalsEarlyAlertsFromScored(
+      [scored({ token_address: 'CutMiss', ml_closed_loop_score: 0.549 })],
+      'sol',
+      gateOn,
+    )
+    expect(miss).toHaveLength(0)
+  })
+
+  it('suppresses null / unavailable and does not burn the 24h dedup key', () => {
+    const first = emitSignalsEarlyAlertsFromScored(
+      [scored({ token_address: 'LaterOk', ml_closed_loop_score: null })],
+      'sol',
+      gateOn,
+    )
+    expect(first).toHaveLength(0)
+
+    const later = emitSignalsEarlyAlertsFromScored(
+      [scored({ token_address: 'LaterOk', ml_closed_loop_score: 0.7 })],
+      'sol',
+      gateOn,
+    )
+    expect(later).toHaveLength(1)
+    expect(later[0].mlClosedLoopScore).toBe(0.7)
+  })
+
+  it('high Pattern pWinner with n/a closed-loop score does not emit', () => {
+    const recorded = emitSignalsEarlyAlertsFromScored(
+      [
+        scored({
+          token_address: 'PatternOnly',
+          ml_pattern_p_winner: 0.99,
+          ml_pattern_predicted: 'winner',
+          ml_closed_loop_score: null,
+        }),
+      ],
+      'sol',
+      gateOn,
+    )
+    expect(recorded).toHaveLength(0)
+  })
+
+  it('low Pattern pWinner with passing closed-loop score still records (Pattern display-only)', () => {
+    const recorded = emitSignalsEarlyAlertsFromScored(
+      [
+        scored({
+          token_address: 'ClPass',
+          ml_pattern_p_winner: 0.1,
+          ml_pattern_predicted: 'loser',
+          ml_closed_loop_score: 0.7,
+          ml_closed_loop_version: 'cl-test',
+        }),
+      ],
+      'sol',
+      gateOn,
+    )
+    expect(recorded).toHaveLength(1)
+    expect(recorded[0].pWinner).toBe(0.1)
+    const toast = buildSignalsEarlyToast(recorded[0] as SignalsEarlyAlert)
+    expect(toast.message).toContain('ML pW 0.10 → loser')
+    expect(toast.message).toContain('cl 0.70')
+  })
+
+  it('flag off restores legacy emit when closed-loop score is n/a', () => {
+    const recorded = emitSignalsEarlyAlertsFromScored(
+      [scored({ token_address: 'Legacy', ml_closed_loop_score: null })],
+      'sol',
+      { mlSoftGateEnabled: false },
+    )
+    expect(recorded).toHaveLength(1)
+  })
+})
+
