@@ -53,6 +53,24 @@ describe('prediction helpers', () => {
     expect(pred?.correct).toBeNull()
   })
 
+  it('persists a prediction for shadow + low_combined', () => {
+    const decision = buildEvalDecision({
+      mint: 'MintB',
+      strategyId: 'mcap_enter_first_seen',
+      combined: 0.1,
+      mlScore: 0.2,
+      modelVersion: 'cl-20260920-111d39',
+    })
+    expect(decision.action).toBe('shadow_predict')
+    expect(decision.reason).toBe('low_combined')
+    const pred = buildPredictionFromDecision('run-low', decision)
+    expect(pred).not.toBeNull()
+    expect(pred?.predictedLabel).toBe('loss')
+    expect(pred?.predictedMlWin).toBe(false)
+    expect(pred?.predictedScore).toBe(0.2)
+    expect(pred?.modelVersion).toBe('cl-20260920-111d39')
+  })
+
   it('does not persist skip decisions', () => {
     const decision = buildEvalDecision({
       mint: 'MintA',

@@ -47,6 +47,27 @@ export type EvalDecideInput = {
 
 export const DEFAULT_ML_PAPER_MIN_COMBINED = 0.35
 export const DEFAULT_ML_PAPER_MIN_ML = 0.5
+export const DEFAULT_EVAL_SCAN_LIMIT = 80
+
+/** Interleave eligible vs already-open/closed so the scan is not all one bucket. */
+export function selectDiverseEvalCandidates<T extends { eligible: boolean }>(
+  candidates: T[],
+  limit: number,
+): T[] {
+  if (limit <= 0) return []
+  if (candidates.length <= limit) return candidates
+  const eligible = candidates.filter((c) => c.eligible)
+  const rest = candidates.filter((c) => !c.eligible)
+  const out: T[] = []
+  let i = 0
+  let j = 0
+  while (out.length < limit && (i < eligible.length || j < rest.length)) {
+    if (i < eligible.length) out.push(eligible[i++])
+    if (out.length >= limit) break
+    if (j < rest.length) out.push(rest[j++])
+  }
+  return out
+}
 
 export function isEvalEngineEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const raw = env.EVAL_ENGINE?.trim().toLowerCase()
@@ -109,39 +130,44 @@ export function decideEvalAction(
   if (!isClosedLoopPrincipalId(input.strategyId)) {
     return { action: 'skip', reason: 'not_principal', mode }
   }
-  if (input.alreadyOpen) {
-    if (isEvalShadowEnabled(env) && hasDecisionScore(input)) {
-      return { action: 'shadow_predict', reason: 'already_open', mode }
-    }
-    return { action: 'skip', reason: 'already_open', mode }
-  }
-  if (input.alreadyClosed) {
-    if (isEvalShadowEnabled(env) && hasDecisionScore(input)) {
-      return { action: 'shadow_predict', reason: 'already_closed', mode }
-    }
-    return { action: 'skip', reason: 'already_closed', mode }
-  }
-  if (input.eligible === false) {
-    return { action: 'skip', reason: input.eligibilityReason ?? 'not_eligible', mode }
-  }
 
-  const combined = input.combined
-  if (combined == null || !Number.isFinite(combined)) {
-    return { action: 'skip', reason: 'no_combined', mode }
+  const skipReason = evalSkipReason(input, { minCombined, minMl, env })
+  if (isEvalShadowEnabled(env) && hasDecisionScore(input)) {
+    return {
+      action: 'shadow_predict',
+      reason: skipReason ?? 'predicted',
+      mode,
+    }
   }
-  if (combined < minCombined) {
-    return { action: 'skip', reason: 'low_combined', mode }
-  }
-
-  const mlOn = isMlClosedLoopEnabled(env)
-  if (mlOn && input.mlScore != null && Number.isFinite(input.mlScore) && input.mlScore < minMl) {
-    return { action: 'skip', reason: 'low_ml', mode }
+  if (skipReason) {
+    return { action: 'skip', reason: skipReason, mode }
   }
 
   if (mode === 'live') {
     return shadowOrOpen('live_open', 'opened', mode, env)
   }
   return shadowOrOpen('paper_open', 'opened', mode, env)
+}
+
+function evalSkipReason(
+  input: EvalDecideInput,
+  opts: { minCombined: number; minMl: number; env: NodeJS.ProcessEnv },
+): string | null {
+  if (input.alreadyOpen) return 'already_open'
+  if (input.alreadyClosed) return 'already_closed'
+  if (input.eligible === false) return input.eligibilityReason ?? 'not_eligible'
+
+  const combined = input.combined
+  const mlScore = input.mlScore
+  const hasCombined = combined != null && Number.isFinite(combined)
+  const hasMl = mlScore != null && Number.isFinite(mlScore)
+  if (!hasCombined && !hasMl) return 'no_combined'
+  if (!hasCombined) return 'no_combined'
+  if (hasCombined && combined < opts.minCombined) return 'low_combined'
+
+  const mlOn = isMlClosedLoopEnabled(opts.env)
+  if (mlOn && hasMl && mlScore < opts.minMl) return 'low_ml'
+  return null
 }
 
 function shadowOrOpen(

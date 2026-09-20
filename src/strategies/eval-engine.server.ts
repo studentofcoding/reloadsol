@@ -7,9 +7,11 @@ import { loadCombinedScore } from './combined-score-load'
 import { isClosedLoopPrincipalId } from './closed-loop-ml'
 import {
   buildEvalDecision,
+  DEFAULT_EVAL_SCAN_LIMIT,
   getEvalExecMode,
   isEvalEngineEnabled,
   isEvalShadowEnabled,
+  selectDiverseEvalCandidates,
   type EvalDecision,
   type EvalRiskSnapshot,
   type EvalScanSummary,
@@ -78,7 +80,7 @@ export async function runEvalScan(deps: EvalScanDeps = {}): Promise<{
   }
 
   const list = deps.listCandidates ?? listEvalCandidates
-  const candidates = await list({ limit: deps.limit ?? 40 })
+  const candidates = await list({ limit: deps.limit ?? DEFAULT_EVAL_SCAN_LIMIT })
   const scoreFn = deps.loadCombinedScore ?? loadCombinedScore
   const adapter = selectExecutionAdapter(mode, deps.paper, env)
   const decisions: EvalDecision[] = []
@@ -182,7 +184,8 @@ export async function listEvalCandidates(opts?: {
   const { simWalletForChain, MCAP_TRACKER_SIM_WALLET } = await import('./sim-wallets')
 
   const out: EvalCandidate[] = []
-  const limit = opts?.limit ?? 40
+  const limit = opts?.limit ?? DEFAULT_EVAL_SCAN_LIMIT
+  const poolCap = Math.max(limit * 3, 120)
   for (const chain of ['sol', 'robinhood'] as CombinedScoreChain[]) {
     const strategies = (await getActiveMcapTrackerStrategies(chain)).filter((s) =>
       isClosedLoopPrincipalId(s.id),
@@ -217,11 +220,13 @@ export async function listEvalCandidates(opts?: {
           eligible: skip == null,
           eligibilityReason: skip,
         })
-        if (out.length >= limit) return out
+        if (out.length >= poolCap) {
+          return selectDiverseEvalCandidates(out, limit)
+        }
       }
     }
   }
-  return out
+  return selectDiverseEvalCandidates(out, limit)
 }
 
 function riskFromScore(combined: number, rugTrip: boolean): EvalRiskSnapshot {

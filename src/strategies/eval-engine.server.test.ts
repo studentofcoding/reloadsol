@@ -81,6 +81,59 @@ describe('runEvalScan', () => {
     expect(opened).toBe(0)
   })
 
+  it('shadow-predicts ineligible and low-score candidates and persists them', async () => {
+    const persisted: Array<{ action: string; reason: string }> = []
+    const result = await runEvalScan({
+      env: { EVAL_ENGINE: '1', ML_CLOSED_LOOP: '1' },
+      persist: async (_runId, _summary, decisions) => {
+        persisted.push(...decisions.map((d) => ({ action: d.action, reason: d.reason })))
+      },
+      loadCombinedScore: async ({ address }) =>
+        address === 'MintNone' ? score(Number.NaN, null) : score(0.15, 0.2),
+      listCandidates: async () => [
+        {
+          mint: 'MintLow',
+          strategyId: 'mcap_enter_at_80',
+          chain: 'sol',
+          alreadyOpen: false,
+          alreadyClosed: false,
+          eligible: true,
+          eligibilityReason: null,
+        },
+        {
+          mint: 'MintRug',
+          strategyId: 'mcap_enter_at_80',
+          chain: 'sol',
+          alreadyOpen: false,
+          alreadyClosed: false,
+          eligible: false,
+          eligibilityReason: 'rugged',
+        },
+        {
+          mint: 'MintNone',
+          strategyId: 'mcap_enter_at_80',
+          chain: 'sol',
+          alreadyOpen: false,
+          alreadyClosed: false,
+          eligible: true,
+          eligibilityReason: null,
+        },
+      ],
+    })
+    expect(result.decisions.map((d) => d.action)).toEqual([
+      'shadow_predict',
+      'shadow_predict',
+      'skip',
+    ])
+    expect(result.decisions[0].reason).toBe('low_combined')
+    expect(result.decisions[1].reason).toBe('rugged')
+    expect(result.decisions[2].reason).toBe('no_combined')
+    expect(result.summary.predictCount).toBe(2)
+    expect(result.summary.skipped).toBe(1)
+    expect(result.summary.paperOpened).toBe(0)
+    expect(persisted.filter((d) => d.action === 'shadow_predict')).toHaveLength(2)
+  })
+
   it('opens paper above threshold only when shadow is off', async () => {
     const opened = new Set<string>()
     const env = { EVAL_ENGINE: '1', ML_CLOSED_LOOP: '1', EVAL_SHADOW: '0' }
