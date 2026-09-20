@@ -81,6 +81,16 @@ Above the list (or sticky under filters):
 
 Optional filter chip: `catch only`.
 
+### D. Wallet holding USD (v1 follow-up)
+
+On each Tracker card, show connected-wallet **USD value** for that mint when held.
+
+- Reuse `useWalletTokens` → `fetchSolWalletHoldings` / `UserToken` (`mintAddress`, `uiAmount`, `usdValue`). Same React Query key as the swap Holdings list (`includeZeroBalance: false`) — no extra RPC when that cache is warm.
+- If `uiAmount > 0`: `Holding: $12.34`. If not held: omit (do not show `Holding: —`).
+- Robinhood: `useRhWalletTokens` when `network === 'robinhood'`.
+- Fail-soft: holdings errors must not break the Tracker list.
+- Catch-train strip (optional): count + sum USD of catch rows already held.
+
 ## API / types
 
 - Extend list payload tokens with optional:
@@ -109,6 +119,8 @@ Keep existing fields user listed (Risk, Momentum, Milestones, Age, Liquidity, Fi
 - age ≤45m + combined 0.5 → catch  
 - social join mapper maps twitter/telegram/website  
 - Tracker card renders links when social present (component test light)
+- Holdings mapper: UserToken[] → mint → { usd, amount }; format `$12.34`
+- Held mint chip shows `Holding: $…`
 
 ## Flags
 
@@ -129,3 +141,4 @@ Keep existing fields user listed (Risk, Momentum, Milestones, Age, Liquidity, Fi
 - Oxc / existing patterns; avoid cursoragent@ commits when possible  
 - Wallet gate still applies to `/dev/signals` — no change  
 - Phase-4 shadow eval remains independent; Tracker decision is UI guidance only  
+- Holding $ uses the existing holdings query; Sol + Robinhood both supported  

@@ -4,12 +4,16 @@ export function TrackerCatchTrainStrip({
   onToggleCatchOnly,
   catchTrainSort,
   onCatchTrainSort,
+  heldCatchCount,
+  heldCatchUsdLabel,
 }: {
   catchCount: number
   catchOnly: boolean
   onToggleCatchOnly: () => void
   catchTrainSort: boolean
   onCatchTrainSort: () => void
+  heldCatchCount?: number
+  heldCatchUsdLabel?: string
 }) {
   return (
     <div className="sticky top-0 z-10 mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-emerald-800/60 bg-gray-800/95 px-4 py-3 backdrop-blur">
@@ -17,6 +21,11 @@ export function TrackerCatchTrainStrip({
         <span className="font-semibold">{catchCount}</span> catch
         <span className="text-gray-400"> on this page</span>
       </span>
+      {heldCatchCount != null && heldCatchCount > 0 && heldCatchUsdLabel && (
+        <span className="text-sm text-amber-200">
+          held {heldCatchCount} · {heldCatchUsdLabel}
+        </span>
+      )}
       <button
         type="button"
         onClick={onCatchTrainSort}

@@ -4,6 +4,7 @@ import React, { useState, useMemo } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
 import { formatAppDateTime } from "@/utils/datetime";
+import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import ChartBuyModal from "@/components/ChartBuyModal";
 import DlmmChartActions from "@/components/dlmm/DlmmChartActions";
 import TokenSearchLink from "@/components/signals/shared/TokenSearchLink";
@@ -26,7 +27,16 @@ import {
 } from "@/components/signals/tracker-insights";
 import { TrackerSocialLinks } from "@/components/signals/TrackerSocialLinks";
 import { TrackerCatchTrainStrip } from "@/components/signals/TrackerCatchTrainStrip";
+import { TrackerHoldingChip } from "@/components/signals/TrackerHoldingChip";
+import {
+  formatHoldingUsd,
+  lookupHolding,
+  mapUserTokensToHoldings,
+  sumHeldCatchUsd,
+} from "@/components/signals/tracker-holdings";
 import { useTrackerScoreBadges } from "@/hooks/useTrackerScoreBadges";
+import { useWalletTokens } from "@/hooks/useWalletTokens";
+import { useRhWalletTokens } from "@/hooks/useRhWalletTokens";
 import {
   isTrackerCatchTrainEnabled,
   isTrackerScoreBadgesEnabled,
@@ -152,6 +162,9 @@ export default function TrackerTab() {
   const urlSearch = searchParams.get("search")?.trim() ?? "";
   const queryClient = useQueryClient();
   const { network } = useAppNetwork();
+  const { connection } = useConnection();
+  const { publicKey, connected } = useWallet();
+  const walletAddress = connected && publicKey ? publicKey.toString() : null;
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(100);
   const [refetchingTokens, setRefetchingTokens] = useState<Set<string>>(
@@ -254,6 +267,24 @@ export default function TrackerTab() {
   });
   const scoreBadges = scoreQuery.data ?? {};
 
+  const isRhNetwork = network === "robinhood";
+  const solHoldings = useWalletTokens({
+    connection,
+    publicKey,
+    walletAddress,
+    enabled: !isRhNetwork && connected && !!publicKey,
+    includeZeroBalance: false,
+  });
+  const rhHoldings = useRhWalletTokens();
+  const holdingsByMint = useMemo(() => {
+    try {
+      const list = isRhNetwork ? rhHoldings.tokens : solHoldings.allTokens;
+      return mapUserTokensToHoldings(list);
+    } catch {
+      return {};
+    }
+  }, [isRhNetwork, rhHoldings.tokens, solHoldings.allTokens]);
+
   const tokenRows = useMemo(() => {
     return tokens.map((token) => {
       const analytics = analyticsData[token.token_address] as
@@ -283,6 +314,12 @@ export default function TrackerTab() {
     () => tokenRows.filter((row) => row.insights.decision === "catch").length,
     [tokenRows],
   );
+  const heldCatch = useMemo(() => {
+    const mints = tokenRows
+      .filter((row) => row.insights.decision === "catch")
+      .map((row) => row.token.token_address);
+    return sumHeldCatchUsd(mints, holdingsByMint);
+  }, [tokenRows, holdingsByMint]);
 
   const displayTokens = useMemo(
     () => displayedRows.map((row) => row.token),
@@ -2141,6 +2178,10 @@ export default function TrackerTab() {
               sortOrder: "desc",
             }));
           }}
+          heldCatchCount={heldCatch.count}
+          heldCatchUsdLabel={
+            heldCatch.count > 0 ? formatHoldingUsd(heldCatch.usd) : undefined
+          }
         />
       )}
 
@@ -2154,6 +2195,7 @@ export default function TrackerTab() {
         )}
 
         {displayedRows.map(({ token, analytics, insights, scores }) => {
+          const holding = lookupHolding(holdingsByMint, token.token_address);
           return (
           <div
             key={token.token_address}
@@ -2316,6 +2358,7 @@ export default function TrackerTab() {
             </div>
 
             <div className="mt-3 flex flex-wrap gap-2 text-xs">
+              <TrackerHoldingChip holding={holding} />
               <span className="rounded bg-gray-700 px-2 py-1 text-gray-200">
                 Risk: {formatScore0To100(insights.riskScore)} {insights.riskLabel}
               </span>
