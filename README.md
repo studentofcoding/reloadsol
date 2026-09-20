@@ -239,27 +239,29 @@ Copy from [`.env.docker.example`](.env.docker.example). Key groups:
 
 ### Market-brain (optional)
 
-Read-only client for [market-brain](https://market-brain.yonathanevanchristy.workers.dev) lists + recipes + `/regime/params` + `/ohlc`. Universe plugs default off. OHLC prefers brain when a read token is set (set `MARKET_BRAIN_OHLC=0` to keep SolanaTracker/GMGN). Sim-open **risk** (sizeScale / TP / SL / hold) still resolves when a read token is set — independent of `MARKET_BRAIN_*` membership flags when an active recipe exists. Does not change live execute.
+Read-only client for [market-brain](https://market-brain.yonathanevanchristy.workers.dev) lists + recipes + `/regime/params` + `/ohlc` + `/risk/from-score`. Universe plugs default off. OHLC prefers brain when a read token is set (set `MARKET_BRAIN_OHLC=0` to keep SolanaTracker/GMGN). Principal sim-open **score risk** (`GET /risk/from-score`) defaults on when a read token is set — set `MARKET_BRAIN_SCORE_RISK=0` to keep today's recipe / `DEFAULT_MCAP_TRACKER_EXIT` knobs. Climate `sizeScale` still comes from `/regime/params`. Does not change live execute.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MARKET_BRAIN_URL` | `https://market-brain.yonathanevanchristy.workers.dev` | Optional base override |
-| `MARKET_BRAIN_TOKEN` | — | Bearer read token (`BRAIN_READ_TOKEN`). Never logged. |
+| `MARKET_BRAIN_TOKEN` / `MARKET_BRAIN_READ_TOKEN` | — | Bearer read token (`BRAIN_READ_TOKEN`). Never logged. |
 | `MARKET_BRAIN_ADMIN_TOKEN` | — | Bearer admin token (`BRAIN_ADMIN_TOKEN`) for recipe writes (promote / deactivate / dormant / seed). Missing token is fail-soft: log once, local promote continues. Never logged. |
 | `MARKET_BRAIN_TRENDING` | off | `1` intersects trending-assign Jupiter `toptrending/1h` with `GET /union` (membership). Skipped if the token is missing. |
 | `MARKET_BRAIN_MCAP` | off | `1` intersects mcap sim-track opens with `GET /union` (membership) and default recipe gates (mcap≥50k, liq≥10k, climateSafe). Does not change live execute. Skipped if the token is missing. |
 | `MARKET_BRAIN_SIGNALS` | off | `1` intersects signals sim-track enter candidates with `GET /union` (or the matching signals recipe universe) and default recipe gates. Skipped if the token is missing. |
 | `MARKET_BRAIN_OHLC` | on when token set | Prefer `GET /ohlc` (Bearer) for Freeview / token-chart / rug-shadow 1m bars. Falls back to SolanaTracker/GMGN on 5xx/timeout. Set `0` to force the local path. |
+| `MARKET_BRAIN_SCORE_RISK` | on when token set | Principal sim-open (`mcap_enter_first_seen`, `mcap_enter_at_80`) calls `GET /risk/from-score` after combined score and applies returned TP/SL/hold. Set `0` to disable. Brain miss → `riskSource=fallback_default`. |
 
 **Sim-open risk order** (first-cut mcap / trending-assign / signals):
 
-1. Live `GET /regime/params?profile=<recipe.profileId|default>` wins
+1. Live `GET /regime/params?profile=<recipe.profileId|default>` wins for **sizeScale** (and first-cut TP/SL/hold)
 2. Else embedded `recipe.riskGrid[climate state]`
 3. Else keep local TP / SL / size (log once)
+4. Principal sim-opens then overlay TP/SL/hold from `GET /risk/from-score?score=&rugTrip=` (does not replace climate size). Disable with `MARKET_BRAIN_SCORE_RISK=0`.
 
 `sizeScale` multiplies size; `0` is stand-down (skip new sim opens).
 
-Smoke: `GET /health` is public. Authenticated `GET /union` / `/jupiter` / `/bubble` / `/recipes` / `/regime/params?profile=default` / `/ohlc` / `/ohlc/patterns` need `Authorization: Bearer $MARKET_BRAIN_TOKEN`. Recipe writes need `Authorization: Bearer $MARKET_BRAIN_ADMIN_TOKEN`.
+Smoke: `GET /health` is public. Authenticated `GET /union` / `/jupiter` / `/bubble` / `/recipes` / `/regime/params?profile=default` / `/ohlc` / `/ohlc/patterns` / `/risk/from-score` need `Authorization: Bearer $MARKET_BRAIN_TOKEN`. Recipe writes need `Authorization: Bearer $MARKET_BRAIN_ADMIN_TOKEN`.
 
 Seed known-winner recipes (`mcap_enter_first_seen`, `mcap_enter_at_80`, `signals_sell_over_100`) as active fat payloads (union universe, default gates, `profileId: default`, embedded risk grid, **no bmScore**):
 

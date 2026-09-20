@@ -4,23 +4,28 @@ import {
   brainOhlcSourceLabel,
   buildBrainOhlcQuery,
   fetchBrainJson,
+  buildBrainRiskFromScoreQuery,
   fetchBrainOhlc,
   fetchBrainOhlcPatterns,
   fetchBrainRecipe,
   fetchBrainRecipes,
   fetchBrainRegimeParams,
+  fetchBrainRiskFromScore,
   fetchBrainUnion,
   isMarketBrainConfigured,
   isMarketBrainMcapEnabled,
   isMarketBrainOhlcEnabled,
+  isMarketBrainScoreRiskEnabled,
   isMarketBrainSignalsEnabled,
   isMarketBrainTrendingEnabled,
   marketBrainMcapSkipReason,
   marketBrainOhlcSkipReason,
+  marketBrainScoreRiskSkipReason,
   marketBrainSignalsSkipReason,
   marketBrainTrendingSkipReason,
   parseBrainListPayload,
   parseBrainOhlcResponse,
+  parseBrainRiskFromScore,
   parseLegoRecipe,
   parseRegimeParams,
   shouldFallbackBrainOhlc,
@@ -92,6 +97,29 @@ describe('market-brain config', () => {
     vi.stubEnv('MARKET_BRAIN_OHLC', '1')
     expect(isMarketBrainOhlcEnabled()).toBe(false)
     expect(marketBrainOhlcSkipReason()).toMatch(/MARKET_BRAIN_TOKEN is not set/)
+  })
+
+  it('enables score-risk by default when a read token is set', () => {
+    vi.stubEnv('MARKET_BRAIN_TOKEN', '')
+    vi.stubEnv('MARKET_BRAIN_SCORE_RISK', '')
+    expect(isMarketBrainScoreRiskEnabled()).toBe(false)
+    expect(marketBrainScoreRiskSkipReason()).toBeNull()
+
+    vi.stubEnv('MARKET_BRAIN_TOKEN', 'read-token')
+    expect(isMarketBrainScoreRiskEnabled()).toBe(true)
+
+    vi.stubEnv('MARKET_BRAIN_SCORE_RISK', '0')
+    expect(isMarketBrainScoreRiskEnabled()).toBe(false)
+
+    vi.stubEnv('MARKET_BRAIN_SCORE_RISK', '1')
+    expect(isMarketBrainScoreRiskEnabled()).toBe(true)
+  })
+
+  it('accepts MARKET_BRAIN_READ_TOKEN as the read-token alias', () => {
+    vi.stubEnv('MARKET_BRAIN_TOKEN', '')
+    vi.stubEnv('MARKET_BRAIN_READ_TOKEN', 'alias-token')
+    expect(isMarketBrainConfigured()).toBe(true)
+    expect(isMarketBrainScoreRiskEnabled()).toBe(true)
   })
 })
 
@@ -383,6 +411,81 @@ describe('brain OHLC client', () => {
     expect(result.error).toMatch(/unauthorized/)
     expect(result.error).not.toContain(token)
     expect(result.status).toBe(401)
+  })
+})
+
+describe('market-brain GET /risk/from-score', () => {
+  const payload = {
+    ok: true,
+    score: 0.62,
+    profileId: 'default',
+    climate: { state: 'Cash', sizeScale: 0.5 },
+    risk: {
+      takeProfitPct: 120,
+      stopLossPct: -40,
+      holdHours: 48,
+      autoSl: false,
+      source: 'score_overlay_v1',
+    },
+    anchors: {
+      deRisk: { takeProfitPct: 80, stopLossPct: -30, holdHours: 24 },
+      hype: { takeProfitPct: 200, stopLossPct: -50, holdHours: 96 },
+    },
+  }
+
+  it('parses the SPEC contract payload', () => {
+    const parsed = parseBrainRiskFromScore(payload)
+    expect(parsed).toMatchObject({
+      score: 0.62,
+      profileId: 'default',
+      climate: { state: 'Cash', sizeScale: 0.5 },
+      risk: {
+        takeProfitPct: 120,
+        stopLossPct: -40,
+        holdHours: 48,
+        autoSl: false,
+        source: 'score_overlay_v1',
+      },
+    })
+    expect(parsed?.anchors.deRisk?.takeProfitPct).toBe(80)
+  })
+
+  it('builds score + rugTrip query strings', () => {
+    expect(buildBrainRiskFromScoreQuery({ score: 0.62 })).toBe('score=0.62')
+    expect(
+      buildBrainRiskFromScoreQuery({ score: 0.2, rugTrip: true, profile: 'default' }),
+    ).toBe('score=0.2&rugTrip=true&profile=default')
+  })
+
+  it('GETs /risk/from-score with bearer and parses knobs', async () => {
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      expect(String(url)).toBe(
+        `${DEFAULT_MARKET_BRAIN_URL}/risk/from-score?score=0.62&rugTrip=true`,
+      )
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer t' })
+      return jsonResponse(payload)
+    })
+    const result = await fetchBrainRiskFromScore(
+      { score: 0.62, rugTrip: true },
+      { token: 't', fetchImpl },
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('expected ok')
+    expect(result.data.risk.takeProfitPct).toBe(120)
+    expect(result.data.risk.autoSl).toBe(false)
+  })
+
+  it('fails soft on 4xx without leaking the bearer token', async () => {
+    const token = 'super-secret-score-risk-token'
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({ code: 'RISK_PROFILE_MISSING', error: 'RISK_PROFILE_MISSING' }, 400),
+    )
+    const result = await fetchBrainRiskFromScore({ score: 0.5 }, { token, fetchImpl })
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('expected failure')
+    expect(result.status).toBe(400)
+    expect(result.error).toMatch(/RISK_PROFILE_MISSING/)
+    expect(result.error).not.toContain(token)
   })
 })
 
