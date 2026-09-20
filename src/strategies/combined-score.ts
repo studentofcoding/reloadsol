@@ -117,7 +117,7 @@ export type CombinedScoreAssembleInput = {
 }
 
 export function clamp01(n: number): number {
-  if (!Number.isFinite(n)) return 0
+  if (Number.isNaN(n)) return 0
   if (n <= 0) return 0
   if (n >= 1) return 1
   return n

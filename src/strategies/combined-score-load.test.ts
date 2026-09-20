@@ -67,12 +67,12 @@ describe('loadCombinedScore', () => {
         locateTokenByAddress: vi.fn(async () => locateWithMcap()),
         loadTokenMapChart: vi.fn(async () => emptyChart()),
         fetchBrainOhlcPatterns: vi.fn(async () => ({
-          ok: false,
+          ok: false as const,
           error: 'down',
           path: '/ohlc/patterns',
         })),
         fetchBrainOhlc: vi.fn(async () => ({
-          ok: false,
+          ok: false as const,
           error: 'down',
           path: '/ohlc',
         })),

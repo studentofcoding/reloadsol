@@ -73,6 +73,7 @@ describe('clamp01', () => {
     expect(clamp01(1.4)).toBe(1)
     expect(clamp01(0.42)).toBe(0.42)
     expect(clamp01(Number.NaN)).toBe(0)
+    expect(clamp01(Number.NEGATIVE_INFINITY)).toBe(0)
     expect(clamp01(Number.POSITIVE_INFINITY)).toBe(1)
   })
 })

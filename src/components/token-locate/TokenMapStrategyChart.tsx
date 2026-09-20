@@ -427,19 +427,17 @@ export default function TokenMapStrategyChart({
 
   // Combined score badge is read-only; ignore endpoint errors so Freeview still loads.
   useEffect(() => {
-    let cancelled = false
-    setCombined(null)
     if (!tokenAddress) return
     const qs = new URLSearchParams({
       address: tokenAddress,
       hours: String(hours),
     })
     if (chain) qs.set('chain', chain)
-    void fetch(`/api/strategies/combined-score?${qs}`)
+    const ac = new AbortController()
+    void fetch(`/api/strategies/combined-score?${qs}`, { signal: ac.signal })
       .then(async (res) => {
         const json = (await res.json()) as { success?: boolean; combined?: number }
         if (
-          !cancelled &&
           res.ok &&
           json.success &&
           typeof json.combined === 'number' &&
@@ -452,7 +450,7 @@ export default function TokenMapStrategyChart({
         /* badge optional */
       })
     return () => {
-      cancelled = true
+      ac.abort()
     }
   }, [tokenAddress, hours, chain, refreshKey])
 
