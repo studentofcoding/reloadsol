@@ -6,6 +6,7 @@
  * - Health: GET /health (public)
  * - Lists (Bearer MARKET_BRAIN_TOKEN = BRAIN_READ_TOKEN): GET /bubble /jupiter /union
  * - Regime: GET /regime/params?profile=default (Bearer read)
+ * - Score risk: GET /risk/from-score?score=&rugTrip= (Bearer read)
  * - Recipes read: GET /recipes, GET /recipes/:id (Bearer read)
  * - OHLC: GET /ohlc, GET /ohlc/patterns (Bearer read)
  * - Recipes write: PUT /recipes/:id, POST /recipes,
@@ -14,13 +15,15 @@
  *
  * Env:
  * - MARKET_BRAIN_URL — optional base override (no trailing slash required)
- * - MARKET_BRAIN_TOKEN — Bearer read token (never logged)
+ * - MARKET_BRAIN_TOKEN / MARKET_BRAIN_READ_TOKEN — Bearer read token (never logged)
  * - MARKET_BRAIN_ADMIN_TOKEN — Bearer admin token for recipe writes (never logged)
  * - MARKET_BRAIN_TRENDING=1 — opt-in trending/assign universe from GET /union
  * - MARKET_BRAIN_MCAP=1 — opt-in mcap sim-track membership from GET /union
  * - MARKET_BRAIN_SIGNALS=1 — opt-in signals sim-track membership from GET /union
  * - MARKET_BRAIN_OHLC — prefer GET /ohlc (default on when a read token is set;
  *   set `0`/`false` to force today's SolanaTracker/GMGN path)
+ * - MARKET_BRAIN_SCORE_RISK — principal sim-open GET /risk/from-score
+ *   (default on when a read token is set; set `0`/`false` to disable)
  *
  * First-cut sim opens also resolve risk from GET /regime/params (live wins) then
  * recipe.riskGrid[state], even when the universe flags above are off.
@@ -82,6 +85,41 @@ export type RegimeRiskCell = {
   takeProfitPct: number | null
   stopLossPct: number | null
   holdHours: number | null
+}
+
+export type BrainScoreRiskAnchors = {
+  takeProfitPct: number
+  stopLossPct: number
+  holdHours: number
+}
+
+export type BrainScoreRiskOverlay = {
+  takeProfitPct: number
+  stopLossPct: number
+  holdHours: number
+  autoSl: boolean
+  source: string
+}
+
+export type BrainRiskFromScoreResolved = {
+  score: number
+  profileId: string
+  climate: {
+    state: BrainClimateState | null
+    sizeScale: number | null
+  }
+  risk: BrainScoreRiskOverlay
+  anchors: {
+    deRisk: BrainScoreRiskAnchors | null
+    hype: BrainScoreRiskAnchors | null
+  }
+  raw: Record<string, unknown>
+}
+
+export type BrainRiskFromScoreQuery = {
+  score: number
+  rugTrip?: boolean
+  profile?: string
 }
 
 export type LegoRecipeSoftHints = {
@@ -215,7 +253,10 @@ export function marketBrainToken(override?: string | null): string | null {
     const trimmed = override?.trim() ?? ''
     return trimmed ? trimmed : null
   }
-  const env = process.env.MARKET_BRAIN_TOKEN?.trim() ?? ''
+  const env =
+    process.env.MARKET_BRAIN_TOKEN?.trim() ||
+    process.env.MARKET_BRAIN_READ_TOKEN?.trim() ||
+    ''
   return env ? env : null
 }
 
@@ -353,6 +394,33 @@ export function marketBrainOhlcSkipReason(opts?: {
   return domainPlugSkipReason(
     'MARKET_BRAIN_OHLC',
     'MARKET_BRAIN_OHLC=1 but MARKET_BRAIN_TOKEN is not set; using SolanaTracker/GMGN',
+    opts,
+  )
+}
+
+/**
+ * Prefer brain GET /risk/from-score on principal sim-opens when a read token
+ * is set. Default ON when configured. Set MARKET_BRAIN_SCORE_RISK=0 to keep
+ * today's DEFAULT_MCAP_TRACKER_EXIT / recipe risk path.
+ */
+export function isMarketBrainScoreRiskEnabled(opts?: {
+  baseUrl?: string
+  token?: string | null
+}): boolean {
+  if (!isMarketBrainConfigured(opts)) return false
+  const v = process.env.MARKET_BRAIN_SCORE_RISK
+  if (v === undefined || v === '') return true
+  if (v === '0' || v === 'false') return false
+  return v === '1' || v === 'true'
+}
+
+export function marketBrainScoreRiskSkipReason(opts?: {
+  baseUrl?: string
+  token?: string | null
+}): string | null {
+  return domainPlugSkipReason(
+    'MARKET_BRAIN_SCORE_RISK',
+    'MARKET_BRAIN_SCORE_RISK=1 but MARKET_BRAIN_TOKEN is not set; using fallback_default exit',
     opts,
   )
 }
@@ -722,6 +790,72 @@ export function parseRegimeParams(body: unknown): RegimeParamsResolved | null {
   }
 }
 
+function parseScoreRiskAnchors(value: unknown): BrainScoreRiskAnchors | null {
+  const obj = asObject(value)
+  if (!obj) return null
+  const takeProfitPct = firstNumber(obj, ['takeProfitPct', 'take_profit_pct'])
+  const stopLossPct = firstNumber(obj, ['stopLossPct', 'stop_loss_pct'])
+  const holdHours = firstNumber(obj, ['holdHours', 'hold_hours'])
+  if (takeProfitPct == null || stopLossPct == null || holdHours == null) return null
+  return { takeProfitPct, stopLossPct, holdHours }
+}
+
+export function parseBrainRiskFromScore(
+  body: unknown,
+): BrainRiskFromScoreResolved | null {
+  const obj = asObject(body)
+  if (!obj) return null
+  const inner = asObject(obj.data) ?? obj
+  const riskObj = asObject(inner.risk)
+  if (!riskObj) return null
+  const takeProfitPct = firstNumber(riskObj, ['takeProfitPct', 'take_profit_pct'])
+  const stopLossPct = firstNumber(riskObj, ['stopLossPct', 'stop_loss_pct'])
+  const holdHours = firstNumber(riskObj, ['holdHours', 'hold_hours'])
+  if (takeProfitPct == null || stopLossPct == null || holdHours == null) return null
+  const climateObj = asObject(inner.climate)
+  const anchorsObj = asObject(inner.anchors)
+  const score = firstNumber(inner, ['score'])
+  return {
+    score: score ?? 0,
+    profileId:
+      firstString(inner, ['profileId', 'profile_id', 'profile']) ?? 'default',
+    climate: {
+      state: parseClimateState(climateObj?.state),
+      sizeScale: climateObj
+        ? firstNumber(climateObj, ['sizeScale', 'size_scale'])
+        : null,
+    },
+    risk: {
+      takeProfitPct,
+      stopLossPct,
+      holdHours,
+      autoSl: riskObj.autoSl === true || riskObj.auto_sl === true,
+      source:
+        firstString(riskObj, ['source']) ??
+        firstString(inner, ['source']) ??
+        'score_overlay_v1',
+    },
+    anchors: {
+      deRisk: parseScoreRiskAnchors(
+        anchorsObj?.deRisk ?? anchorsObj?.de_risk,
+      ),
+      hype: parseScoreRiskAnchors(anchorsObj?.hype),
+    },
+    raw: inner,
+  }
+}
+
+export function buildBrainRiskFromScoreQuery(
+  query: BrainRiskFromScoreQuery,
+): string {
+  const p = new URLSearchParams()
+  p.set('score', String(query.score))
+  if (query.rugTrip === true) p.set('rugTrip', 'true')
+  const profile = query.profile?.trim()
+  if (profile) p.set('profile', profile)
+  return p.toString()
+}
+
 function parseUniverse(value: unknown): BrainListName[] {
   if (typeof value === 'string' && isBrainListName(value)) return [value]
   if (!Array.isArray(value)) return []
@@ -943,6 +1077,30 @@ export async function fetchBrainRegimeParams(
     return fail('market-brain /regime/params: missing sizeScale', {
       status: raw.status,
       path: '/regime/params',
+    })
+  }
+  return { ok: true, status: raw.status, data: parsed }
+}
+
+export async function fetchBrainRiskFromScore(
+  query: BrainRiskFromScoreQuery,
+  opts: MarketBrainFetchOpts = {},
+): Promise<BrainResult<BrainRiskFromScoreResolved>> {
+  if (!Number.isFinite(query.score)) {
+    return fail('market-brain /risk/from-score: score is required', {
+      path: '/risk/from-score',
+    })
+  }
+  const raw = await fetchBrainJson('/risk/from-score', {
+    ...opts,
+    query: buildBrainRiskFromScoreQuery(query),
+  })
+  if (!raw.ok) return raw
+  const parsed = parseBrainRiskFromScore(raw.data)
+  if (!parsed) {
+    return fail('market-brain /risk/from-score: invalid payload', {
+      status: raw.status,
+      path: '/risk/from-score',
     })
   }
   return { ok: true, status: raw.status, data: parsed }

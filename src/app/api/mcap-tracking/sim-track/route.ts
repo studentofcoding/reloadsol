@@ -28,6 +28,10 @@ import {
   stampBrainRisk,
   type ResolvedBrainRisk,
 } from '@/utils/brain-regime-risk'
+import {
+  resolveScoreRiskForSimOpen,
+  stampScoreRisk,
+} from '@/utils/brain-score-risk'
 import { mcapTrackerToCanonical } from '@/strategies/canonical-params'
 import { resolveExitOverlayForOpen } from '@/strategies/potential-exit-overlay'
 import type { McapTrackerStrategy, StrategyChain } from '@/strategies/types'
@@ -235,14 +239,26 @@ async function openSimPosition(params: {
     strategyId: params.strategyId,
     persistEffectiveExit: true,
   })
+  const preScoreExit = overlayResult.effectiveExit ?? baseExit
+  const scoreRisk = await resolveScoreRiskForSimOpen({
+    strategyId: params.strategyId,
+    mint: params.mintAddress,
+    chain: params.chain,
+    fallbackExit: preScoreExit,
+    profileId: brainRisk.profileId,
+  })
+  const exitAfterScore = scoreRisk.applied ? scoreRisk.exit : preScoreExit
   scoredEntryFeatures = stampBrainRisk(overlayResult.features, brainRisk, {
     sizedSol: params.solAmount,
   })
-  const effectiveExit = frozenExitForSimOpen(
-    overlayResult.effectiveExit,
-    baseExit,
-    brainRisk,
-  )
+  scoredEntryFeatures = stampScoreRisk(scoredEntryFeatures, scoreRisk)
+  const effectiveExit = scoreRisk.called
+    ? exitAfterScore
+    : frozenExitForSimOpen(
+        overlayResult.effectiveExit,
+        baseExit,
+        brainRisk,
+      )
 
   const record = buildTradingRecord({
     walletAddress: simWallet,
