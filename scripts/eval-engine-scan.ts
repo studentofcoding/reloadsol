@@ -4,6 +4,7 @@
  *
  *   EVAL_ENGINE=1 npm run ml:eval-scan -- --dry-run
  *   EVAL_ENGINE=1 npm run ml:eval-scan
+ *   Shadow is on by default (EVAL_SHADOW=1): scores + logs, never opens.
  */
 import { config as loadEnv } from 'dotenv'
 import { resolve } from 'path'

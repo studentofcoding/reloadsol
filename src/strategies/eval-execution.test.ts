@@ -3,12 +3,15 @@ import { buildEvalDecision } from './eval-engine'
 import { PaperExecutionAdapter } from './eval-execution'
 
 describe('PaperExecutionAdapter', () => {
-  const decision = buildEvalDecision({
-    mint: 'MintA',
-    strategyId: 'mcap_enter_at_80',
-    combined: 0.7,
-    mlScore: 0.8,
-  })
+  const decision = buildEvalDecision(
+    {
+      mint: 'MintA',
+      strategyId: 'mcap_enter_at_80',
+      combined: 0.7,
+      mlScore: 0.8,
+    },
+    { env: { EVAL_ENGINE: '1', EVAL_SHADOW: '0' } },
+  )
 
   it('does not double-open when the mint is already open', async () => {
     const adapter = new PaperExecutionAdapter({

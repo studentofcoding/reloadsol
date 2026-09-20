@@ -3,6 +3,7 @@ import { isMlRouteAuthorized } from '@/strategies/ml-api-auth'
 import {
   getEvalExecMode,
   isEvalEngineEnabled,
+  isEvalShadowEnabled,
   isLiveTradeEnabled,
 } from '@/strategies/eval-engine'
 import { loadEvalLastRun, runEvalScan } from '@/strategies/eval-engine.server'
@@ -16,6 +17,7 @@ export async function GET() {
     {
       success: true,
       enabled: isEvalEngineEnabled(),
+      shadow: isEvalShadowEnabled(),
       mode: getEvalExecMode(),
       liveTradeEnabled: isLiveTradeEnabled(),
       lastRun: last,

@@ -1,13 +1,14 @@
 /**
- * Phase 4 eval engine — decide skip | paper_open | live_open.
+ * Phase 4 eval engine — decide skip | shadow_predict | paper_open | live_open.
  *
- * Paper opens go through PaperExecutionAdapter (sim-track + score→risk).
- * Live is a stub: both EVAL_EXEC_MODE=live and LIVE_TRADE_ENABLED=1 required,
- * and even then v1 does not call a broker.
+ * Shadow is the default: score + log predictions, never auto-open.
+ * Paper opens (EVAL_SHADOW=0 + EVAL_ENGINE=1) go through PaperExecutionAdapter
+ * (sim-track + score→risk). Live is a stub: both EVAL_EXEC_MODE=live and
+ * LIVE_TRADE_ENABLED=1 required, and even then v1 does not call a broker.
  */
 import { isClosedLoopPrincipalId, isMlClosedLoopEnabled } from './closed-loop-ml'
 
-export type EvalAction = 'skip' | 'paper_open' | 'live_open'
+export type EvalAction = 'skip' | 'shadow_predict' | 'paper_open' | 'live_open'
 export type EvalExecMode = 'paper' | 'live'
 
 export type EvalRiskSnapshot = {
@@ -50,6 +51,18 @@ export const DEFAULT_ML_PAPER_MIN_ML = 0.5
 export function isEvalEngineEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const raw = env.EVAL_ENGINE?.trim().toLowerCase()
   return raw === '1' || raw === 'true' || raw === 'yes'
+}
+
+/** Shadow is on unless EVAL_SHADOW is explicitly 0/false/no/off. */
+export function isEvalShadowEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env.EVAL_SHADOW?.trim().toLowerCase()
+  if (raw === '0' || raw === 'false' || raw === 'no' || raw === 'off') return false
+  return true
+}
+
+/** Paper/live opens only when the engine is on and shadow is explicitly off. */
+export function allowsEvalOpens(env: NodeJS.ProcessEnv = process.env): boolean {
+  return isEvalEngineEnabled(env) && !isEvalShadowEnabled(env)
 }
 
 export function getEvalExecMode(env: NodeJS.ProcessEnv = process.env): EvalExecMode {
@@ -97,9 +110,15 @@ export function decideEvalAction(
     return { action: 'skip', reason: 'not_principal', mode }
   }
   if (input.alreadyOpen) {
+    if (isEvalShadowEnabled(env) && hasDecisionScore(input)) {
+      return { action: 'shadow_predict', reason: 'already_open', mode }
+    }
     return { action: 'skip', reason: 'already_open', mode }
   }
   if (input.alreadyClosed) {
+    if (isEvalShadowEnabled(env) && hasDecisionScore(input)) {
+      return { action: 'shadow_predict', reason: 'already_closed', mode }
+    }
     return { action: 'skip', reason: 'already_closed', mode }
   }
   if (input.eligible === false) {
@@ -120,9 +139,28 @@ export function decideEvalAction(
   }
 
   if (mode === 'live') {
-    return { action: 'live_open', reason: 'opened', mode }
+    return shadowOrOpen('live_open', 'opened', mode, env)
   }
-  return { action: 'paper_open', reason: 'opened', mode }
+  return shadowOrOpen('paper_open', 'opened', mode, env)
+}
+
+function shadowOrOpen(
+  action: 'paper_open' | 'live_open',
+  reason: string,
+  mode: EvalExecMode,
+  env: NodeJS.ProcessEnv,
+): Pick<EvalDecision, 'action' | 'reason' | 'mode'> {
+  if (!allowsEvalOpens(env)) {
+    return { action: 'shadow_predict', reason: 'predicted', mode }
+  }
+  return { action, reason, mode }
+}
+
+function hasDecisionScore(input: EvalDecideInput): boolean {
+  return (
+    (input.mlScore != null && Number.isFinite(input.mlScore)) ||
+    (input.combined != null && Number.isFinite(input.combined))
+  )
 }
 
 export function buildEvalDecision(
@@ -176,6 +214,7 @@ export type EvalReport = {
     skip: number
     paper_open: number
     live_open: number
+    shadow_predict: number
     openRate: number
   }
   evalTagged: EvalReportBucket
@@ -226,6 +265,7 @@ export function buildEvalReport(params: {
   const skip = params.decisions.filter((d) => d.action === 'skip').length
   const paper = params.decisions.filter((d) => d.action === 'paper_open').length
   const live = params.decisions.filter((d) => d.action === 'live_open').length
+  const shadow = params.decisions.filter((d) => d.action === 'shadow_predict').length
   const total = params.decisions.length
   return {
     days: params.days,
@@ -234,6 +274,7 @@ export function buildEvalReport(params: {
       skip,
       paper_open: paper,
       live_open: live,
+      shadow_predict: shadow,
       openRate: total === 0 ? 0 : (paper + live) / total,
     },
     evalTagged: summarizeOutcomeBucket(params.evalOutcomes),
@@ -243,12 +284,15 @@ export function buildEvalReport(params: {
 
 export type EvalScanSummary = {
   enabled: boolean
+  shadow: boolean
   mode: EvalExecMode
   runId: string
   scanned: number
   skipped: number
   paperOpened: number
   liveAttempted: number
+  predictCount: number
+  linkedCount: number
   errors: number
   finishedAt: string
 }

@@ -8,12 +8,20 @@ import {
   evalLiveGateError,
   getEvalExecMode,
   isEvalEngineEnabled,
+  isEvalShadowEnabled,
+  allowsEvalOpens,
 } from './eval-engine'
 import { LiveExecutionAdapter } from './eval-execution'
 
 describe('eval flags', () => {
-  it('defaults engine off and mode paper', () => {
+  it('defaults engine off, shadow on, and mode paper', () => {
     expect(isEvalEngineEnabled({})).toBe(false)
+    expect(isEvalShadowEnabled({})).toBe(true)
+    expect(isEvalShadowEnabled({ EVAL_SHADOW: '1' })).toBe(true)
+    expect(isEvalShadowEnabled({ EVAL_SHADOW: '0' })).toBe(false)
+    expect(allowsEvalOpens({})).toBe(false)
+    expect(allowsEvalOpens({ EVAL_ENGINE: '1' })).toBe(false)
+    expect(allowsEvalOpens({ EVAL_ENGINE: '1', EVAL_SHADOW: '0' })).toBe(true)
     expect(getEvalExecMode({})).toBe('paper')
     expect(evalLiveGateError({ EVAL_EXEC_MODE: 'paper', LIVE_TRADE_ENABLED: '1' })).toBe(
       LIVE_NOT_ENABLED,
@@ -49,7 +57,7 @@ describe('decideEvalAction', () => {
     expect(
       decideEvalAction(
         { ...base, mlScore: 0.2 },
-        { env: { ML_CLOSED_LOOP: '0' } },
+        { env: { ML_CLOSED_LOOP: '0', EVAL_ENGINE: '1', EVAL_SHADOW: '0' } },
       ).action,
     ).toBe('paper_open')
   })
@@ -57,27 +65,40 @@ describe('decideEvalAction', () => {
   it('ignores ml threshold when mlScore is null', () => {
     const decided = decideEvalAction(
       { ...base, mlScore: null },
-      { env: { ML_CLOSED_LOOP: '1' } },
+      { env: { ML_CLOSED_LOOP: '1', EVAL_ENGINE: '1', EVAL_SHADOW: '0' } },
     )
     expect(decided.action).toBe('paper_open')
   })
 
-  it('skips already-open / already-closed / not eligible', () => {
+  it('attaches a shadow prediction to already-open / already-closed', () => {
+    expect(decideEvalAction({ ...base, alreadyOpen: true }).action).toBe('shadow_predict')
     expect(decideEvalAction({ ...base, alreadyOpen: true }).reason).toBe('already_open')
-    expect(decideEvalAction({ ...base, alreadyClosed: true }).reason).toBe('already_closed')
+    expect(decideEvalAction({ ...base, alreadyClosed: true }).action).toBe('shadow_predict')
     expect(
       decideEvalAction({ ...base, eligible: false, eligibilityReason: 'rugged' }).reason,
     ).toBe('rugged')
+    expect(
+      decideEvalAction({ ...base, alreadyOpen: true }, { env: { EVAL_SHADOW: '0' } }).action,
+    ).toBe('skip')
   })
 
-  it('opens paper by default and live_open when mode is live', () => {
-    expect(decideEvalAction(base, { env: {} }).action).toBe('paper_open')
+  it('shadow-predicts by default and only opens when shadow is off', () => {
+    expect(decideEvalAction(base, { env: {} }).action).toBe('shadow_predict')
     expect(decideEvalAction(base, { env: { EVAL_EXEC_MODE: 'live' } }).action).toBe(
-      'live_open',
+      'shadow_predict',
     )
+    expect(
+      decideEvalAction(base, { env: { EVAL_ENGINE: '1', EVAL_SHADOW: '0' } }).action,
+    ).toBe('paper_open')
+    expect(
+      decideEvalAction(base, {
+        env: { EVAL_ENGINE: '1', EVAL_SHADOW: '0', EVAL_EXEC_MODE: 'live' },
+      }).action,
+    ).toBe('live_open')
     const decision = buildEvalDecision(base)
     expect(decision.mint).toBe('MintA')
-    expect(decision.reason).toBe('opened')
+    expect(decision.action).toBe('shadow_predict')
+    expect(decision.reason).toBe('predicted')
   })
 })
 
@@ -88,7 +109,7 @@ describe('buildEvalReport', () => {
       decisions: [
         { action: 'skip' },
         { action: 'skip' },
-        { action: 'paper_open' },
+        { action: 'shadow_predict' },
         { action: 'paper_open' },
       ],
       evalOutcomes: [
@@ -102,7 +123,8 @@ describe('buildEvalReport', () => {
       ],
     })
     expect(report.decisions.total).toBe(4)
-    expect(report.decisions.openRate).toBeCloseTo(0.5)
+    expect(report.decisions.shadow_predict).toBe(1)
+    expect(report.decisions.openRate).toBeCloseTo(0.25)
     expect(report.evalTagged.n).toBe(2)
     expect(report.evalTagged.winRate).toBeCloseTo(0.5)
     expect(report.baseline.n).toBe(3)

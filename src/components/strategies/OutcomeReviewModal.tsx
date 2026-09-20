@@ -375,6 +375,10 @@ export default function OutcomeReviewModal({
               )}
             </p>
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              <OutcomeClosedLoopPredictBadge
+                features={outcome.features}
+                prediction={outcome.ml_prediction}
+              />
               <OutcomeGateMlBadge features={outcome.features} />
               <OutcomePotentialMlBadge features={outcome.features} />
               <OutcomeExitOverlayBadge features={outcome.features} />
@@ -562,6 +566,67 @@ export default function OutcomeReviewModal({
       </div>
     </div>
   );
+}
+
+export function OutcomeClosedLoopPredictBadge({
+  features,
+  prediction,
+}: {
+  features?: Record<string, unknown> | null
+  prediction?: StrategyOutcomeRow['ml_prediction']
+}) {
+  const fromFeatures = readClosedLoopPrediction(features ?? null)
+  const label = prediction?.predicted_label ?? fromFeatures.predicted_label
+  const predScore = prediction?.predicted_score ?? fromFeatures.predicted_score
+  const version = prediction?.model_version ?? fromFeatures.model_version
+  const predictedWin =
+    prediction?.predicted_ml_win ??
+    fromFeatures.predicted_ml_win ??
+    (label === 'win' ? true : label === 'loss' ? false : null)
+  if (label == null && predScore == null && predictedWin == null) {
+    return <span className="text-gray-600">—</span>
+  }
+  const win = predictedWin === true || label === 'win'
+  const styles = win
+    ? 'bg-emerald-900/50 text-emerald-300'
+    : 'bg-red-900/50 text-red-300'
+  const scoreText =
+    typeof predScore === 'number' && Number.isFinite(predScore)
+      ? ` ${(predScore * 100).toFixed(0)}%`
+      : ''
+  const titleParts = [
+    label ? `predicted=${label}` : null,
+    typeof predScore === 'number' ? `score=${predScore.toFixed(3)}` : null,
+    version ? `model=${version}` : null,
+    prediction?.correct == null ? null : prediction.correct ? 'correct' : 'miss',
+  ].filter(Boolean)
+  return (
+    <span className={`text-xs px-2 py-0.5 rounded ${styles}`} title={titleParts.join(' · ')}>
+      pred {win ? 'win' : 'loss'}
+      {scoreText}
+      {version ? ` · ${version}` : ''}
+    </span>
+  )
+}
+
+function readClosedLoopPrediction(features: Record<string, unknown> | null): {
+  predicted_label: 'win' | 'loss' | null
+  predicted_score: number | null
+  predicted_ml_win: boolean | null
+  model_version: string | null
+} {
+  const label = features?.ml_predicted_label
+  const score = features?.ml_predicted_score
+  const win = features?.ml_predicted_ml_win
+  return {
+    predicted_label: label === 'win' || label === 'loss' ? label : null,
+    predicted_score: typeof score === 'number' && Number.isFinite(score) ? score : null,
+    predicted_ml_win: win === true || win === 1 ? true : win === false || win === 0 ? false : null,
+    model_version:
+      typeof features?.ml_predicted_model_version === 'string'
+        ? features.ml_predicted_model_version
+        : null,
+  }
 }
 
 export function OutcomeMlBadge({

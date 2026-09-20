@@ -235,9 +235,11 @@ Re-export after new sim closes. Do not change entry/exit rules mid-collection. C
 
 ## Closed loop + eval engine (phase 4)
 
-Lightweight TS logistic (heuristic fallback when n &lt; 8) trained on **closed principal** outcomes (`mcap_enter_first_seen`, `mcap_enter_at_80` + RH). Infer `mlScore` feeds the optional combined-score `ml` weight so phase-3 `/risk/from-score` sees it. The **eval engine** scores **open** candidates in real time and can `paper_open` via sim-track. Live trade is a stub.
+Lightweight TS logistic (heuristic fallback when n &lt; 8) trained on **closed principal** outcomes (`mcap_enter_first_seen`, `mcap_enter_at_80` + RH). Infer `mlScore` feeds the optional combined-score `ml` weight so phase-3 `/risk/from-score` sees it.
 
-### How to enable (paper)
+The **eval engine is a shadow system**. `eval-scan` scores candidates and writes `strategy_ml_predictions` (`action=shadow_predict`). It does **not** `paper_open` / `live_open` unless you explicitly set `EVAL_SHADOW=0` **and** `EVAL_ENGINE=1`. Paper opens stay on the existing sim-track / principals path; shadow predictions attach to those opens when they close, or sit on candidates without opening. Live trade is a stub.
+
+### How to enable (shadow — default)
 
 ```bash
 # 1) Labels (win/loss + R-bucket) on closed principals
@@ -255,18 +257,36 @@ npm run ml:train-closed-loop
 export ML_CLOSED_LOOP=1
 # GET /api/strategies/ml/score?address=<mint> → { mlScore, modelVersion }
 
-# 4) Live paper via eval engine (default mode=paper)
+# 4) Shadow eval (EVAL_SHADOW defaults on — scores + logs, never opens)
 export EVAL_ENGINE=1
+export EVAL_SHADOW=1
 export EVAL_EXEC_MODE=paper
 export LIVE_TRADE_ENABLED=0
 # optional: ML_PAPER_MIN_COMBINED=0.35 ML_PAPER_MIN_ML=0.5
 npm run ml:eval-scan -- --dry-run
 npm run ml:eval-scan
+# Per-run accuracy (resolved n, correct n, %, avg score wins vs losses):
 # GET /api/strategies/ml/eval-report?days=7
+# GET /api/strategies/ml/eval-report?run_id=<uuid>
 ```
+
+Leave `EVAL_SHADOW=1`. Do **not** turn shadow off unless you intentionally want eval-scan to paper-open through sim-track. That path is discouraged — sim-track already opens principals; eval should measure predictions against those outcomes.
+
+```bash
+# Discouraged — only if you really want eval-scan to open paper
+export EVAL_ENGINE=1 EVAL_SHADOW=0 EVAL_EXEC_MODE=paper LIVE_TRADE_ENABLED=0
+```
+
+### Reading per-run accuracy
+
+Each `eval-scan` writes a `ml_eval_runs` row (`run_id` UUID) and one `strategy_ml_predictions` row per predicted candidate (`predicted_label` / `predicted_score` / `model_version`). When a matching `strategy_outcomes` row closes or labels backfill, the prediction gets `actual_ml_win` + `correct`, and the run’s `accuracy` is rolled up.
+
+- **API:** `GET /api/strategies/ml/eval-report?days=7` lists recent runs with resolved n, correct n, accuracy %, avg predicted score for actual wins vs losses. `?run_id=` returns that run’s predictions.
+- **Admin:** Strategy Admin → eval panel → recent runs. Click a run for its predictions.
+- **Labels UI:** Outcomes table **Predict** column and outcome review show the predicted win/loss (score + `modelVersion`) next to the actual training-class label. Freeview / combined-score still show `mlScore`; the labels page is the source of truth for prediction vs actual.
 
 ### Live trade stub
 
-`LiveExecutionAdapter` never talks to a wallet or broker. It returns `LIVE_NOT_ENABLED` unless **both** `EVAL_EXEC_MODE=live` **and** `LIVE_TRADE_ENABLED=1`. Even then v1 returns `LIVE_STUB_NO_BROKER`.
+`LiveExecutionAdapter` never talks to a wallet or broker. It returns `LIVE_NOT_ENABLED` unless **both** `EVAL_EXEC_MODE=live` **and** `LIVE_TRADE_ENABLED=1` **and** shadow is off. Even then v1 returns `LIVE_STUB_NO_BROKER`.
 
 Artifact path: `data/ml-closed-loop/model.json` (override `ML_CLOSED_LOOP_ARTIFACT`). Docker mounts `./data/ml-closed-loop`.

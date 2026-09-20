@@ -299,22 +299,23 @@ export MARKET_BRAIN_SIGNALS=1
 
 ### ML closed loop + eval engine (optional)
 
-Closed-loop `mlScore` is an adjuster on combined score (so phase-3 TP/SL can see it). The eval engine can paper-open principal candidates in real time. **Live trade is stubbed.** Full how-to: [ml/README.md](ml/README.md#closed-loop--eval-engine-phase-4).
+Closed-loop `mlScore` is an adjuster on combined score (so phase-3 TP/SL can see it). The eval engine is **shadow-by-default**: it scores + logs predictions and measures per-run accuracy. It does not auto-open. **Live trade is stubbed.** Full how-to: [ml/README.md](ml/README.md#closed-loop--eval-engine-phase-4).
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ML_CLOSED_LOOP` | off | Enable `mlScore` infer + combined-score `ml` weight |
 | `ML_CLOSED_LOOP_ARTIFACT` | `data/ml-closed-loop/model.json` | Persisted model version |
-| `EVAL_ENGINE` | off | Candidate scan / decision logging / paper opens |
-| `EVAL_EXEC_MODE` | `paper` | `paper` or `live` adapter |
+| `EVAL_ENGINE` | off | Candidate scan / decision + prediction logging |
+| `EVAL_SHADOW` | **on** | `shadow_predict` only; set `0` with `EVAL_ENGINE=1` to allow opens (discouraged) |
+| `EVAL_EXEC_MODE` | `paper` | `paper` or `live` adapter (opens only if shadow is off) |
 | `LIVE_TRADE_ENABLED` | `0` | Hard gate; live adapter refuses without it |
-| `ML_PAPER_MIN_COMBINED` | `0.35` | Skip paper open below this combined |
+| `ML_PAPER_MIN_COMBINED` | `0.35` | Skip predict/open below this combined |
 | `ML_PAPER_MIN_ML` | `0.5` | Skip when ML is on and `mlScore` is below this |
 
 ```bash
 npm run ml:backfill-labels -- --principals
 npm run ml:train-closed-loop
-export ML_CLOSED_LOOP=1 EVAL_ENGINE=1 EVAL_EXEC_MODE=paper LIVE_TRADE_ENABLED=0
+export ML_CLOSED_LOOP=1 EVAL_ENGINE=1 EVAL_SHADOW=1 EVAL_EXEC_MODE=paper LIVE_TRADE_ENABLED=0
 ```
 
 ### Telegram (optional)

@@ -1,17 +1,20 @@
 /**
  * Candidate scan + persist for the eval engine.
+ * Default is shadow: score + log predictions, never auto-open.
  */
+import { randomUUID } from 'crypto'
 import { loadCombinedScore } from './combined-score-load'
 import { isClosedLoopPrincipalId } from './closed-loop-ml'
 import {
   buildEvalDecision,
   getEvalExecMode,
   isEvalEngineEnabled,
+  isEvalShadowEnabled,
   type EvalDecision,
-  type EvalExecMode,
   type EvalRiskSnapshot,
   type EvalScanSummary,
 } from './eval-engine'
+import { buildPredictionFromDecision, isPredictAction } from './eval-predictions'
 import {
   selectExecutionAdapter,
   type PaperExecutionDeps,
@@ -23,7 +26,11 @@ export type EvalScanDeps = {
   loadCombinedScore?: typeof loadCombinedScore
   listCandidates?: typeof listEvalCandidates
   paper?: PaperExecutionDeps
-  persist?: typeof persistEvalRun
+  persist?: (
+    runId: string,
+    summary: EvalScanSummary,
+    decisions: EvalDecision[],
+  ) => Promise<void | { linkedCount?: number }>
   now?: Date
   env?: NodeJS.ProcessEnv
   limit?: number
@@ -46,15 +53,19 @@ export async function runEvalScan(deps: EvalScanDeps = {}): Promise<{
   const env = deps.env ?? process.env
   const now = deps.now ?? new Date()
   const mode = getEvalExecMode(env)
-  const runId = `eval-${now.toISOString().replace(/[:.]/g, '')}`
+  const shadow = isEvalShadowEnabled(env)
+  const runId = randomUUID()
   const empty = (extras: Partial<EvalScanSummary> = {}): EvalScanSummary => ({
     enabled: isEvalEngineEnabled(env),
+    shadow,
     mode,
     runId,
     scanned: 0,
     skipped: 0,
     paperOpened: 0,
     liveAttempted: 0,
+    predictCount: 0,
+    linkedCount: 0,
     errors: 0,
     finishedAt: now.toISOString(),
     ...extras,
@@ -111,8 +122,8 @@ export async function runEvalScan(deps: EvalScanDeps = {}): Promise<{
       { env },
     )
 
-    if (decision.action === 'skip') {
-      skipped += 1
+    if (decision.action === 'skip' || decision.action === 'shadow_predict') {
+      if (decision.action === 'skip') skipped += 1
       decisions.push(decision)
       continue
     }
@@ -142,15 +153,20 @@ export async function runEvalScan(deps: EvalScanDeps = {}): Promise<{
     decisions.push(decision)
   }
 
+  const predictCount = decisions.filter((d) => isPredictAction(d.action)).length
   const summary = empty({
     scanned: candidates.length,
     skipped,
     paperOpened,
     liveAttempted,
+    predictCount,
     errors,
     finishedAt: new Date().toISOString(),
   })
-  await (deps.persist ?? persistEvalRun)(runId, summary, decisions)
+  const persisted = await (deps.persist ?? persistEvalRun)(runId, summary, decisions)
+  if (persisted && typeof persisted === 'object' && 'linkedCount' in persisted) {
+    summary.linkedCount = persisted.linkedCount
+  }
   return { summary, decisions }
 }
 
@@ -222,11 +238,26 @@ export async function persistEvalRun(
   runId: string,
   summary: EvalScanSummary,
   decisions: EvalDecision[],
-): Promise<void> {
+): Promise<{ linkedCount: number }> {
+  let linkedCount = 0
   try {
-    const { insertEvalRun, insertEvalDecisions } = await import('./eval-engine-db')
-    await insertEvalRun(runId, summary)
+    const {
+      insertEvalRun,
+      insertEvalDecisions,
+      insertMlPredictions,
+      linkPredictionsForRun,
+      rollupEvalRunAccuracy,
+    } = await import('./eval-engine-db')
+    const predictions = decisions
+      .map((d, i) =>
+        buildPredictionFromDecision(runId, d, { id: `${runId}-${i}-${d.mint.slice(0, 8)}` }),
+      )
+      .filter((p): p is NonNullable<typeof p> => p != null)
+    await insertEvalRun(runId, { ...summary, predictCount: predictions.length })
     await insertEvalDecisions(runId, decisions)
+    await insertMlPredictions(predictions)
+    linkedCount = await linkPredictionsForRun(runId)
+    await rollupEvalRunAccuracy(runId)
   } catch (error) {
     console.warn(
       '[eval-engine] persist failed (fail-soft):',
@@ -235,10 +266,11 @@ export async function persistEvalRun(
   }
   try {
     const { saveEvalLastRun } = await import('./eval-engine-db')
-    saveEvalLastRun(summary, decisions.length)
+    saveEvalLastRun({ ...summary, linkedCount, predictCount: summary.predictCount }, decisions.length)
   } catch {
     /* ignore file persist */
   }
+  return { linkedCount }
 }
 
 export async function loadEvalLastRun(): Promise<EvalScanSummary | null> {

@@ -123,6 +123,7 @@ services:
       ML_CLOSED_LOOP: ${ML_CLOSED_LOOP:-0}
       ML_CLOSED_LOOP_ARTIFACT: ${ML_CLOSED_LOOP_ARTIFACT:-/app/data/ml-closed-loop/model.json}
       EVAL_ENGINE: ${EVAL_ENGINE:-0}
+      EVAL_SHADOW: ${EVAL_SHADOW:-1}
       EVAL_EXEC_MODE: ${EVAL_EXEC_MODE:-paper}
       LIVE_TRADE_ENABLED: ${LIVE_TRADE_ENABLED:-0}
       # DATABASE_URL from .env (bouncer host; URL-encode password if it contains @ # : %)
