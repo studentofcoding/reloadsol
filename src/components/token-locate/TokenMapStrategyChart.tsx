@@ -180,6 +180,7 @@ export default function TokenMapStrategyChart({
   const [refreshKey, setRefreshKey] = useState(0)
   const [lastPrice, setLastPrice] = useState<number | null>(null)
   const [corr, setCorr] = useState<number | null>(null)
+  const [combined, setCombined] = useState<number | null>(null)
   const [enabledDomains, setEnabledDomains] = useState<Set<TokenMapDomain>>(
     () => new Set(TOGGLE_DOMAINS),
   )
@@ -424,6 +425,37 @@ export default function TokenMapStrategyChart({
     applyDomainPaint(payload, enabledDomains)
   }, [enabledKey, enabledDomains, applyDomainPaint])
 
+  // Combined score badge is read-only; ignore endpoint errors so Freeview still loads.
+  useEffect(() => {
+    let cancelled = false
+    setCombined(null)
+    if (!tokenAddress) return
+    const qs = new URLSearchParams({
+      address: tokenAddress,
+      hours: String(hours),
+    })
+    if (chain) qs.set('chain', chain)
+    void fetch(`/api/strategies/combined-score?${qs}`)
+      .then(async (res) => {
+        const json = (await res.json()) as { success?: boolean; combined?: number }
+        if (
+          !cancelled &&
+          res.ok &&
+          json.success &&
+          typeof json.combined === 'number' &&
+          Number.isFinite(json.combined)
+        ) {
+          setCombined(json.combined)
+        }
+      })
+      .catch(() => {
+        /* badge optional */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [tokenAddress, hours, chain, refreshKey])
+
   return (
     <div className="rounded-xl border border-gray-700 bg-gray-900/60 overflow-hidden">
       <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-gray-800">
@@ -439,6 +471,14 @@ export default function TokenMapStrategyChart({
           {corr != null ? (
             <span className="text-xs text-emerald-300/90 shrink-0">
               corr: {corr.toFixed(2)}
+            </span>
+          ) : null}
+          {combined != null ? (
+            <span
+              className="text-xs text-violet-300/90 shrink-0"
+              title="Principal + adjuster combined score"
+            >
+              Combined score {combined.toFixed(2)}
             </span>
           ) : null}
         </div>
