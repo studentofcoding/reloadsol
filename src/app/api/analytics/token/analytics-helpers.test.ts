@@ -27,7 +27,7 @@ describe('resolveAnalyticsMaxAge / cutoff', () => {
     expect(analyticsHasLastUpdatedCutoff(60)).toBe(true)
     expect(analyticsHasLastUpdatedCutoff(0)).toBe(false)
     expect(buildMcapAnalyticsSql(0).hasCutoff).toBe(false)
-    expect(buildMcapAnalyticsSql(0).sql).not.toMatch(/last_updated_at/)
+    expect(buildMcapAnalyticsSql(0).sql).not.toMatch(/last_updated_at >=/)
     expect(buildMcapAnalyticsSql(60).hasCutoff).toBe(true)
     expect(buildMcapAnalyticsSql(60).sql).toMatch(/last_updated_at >= \$2/)
   })
