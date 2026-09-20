@@ -8,9 +8,11 @@ import {
   clamp01,
   combineParts,
   jaccardScoreForFormula,
+  parseCombinedScoreWeights,
   scoreAdjusterPresence,
   scoreOhlcPattern,
   scorePrincipal,
+  validateCombinedScoreWeights,
 } from '@/strategies/combined-score'
 
 function outcome(
@@ -51,6 +53,68 @@ function patterns(
 }
 
 const NOW = Date.parse('2026-09-20T12:00:00.000Z')
+
+describe('validateCombinedScoreWeights', () => {
+  it('rejects negatives, missing keys, and an all-zero set', () => {
+    expect(validateCombinedScoreWeights(null).ok).toBe(false)
+    expect(validateCombinedScoreWeights({ principal: -1 }).ok).toBe(false)
+    expect(
+      validateCombinedScoreWeights({
+        principal: 0,
+        adjusterPresence: 0,
+        jaccard: 0,
+        ohlcPattern: 0,
+      }).ok,
+    ).toBe(false)
+    const neg = validateCombinedScoreWeights({
+      principal: 0.55,
+      adjusterPresence: -0.2,
+      jaccard: 0.15,
+      ohlcPattern: 0.1,
+    })
+    expect(neg.ok).toBe(false)
+    if (neg.ok) throw new Error('expected reject')
+    expect(neg.error).toMatch(/adjusterPresence/)
+  })
+
+  it('renormalizes when the sum is not 1', () => {
+    const result = validateCombinedScoreWeights({
+      principal: 55,
+      adjusterPresence: 20,
+      jaccard: 15,
+      ohlcPattern: 10,
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('expected ok')
+    expect(result.renormalized).toBe(true)
+    expect(result.sumBefore).toBe(100)
+    expect(result.weights.principal).toBeCloseTo(0.55)
+    expect(result.weights.adjusterPresence).toBeCloseTo(0.2)
+    expect(result.weights.jaccard).toBeCloseTo(0.15)
+    expect(result.weights.ohlcPattern).toBeCloseTo(0.1)
+    const sum =
+      result.weights.principal +
+      result.weights.adjusterPresence +
+      result.weights.jaccard +
+      result.weights.ohlcPattern
+    expect(sum).toBeCloseTo(1)
+  })
+
+  it('accepts snake_case aliases and already-normalized defaults', () => {
+    const aliased = validateCombinedScoreWeights({
+      principal: 0.55,
+      adjuster_presence: 0.2,
+      jaccard: 0.15,
+      ohlc_pattern: 0.1,
+    })
+    expect(aliased.ok).toBe(true)
+    if (!aliased.ok) throw new Error('expected ok')
+    expect(aliased.renormalized).toBe(false)
+    expect(parseCombinedScoreWeights({ principal: 'nope' })).toEqual({
+      ...COMBINED_SCORE_WEIGHTS,
+    })
+  })
+})
 
 describe('COMBINED_SCORE_WEIGHTS', () => {
   it('sums to 1', () => {
@@ -200,6 +264,42 @@ describe('scorePrincipal', () => {
 })
 
 describe('combineParts / assembleCombinedScore', () => {
+  it('uses stored weights when they are provided', () => {
+    const payload = assembleCombinedScore({
+      mint: 'MintA',
+      chain: 'sol',
+      hours: 24,
+      nowMs: NOW,
+      locate: {
+        strategyPresence: [],
+        locations: {
+          trending: null,
+          mcap: { present: true },
+          signals: null,
+          social: null,
+        },
+      },
+      outcomes: [],
+      ohlcPatterns: null,
+      ohlcFailed: true,
+      weights: {
+        principal: 1,
+        adjusterPresence: 0,
+        jaccard: 0,
+        ohlcPattern: 0,
+      },
+    })
+    expect(payload.parts.principalScore).toBe(0.3)
+    expect(payload.parts.ohlcPatternScore).toBe(0.5)
+    expect(payload.combined).toBeCloseTo(0.3)
+    expect(payload.weights).toEqual({
+      principal: 1,
+      adjusterPresence: 0,
+      jaccard: 0,
+      ohlcPattern: 0,
+    })
+  })
+
   it('uses 0 for a null Jaccard in the weighted formula', () => {
     const combined = combineParts({
       principalScore: 1,

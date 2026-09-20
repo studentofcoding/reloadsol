@@ -5,8 +5,9 @@
  * + Jaccard meanPairwiseOverlapCorr + brain OHLC rug patterns
  *   → combined ∈ [0, 1]
  *
- * Weights live in COMBINED_SCORE_WEIGHTS so phase 3 / tuning can change
- * them without an API break. Rug trip is a score penalty only — it does
+ * Default weights live in COMBINED_SCORE_WEIGHTS (0.55 / 0.20 / 0.15 / 0.10).
+ * Operators can override them from /dev/strategies; the score reader loads
+ * the live row and renormalizes. Rug trip is a score penalty only — it does
  * not block principal opens.
  */
 import { meanPairwiseOverlapCorr } from '@/strategies/token-map-strategy-chart-paint'
@@ -114,6 +115,106 @@ export type CombinedScoreAssembleInput = {
   ohlcPatterns: BrainOhlcPatternSummary | null
   ohlcFailed?: boolean
   ohlcSource?: string
+  /** Live operator weights; defaults when omitted. */
+  weights?: CombinedScoreWeights
+}
+
+export const COMBINED_SCORE_WEIGHT_KEYS = [
+  'principal',
+  'adjusterPresence',
+  'jaccard',
+  'ohlcPattern',
+] as const
+
+export type CombinedScoreWeightKey = (typeof COMBINED_SCORE_WEIGHT_KEYS)[number]
+
+const WEIGHT_ALIASES: Record<CombinedScoreWeightKey, string[]> = {
+  principal: ['principal'],
+  adjusterPresence: ['adjusterPresence', 'adjuster_presence'],
+  jaccard: ['jaccard'],
+  ohlcPattern: ['ohlcPattern', 'ohlc_pattern'],
+}
+
+const WEIGHT_SUM_EPS = 1e-9
+
+export type CombinedScoreWeightsValidation =
+  | {
+      ok: true
+      weights: CombinedScoreWeights
+      renormalized: boolean
+      sumBefore: number
+    }
+  | { ok: false; error: string }
+
+function readWeightNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() !== '') {
+    const n = Number(value)
+    if (Number.isFinite(n)) return n
+  }
+  return null
+}
+
+export function readCombinedScoreWeight(
+  raw: Record<string, unknown> | null | undefined,
+  key: CombinedScoreWeightKey,
+): number | null {
+  if (!raw) return null
+  for (const alias of WEIGHT_ALIASES[key]) {
+    const n = readWeightNumber(raw[alias])
+    if (n != null) return n
+  }
+  return null
+}
+
+/**
+ * Validate operator weights.
+ *
+ * Rule: each weight must be a finite number ≥ 0 and the sum must be > 0.
+ * Saved / applied weights are **renormalized** so they sum to 1 (55/20/15/10
+ * and 0.55/0.20/0.15/0.10 both work). Reject negatives, NaN, and an all-zero set.
+ */
+export function validateCombinedScoreWeights(
+  raw: unknown,
+): CombinedScoreWeightsValidation {
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ok: false, error: 'weights must be an object' }
+  }
+  const obj = raw as Record<string, unknown>
+  const parsed = {} as CombinedScoreWeights
+  for (const key of COMBINED_SCORE_WEIGHT_KEYS) {
+    const n = readCombinedScoreWeight(obj, key)
+    if (n == null) {
+      return { ok: false, error: `${key} must be a finite number ≥ 0` }
+    }
+    if (n < 0) {
+      return { ok: false, error: `${key} must be ≥ 0` }
+    }
+    parsed[key] = n
+  }
+  const sumBefore =
+    parsed.principal + parsed.adjusterPresence + parsed.jaccard + parsed.ohlcPattern
+  if (!(sumBefore > 0)) {
+    return { ok: false, error: 'weights must sum to more than 0' }
+  }
+  const renormalized = Math.abs(sumBefore - 1) > WEIGHT_SUM_EPS
+  const weights: CombinedScoreWeights = {
+    principal: parsed.principal / sumBefore,
+    adjusterPresence: parsed.adjusterPresence / sumBefore,
+    jaccard: parsed.jaccard / sumBefore,
+    ohlcPattern: parsed.ohlcPattern / sumBefore,
+  }
+  return { ok: true, weights, renormalized, sumBefore }
+}
+
+/** Fail-soft parse for scoring: invalid / missing → v1 defaults. */
+export function parseCombinedScoreWeights(raw: unknown): CombinedScoreWeights {
+  const validated = validateCombinedScoreWeights(raw)
+  return validated.ok ? validated.weights : { ...COMBINED_SCORE_WEIGHTS }
+}
+
+export function defaultCombinedScoreWeights(): CombinedScoreWeights {
+  return { ...COMBINED_SCORE_WEIGHTS }
 }
 
 export function clamp01(n: number): number {
@@ -379,14 +480,15 @@ export function assembleCombinedScore(
   const rugTrip = input.ohlcFailed || input.ohlcPatterns == null
     ? undefined
     : input.ohlcPatterns.rug.trip
+  const weights = input.weights ?? { ...COMBINED_SCORE_WEIGHTS }
 
   return {
     success: true,
     mint: input.mint,
     chain: input.chain,
     hours,
-    combined: combineParts(parts),
-    weights: { ...COMBINED_SCORE_WEIGHTS },
+    combined: combineParts(parts, weights),
+    weights,
     parts,
     principals,
     adjusters,

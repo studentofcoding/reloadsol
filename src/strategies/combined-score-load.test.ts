@@ -56,6 +56,20 @@ function emptyChart(): TokenMapChartPayload {
   }
 }
 
+const defaultWeights = {
+  principal: 0.55,
+  adjusterPresence: 0.2,
+  jaccard: 0.15,
+  ohlcPattern: 0.1,
+}
+
+function weightsDep(
+  weights = defaultWeights,
+  source: 'stored' | 'defaults' = 'defaults',
+) {
+  return vi.fn(async () => ({ weights, source }))
+}
+
 describe('loadCombinedScore', () => {
   it('returns success and principals for a mint with mcap presence', async () => {
     const payload = await loadCombinedScore({
@@ -76,6 +90,7 @@ describe('loadCombinedScore', () => {
           error: 'down',
           path: '/ohlc',
         })),
+        loadCombinedScoreWeights: weightsDep(),
       },
     })
 
@@ -104,6 +119,7 @@ describe('loadCombinedScore', () => {
         fetchBrainOhlc: vi.fn(async () => {
           throw new Error('brain timeout')
         }),
+        loadCombinedScoreWeights: weightsDep(),
       },
     })
 
@@ -142,6 +158,7 @@ describe('loadCombinedScore', () => {
         loadTokenMapChart: vi.fn(async () => emptyChart()),
         fetchBrainOhlcPatterns: fetchPatterns,
         fetchBrainOhlc: fetchOhlc,
+        loadCombinedScoreWeights: weightsDep(),
       },
     })
 
@@ -150,5 +167,41 @@ describe('loadCombinedScore', () => {
     expect(payload.ohlcSource).toBe('brain:/ohlc/patterns')
     expect(payload.parts.ohlcPatternScore).toBe(1)
     expect(payload.rugTrip).toBe(false)
+  })
+
+  it('applies stored operator weights when present', async () => {
+    const payload = await loadCombinedScore({
+      address: MINT,
+      chain: 'sol',
+      hours: 24,
+      deps: {
+        nowMs: NOW,
+        locateTokenByAddress: vi.fn(async () => locateWithMcap()),
+        loadTokenMapChart: vi.fn(async () => emptyChart()),
+        fetchBrainOhlcPatterns: vi.fn(async () => ({
+          ok: false as const,
+          error: 'down',
+          path: '/ohlc/patterns',
+        })),
+        fetchBrainOhlc: vi.fn(async () => ({
+          ok: false as const,
+          error: 'down',
+          path: '/ohlc',
+        })),
+        loadCombinedScoreWeights: weightsDep(
+          {
+            principal: 1,
+            adjusterPresence: 0,
+            jaccard: 0,
+            ohlcPattern: 0,
+          },
+          'stored',
+        ),
+      },
+    })
+
+    expect(payload.parts.principalScore).toBe(0.3)
+    expect(payload.weights.principal).toBe(1)
+    expect(payload.combined).toBeCloseTo(0.3)
   })
 })

@@ -8,11 +8,14 @@
 import { locateTokenByAddress, type TokenLocateResult } from '@/strategies/token-locate'
 import { loadTokenMapChart, type TokenChartOutcomeSegment } from '@/strategies/token-map-chart'
 import {
+  COMBINED_SCORE_WEIGHTS,
   assembleCombinedScore,
   type CombinedScoreChain,
   type CombinedScoreLocateInput,
   type CombinedScoreResponse,
+  type CombinedScoreWeights,
 } from '@/strategies/combined-score'
+import { loadCombinedScoreWeights } from '@/strategies/combined-score-weights'
 import {
   fetchBrainOhlc,
   fetchBrainOhlcPatterns,
@@ -25,6 +28,7 @@ export type CombinedScoreLoadDeps = {
   loadTokenMapChart?: typeof loadTokenMapChart
   fetchBrainOhlcPatterns?: typeof fetchBrainOhlcPatterns
   fetchBrainOhlc?: typeof fetchBrainOhlc
+  loadCombinedScoreWeights?: typeof loadCombinedScoreWeights
   nowMs?: number
 }
 
@@ -125,6 +129,14 @@ export async function loadCombinedScore(params: {
     params.brain,
   )
 
+  let weights: CombinedScoreWeights = { ...COMBINED_SCORE_WEIGHTS }
+  try {
+    const loadWeights = deps.loadCombinedScoreWeights ?? loadCombinedScoreWeights
+    weights = (await loadWeights()).weights
+  } catch {
+    weights = { ...COMBINED_SCORE_WEIGHTS }
+  }
+
   return assembleCombinedScore({
     mint: params.address,
     chain: params.chain,
@@ -135,5 +147,6 @@ export async function loadCombinedScore(params: {
     ohlcPatterns: ohlc.patterns,
     ohlcFailed: ohlc.failed,
     ohlcSource: ohlc.source,
+    weights,
   })
 }
