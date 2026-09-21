@@ -8,13 +8,23 @@ This document summarizes how bulk swaps and token account closures work across t
 |-------|---------|-------|
 | Wallet tokens | Shyft `all_tokens` (cached), Jupiter Portfolio fallback | `useWalletTokens.ts`, `sol-wallet-holdings.ts`, `shyft-wallet.ts` |
 | Multi-tx send | Shyft `send_many_txns` (RPC fallback per tx) | `swap-executor.ts`, `shyft-transaction.ts` |
-| Swaps | **Solana Tracker Raptor** (quote-and-swap + send-transaction) | `solanatracker-raptor.ts`, `swap-executor.ts`, `/api/solanatracker/*` |
+| Swaps | **Parallel pick:** Raptor (maxHops=1) + Jupiter Lite + Jupiter Swap `/order`; impact-gated; winner’s prepare | `swap-executor.ts`, `swap-quote-pick.ts`, `solanatracker-raptor.ts`, `jupiter-lite-swap.ts`, `jupiter-swap-quote.ts` |
 | RPC | Same-origin `/api/rpc` proxy (fallback send only) | `RpcContext.tsx`, `/api/rpc/route.ts` |
 | Prices/metadata | Jupiter APIs (UI support, not swap execution) | `/api/tokens/prices`, `/api/jupiter/metadata` |
 | Charts | GMGN iframe embeds only (`gmgn.cc`) | Bulk pages, chart pages |
 | Close accounts | Jupiter `/reclaim/craft` + fixed fee (manual fallback) | `jupiter-reclaim.ts`, `/api/jupiter/reclaim/craft`, `closeTokenAccounts` |
 
-## Raptor Swap Flow (all buy/sell)
+## Directional swap quote (parallel pick)
+
+`fetchSwapQuote` / `prepareSwapTransaction` (no `maxHops`) race three providers and **gate** by absolute price impact (`SWAP_QUOTE_MAX_IMPACT_PCT`, default **15%**):
+
+1. **Solana Tracker Raptor** — still `maxHops=1` / `RAPTOR_DEFAULT_MAX_HOPS` (do not raise for directional bots)
+2. **Jupiter Lite** — `lite-api.jup.ag/swap/v1/quote` (proxied `/api/jupiter/lite/quote`)
+3. **Jupiter Swap** — `api.jup.ag/swap/v2/order` (proxied `/api/jupiter/quote`; needs `JUPITER_API_KEY`)
+
+Fail-soft per provider (a 429 on Swap does not fail Lite/Raptor). Winner = highest `outAmount`, then lower impact, then prefer Raptor. Prepare uses that provider: Raptor `quote-and-swap`, Lite `/swap`, or Swap `/order?taker=`. Live arb still passes `maxHops` and keeps the Raptor hops path.
+
+## Raptor Swap Flow (Raptor winner / arb)
 
 Per [Solana Tracker Swap API](https://docs.solanatracker.io/guides/swap-api):
 
@@ -27,8 +37,9 @@ Per [Solana Tracker Swap API](https://docs.solanatracker.io/guides/swap-api):
 
 | Helper | Purpose |
 |--------|---------|
-| `prepareSwapTransaction` | Raptor-only quote-and-swap |
-| `submitSignedSwap` | Raptor send → RPC fallback |
+| `fetchSwapQuote` | Parallel Raptor + Lite + Swap; impact gate; pick winner |
+| `prepareSwapTransaction` | Winner’s prepare (arb: `maxHops` → Raptor hops path) |
+| `submitSignedSwap` | Shyft send or RPC; Raptor status poll only if tx was Raptor-built |
 | `executeClientSwap` | Single-tx: prepare → sign → submit → confirm |
 | `signTransactionsWithFallback` | Batch sign; one-by-one fallback on wallet reject |
 | `prepareBulkSwapTransaction` | Bulk buy/sell tx + metadata |
@@ -48,13 +59,23 @@ Per [Solana Tracker Swap API](https://docs.solanatracker.io/guides/swap-api):
 ## Providers and Flow
 
 - **Solana Tracker Raptor (swap execution)**
-  - Quote: `GET /api/solanatracker/quote` → Raptor `GET /quote`
+  - Quote: `GET /api/solanatracker/quote` → Raptor `GET /quote` (`maxHops=1` directional)
   - Swap: `POST /api/solanatracker/swap` → Raptor `POST /quote-and-swap`
   - Send: `POST /api/solanatracker/send` → Raptor `POST /send-transaction`
-  - Status: `GET /api/solanatracker/transaction/[signature]`
+  - Status: `GET /api/solanatracker/transaction/[signature]` (Raptor-built txs)
   - Env: `RAPTOR_API_BASE` (optional). Platform fee is **always 25 bps (0.25%)**
     to the buy_bulk treasury (`feeAccount` / `feeBps` via `src/utils/buybulk-fee.ts`);
     clients cannot omit or override it.
+
+- **Jupiter Lite (directional fallback)**
+  - Quote: `GET /api/jupiter/lite/quote` → `lite-api.jup.ag/swap/v1/quote`
+  - Swap build: `POST /api/jupiter/lite/swap` → `POST /swap`
+  - Shares `throttleJupiterRps` with Price V3 / Swap `/order` on the server
+
+- **Jupiter Swap `/order` (directional fallback)**
+  - Quote: `GET /api/jupiter/quote` → `api.jup.ag/swap/v2/order` (no `taker`)
+  - Prepare: same URL with `taker` = user pubkey (unsigned `transaction`)
+  - Requires `JUPITER_API_KEY`; send still uses Shyft/RPC like Lite
 
 - **Jupiter Ultra Reclaim (close only — not swaps)**
   - Craft: `POST /api/jupiter/reclaim/craft` → reclaim API

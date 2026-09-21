@@ -46,19 +46,24 @@ selection back to `sol`.
 
 ### Solana
 
-- **Solana Tracker Raptor** is the primary executor for bulk buy/sell, chart buys and
-  PnL Fast Sell: `prepareSwapTransaction` → wallet signs the returned v0 tx →
-  `submitSignedSwap` (Raptor send, RPC fallback only) → poll `confirmed|failed|expired`
+- **Solana Tracker Raptor** is still the preferred executor when it quotes a
+  1-hop route inside the impact gate, but directional `fetchSwapQuote` /
+  `prepareSwapTransaction` race **Raptor (`maxHops=1`) + Jupiter Lite + Jupiter
+  Swap `/order`**, discard routes above `SWAP_QUOTE_MAX_IMPACT_PCT` (default 15%),
+  and build via the winner: `prepareSwapTransaction` → wallet signs the returned v0 tx →
+  `submitSignedSwap` (Shyft or RPC) → poll `confirmed|failed|expired`
   (`src/utils/swap-executor.ts`, `src/utils/jupiter.ts` `executeBulkBuy`,
-  `executeBulkSellAlt`, `executeClientSwap`; server proxy `/api/solanatracker/*`).
+  `executeBulkSellAlt`, `executeClientSwap`; proxies `/api/solanatracker/*`,
+  `/api/jupiter/lite/*`, `/api/jupiter/quote`).
   Full `/sell` defaults `outputMint` to wrapped SOL; a custom mint is resolved by
   `sellOutputMint` (`src/utils/sell-output-mint.ts`) and threaded into quotes,
   prefetch, and `executeBulkSellAlt`. Compact `ReloadHome` (native SOL only) is unused as a post-connect landing; connect goes to `/sell/{chain}`.
   PnL Fast Sell stays native SOL.
 - **Jupiter** handles pricing/metadata, the wallet token list (Portfolio), the `/swap`
-  Jupiter Terminal widget, and account close/reclaim — not the main swap executor.
+  Jupiter Terminal widget, account close/reclaim, and **Lite / Swap `/order` as
+  directional quote/prepare fallbacks** when Raptor has no 1-hop route or fails the impact gate.
 - **GMGN** on Solana is charts (embedded `gmgn.cc` iframes) plus a dev-only GMGN
-  bound-wallet path in the bulk buyer (`useGmgnOnSol`); swaps otherwise stay Raptor.
+  bound-wallet path in the bulk buyer (`useGmgnOnSol`); GMGN is not a Solana swap executor.
 - Tokens: cached Shyft `all_tokens` (`useWalletTokens.ts`, Jupiter Portfolio fallback); prices from the shared
   GMGN + Redis + SSE feed with Jupiter fallback; RPC via the same-origin `/api/rpc`
   proxy (Shyft). Quote comparison across Jupiter / SolanaTracker / GMGN exists at

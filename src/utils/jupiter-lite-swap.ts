@@ -1,4 +1,5 @@
 import type { SwapQuote } from "@/types";
+import { throttleJupiterRps } from "@/utils/jupiter-rps";
 
 export const JUPITER_LITE_SWAP_BASE = "https://lite-api.jup.ag/swap/v1";
 export const JUPITER_LITE_FETCH_TIMEOUT_MS = 20_000;
@@ -47,11 +48,16 @@ async function liteFetch<T>(
   init?: RequestInit,
   timeoutMs = JUPITER_LITE_FETCH_TIMEOUT_MS,
 ): Promise<T> {
+  const isClient = typeof window !== "undefined";
+  // Share the process-wide Jupiter RPS slot with Price V3 / Swap `/order`.
+  if (!isClient) {
+    await throttleJupiterRps();
+  }
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const isClient = typeof window !== "undefined";
     const url = isClient
       ? `${getClientBaseUrl()}/api/jupiter/lite${path}`
       : `${JUPITER_LITE_SWAP_BASE}${path}`;

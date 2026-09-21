@@ -16,6 +16,7 @@ export async function GET(request: NextRequest) {
       searchParams.get('slippageBps') ?? '200',
       10,
     )
+    const taker = searchParams.get('taker') ?? undefined
 
     if (!inputMint || !outputMint || !amount) {
       return NextResponse.json(
@@ -27,8 +28,12 @@ export async function GET(request: NextRequest) {
     try {
       new PublicKey(inputMint)
       new PublicKey(outputMint)
+      if (taker) new PublicKey(taker)
     } catch {
-      return NextResponse.json({ error: 'Invalid mint address' }, { status: 400 })
+      return NextResponse.json(
+        { error: 'Invalid mint or wallet address' },
+        { status: 400 },
+      )
     }
 
     if (!/^\d+$/.test(amount) || Number(amount) <= 0) {
@@ -44,6 +49,7 @@ export async function GET(request: NextRequest) {
       outputMint,
       amount,
       slippageBps: Number.isFinite(slippageBps) ? slippageBps : 200,
+      taker,
     })
 
     return NextResponse.json(

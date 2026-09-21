@@ -4,6 +4,7 @@ import {
   BUYBULK_SOL_FEE_ACCOUNT,
 } from "@/utils/buybulk-fee";
 import {
+  RAPTOR_DEFAULT_MAX_HOPS,
   RAPTOR_DEV_FEE_ACCOUNT,
   RAPTOR_DEV_FEE_BPS,
   buildRaptorQuoteAndSwapBody,
@@ -18,6 +19,11 @@ const BASE = {
 };
 
 describe("buildRaptorQuoteAndSwapBody buy_bulk fee", () => {
+  it("keeps directional maxHops default at 1", () => {
+    expect(RAPTOR_DEFAULT_MAX_HOPS).toBe(1);
+    expect(buildRaptorQuoteAndSwapBody(BASE).maxHops).toBe(1);
+  });
+
   it("always stamps 25 bps + canonical fee account", () => {
     const body = buildRaptorQuoteAndSwapBody(BASE);
     expect(body.feeBps).toBe(25);
