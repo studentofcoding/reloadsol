@@ -356,10 +356,10 @@ BOT_TRADE_LOCK_TTL_SEC=120
 | `/dev/signals` | Signals hub — signals, live trending, chart board, mcap tracker (`?tab=`) |
 | `/dev/search-token` | Token search (name/symbol/CA); chain pages `/solana`, `/robinhood` |
 | `/dev/search-token/detail` | Token map — Freeview (lanes + chart) or List (`?address=&view=`) |
-| `/dev/algo-tester` | Algo tester — trending win/loss dashboard + tracking history |
+| `/dev/algo-tester` | Algo tester — config, open positions, closed reports (all domains) |
 | `/dev/dlmm` | Meteora DLMM agent — pools, positions, deploy/edit/close |
 
-Legacy routes redirect via `proxy.ts` (e.g. `/charts` → `/dev/signals?tab=board`, `/dev/trending-tracker` → `/dev/algo-tester`). `/search-token*` → `/dev/search-token*`; `/dev/token-search` → `/dev/search-token/detail`.
+Legacy routes redirect via `proxy.ts` (e.g. `/charts` → `/dev/signals?tab=board`, `/dev/trending-tracker` → `/dev/algo-tester`, `/dev/strategies` → `/dev/algo-tester?tab=config`). `/search-token*` → `/dev/search-token*`; `/dev/token-search` → `/dev/search-token/detail`.
 
 ---
 

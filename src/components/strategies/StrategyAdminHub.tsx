@@ -52,6 +52,24 @@ import {
 import { DEFAULT_GMGN_RADAR } from "@/strategies/registry";
 import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import { notifySyncForActive, readNotifyFlags } from "@/strategies/strategy-notify";
+import {
+  simulatedToReportParam,
+  type AlgoTesterSimulated,
+} from "@/components/algo-tester/algo-tester-query";
+
+export type StrategyAdminEmbedded = {
+  view: "config" | "closed";
+  panel?: "workers" | "review" | "";
+  domain?: string;
+  strategyId?: string;
+  simulated?: AlgoTesterSimulated;
+  tokenAddress?: string;
+  hideSharedFilters?: boolean;
+  onDomainChange?: (domain: string) => void;
+  onStrategyIdChange?: (strategyId: string) => void;
+  onSimulatedChange?: (simulated: AlgoTesterSimulated) => void;
+  onTokenAddressChange?: (tokenAddress: string) => void;
+};
 
 const OUTCOMES_PAGE_SIZE = 100;
 
@@ -431,11 +449,17 @@ function buildCsvHref(params: {
   return `/api/strategies/outcomes?${q.toString()}`;
 }
 
-export default function StrategyAdminHub() {
+export default function StrategyAdminHub({
+  embedded,
+}: {
+  embedded?: StrategyAdminEmbedded;
+} = {}) {
   const queryClient = useQueryClient();
   const { network, setNetwork } = useAppNetwork();
   const isRobinhood = network === "robinhood";
   const [tab, setTab] = useState<TabId>(() => {
+    if (embedded?.view === "closed") return "reports";
+    if (embedded?.view === "config") return "config";
     if (typeof window === "undefined") return "config";
     const params = new URLSearchParams(window.location.search);
     return parseTabParam(params.get("tab"));
@@ -462,11 +486,67 @@ export default function StrategyAdminHub() {
     );
   });
 
+  const showConfig = embedded ? embedded.view === "config" : tab === "config";
+  const showReports = embedded ? embedded.view === "closed" : tab === "reports";
+  const showReview = embedded
+    ? embedded.view === "closed"
+    : tab === "review";
+  const showWorkers = embedded
+    ? embedded.view === "config"
+    : tab === "workers";
+
+  useEffect(() => {
+    if (!embedded) return;
+    setTab(embedded.view === "closed" ? "reports" : "config");
+  }, [embedded, embedded?.view]);
+
+  const embeddedDomain = embedded?.domain;
+  const embeddedStrategyId = embedded?.strategyId;
+  const embeddedSimulated = embedded?.simulated;
+  const embeddedTokenAddress = embedded?.tokenAddress;
+
+  useEffect(() => {
+    if (embeddedDomain !== undefined) setReportDomain(embeddedDomain);
+    if (embeddedStrategyId !== undefined) setReportStrategyId(embeddedStrategyId);
+    if (embeddedSimulated !== undefined) {
+      setReportSimulated(simulatedToReportParam(embeddedSimulated));
+    }
+    if (embeddedTokenAddress !== undefined) setTokenSearch(embeddedTokenAddress);
+    if (
+      embeddedDomain !== undefined ||
+      embeddedStrategyId !== undefined ||
+      embeddedSimulated !== undefined ||
+      embeddedTokenAddress !== undefined
+    ) {
+      setOutcomesOffset(0);
+    }
+  }, [
+    embeddedDomain,
+    embeddedStrategyId,
+    embeddedSimulated,
+    embeddedTokenAddress,
+  ]);
+
+  useEffect(() => {
+    if (embedded?.panel !== "workers") return;
+    document
+      .getElementById("algo-tester-workers")
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [embedded?.panel]);
+
+  useEffect(() => {
+    if (embedded?.panel !== "review") return;
+    document
+      .getElementById("algo-tester-review")
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [embedded?.panel]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const c = new URLSearchParams(window.location.search).get("chain");
     if (c === "sol" || c === "robinhood") setNetwork(c);
   }, [setNetwork]);
+
   const [selectedOutcomeIndex, setSelectedOutcomeIndex] = useState<number | null>(
     null,
   );
@@ -484,13 +564,13 @@ export default function StrategyAdminHub() {
   const socialOverlapSeenRef = useRef(new Set<string>());
 
   const reportsPollingActive =
-    tab === "reports" && backfillPhase !== "running";
+    showReports && backfillPhase !== "running";
 
   useEffect(() => {
-    if (tab !== "reports") return;
+    if (!showReports) return;
     const tick = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(tick);
-  }, [tab]);
+  }, [showReports]);
 
   const dismissToast = useCallback(() => {
     if (toastTimerRef.current) {
@@ -575,7 +655,7 @@ export default function StrategyAdminHub() {
       }
       return map;
     },
-    enabled: tab === "reports",
+    enabled: showReports,
     staleTime: 60_000,
   });
 
@@ -640,7 +720,7 @@ export default function StrategyAdminHub() {
       };
     },
     refetchInterval:
-      tab === "reports" && backfillPhase !== "running"
+      showReports && backfillPhase !== "running"
         ? REPORTS_POLL_INTERVAL_MS
         : false,
     refetchIntervalInBackground: false,
@@ -654,8 +734,8 @@ export default function StrategyAdminHub() {
       if (!json.success) throw new Error("Failed to load workers");
       return json;
     },
-    refetchInterval: tab === "workers" ? 30_000 : false,
-    enabled: tab === "workers",
+    refetchInterval: showWorkers ? 30_000 : false,
+    enabled: showWorkers,
   });
 
   const data = strategiesQuery.data?.data ?? null;
@@ -676,7 +756,7 @@ export default function StrategyAdminHub() {
     : null;
 
   useEffect(() => {
-    if (tab !== "reports" || outcomes.length === 0) return;
+    if (!showReports || outcomes.length === 0) return;
     for (const o of outcomes) {
       const feats =
         o.features && typeof o.features === "object"
@@ -697,13 +777,13 @@ export default function StrategyAdminHub() {
       );
       break;
     }
-  }, [outcomes, tab, showToast]);
+  }, [outcomes, showReports, showToast]);
 
   const load = useCallback(async (options?: { silent?: boolean }) => {
     try {
       const result = await strategiesQuery.refetch();
       if (result.error) throw result.error;
-      if (tab === "workers") {
+      if (showWorkers) {
         const workersResult = await workersQuery.refetch();
         if (workersResult.error) throw workersResult.error;
       }
@@ -713,7 +793,7 @@ export default function StrategyAdminHub() {
     } catch (e) {
       showToast("error", "Refresh failed", formatError(e));
     }
-  }, [strategiesQuery, workersQuery, tab, showToast]);
+  }, [strategiesQuery, workersQuery, showWorkers, showToast]);
 
   const refreshWorkers = useCallback(async () => {
     try {
@@ -980,6 +1060,7 @@ export default function StrategyAdminHub() {
   return (
     <div className="space-y-6">
       <AdminToastBanner toast={toast} onDismiss={dismissToast} />
+      {!embedded ? (
       <ScrollableMenuRow className="border-b border-gray-700 pb-2">
         <button
           type="button"
@@ -1010,8 +1091,9 @@ export default function StrategyAdminHub() {
           Workers
         </button>
       </ScrollableMenuRow>
+      ) : null}
 
-      {tab === "config" && (
+      {showConfig && (
         <StrategyConfigTab
           isRobinhood={isRobinhood}
           effective={effective}
@@ -1026,20 +1108,26 @@ export default function StrategyAdminHub() {
           onSave={saveStrategy}
           onPromote={promoteStrategy}
           onToast={showToast}
+          focusDomain={embedded?.domain || ""}
         />
       )}
 
-      {tab === "reports" && (
+      {showReports && (
         <>
+          {showReview ? (
+            <div id="algo-tester-review">
+              <StrategyReviewPanel />
+            </div>
+          ) : null}
           <p className="text-gray-400 text-sm mb-4">
             Reports and the ML feed below show{" "}
             <span className="text-white">closed trades</span> from{" "}
             <code className="text-xs">strategy_outcomes</code>. Open positions
-            (still holding) appear in{" "}
-            <Link href="/dev/algo-tester" className="text-blue-400 underline">
-              Algo tester
+            (still holding) appear on this page&apos;s{" "}
+            <Link href="/dev/algo-tester?tab=open" className="text-blue-400 underline">
+              Open positions
             </Link>{" "}
-            until fully closed — counts will not match 1:1.
+            tab until fully closed — counts will not match 1:1.
           </p>
           <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
             <div className="flex flex-wrap gap-3 mb-4 text-sm">
@@ -1093,6 +1181,8 @@ export default function StrategyAdminHub() {
                   <option value="UTC">UTC</option>
                 </select>
               </label>
+              {!embedded?.hideSharedFilters ? (
+              <>
               <label className="text-gray-400">
                 Domain
                 <select
@@ -1101,6 +1191,7 @@ export default function StrategyAdminHub() {
                   onChange={(e) => {
                     setReportDomain(e.target.value);
                     setOutcomesOffset(0);
+                    embedded?.onDomainChange?.(e.target.value);
                   }}
                 >
                   <option value="">All</option>
@@ -1120,6 +1211,7 @@ export default function StrategyAdminHub() {
                   onChange={(e) => {
                     setReportStrategyId(e.target.value);
                     setOutcomesOffset(0);
+                    embedded?.onStrategyIdChange?.(e.target.value);
                   }}
                 >
                   <option value="">All</option>
@@ -1145,6 +1237,8 @@ export default function StrategyAdminHub() {
                   <option value="false">LIVE</option>
                 </select>
               </label>
+              </>
+              ) : null}
               <label className="text-gray-400">
                 ML label
                 <select
@@ -1283,10 +1377,11 @@ export default function StrategyAdminHub() {
                         reportStrategyId === c.strategy_id ? "bg-gray-800/80" : ""
                       }`}
                       onClick={() => {
-                        setReportStrategyId(
-                          reportStrategyId === c.strategy_id ? "" : c.strategy_id,
-                        );
+                        const next =
+                          reportStrategyId === c.strategy_id ? "" : c.strategy_id;
+                        setReportStrategyId(next);
                         setOutcomesOffset(0);
+                        embedded?.onStrategyIdChange?.(next);
                       }}
                     >
                       <td className="p-2">{c.domain}</td>
@@ -1626,12 +1721,14 @@ export default function StrategyAdminHub() {
             <div className="flex flex-wrap items-start justify-between gap-3 mb-2">
               <h2 className="text-xl font-bold text-white">Outcomes (ML feed)</h2>
               <div className="flex flex-wrap items-center gap-2">
+                {!embedded?.hideSharedFilters ? (
                 <input
                   type="search"
                   value={tokenSearch}
                   onChange={(e) => {
                     setTokenSearch(e.target.value);
                     setOutcomesOffset(0);
+                    embedded?.onTokenAddressChange?.(e.target.value);
                     if (typeof window !== "undefined") {
                       const url = new URL(window.location.href);
                       const v = e.target.value.trim();
@@ -1643,6 +1740,7 @@ export default function StrategyAdminHub() {
                   placeholder="Search token / CA"
                   className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white w-56"
                 />
+                ) : null}
               <button
                 type="button"
                 disabled={backfillPhase !== "idle"}
@@ -1901,17 +1999,23 @@ export default function StrategyAdminHub() {
         </>
       )}
 
-      {tab === "review" && <StrategyReviewPanel />}
+      {showReview && !showReports ? (
+        <div id="algo-tester-review">
+          <StrategyReviewPanel />
+        </div>
+      ) : null}
 
-      {tab === "workers" && (
-        <WorkersTab
-          data={workersQuery.data}
-          loading={workersQuery.isLoading}
-          error={workersQuery.error}
-          onRefresh={() => void refreshWorkers()}
-          triggeringWorker={triggeringWorker}
-          onRunNow={runWorkerNow}
-        />
+      {showWorkers && (
+        <section id="algo-tester-workers">
+          <WorkersTab
+            data={workersQuery.data}
+            loading={workersQuery.isLoading}
+            error={workersQuery.error}
+            onRefresh={() => void refreshWorkers()}
+            triggeringWorker={triggeringWorker}
+            onRunNow={runWorkerNow}
+          />
+        </section>
       )}
 
       {selectedOutcome && (
@@ -3258,6 +3362,7 @@ function StrategyConfigTab({
   onSave,
   onPromote,
   onToast,
+  focusDomain = "",
 }: {
   isRobinhood: boolean;
   effective: Record<string, TrendingBotStrategy>;
@@ -3272,7 +3377,29 @@ function StrategyConfigTab({
   onSave: SaveStrategyFn;
   onPromote: (source: string, target: string, confirm: boolean) => void;
   onToast: (kind: "success" | "error", title: string, detail?: string) => void;
+  focusDomain?: string;
 }) {
+  useEffect(() => {
+    if (!focusDomain) return;
+    document
+      .getElementById(`algo-config-${focusDomain}`)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [focusDomain]);
+
+  const show = (domain: string) => !focusDomain || focusDomain === domain;
+  const collapsed = (domain: string, summary: string, title: string) => (
+    <section
+      id={`algo-config-${domain}`}
+      className="bg-gray-900 border border-gray-700 rounded-lg px-6 py-3"
+    >
+      <p className="text-sm text-gray-400">
+        <span className="text-white font-medium">{title}</span>
+        {" · "}
+        {summary}
+      </p>
+    </section>
+  );
+
   return (
     <>
       <CombinedScoreWeightsPanel
@@ -3285,7 +3412,8 @@ function StrategyConfigTab({
         onNotify={(kind, title, detail) => onToast(kind, title, detail ?? "")}
       />
 
-      <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
+      {show("trending_bot") ? (
+      <section id="algo-config-trending_bot" className="bg-gray-900 border border-gray-700 rounded-lg p-6">
         <h2 className="text-xl font-bold text-white mb-2">Trending bot</h2>
         <p className="text-gray-400 text-sm mb-4">
           Active: {active.join(", ") || "none"} · Pre-filter uses union of active bands.
@@ -3305,8 +3433,14 @@ function StrategyConfigTab({
           ))}
         </div>
       </section>
+      ) : collapsed(
+        "trending_bot",
+        `${Object.keys(effective).length} strategies · Active: ${active.join(", ") || "none"}`,
+        "Trending bot",
+      )}
 
-      <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
+      {show("signals") ? (
+      <section id="algo-config-signals" className="bg-gray-900 border border-gray-700 rounded-lg p-6">
         <h2 className="text-xl font-bold text-white mb-4">Signals strategies</h2>
         <div className="grid gap-4 md:grid-cols-2">
           {signals.map((s) => (
@@ -3322,8 +3456,14 @@ function StrategyConfigTab({
           Open Signals hub (manual live buys)
         </Link>
       </section>
+      ) : collapsed(
+        "signals",
+        `${signals.length} strategies · Active: ${signals.filter((s) => s.is_active).map((s) => s.id).join(", ") || "none"}`,
+        "Signals strategies",
+      )}
 
-      <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
+      {show("mcap_tracker") ? (
+      <section id="algo-config-mcap_tracker" className="bg-gray-900 border border-gray-700 rounded-lg p-6">
         <h2 className="text-xl font-bold text-white mb-4">MCap tracker strategies</h2>
         <div className="grid gap-4 md:grid-cols-2">
           {mcapTracker.map((s) => (
@@ -3343,8 +3483,14 @@ function StrategyConfigTab({
           Open MCap tracker tab
         </Link>
       </section>
+      ) : collapsed(
+        "mcap_tracker",
+        `${mcapTracker.length} strategies · Active: ${mcapTracker.filter((s) => s.is_active).map((s) => s.id).join(", ") || "none"}`,
+        "MCap tracker strategies",
+      )}
 
-      <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
+      {show("gmgn") ? (
+      <section id="algo-config-gmgn" className="bg-gray-900 border border-gray-700 rounded-lg p-6">
         <h2 className="text-xl font-bold text-white mb-4">GMGN strategies</h2>
         <p className="text-gray-400 text-sm mb-4">
           Smart money / KOL discovery via gmgn-cli. Paper sim wallet:{" "}
@@ -3361,8 +3507,14 @@ function StrategyConfigTab({
           ))}
         </div>
       </section>
+      ) : collapsed(
+        "gmgn",
+        `${gmgn.length} strategies · Active: ${gmgn.filter((s) => s.is_active).map((s) => s.id).join(", ") || "none"}`,
+        "GMGN strategies",
+      )}
 
-      <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
+      {show("social") ? (
+      <section id="algo-config-social" className="bg-gray-900 border border-gray-700 rounded-lg p-6">
         <h2 className="text-xl font-bold text-white mb-4">Social strategies</h2>
         <p className="text-gray-400 text-sm mb-4">
           {isRobinhood ? (
@@ -3394,8 +3546,14 @@ function StrategyConfigTab({
           </div>
         ) : null}
       </section>
+      ) : collapsed(
+        "social",
+        `${social.length} strategies · Active: ${social.filter((s) => s.is_active).map((s) => s.id).join(", ") || "none"}`,
+        "Social strategies",
+      )}
 
-      <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
+      {show("dlmm") ? (
+      <section id="algo-config-dlmm" className="bg-gray-900 border border-gray-700 rounded-lg p-6">
         <h2 className="text-xl font-bold text-white mb-4">DLMM thresholds</h2>
         {isRobinhood ? (
           <p className="text-gray-400 text-sm">
@@ -3421,6 +3579,11 @@ function StrategyConfigTab({
           </>
         )}
       </section>
+      ) : collapsed(
+        "dlmm",
+        dlmm ? `1 strategy · ${dlmm.is_active ? "Active" : "Inactive"}` : "0 strategies",
+        "DLMM thresholds",
+      )}
     </>
   );
 }

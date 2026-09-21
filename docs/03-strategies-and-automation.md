@@ -152,7 +152,7 @@ Chain split: definitions and sim wallets are per `chain` (`sol` | `robinhood`); 
 
 ## 3c. Admin & API surface
 
-- **Admin UI `/dev/strategies`**: Config (edit params / activation / execution mode / notify toggles), Reports (coverage + outcomes + ML review + Pattern ML columns), Workers (cron health + Run now).
+- **Admin UI `/dev/algo-tester`**: Config (edit params / activation / execution mode / notify toggles + Workers), Open positions (all-domain `getAlgoPositions`), Closed reports (coverage + outcomes + ML review + Pattern ML columns + Review). Legacy `/dev/strategies` redirects with tab mapping.
 - **Strategy APIs**: `GET /api/strategies` (merged registry), `PATCH /api/strategies/[id]` (partial config deep-merge; deactivate ⇒ close positions; DLMM syncs `dlmm_agent_config`), `POST /api/strategies/[id]/promote` (copy winning config), `GET /api/strategies/outcomes`, `PATCH /api/strategies/outcomes/[id]` (ML label), `GET /api/strategies/reports`, `POST /api/strategies/report-digest`.
 - **Workers API**: `GET /api/workers/status`, `GET /api/workers/runtime`, `POST /api/workers/trigger` (dev proxy that forwards `X-Trigger-Secret`).
 - **Outcome review → ML**: rows are labeled in the Reports modal (`ml_label` skip/interesting/anomaly + optional `ml_condition`), persisted into `features`, and re-exported by `npm run ml:export` / `ml:export-patterns` for training (see [OPERATOR_STATE.md](./OPERATOR_STATE.md) data-hygiene section — "menuju 200" tracks extractable closed sims, not all rows).
@@ -172,7 +172,7 @@ Chain split: definitions and sim wallets are per `chain` (`sol` | `robinhood`); 
 
 ### Ops notes
 
-- Monitor/trigger workers at `/dev/strategies` → **Workers** tab (needs `CRON_SERVICE_URL`, default `http://cron:8080`). Worker status: `ok` (last success within 2× interval), `stale` (>2× interval), `error` (failed after last success), `never_run`, `disabled`, `offline`.
+- Monitor/trigger workers at `/dev/algo-tester` → Config → Workers (`?panel=workers`; needs `CRON_SERVICE_URL`, default `http://cron:8080`). Worker status: `ok` (last success within 2× interval), `stale` (>2× interval), `error` (failed after last success), `never_run`, `disabled`, `offline`.
 - Manual run: `POST /trigger/<worker>` on cron `:8080` with `X-Trigger-Secret`, or the dev proxy `POST /api/workers/trigger`. `npm run dev` alone does not run cron — sim/social history gaps usually mean the `reloadsol-cron` container is down (see algo_overview.md gap-diagnosis).
 - Key env defaults: `TRENDING_TRACKER_SECRET`/`TRIGGER_SECRET` (auth), `SIGNALS_SIM_INTERVAL=120`, `MCAP_TRACKER_SIM_OPEN_INTERVAL=15`, `MCAP_TRACKER_SIM_INTERVAL=120`, `GMGN_SIM_INTERVAL=120`, `GMGN_ACTIVITY_POLL_INTERVAL=180`, `SOCIAL_ROLLUP_INTERVAL=300`, `DLMM_SCREEN_INTERVAL=300`, `DLMM_MANAGE_INTERVAL=60`, `RH_CLMM_MANAGE_INTERVAL=300`, `SOL_ARB_SCAN_INTERVAL=60`, `STRATEGY_REPORT_INTERVAL=86400`, `STRATEGY_TRACK_TELEGRAM_ENABLED` (global telegram kill switch).
 - Docs disagreements resolved in favor of code: registry now includes RH sim twins (`att_rh`, `signals_default_rh`, `mcap_enter_*_rh`) and `social_only_fomo_gt7`, GMGN strategies are **inactive by default**, and DLMM/RH cadences differ from older docs' "5m DLMM" phrasing (screen/sim-track 300s, manage 60s).

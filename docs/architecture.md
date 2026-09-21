@@ -80,7 +80,6 @@ flowchart LR
     Signals["/dev/signals"]
     Algo["/dev/algo-tester"]
     DLMM["/dev/dlmm"]
-    Strategies["/dev/strategies"]
   end
 
   subgraph auto [Automated workers]
@@ -125,8 +124,8 @@ Outcomes land in `strategy_outcomes` only on **full position close**.
 
 | Route | Purpose |
 |-------|---------|
-| `/dev/strategies` | Config, Reports (coverage + outcomes), **Workers** tab |
-| `/dev/algo-tester` | Trending bot dashboard, manual track test |
+| `/dev/algo-tester` | Config (all domains + Workers), Open positions, Closed reports (coverage + outcomes + Review) |
+| `/dev/strategies` | Legacy — redirects to `/dev/algo-tester` |
 | `/dev/dlmm` | DLMM candidates, positions, agent config |
 
 ---

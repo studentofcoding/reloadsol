@@ -38,7 +38,7 @@ function locateWithMcap(): TokenLocateResult {
       signals: '/dev/signals',
       algoTester: '/dev/algo-tester',
       social: '/dev/social',
-      strategies: '/dev/strategies',
+      strategies: '/dev/algo-tester?tab=closed',
       dlmm: '/dev/dlmm',
     },
   }
