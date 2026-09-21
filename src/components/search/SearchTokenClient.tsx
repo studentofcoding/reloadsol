@@ -362,10 +362,10 @@ function SystemPresence({
           <p className="text-xs text-gray-500">No strategy rows for this chain.</p>
         )}
         <Link
-          href={`/dev/strategies?tab=outcomes&tokenAddress=${encodeURIComponent(result.tokenAddress)}&chain=${chain}`}
+          href={`/dev/algo-tester?tab=closed&tokenAddress=${encodeURIComponent(result.tokenAddress)}&chain=${chain}`}
           className="inline-block text-xs text-emerald-400 hover:text-emerald-300"
         >
-          Open in strategies
+          Closed reports
         </Link>
         {' '}
         <Link
@@ -464,9 +464,9 @@ function ResultRow({
           </ActionPill>
           <ActionPill onClick={() => copy(token.address)}>Copy CA</ActionPill>
           <ActionPill
-            href={`/dev/strategies?tab=outcomes&tokenAddress=${encodeURIComponent(token.address)}&chain=${token.chain ?? chain}`}
+            href={`/dev/algo-tester?tab=closed&tokenAddress=${encodeURIComponent(token.address)}&chain=${token.chain ?? chain}`}
           >
-            Open in strategies
+            Closed reports
           </ActionPill>
         </div>
       ) : null}

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { enforceApiAccess } from '@/utils/api-auth'
+import { mapStrategiesSearchToAlgoTester } from '@/components/algo-tester/algo-tester-query'
 
 export function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
@@ -31,9 +32,10 @@ export function proxy(request: NextRequest) {
     },
     "/dev/mcap-tracker": () => "/dev/signals?tab=tracker",
     "/dev/trending-tracker": () => "/dev/algo-tester",
-    "/dev/tracking-history": () => "/dev/algo-tester?tab=history",
+    "/dev/tracking-history": () => "/dev/algo-tester?tab=open&view=history",
     "/dev/pools": () => "/dev/dlmm",
     "/dev/pools-test": () => "/dev/algo-tester",
+    "/dev/strategies": (params) => mapStrategiesSearchToAlgoTester(params),
   };
 
   const redirectBuilder = slimRedirects[pathname];

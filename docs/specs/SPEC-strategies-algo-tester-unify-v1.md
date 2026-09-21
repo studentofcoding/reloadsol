@@ -1,6 +1,6 @@
 # SPEC — Algo Tester unify: all domains, Config + Open + Closed v1
 
-**Status:** to-spec  
+**Status:** implement  
 **Date:** 2026-09-21  
 **Surface:** `reloadsol` `/dev/algo-tester` (expand in place); `/dev/strategies` redirect; PnL `AlgoPositions` shrink  
 **Lane:** autotrade & algo  
@@ -8,7 +8,7 @@
 
 **Provenance:** Wayfinder unify pack (locked 2026-09-21). Implement from this document; do not reopen grilling unless a lock is contradicted by production data after ship.
 
-This PR is documentation only. No product code.
+Implement from this document. Destination: `/dev/algo-tester` Config · Open positions · Closed reports.
 
 ---
 

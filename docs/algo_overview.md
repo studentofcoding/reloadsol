@@ -277,13 +277,15 @@ Process: [`main.go`](../main.go) — container `reloadsol-cron`, port **8080** (
 
 ---
 
-## Admin UI (`/dev/strategies`)
+## Admin UI (`/dev/algo-tester`)
+
+Legacy `/dev/strategies` redirects here (tab mapping in `proxy.ts`).
 
 | Tab | Purpose |
 |-----|---------|
-| **Config** | Edit strategy params, activation, execution mode |
-| **Reports** | Coverage table (all strategies), filters, outcomes pagination, ML review modal, Pattern ML + 24h cohort columns, CSV export |
-| **Workers** | Cron online/offline, worker table, domain heartbeat, **Run now** |
+| **Config** | Edit strategy params, activation, execution mode. Workers panel below (`?panel=workers`). |
+| **Open positions** | Cross-domain opens (`GET /api/strategies/positions`). Trending tracker history at `?view=history`. |
+| **Closed reports** | Coverage table, filters, outcomes pagination, ML review modal, Pattern ML + 24h cohort columns, CSV export. Review panel (`?panel=review`). |
 
 ### API routes
 
