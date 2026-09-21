@@ -16,17 +16,34 @@ vi.mock("@/utils/solanatracker-raptor", async (importOriginal) => {
   return {
     ...actual,
     fetchRaptorQuoteAndSwapDirect: vi.fn(),
+    fetchRaptorQuoteDirect: vi.fn(),
+    fetchRaptorQuote: vi.fn(),
     sendRaptorTransactionDirect: vi.fn(),
     getRaptorTransactionStatusSafe: vi.fn(),
   };
 });
 
-vi.mock("@/utils/jupiter-lite-swap", () => ({
-  prepareJupiterLiteSwap: vi.fn(),
-  fetchJupiterLiteQuoteDirect: vi.fn(),
-  fetchJupiterLiteQuote: vi.fn(),
-  mapJupiterLiteQuoteToSwapQuote: vi.fn(),
-}));
+vi.mock("@/utils/jupiter-lite-swap", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/utils/jupiter-lite-swap")>();
+  return {
+    ...actual,
+    prepareJupiterLiteSwap: vi.fn(),
+    fetchJupiterLiteQuoteDirect: vi.fn(),
+    fetchJupiterLiteQuote: vi.fn(),
+  };
+});
+
+vi.mock("@/utils/jupiter-swap-quote", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/utils/jupiter-swap-quote")>();
+  return {
+    ...actual,
+    prepareJupiterSwapOrder: vi.fn(),
+    fetchJupiterSwapQuoteDirect: vi.fn(),
+    fetchJupiterSwapQuote: vi.fn(),
+  };
+});
 
 vi.mock("@/utils/shyft-transaction", () => ({
   sendShyftTransactionDirect: vi.fn(),
@@ -37,11 +54,19 @@ vi.mock("@/utils/shyft-transaction", () => ({
 
 import {
   fetchRaptorQuoteAndSwapDirect,
+  fetchRaptorQuoteDirect,
   sendRaptorTransactionDirect,
   getRaptorTransactionStatusSafe,
 } from "@/utils/solanatracker-raptor";
 import { getTradeProvider } from "@/utils/trade-provider";
-import { prepareJupiterLiteSwap } from "@/utils/jupiter-lite-swap";
+import {
+  prepareJupiterLiteSwap,
+  fetchJupiterLiteQuoteDirect,
+} from "@/utils/jupiter-lite-swap";
+import {
+  prepareJupiterSwapOrder,
+  fetchJupiterSwapQuoteDirect,
+} from "@/utils/jupiter-swap-quote";
 import { sendShyftTransactionDirect, sendShyftManyTransactionsDirect } from "@/utils/shyft-transaction";
 import {
   prepareSwapTransaction,
@@ -65,7 +90,18 @@ describe("swap-executor shyft provider", () => {
     vi.mocked(getTradeProvider).mockReturnValue("shyft");
   });
 
-  it("prepareSwapTransaction uses Raptor on shyft stack when Raptor succeeds", async () => {
+  it("prepareSwapTransaction uses Raptor when Raptor quote wins the parallel pick", async () => {
+    vi.mocked(fetchRaptorQuoteDirect).mockResolvedValue({
+      inputMint: PREPARE_PARAMS.inputMint,
+      outputMint: PREPARE_PARAMS.outputMint,
+      amountIn: "1000000",
+      amountOut: "500",
+      minAmountOut: "490",
+      priceImpact: 0.001,
+      slippageBps: 50,
+    });
+    vi.mocked(fetchJupiterLiteQuoteDirect).mockRejectedValue(new Error("lite 429"));
+    vi.mocked(fetchJupiterSwapQuoteDirect).mockRejectedValue(new Error("swap 429"));
     vi.mocked(fetchRaptorQuoteAndSwapDirect).mockResolvedValue({
       quote: {
         inputMint: PREPARE_PARAMS.inputMint,
@@ -84,6 +120,7 @@ describe("swap-executor shyft provider", () => {
 
     expect(prepared.provider).toBe("raptor");
     expect(prepareJupiterLiteSwap).not.toHaveBeenCalled();
+    expect(prepareJupiterSwapOrder).not.toHaveBeenCalled();
     expect(fetchRaptorQuoteAndSwapDirect).toHaveBeenCalledWith(
       expect.objectContaining({
         feeBps: 25,
@@ -92,10 +129,22 @@ describe("swap-executor shyft provider", () => {
     );
   });
 
-  it("prepareSwapTransaction falls back to Jupiter Lite when Raptor fails", async () => {
-    vi.mocked(fetchRaptorQuoteAndSwapDirect).mockRejectedValue(
+  it("prepareSwapTransaction uses Jupiter Lite when Raptor quote fails", async () => {
+    vi.mocked(fetchRaptorQuoteDirect).mockRejectedValue(
       new RaptorAPIError("Raptor down", 502),
     );
+    vi.mocked(fetchJupiterLiteQuoteDirect).mockResolvedValue({
+      inputMint: PREPARE_PARAMS.inputMint,
+      outputMint: PREPARE_PARAMS.outputMint,
+      inAmount: "1000000",
+      outAmount: "500",
+      otherAmountThreshold: "490",
+      swapMode: "ExactIn",
+      slippageBps: 50,
+      priceImpactPct: "0.01",
+      routePlan: [],
+    });
+    vi.mocked(fetchJupiterSwapQuoteDirect).mockRejectedValue(new Error("no key"));
     vi.mocked(prepareJupiterLiteSwap).mockResolvedValue({
       swapTransaction: "bGl0ZQ==",
       outAmount: "500",
@@ -107,6 +156,72 @@ describe("swap-executor shyft provider", () => {
 
     expect(prepared.provider).toBe("jupiter_lite");
     expect(prepareJupiterLiteSwap).toHaveBeenCalled();
+    expect(fetchRaptorQuoteAndSwapDirect).not.toHaveBeenCalled();
+  });
+
+  it("prepareSwapTransaction with maxHops skips parallel pick (arb path)", async () => {
+    vi.mocked(fetchRaptorQuoteAndSwapDirect).mockResolvedValue({
+      quote: {
+        inputMint: PREPARE_PARAMS.inputMint,
+        outputMint: PREPARE_PARAMS.outputMint,
+        amountIn: "1000000",
+        amountOut: "500",
+        minAmountOut: "490",
+        priceImpact: 0,
+        slippageBps: 50,
+      },
+      swapTransaction: "dGVzdA==",
+      lastValidBlockHeight: 123,
+    });
+
+    const prepared = await prepareSwapTransaction({
+      ...PREPARE_PARAMS,
+      maxHops: 3,
+    });
+
+    expect(prepared.provider).toBe("raptor");
+    expect(fetchRaptorQuoteDirect).not.toHaveBeenCalled();
+    expect(fetchJupiterLiteQuoteDirect).not.toHaveBeenCalled();
+    expect(fetchJupiterSwapQuoteDirect).not.toHaveBeenCalled();
+    expect(fetchRaptorQuoteAndSwapDirect).toHaveBeenCalled();
+  });
+
+  it("prepareSwapTransaction uses Jupiter Swap when it wins the parallel pick", async () => {
+    vi.mocked(fetchRaptorQuoteDirect).mockRejectedValue(new Error("no route"));
+    vi.mocked(fetchJupiterLiteQuoteDirect).mockResolvedValue({
+      inputMint: PREPARE_PARAMS.inputMint,
+      outputMint: PREPARE_PARAMS.outputMint,
+      inAmount: "1000000",
+      outAmount: "400",
+      otherAmountThreshold: "390",
+      swapMode: "ExactIn",
+      slippageBps: 50,
+      priceImpactPct: "0.01",
+      routePlan: [],
+    });
+    vi.mocked(fetchJupiterSwapQuoteDirect).mockResolvedValue({
+      inputMint: PREPARE_PARAMS.inputMint,
+      outputMint: PREPARE_PARAMS.outputMint,
+      amount: "1000000",
+      outAmount: "600",
+      minAmountOut: "590",
+      priceImpact: 0.002,
+      slippageBps: 50,
+      route: {},
+    });
+    vi.mocked(prepareJupiterSwapOrder).mockResolvedValue({
+      swapTransaction: "c3dhcA==",
+      outAmount: "600",
+      lastValidBlockHeight: 789,
+      requestId: "req-1",
+    });
+
+    const prepared = await prepareSwapTransaction(PREPARE_PARAMS);
+
+    expect(prepared.provider).toBe("jupiter_swap");
+    expect(prepared.requestId).toBe("req-1");
+    expect(prepareJupiterSwapOrder).toHaveBeenCalled();
+    expect(prepareJupiterLiteSwap).not.toHaveBeenCalled();
   });
 
   it("submitSignedSwap returns via shyft when Shyft send succeeds", async () => {
@@ -215,6 +330,24 @@ describe("swap-executor raptor provider", () => {
       maxRetries: 2,
     });
     expect(sendRaptorTransactionDirect).not.toHaveBeenCalled();
+  });
+
+  it("submitSignedSwap skips Raptor confirm poll when the tx was built by Lite", async () => {
+    const tx = {
+      serialize: () => Buffer.from("signed-bytes"),
+    } as unknown as VersionedTransaction;
+
+    const sendTransaction = vi.fn().mockResolvedValue("rpc-sig");
+    const connection = { sendTransaction } as unknown as Connection;
+
+    const result = await submitSignedSwap({
+      signedTx: tx,
+      prepared: { provider: "jupiter_lite", swapTransaction: "x" },
+      connection,
+      direct: true,
+    });
+
+    expect(result.checkViaRaptor).toBe(false);
   });
 
   it("submitSignedSwapBatch uses send_many_txns on raptor stack when batch size > 1", async () => {

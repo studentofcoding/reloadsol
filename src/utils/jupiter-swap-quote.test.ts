@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildJupiterSwapQuoteUrl,
   mapJupiterOrderToDisplay,
+  mapJupiterSwapDisplayToSwapQuote,
 } from '@/utils/jupiter-swap-quote'
 import {
   mintsNeedingJupiterQuote,
@@ -25,6 +26,17 @@ describe('buildJupiterSwapQuoteUrl', () => {
     expect(url).toContain('inputMint=')
     expect(url).toContain('amount=2000221')
   })
+
+  it('includes taker when building a swap-tx order', () => {
+    const url = buildJupiterSwapQuoteUrl({
+      inputMint: USDC,
+      outputMint: SOL,
+      amount: '2000221',
+      slippageBps: 200,
+      taker: 'BQ72nSv9f3PRyRKCBnHLVrerrv37CYTHm5h3s9VSGQDV',
+    })
+    expect(url).toContain('taker=BQ72nSv9f3PRyRKCBnHLVrerrv37CYTHm5h3s9VSGQDV')
+  })
 })
 
 describe('mapJupiterOrderToDisplay', () => {
@@ -45,6 +57,28 @@ describe('mapJupiterOrderToDisplay', () => {
     expect(mapped?.outAmount).toBe('19673060')
     expect(mapped?.minAmountOut).toBe('19580613')
     expect(mapped?.priceImpact).toBeCloseTo(-0.00026)
+    expect(mapped?.transaction).toBeNull()
+  })
+
+  it('keeps transaction + requestId when taker order includes a tx', () => {
+    const mapped = mapJupiterOrderToDisplay(
+      {
+        inputMint: USDC,
+        outputMint: SOL,
+        outAmount: '19673060',
+        transaction: 'AQID',
+        requestId: 'req-1',
+        lastValidBlockHeight: '12345',
+        routePlan: [{ swapInfo: {} }],
+      },
+      '2000221',
+      50,
+    )
+    expect(mapped?.transaction).toBe('AQID')
+    expect(mapped?.requestId).toBe('req-1')
+    expect(mapped?.lastValidBlockHeight).toBe(12345)
+    expect(mapJupiterSwapDisplayToSwapQuote(mapped!).outAmount).toBe('19673060')
+    expect(mapJupiterSwapDisplayToSwapQuote(mapped!).routePlan).toHaveLength(1)
   })
 
   it('returns null without outAmount', () => {

@@ -496,7 +496,7 @@ function getTokenIdentifierForLogging(mintAddress: string): string {
   return `${mintAddress.slice(0, 4)}...${mintAddress.slice(-4)}`
 }
 
-// Get quote for a single token swap (Raptor quote — no lite-api)
+// Get quote for a single token swap (parallel Raptor / Lite / Swap + impact gate)
 export async function getSwapQuote(
   inputMint: string,
   outputMint: string,

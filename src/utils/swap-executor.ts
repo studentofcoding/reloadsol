@@ -2,23 +2,21 @@ import { Connection, VersionedTransaction } from "@solana/web3.js";
 import {
   fetchRaptorQuoteAndSwap,
   fetchRaptorQuoteAndSwapDirect,
-  fetchRaptorQuote,
-  fetchRaptorQuoteDirect,
   getRaptorTransactionStatusSafe,
   RaptorAPIError,
   type RaptorQuoteAndSwapParams,
-  type RaptorQuoteResponse,
 } from "@/utils/solanatracker-raptor";
 import {
   resolveBuybulkFeeBps,
   resolveBuybulkSolFeeAccount,
 } from "@/utils/buybulk-fee";
+import { prepareJupiterLiteSwap } from "@/utils/jupiter-lite-swap";
+import { prepareJupiterSwapOrder } from "@/utils/jupiter-swap-quote";
 import {
-  prepareJupiterLiteSwap,
-  fetchJupiterLiteQuote,
-  fetchJupiterLiteQuoteDirect,
-  mapJupiterLiteQuoteToSwapQuote,
-} from "@/utils/jupiter-lite-swap";
+  getSwapQuoteMaxImpactPct,
+  type SwapQuoteProvider,
+} from "@/utils/swap-quote-pick";
+import { pickParallelSwapQuote } from "@/utils/swap-quote-parallel";
 import {
   sendShyftTransaction,
   sendShyftTransactionDirect,
@@ -36,7 +34,7 @@ import { confirmSignaturesViaWs } from "@/utils/ws-confirm";
 import { isWalletUserRejection } from "@/utils/wallet-rejection";
 import type { SwapQuote, SwapTransaction } from "@/types";
 
-export type SwapProvider = "raptor" | "jupiter_lite";
+export type SwapProvider = SwapQuoteProvider;
 
 export type SwapSendVia = "raptor" | "shyft" | "rpc";
 
@@ -45,6 +43,8 @@ export type PreparedSwap = {
   swapTransaction: string;
   outAmount?: string;
   lastValidBlockHeight?: number;
+  /** Jupiter Swap `/order` requestId (optional; send still uses RPC/Shyft). */
+  requestId?: string;
 };
 
 export type PrepareSwapParams = {
@@ -116,23 +116,6 @@ export function takeFreshPreparedSwap(
   return e.prepared;
 }
 
-function mapRaptorQuoteToSwapQuote(
-  quote: RaptorQuoteResponse,
-  amount: number,
-): SwapQuote {
-  return {
-    inputMint: quote.inputMint,
-    outputMint: quote.outputMint,
-    inAmount: quote.amountIn,
-    outAmount: quote.amountOut,
-    otherAmountThreshold: quote.minAmountOut,
-    swapMode: "ExactIn",
-    slippageBps: quote.slippageBps,
-    priceImpactPct: String(quote.priceImpact ?? 0),
-    routePlan: (quote.routePlan as unknown[]) ?? [],
-  };
-}
-
 async function prepareRaptorSwap(
   params: PrepareSwapParams,
 ): Promise<PreparedSwap> {
@@ -186,7 +169,66 @@ async function prepareJupiterLiteSwapPrepared(
   };
 }
 
-/** Shyft stack: Raptor (buy_bulk 25 bps) first. Jupiter Lite has no
+async function prepareJupiterSwapPrepared(
+  params: PrepareSwapParams,
+): Promise<PreparedSwap> {
+  const order = await prepareJupiterSwapOrder({
+    userPublicKey: params.userPublicKey,
+    inputMint: params.inputMint,
+    outputMint: params.outputMint,
+    amount: params.amount,
+    slippageBps: params.slippageBps,
+    direct: params.direct,
+  });
+
+  return {
+    provider: "jupiter_swap",
+    swapTransaction: order.swapTransaction,
+    outAmount: order.outAmount,
+    lastValidBlockHeight: order.lastValidBlockHeight,
+    requestId: order.requestId,
+  };
+}
+
+async function prepareWinningProviderSwap(
+  params: PrepareSwapParams,
+): Promise<PreparedSwap> {
+  const picked = await pickParallelSwapQuote({
+    inputMint: params.inputMint,
+    outputMint: params.outputMint,
+    amount: String(params.amount),
+    slippageBps: params.slippageBps,
+    direct: params.direct,
+  });
+  if (!picked) {
+    throw new Error(
+      `No swap route within ${getSwapQuoteMaxImpactPct()}% price impact`,
+    );
+  }
+
+  switch (picked.provider) {
+    case "raptor":
+      return prepareRaptorSwap(params);
+    case "jupiter_lite":
+      return prepareJupiterLiteSwapPrepared(params);
+    case "jupiter_swap":
+      return prepareJupiterSwapPrepared(params);
+    default: {
+      const unexpected: never = picked.provider;
+      throw new Error(`Unknown swap quote provider: ${String(unexpected)}`);
+    }
+  }
+}
+
+/** Arb (`maxHops` set): Raptor with hops override; Lite only if Raptor cannot build. */
+async function prepareArbSwap(params: PrepareSwapParams): Promise<PreparedSwap> {
+  if (getTradeProvider() === "shyft") {
+    return prepareShyftStackSwap(params);
+  }
+  return prepareRaptorSwap(params);
+}
+
+/** Shyft stack arb/legacy: Raptor (buy_bulk 25 bps) first. Jupiter Lite has no
  *  referral ATA in this repo, so it cannot collect the platform fee —
  *  fallback is last-resort only when Raptor cannot build the tx. */
 async function prepareShyftStackSwap(
@@ -203,14 +245,15 @@ async function prepareShyftStackSwap(
   }
 }
 
-/** Quote-and-swap — builds unsigned swap transaction. */
+/** Quote-and-swap — builds unsigned swap transaction from the gated winner. */
 export async function prepareSwapTransaction(
   params: PrepareSwapParams,
 ): Promise<PreparedSwap> {
-  if (getTradeProvider() === "shyft") {
-    return prepareShyftStackSwap(params);
+  // Live arb passes maxHops and must keep Raptor hops, not the directional pick.
+  if (params.maxHops != null) {
+    return prepareArbSwap(params);
   }
-  return prepareRaptorSwap(params);
+  return prepareWinningProviderSwap(params);
 }
 
 export async function prefetchSwapTransaction(
@@ -221,7 +264,7 @@ export async function prefetchSwapTransaction(
   return prepared;
 }
 
-/** Quote for UI. */
+/** Quote for UI — parallel Raptor / Jupiter Lite / Jupiter Swap + impact gate. */
 export async function fetchSwapQuote(
   inputMint: string,
   outputMint: string,
@@ -231,60 +274,14 @@ export async function fetchSwapQuote(
 ): Promise<SwapQuote | null> {
   try {
     if (amount <= 0) return null;
-    const useDirect = direct ?? typeof window === "undefined";
-
-    if (getTradeProvider() === "shyft") {
-      try {
-        const quote = useDirect
-          ? await fetchRaptorQuoteDirect(
-              inputMint,
-              outputMint,
-              String(amount),
-              slippageBps,
-            )
-          : await fetchRaptorQuote(
-              inputMint,
-              outputMint,
-              String(amount),
-              slippageBps,
-            );
-        return mapRaptorQuoteToSwapQuote(quote, amount);
-      } catch (raptorError) {
-        console.warn(
-          "Raptor quote failed on shyft stack, falling back to Jupiter Lite:",
-          raptorError,
-        );
-        const liteQuote = useDirect
-          ? await fetchJupiterLiteQuoteDirect(
-              inputMint,
-              outputMint,
-              String(amount),
-              slippageBps,
-            )
-          : await fetchJupiterLiteQuote(
-              inputMint,
-              outputMint,
-              String(amount),
-              slippageBps,
-            );
-        return mapJupiterLiteQuoteToSwapQuote(liteQuote);
-      }
-    }
-
-    const quote = useDirect
-      ? await fetchRaptorQuoteDirect(
-          inputMint,
-          outputMint,
-          String(amount),
-          slippageBps,
-        )
-      : await fetchRaptorQuote(
-          inputMint,
-          outputMint,
-          String(amount),
-          slippageBps,
-        );
-    return mapRaptorQuoteToSwapQuote(quote, amount);
+    const picked = await pickParallelSwapQuote({
+      inputMint,
+      outputMint,
+      amount: String(amount),
+      slippageBps,
+      direct,
+    });
+    return picked?.quote ?? null;
   } catch (error) {
     console.error("Error getting swap quote:", error);
     return null;
@@ -297,7 +294,7 @@ export async function buildPreparedSwap(
   return prepareSwapTransaction(params);
 }
 
-/** Build swap tx via Raptor. */
+/** Build swap tx via the gated winning provider. */
 export async function buildSwapTransaction(
   quote: SwapQuote,
   userPublicKey: string,
@@ -375,13 +372,18 @@ export async function submitSignedSwap(
     return { signature, via: "rpc" };
   }
 
-  // Raptor stack: send via RPC only; confirm still uses Raptor status API.
+  // Raptor stack: send via RPC only; confirm still uses Raptor status API
+  // when the tx was built by Raptor (Lite/Swap txs are not in Raptor's tracker).
   await waitForRpcRateLimit();
   const signature = await params.connection.sendTransaction(params.signedTx, {
     skipPreflight: true,
     maxRetries: 2,
   });
-  return { signature, via: "rpc", checkViaRaptor: true };
+  return {
+    signature,
+    via: "rpc",
+    checkViaRaptor: params.prepared.provider === "raptor",
+  };
 }
 
 export type SubmitSignedSwapBatchItem = {
@@ -856,7 +858,7 @@ function withWalletSignTimeout<T>(promise: Promise<T>): Promise<T> {
   });
 }
 
-/** Single client-side swap: Raptor prepare → sign → submit → confirm. */
+/** Single client-side swap: parallel quote pick → prepare → sign → submit → confirm. */
 export async function executeClientSwap(
   params: ExecuteClientSwapParams,
 ): Promise<ExecuteClientSwapResult> {
