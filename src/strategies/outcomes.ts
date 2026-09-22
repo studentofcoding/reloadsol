@@ -4,6 +4,7 @@ import { isMissingSchemaError } from '@/utils/db-health'
 import { getAgentConfig } from '@/utils/dlmm/db'
 import type { DlmmPosition } from '@/types/dlmm'
 import { notifyStrategyClose } from './strategy-telegram-notify'
+import { closeOutcomeStatusFromPnl } from './close-outcome-status'
 import type { StrategyChain } from './types'
 
 export async function recordTrendingBotOutcome(params: {
@@ -386,7 +387,7 @@ export async function syncMissingDlmmOutcomesFromPositions(
       entryAt: position.created_at,
       exitAt: position.closed_at ?? new Date().toISOString(),
       pnlPct: position.pnl_pct,
-      status: (position.pnl_pct ?? 0) >= 0 ? 'won' : 'lost',
+      status: closeOutcomeStatusFromPnl(position.pnl_pct ?? 0),
       isSimulated: config.dry_run,
       features: {
         pool_name: position.pool_name,

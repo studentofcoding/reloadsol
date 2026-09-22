@@ -4,6 +4,7 @@ import type {
   EditPositionInput,
 } from '@/types/dlmm';
 import { applyClimateToNewRisk } from '@/utils/climateGate';
+import { closeOutcomeStatusFromPnl } from '@/strategies/close-outcome-status';
 import {
   appendLesson,
   getAgentConfig,
@@ -278,7 +279,7 @@ export async function removePosition(id: string): Promise<DlmmActionResult> {
     entryAt: position.created_at ?? null,
     exitAt: new Date().toISOString(),
     pnlPct: position.pnl_pct,
-    status: (position.pnl_pct ?? 0) >= 0 ? 'won' : 'lost',
+    status: closeOutcomeStatusFromPnl(position.pnl_pct ?? 0),
     isSimulated: config.dry_run,
     features: {
       ...tokenFeatures,

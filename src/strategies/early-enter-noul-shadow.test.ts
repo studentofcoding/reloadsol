@@ -3,6 +3,10 @@ import {
   classifyNoulBand,
   decisionShadowFromBand,
   evaluateFlipBars,
+  evaluateKillSwitchWindow,
+  flipBarsWithMissKill,
+  mergeKillSwitches,
+  noulFlipSampleRates,
   filterReasonFromBand,
   isEarlyEnterNoulShadowEnabled,
   isEarlyEnterNoulSoftActiveEnabled,
@@ -174,6 +178,90 @@ describe('filterReasonFromBand', () => {
   })
 })
 
+describe('evaluateKillSwitchWindow (#54 api_miss)', () => {
+  it('counts an api_miss rate spike separately from mid-band', () => {
+    const quiet = evaluateKillSwitchWindow({
+      total: 40,
+      apiMiss: 2,
+      agreementEligible: 30,
+      agreementMatches: 28,
+    })
+    expect(quiet.apiMissRate).toBeCloseTo(0.05)
+    expect(quiet.apiMissSpike).toBe(false)
+    expect(quiet.tripped).toBe(false)
+
+    const spike = evaluateKillSwitchWindow({
+      total: 40,
+      apiMiss: 5,
+      agreementEligible: 30,
+      agreementMatches: 28,
+    })
+    expect(spike.apiMissRate).toBeCloseTo(0.125)
+    expect(spike.apiMissSpike).toBe(true)
+    expect(spike.tripped).toBe(true)
+  })
+
+  it('does not trip on a tiny sample', () => {
+    expect(
+      evaluateKillSwitchWindow({
+        total: 10,
+        apiMiss: 10,
+        agreementEligible: 0,
+        agreementMatches: 0,
+      }).tripped,
+    ).toBe(false)
+  })
+
+  it('does not treat keep/suppress disagreement as the miss kill', () => {
+    const spike = evaluateKillSwitchWindow({
+      total: 40,
+      apiMiss: 0,
+      agreementEligible: 20,
+      agreementMatches: 16,
+    })
+    expect(spike.disagreementRate).toBeCloseTo(0.2)
+    expect(spike.disagreementSpike).toBe(true)
+    expect(spike.apiMissSpike).toBe(false)
+    expect(spike.tripped).toBe(false)
+  })
+
+  it('merges a 24h api_miss spike onto a quiet all-time sample', () => {
+    const allTime = evaluateKillSwitchWindow({
+      total: 500,
+      apiMiss: 10,
+      agreementEligible: 400,
+      agreementMatches: 380,
+    })
+    const recent = evaluateKillSwitchWindow({
+      total: 40,
+      apiMiss: 12,
+      agreementEligible: 20,
+      agreementMatches: 18,
+    })
+    const merged = mergeKillSwitches(allTime, recent)
+    expect(allTime.tripped).toBe(false)
+    expect(recent.apiMissSpike).toBe(true)
+    expect(merged.tripped).toBe(true)
+    expect(merged.apiMissRate).toBe(allTime.apiMissRate)
+  })
+})
+
+describe('noulFlipSampleRates (#54)', () => {
+  it('keeps api_miss out of agreement and mid denominators', () => {
+    const rates = noulFlipSampleRates({
+      total: 100,
+      midBand: 10,
+      apiMiss: 40,
+      agreementEligible: 50,
+      agreementMatches: 45,
+    })
+    expect(rates.midDenom).toBe(60)
+    expect(rates.midBandRate).toBeCloseTo(10 / 60)
+    expect(rates.apiMissRate).toBeCloseTo(0.4)
+    expect(rates.agreementRate).toBeCloseTo(0.9)
+  })
+})
+
 describe('evaluateFlipBars (#54)', () => {
   it('requires N≥500, A≥85%, M≤20%', () => {
     expect(
@@ -186,6 +274,7 @@ describe('evaluateFlipBars (#54)', () => {
       nOk: true,
       agreementOk: true,
       midOk: true,
+      missOk: true,
       ready: true,
     })
     expect(
@@ -209,5 +298,44 @@ describe('evaluateFlipBars (#54)', () => {
         midBandRate: 0.21,
       }).midOk,
     ).toBe(false)
+  })
+
+  it('blocks flip when miss% is above the kill even if N, A, and M pass', () => {
+    const rates = noulFlipSampleRates({
+      total: 500,
+      midBand: 40,
+      apiMiss: 60,
+      agreementEligible: 400,
+      agreementMatches: 360,
+    })
+    expect(rates.midBandRate).toBeCloseTo(40 / 440)
+    expect(rates.agreementRate).toBeCloseTo(0.9)
+    expect(rates.apiMissRate).toBeCloseTo(0.12)
+    const bars = evaluateFlipBars({
+      total: 500,
+      agreementRate: rates.agreementRate,
+      midBandRate: rates.midBandRate,
+      apiMissRate: rates.apiMissRate,
+    })
+    expect(bars.nOk).toBe(true)
+    expect(bars.agreementOk).toBe(true)
+    expect(bars.midOk).toBe(true)
+    expect(bars.missOk).toBe(false)
+    expect(bars.ready).toBe(false)
+  })
+
+  it('a 24h miss spike blocks flip when the all-time miss% is still quiet', () => {
+    const quiet = evaluateFlipBars({
+      total: 500,
+      agreementRate: 0.9,
+      midBandRate: 0.1,
+      apiMissRate: 0.02,
+    })
+    expect(quiet.missOk).toBe(true)
+    expect(quiet.ready).toBe(true)
+    const held = flipBarsWithMissKill(quiet, true)
+    expect(held.missOk).toBe(false)
+    expect(held.ready).toBe(false)
+    expect(held.agreementOk).toBe(true)
   })
 })

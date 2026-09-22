@@ -1,6 +1,7 @@
 /**
  * Researchy room lock (honor exactly):
  * 1. Rank primary: avg pnl% × n + win%
+ *    win% numerator is strictly positive pnl (flats / breakeven excluded)
  * 2. sum% is footnote only (never a rank key)
  * 3. Min-n floors — below floor cannot win top slots:
  *    - all-time n ≥ 30

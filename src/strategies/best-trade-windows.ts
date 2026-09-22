@@ -7,6 +7,7 @@ import type {
   StrategyOutcomeRow,
   StrategyTradeWindow,
 } from './types'
+import { isWinningPnlPct } from './close-outcome-status'
 
 export const DEFAULT_REPORT_TIMEZONE = 'Asia/Bangkok'
 export const REPORT_TIMEZONES = ['Asia/Bangkok', 'UTC'] as const
@@ -139,7 +140,7 @@ export function computeBestTradeWindows(
       const pnl = Number(row.pnl_pct)
       bucket.trade_count += 1
       bucket.total_pnl_pct += pnl
-      if (pnl >= 0) bucket.win_count += 1
+      if (isWinningPnlPct(pnl)) bucket.win_count += 1
       timed += 1
     }
 

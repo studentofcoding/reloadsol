@@ -6,6 +6,7 @@ import {
   ensureCompleteBuyFeaturesForOutcome,
 } from '@/strategies/resolve-entry-snapshot'
 import { recordSocialOutcome } from '@/strategies/outcomes'
+import { closeOutcomeStatusFromPnl } from '@/strategies/close-outcome-status'
 import { fetchTradingRecordsForWallet } from '@/strategies/db'
 import { computeOpenSimCycle } from '@/utils/simulation-trades'
 import { buildTradingRecord, insertTradingRecord, insertTradingRecords } from '@/utils/trading-records-db'
@@ -111,7 +112,7 @@ async function closeSimPosition(params: {
     feesPaid: 0,
     solPriceUsd: solPrice,
     signatures: [`social-sim-close-${Date.now()}`],
-    status: pnlPct >= 0 ? 'won' : 'lost',
+    status: closeOutcomeStatusFromPnl(pnlPct),
     trading_simulation: {
       close_reason: params.closeReason,
     },
@@ -147,7 +148,7 @@ async function closeSimPosition(params: {
     entryAt: params.entryAt,
     exitAt: new Date().toISOString(),
     pnlPct,
-    status: pnlPct >= 0 ? 'won' : 'lost',
+    status: closeOutcomeStatusFromPnl(pnlPct),
     isSimulated: true,
     features: mergeEntryFeaturesForOutcome(
       completeFeatures ?? params.entryFeatures,

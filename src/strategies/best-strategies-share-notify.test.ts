@@ -173,6 +173,25 @@ describe('follow alert hygiene', () => {
     expect(arg.caption).toContain('Follow alert')
   })
 
+  it('rejects RH twins from the Telegram follow blast', async () => {
+    for (const strategyId of [
+      'mcap_enter_first_seen_rh',
+      'mcap_enter_at_80_rh',
+    ]) {
+      const result = await sendBestStrategyFollowAlert({
+        strategyId,
+        tokenAddress: 'MintRH',
+        tokenSymbol: 'RHT',
+        mcap: 90_000,
+        force: true,
+      })
+      expect(result).toEqual({ sent: false, reason: 'arm_not_allowlisted' })
+    }
+    expect(sendTelegramMessage).not.toHaveBeenCalled()
+    expect(sendTelegramOhlcPhotoOrText).not.toHaveBeenCalled()
+    expect(loadOhlcBarsForTelegram).not.toHaveBeenCalled()
+  })
+
   it('does not encode the follow chart until after the response task runs', async () => {
     const bars = [{ t: 1, o: 1, h: 2, l: 0.5, c: 1.5, v: 1 }]
     vi.mocked(loadOhlcBarsForTelegram).mockResolvedValueOnce(bars)

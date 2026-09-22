@@ -49,7 +49,7 @@ export interface TrackingRecord {
   txStatus?: 'pending' | 'confirmed' | 'failed'
 
   // New fields from API improvements
-  status?: 'waiting' | 'tracking' | 'won' | 'lost' | 'skipped'
+  status?: 'waiting' | 'tracking' | 'won' | 'lost' | 'breakeven' | 'skipped'
   is_bot_operation?: boolean // Whether this was a bot operation
   bot_strategy?: string // Bot strategy used
   is_simulation?: boolean // Whether this is a simulation

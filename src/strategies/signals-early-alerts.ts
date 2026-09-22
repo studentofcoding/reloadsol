@@ -15,6 +15,7 @@ import {
   shouldEmitWithNoulSoftActive,
 } from './early-enter-noul-shadow'
 import { evaluateEarlyEnterNoulShadow } from './early-enter-noul-evaluate'
+import { isEarlyEnterNoulKillTripped } from './early-enter-noul-shadow-db'
 import type { TypeSafeNoulCallResult } from './typesafe-noul'
 import type { EarlyEnterNoulState } from './early-enter-noul-shadow'
 import type { ScoredSignal } from './signals-pipeline'
@@ -261,7 +262,12 @@ export async function emitSignalsEarlyAlertsFromScoredAsync(
   const gateEnabled = opts?.mlSoftGateEnabled ?? isEarlyEnterMlSoftGateEnabled()
   const mlMin = opts?.mlMin ?? getEarlyEnterMlMin()
   const shadowEnabled = opts?.noulShadowEnabled ?? isEarlyEnterNoulShadowEnabled()
-  const softActive = opts?.noulSoftActive ?? isEarlyEnterNoulSoftActiveEnabled()
+  let softActive = opts?.noulSoftActive ?? isEarlyEnterNoulSoftActiveEnabled()
+  // Explicit test override skips the DB kill read. Env soft-active still dies on a spike.
+  // A spike never turns soft-active on.
+  if (opts?.noulSoftActive == null && softActive) {
+    if (await isEarlyEnterNoulKillTripped()) softActive = false
+  }
   const activeKeys = opts?.activeNoulStrategyKeys
 
   const recorded: SignalsEarlyAlert[] = []

@@ -10,6 +10,18 @@ export const MCAP_MANUAL_TRADE_STRATEGIES = [
   'mcap_enter_at_80_rh',
 ] as const
 
+/**
+ * Telegram follow blast only. RH twins stay on the in-app manual-trade toast
+ * until Architype adds them. Buy link stays Jupiter (formatTelegramBuyLink).
+ */
+export const MCAP_FOLLOW_ALERT_STRATEGIES = [
+  'mcap_enter_first_seen',
+  'mcap_enter_at_80',
+] as const
+
+export type McapFollowAlertStrategyId =
+  (typeof MCAP_FOLLOW_ALERT_STRATEGIES)[number]
+
 export type McapManualTradeStrategyId = (typeof MCAP_MANUAL_TRADE_STRATEGIES)[number]
 
 export type McapSimOpenAlert = {
@@ -36,6 +48,12 @@ export function isMcapManualTradeStrategy(
   strategyId: string,
 ): strategyId is McapManualTradeStrategyId {
   return (MCAP_MANUAL_TRADE_STRATEGIES as readonly string[]).includes(strategyId)
+}
+
+export function isMcapFollowAlertStrategy(
+  strategyId: string,
+): strategyId is McapFollowAlertStrategyId {
+  return (MCAP_FOLLOW_ALERT_STRATEGIES as readonly string[]).includes(strategyId)
 }
 
 export function strategyLabelForManualTrade(

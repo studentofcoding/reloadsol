@@ -22,6 +22,7 @@ import {
 import { buildTradingRecord, insertTradingRecords } from '@/utils/trading-records-db'
 import type { TrackingRecord } from '@/utils/trading-tracker'
 import { log } from '@/utils/unified-logger'
+import { closeOutcomeStatusFromPnl } from '@/strategies/close-outcome-status'
 
 // Re-export so existing consumers/tests keep their import path.
 export { decideRhTrendingExit }
@@ -184,7 +185,7 @@ async function sellSim(params: {
       feesPaid: 0,
       solPriceUsd: nativeUsd,
       signatures: [`trending-rh-sim-sell-${Date.now()}`],
-      status: pnlPct >= 0 ? 'won' : 'lost',
+      status: closeOutcomeStatusFromPnl(pnlPct),
       trading_simulation: { close_reason: params.reason },
     }),
   )
@@ -199,7 +200,7 @@ async function sellSim(params: {
     entryAt: params.position.entryAt,
     exitAt: new Date().toISOString(),
     pnlPct,
-    status: pnlPct >= 0 ? 'won' : 'lost',
+    status: closeOutcomeStatusFromPnl(pnlPct),
     isSimulated: true,
     features: {
       ...params.position.entryFeatures,

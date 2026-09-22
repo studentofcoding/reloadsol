@@ -18,7 +18,16 @@ type FlipBarCheck = {
   nOk: boolean
   agreementOk: boolean
   midOk: boolean
+  missOk: boolean
   ready: boolean
+}
+
+type KillSwitchCheck = {
+  apiMissRate: number | null
+  disagreementRate: number | null
+  apiMissSpike: boolean
+  disagreementSpike: boolean
+  tripped: boolean
 }
 
 type StrategyStats = {
@@ -36,19 +45,30 @@ type FlipArmStats = {
   total: number
   midBand: number
   midBandRate: number | null
+  apiMiss: number
+  apiMissRate: number | null
+  total24h: number
+  apiMiss24h: number
+  apiMissRate24h: number | null
   agreementEligible: number
   agreementMatches: number
   agreementRate: number | null
   bars: FlipBarCheck
+  kill: KillSwitchCheck
 }
 
 type FlipStrategyStats = StrategyStats & {
   arm: FlipArmFamily | null
+  apiMiss: number
+  apiMissRate: number | null
+  apiMissRate24h: number | null
   bars: FlipBarCheck
+  kill: KillSwitchCheck
 }
 
 type FlipReadiness = {
   bars: { nMin: number; agreementMin: number; midMax: number }
+  kill?: { apiMissMax: number; disagreementMax: number; minN: number }
   overall: FlipArmStats
   byArm: FlipArmStats[]
   byStrategy: FlipStrategyStats[]
@@ -233,6 +253,7 @@ function FlipArmCard({
   stats,
   bars,
   thresholds,
+  apiMissMax,
 }: {
   title: string
   subtitle?: string
@@ -243,11 +264,18 @@ function FlipArmCard({
     agreementMatches: number
     agreementEligible: number
     midBand: number
+    apiMiss: number
+    apiMissRate: number | null
+    apiMissRate24h: number | null
+    kill: KillSwitchCheck
   }
   bars: FlipBarCheck
   thresholds: { nMin: number; agreementMin: number; midMax: number }
+  apiMissMax?: number
 }) {
   const { nMin, agreementMin: aMin, midMax: mMax } = thresholds
+  const missMax = apiMissMax ?? 0.1
+  const midDenom = Math.max(0, stats.total - stats.apiMiss)
   return (
     <div
       className={`rounded-lg border p-3 space-y-3 ${
@@ -264,11 +292,19 @@ function FlipArmCard({
           ) : null}
         </div>
         <Chip
-          label={bars.ready ? 'flip-ready' : 'shadow sample'}
+          label={
+            !bars.missOk
+              ? 'miss kill'
+              : bars.ready
+                ? 'flip-ready'
+                : 'shadow sample'
+          }
           className={
-            bars.ready
-              ? 'bg-emerald-900/70 text-emerald-200'
-              : 'bg-sky-900/50 text-sky-200'
+            !bars.missOk
+              ? 'bg-orange-900/70 text-orange-200'
+              : bars.ready
+                ? 'bg-emerald-900/70 text-emerald-200'
+                : 'bg-sky-900/50 text-sky-200'
           }
         />
       </div>
@@ -294,7 +330,7 @@ function FlipArmCard({
           valueLabel={
             stats.midBandRate == null
               ? '—'
-              : `${pct(stats.midBandRate)} (${stats.midBand}/${stats.total})`
+              : `${pct(stats.midBandRate)} (${stats.midBand}/${midDenom})`
           }
           ok={bars.midOk}
           fill={
@@ -303,6 +339,25 @@ function FlipArmCard({
               : stats.midBandRate <= mMax
                 ? 1
                 : Math.max(0, 1 - (stats.midBandRate - mMax) / mMax)
+          }
+        />
+        <BarMeter
+          label={`miss ≤ ${(missMax * 100).toFixed(0)}%`}
+          valueLabel={
+            stats.apiMissRate == null
+              ? '—'
+              : `${pct(stats.apiMissRate)} (${stats.apiMiss}/${stats.total})` +
+                (stats.apiMissRate24h == null
+                  ? ''
+                  : ` · 24h ${pct(stats.apiMissRate24h)}`)
+          }
+          ok={bars.missOk}
+          fill={
+            stats.apiMissRate == null
+              ? 0
+              : stats.apiMissRate <= missMax
+                ? stats.apiMissRate / missMax
+                : 1
           }
         />
       </div>
@@ -392,8 +447,10 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
         <div>
           <h2 className="text-xl font-bold text-white mb-1">Early Enter Noul shadow</h2>
           <p className="text-gray-400 text-sm">
-            Shadow funnel + #54 flip-readiness (N / agreement / mid). Decisions are
-            shadow vs SPEC; follow_spec stays with SPEC.
+            Shadow funnel + #54 flip-readiness (n / agree / mid / miss).
+            api_miss is soft-fail and follows SPEC. It is left out of agreement
+            and mid-rate. miss% too high blocks flip. miss is not suppress
+            disagreement. Soft-active stays off. Paper is never flipped.
           </p>
         </div>
         <span
@@ -411,9 +468,12 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
         <p className="text-gray-400 text-sm">Loading…</p>
       ) : (
         <p className="text-xs text-gray-500">
-          EARLY_ENTER_NOUL_SHADOW={data?.shadowEnabled ? '1' : '0'} · TYPESAFE=
+          EARLY_ENTER_NOUL_SHADOW={data?.shadowEnabled ? '1' : '0'} · soft-active{' '}
+          {data?.softActive ? 'on' : 'off'} · TYPESAFE=
           {data?.hasTypeSafeCreds ? 'set' : 'missing'} · all-time N{' '}
-          {flip?.overall.total ?? 0} · window rows {data?.total ?? 0}
+          {flip?.overall.total ?? 0}
+          {flip?.overall.bars?.missOk === false ? ' · miss kill' : ''} · window rows{' '}
+          {data?.total ?? 0}
         </p>
       )}
 
@@ -424,10 +484,11 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
             Flip readiness (#54)
           </h3>
           <p className="text-[11px] text-gray-500">
-            Bars: N≥{flip?.bars.nMin ?? 500} · A≥
-            {((flip?.bars.agreementMin ?? 0.85) * 100).toFixed(0)}% · M≤
-            {((flip?.bars.midMax ?? 0.2) * 100).toFixed(0)}% · all-time shadow
-            sample
+            n / agree / mid / miss · N≥{flip?.bars.nMin ?? 500} · A≥
+            {((flip?.bars.agreementMin ?? 0.85) * 100).toFixed(0)}% (keep/suppress
+            only) · M≤{((flip?.bars.midMax ?? 0.2) * 100).toFixed(0)}% (excludes
+            api_miss) · miss% &gt;{((flip?.kill?.apiMissMax ?? 0.1) * 100).toFixed(0)}%
+            blocks flip (all-time, or 24h when N≥{flip?.kill?.minN ?? 20})
           </p>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
@@ -438,6 +499,7 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
               stats={firstSeen}
               bars={firstSeen.bars}
               thresholds={flipThresholds}
+              apiMissMax={flip?.kill?.apiMissMax}
             />
           ) : null}
           {at80 ? (
@@ -447,6 +509,7 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
               stats={at80}
               bars={at80.bars}
               thresholds={flipThresholds}
+              apiMissMax={flip?.kill?.apiMissMax}
             />
           ) : null}
         </div>
@@ -460,6 +523,7 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
                   <th className="py-2 pr-3 font-medium">n</th>
                   <th className="py-2 pr-3 font-medium">agreement</th>
                   <th className="py-2 pr-3 font-medium">mid-rate</th>
+                  <th className="py-2 pr-3 font-medium">miss</th>
                   <th className="py-2 pr-3 font-medium">bars</th>
                 </tr>
               </thead>
@@ -480,7 +544,13 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
                     <td className="py-2 pr-3">
                       {pct(r.midBandRate)}
                       <span className="text-gray-500 text-xs ml-1">
-                        ({r.midBand}/{r.total})
+                        ({r.midBand}/{Math.max(0, r.total - r.apiMiss)})
+                      </span>
+                    </td>
+                    <td className="py-2 pr-3">
+                      {pct(r.apiMissRate)}
+                      <span className="text-gray-500 text-xs ml-1">
+                        ({r.apiMiss}/{r.total})
                       </span>
                     </td>
                     <td className="py-2 pr-3">
@@ -492,6 +562,7 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
                                 r.bars.nOk ? null : 'N',
                                 r.bars.agreementOk ? null : 'A',
                                 r.bars.midOk ? null : 'M',
+                                r.bars.missOk ? null : 'miss',
                               ]
                                 .filter(Boolean)
                                 .join('/') || '—'

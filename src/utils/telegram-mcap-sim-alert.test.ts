@@ -212,6 +212,18 @@ describe('buildStrategyAlertText close emoji', () => {
     expect(text).toContain('Result: <b>WON</b>')
   })
 
+  it('labels a flat close BREAKEVEN, not WON', () => {
+    const text = buildStrategyAlertText({
+      ...base,
+      pnlPct: 0,
+      status: 'breakeven',
+    })
+    expect(text).toContain('⚪ <b>CLOSE (SIM)</b>')
+    expect(text).toContain('Result: <b>BREAKEVEN</b>')
+    expect(text).not.toContain('WON')
+    expect(text).not.toContain('🟢 <b>CLOSE')
+  })
+
   it('uses red circle for a LOST result', () => {
     const text = buildStrategyAlertText({
       ...base,

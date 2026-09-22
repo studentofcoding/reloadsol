@@ -149,7 +149,7 @@ CREATE TABLE IF NOT EXISTS trending_token_tracker (
   current_gain_percentage NUMERIC NOT NULL DEFAULT 0,
   peak_gain_percentage NUMERIC NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'waiting'
-    CHECK (status IN ('waiting', 'tracking', 'won', 'lost', 'skipped', 'stopped')),
+    CHECK (status IN ('waiting', 'tracking', 'won', 'lost', 'breakeven', 'skipped', 'stopped')),
   organic_score NUMERIC,
   market_cap NUMERIC,
   volume_1h NUMERIC,
@@ -200,7 +200,7 @@ CREATE TABLE IF NOT EXISTS trending_token_tracker_dev (
   current_gain_percentage NUMERIC NOT NULL DEFAULT 0,
   peak_gain_percentage NUMERIC NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'waiting'
-    CHECK (status IN ('waiting', 'tracking', 'won', 'lost', 'skipped', 'stopped')),
+    CHECK (status IN ('waiting', 'tracking', 'won', 'lost', 'breakeven', 'skipped', 'stopped')),
   organic_score NUMERIC,
   market_cap NUMERIC,
   volume_1h NUMERIC,
@@ -437,7 +437,7 @@ ALTER TABLE trending_token_tracker
   DROP CONSTRAINT IF EXISTS trending_token_tracker_status_check;
 ALTER TABLE trending_token_tracker
   ADD CONSTRAINT trending_token_tracker_status_check
-  CHECK (status IN ('waiting', 'tracking', 'won', 'lost', 'skipped', 'stopped'));
+  CHECK (status IN ('waiting', 'tracking', 'won', 'lost', 'breakeven', 'skipped', 'stopped'));
 
 ALTER TABLE trending_token_tracker_dev
   DROP CONSTRAINT IF EXISTS trending_token_tracker_dev_status_check;
@@ -445,7 +445,7 @@ ALTER TABLE trending_token_tracker_dev
   DROP CONSTRAINT IF EXISTS trending_token_tracker_status_check;
 ALTER TABLE trending_token_tracker_dev
   ADD CONSTRAINT trending_token_tracker_dev_status_check
-  CHECK (status IN ('waiting', 'tracking', 'won', 'lost', 'skipped', 'stopped'));
+  CHECK (status IN ('waiting', 'tracking', 'won', 'lost', 'breakeven', 'skipped', 'stopped'));
 
 ALTER TABLE trending_token_tracker
   ADD COLUMN IF NOT EXISTS waiting_started_at TIMESTAMPTZ;
@@ -652,7 +652,7 @@ ALTER TABLE trending_token_tracker
   DROP CONSTRAINT IF EXISTS trending_token_tracker_status_check;
 ALTER TABLE trending_token_tracker
   ADD CONSTRAINT trending_token_tracker_status_check
-  CHECK (status IN ('waiting', 'tracking', 'won', 'lost', 'skipped', 'stopped'));
+  CHECK (status IN ('waiting', 'tracking', 'won', 'lost', 'breakeven', 'skipped', 'stopped'));
 
 ALTER TABLE trending_token_tracker_dev
   DROP CONSTRAINT IF EXISTS trending_token_tracker_dev_status_check;
@@ -660,7 +660,7 @@ ALTER TABLE trending_token_tracker_dev
   DROP CONSTRAINT IF EXISTS trending_token_tracker_status_check;
 ALTER TABLE trending_token_tracker_dev
   ADD CONSTRAINT trending_token_tracker_dev_status_check
-  CHECK (status IN ('waiting', 'tracking', 'won', 'lost', 'skipped', 'stopped'));
+  CHECK (status IN ('waiting', 'tracking', 'won', 'lost', 'breakeven', 'skipped', 'stopped'));
 
 -- One-time idempotent cleanup: stop ghost "tracking" rows with no active holding simulation.
 UPDATE trending_token_tracker

@@ -4,6 +4,7 @@ import { getActiveGmgnForSim } from '@/strategies/load-gmgn'
 import { mergeEntryFeaturesForOutcome } from '@/strategies/entry-feature-snapshot'
 import { ensureCompleteBuyFeaturesForOutcome } from '@/strategies/resolve-entry-snapshot'
 import { recordGmgnOutcome } from '@/strategies/outcomes'
+import { closeOutcomeStatusFromPnl } from '@/strategies/close-outcome-status'
 import { fetchTradingRecordsForWallet } from '@/strategies/db'
 import {
   GMGN_SIM_WALLET,
@@ -131,7 +132,7 @@ async function closeSimPosition(params: {
     feesPaid: 0,
     solPriceUsd: solPrice,
     signatures: [`gmgn-sim-close-${Date.now()}`],
-    status: pnlPct >= 0 ? 'won' : 'lost',
+    status: closeOutcomeStatusFromPnl(pnlPct),
     trading_simulation: {
       close_reason: params.closeReason,
     },
@@ -173,7 +174,7 @@ async function closeSimPosition(params: {
     entryAt: params.entryAt,
     exitAt: new Date().toISOString(),
     pnlPct,
-    status: pnlPct >= 0 ? 'won' : 'lost',
+    status: closeOutcomeStatusFromPnl(pnlPct),
     isSimulated: true,
     features: mergeEntryFeaturesForOutcome(completeFeatures ?? params.entryFeatures, closeExtras),
   })

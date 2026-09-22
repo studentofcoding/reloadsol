@@ -15,7 +15,7 @@ import {
 import type { StrategyDomain } from './types'
 import { cacheGet, cacheSet } from '@/utils/redis-cache'
 
-const CACHE_KEY = 'best_strategies:qualified_ids_v2'
+const CACHE_KEY = 'best_strategies:qualified_ids_v3'
 const CACHE_TTL_S = 15 * 60
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000
 
