@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getActiveMcapTrackerStrategies } from '@/strategies/load-mcap-tracker'
 import { recordMcapTrackerOutcome } from '@/strategies/outcomes'
+import { closeOutcomeStatusFromPnl } from '@/strategies/close-outcome-status'
 import {
   appendMonitorSnapshot,
   mergeEntryFeaturesForOutcome,
@@ -298,6 +299,7 @@ async function openSimPosition(params: {
 
   const {
     isMcapManualTradeStrategy,
+    isMcapFollowAlertStrategy,
     claimSimOpenDedup,
     pushSimOpenAlertAfterClaim,
   } = await import('@/strategies/mcap-sim-open-alerts')
@@ -328,9 +330,9 @@ async function openSimPosition(params: {
       }
     }
 
-    // Follow alert only — not entry / soft-gate / Noul / paper.
+    // Follow alert only — Sol arms (first_seen / at_80). RH stays in-app toast.
     // Scheduled after the response so sharp PNG encode is off this request.
-    if (notify.telegram && isBest) {
+    if (notify.telegram && isBest && isMcapFollowAlertStrategy(manualStrategyId)) {
       try {
         const { notifyBestStrategyFollowAlert } = await import(
           '@/strategies/best-strategies-share-notify'
@@ -414,7 +416,7 @@ async function closeSimPosition(params: {
     feesPaid: 0,
     solPriceUsd: solPrice,
     signatures: [`mcap-tracker-sim-close-${Date.now()}`],
-    status: pnlPct >= 0 ? 'won' : 'lost',
+    status: closeOutcomeStatusFromPnl(pnlPct),
   })
 
   params.collect(record)
@@ -467,7 +469,7 @@ async function closeSimPosition(params: {
     entryAt: params.entryAt,
     exitAt: new Date().toISOString(),
     pnlPct,
-    status: pnlPct >= 0 ? 'won' : 'lost',
+    status: closeOutcomeStatusFromPnl(pnlPct),
     isSimulated: true,
     features: mergeEntryFeaturesForOutcome(buyFeatures, {
       ...closeFeatures,
@@ -651,7 +653,7 @@ async function closeLivePosition(params: {
     feesPaid: 0,
     solPriceUsd: solPrice,
     signatures: [sell.signature],
-    status: pnlPct >= 0 ? 'won' : 'lost',
+    status: closeOutcomeStatusFromPnl(pnlPct),
   })
 
   params.collect(record)
@@ -688,7 +690,7 @@ async function closeLivePosition(params: {
     entryAt: params.entryAt,
     exitAt: new Date().toISOString(),
     pnlPct,
-    status: pnlPct >= 0 ? 'won' : 'lost',
+    status: closeOutcomeStatusFromPnl(pnlPct),
     isSimulated: false,
     features: mergeEntryFeaturesForOutcome(completeBuyFeatures, {
       ...closeFeatures,

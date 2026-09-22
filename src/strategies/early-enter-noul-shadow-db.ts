@@ -15,15 +15,21 @@ import type {
 } from './early-enter-noul-shadow'
 import {
   evaluateFlipBars,
+  evaluateKillSwitchWindow,
   filterReasonFromBand,
   flipArmFamilyFromStrategyKey,
+  getApiMissKillRate,
+  getDisagreementKillRate,
   isNoulShadowBand,
+  mergeKillSwitches,
   strategyKeysForArmFamily,
   FLIP_AGREEMENT_MIN,
   FLIP_MID_MAX,
   FLIP_N_MIN,
+  KILL_SWITCH_MIN_N,
   type FlipArmFamily,
   type FlipBarCheck,
+  type KillSwitchCheck,
 } from './early-enter-noul-shadow'
 
 let ensurePromise: Promise<void> | null = null
@@ -125,7 +131,10 @@ export type EarlyEnterNoulCompareStats = {
   total: number
   midBand: number
   midBandRate: number | null
-  /** Rows with decision_shadow in {keep,suppress} (excludes follow_spec / skipped_null soft-fail). */
+  /** band = api_miss (soft-fail). Counted separately from mid-band. */
+  apiMiss: number
+  apiMissRate: number | null
+  /** Rows with decision_shadow in {keep,suppress} (excludes follow_spec / skipped_null / api_miss soft-fail). */
   agreementEligible: number
   agreementMatches: number
   agreementRate: number | null
@@ -144,6 +153,7 @@ export async function loadEarlyEnterNoulCompareStats(
       strategy_key: string
       total: string | number
       mid_band: string | number
+      api_miss: string | number
       agreement_eligible: string | number
       agreement_matches: string | number
     }>(
@@ -151,6 +161,7 @@ export async function loadEarlyEnterNoulCompareStats(
          strategy_key,
          COUNT(*)::int AS total,
          COUNT(*) FILTER (WHERE band = 'mid')::int AS mid_band,
+         COUNT(*) FILTER (WHERE band = 'api_miss')::int AS api_miss,
          COUNT(*) FILTER (
            WHERE decision_shadow IN ('keep', 'suppress')
          )::int AS agreement_eligible,
@@ -168,6 +179,7 @@ export async function loadEarlyEnterNoulCompareStats(
     return rows.map((r) => {
       const total = Number(r.total) || 0
       const midBand = Number(r.mid_band) || 0
+      const apiMiss = Number(r.api_miss) || 0
       const agreementEligible = Number(r.agreement_eligible) || 0
       const agreementMatches = Number(r.agreement_matches) || 0
       return {
@@ -175,6 +187,8 @@ export async function loadEarlyEnterNoulCompareStats(
         total,
         midBand,
         midBandRate: total > 0 ? midBand / total : null,
+        apiMiss,
+        apiMissRate: total > 0 ? apiMiss / total : null,
         agreementEligible,
         agreementMatches,
         agreementRate:
@@ -363,20 +377,34 @@ export async function loadEarlyEnterNoulShadowRows(
   }
 }
 
-export type EarlyEnterNoulFlipStrategyStats = EarlyEnterNoulCompareStats & {
-  arm: FlipArmFamily | null
-  bars: FlipBarCheck
-}
-
-export type EarlyEnterNoulFlipArmStats = {
-  arm: FlipArmFamily
+export type NoulFlipWindowCounts = {
   total: number
   midBand: number
-  midBandRate: number | null
+  apiMiss: number
   agreementEligible: number
   agreementMatches: number
+  total24h: number
+  apiMiss24h: number
+  agreementEligible24h: number
+  agreementMatches24h: number
+}
+
+export type EarlyEnterNoulFlipStrategyStats = EarlyEnterNoulCompareStats &
+  NoulFlipWindowCounts & {
+    apiMissRate24h: number | null
+    arm: FlipArmFamily | null
+    bars: FlipBarCheck
+    kill: KillSwitchCheck
+  }
+
+export type EarlyEnterNoulFlipArmStats = NoulFlipWindowCounts & {
+  arm: FlipArmFamily | 'all'
+  midBandRate: number | null
+  apiMissRate: number | null
+  apiMissRate24h: number | null
   agreementRate: number | null
   bars: FlipBarCheck
+  kill: KillSwitchCheck
 }
 
 export type EarlyEnterNoulFlipReadiness = {
@@ -385,8 +413,14 @@ export type EarlyEnterNoulFlipReadiness = {
     agreementMin: number
     midMax: number
   }
+  /** #54 kill thresholds. A spike holds soft-active off; it does not enable it. */
+  kill: {
+    apiMissMax: number
+    disagreementMax: number
+    minN: number
+  }
   /** All-time rows across every strategy_key. */
-  overall: EarlyEnterNoulFlipArmStats & { arm: 'all' }
+  overall: EarlyEnterNoulFlipArmStats
   byArm: EarlyEnterNoulFlipArmStats[]
   byStrategy: EarlyEnterNoulFlipStrategyStats[]
 }
@@ -408,6 +442,138 @@ function ratesFromCounts(opts: {
   }
 }
 
+function emptyFlipCounts(): NoulFlipWindowCounts {
+  return {
+    total: 0,
+    midBand: 0,
+    apiMiss: 0,
+    agreementEligible: 0,
+    agreementMatches: 0,
+    total24h: 0,
+    apiMiss24h: 0,
+    agreementEligible24h: 0,
+    agreementMatches24h: 0,
+  }
+}
+
+function addFlipCounts(
+  a: NoulFlipWindowCounts,
+  b: NoulFlipWindowCounts,
+): NoulFlipWindowCounts {
+  return {
+    total: a.total + b.total,
+    midBand: a.midBand + b.midBand,
+    apiMiss: a.apiMiss + b.apiMiss,
+    agreementEligible: a.agreementEligible + b.agreementEligible,
+    agreementMatches: a.agreementMatches + b.agreementMatches,
+    total24h: a.total24h + b.total24h,
+    apiMiss24h: a.apiMiss24h + b.apiMiss24h,
+    agreementEligible24h: a.agreementEligible24h + b.agreementEligible24h,
+    agreementMatches24h: a.agreementMatches24h + b.agreementMatches24h,
+  }
+}
+
+function killForCounts(slice: NoulFlipWindowCounts): KillSwitchCheck {
+  const apiMissMax = getApiMissKillRate()
+  const disagreementMax = getDisagreementKillRate()
+  return mergeKillSwitches(
+    evaluateKillSwitchWindow({
+      total: slice.total,
+      apiMiss: slice.apiMiss,
+      agreementEligible: slice.agreementEligible,
+      agreementMatches: slice.agreementMatches,
+      apiMissMax,
+      disagreementMax,
+    }),
+    evaluateKillSwitchWindow({
+      total: slice.total24h,
+      apiMiss: slice.apiMiss24h,
+      agreementEligible: slice.agreementEligible24h,
+      agreementMatches: slice.agreementMatches24h,
+      apiMissMax,
+      disagreementMax,
+    }),
+  )
+}
+
+function flipMetrics(slice: NoulFlipWindowCounts): {
+  midBandRate: number | null
+  apiMissRate: number | null
+  apiMissRate24h: number | null
+  agreementRate: number | null
+  bars: FlipBarCheck
+  kill: KillSwitchCheck
+} {
+  const rates = ratesFromCounts(slice)
+  return {
+    midBandRate: rates.midBandRate,
+    apiMissRate: slice.total > 0 ? slice.apiMiss / slice.total : null,
+    apiMissRate24h: slice.total24h > 0 ? slice.apiMiss24h / slice.total24h : null,
+    agreementRate: rates.agreementRate,
+    bars: evaluateFlipBars({
+      total: slice.total,
+      agreementRate: rates.agreementRate,
+      midBandRate: rates.midBandRate,
+    }),
+    kill: killForCounts(slice),
+  }
+}
+
+const FLIP_COUNT_SQL = `
+  COUNT(*)::int AS total,
+  COUNT(*) FILTER (WHERE band = 'mid')::int AS mid_band,
+  COUNT(*) FILTER (WHERE band = 'api_miss')::int AS api_miss,
+  COUNT(*) FILTER (
+    WHERE decision_shadow IN ('keep', 'suppress')
+  )::int AS agreement_eligible,
+  COUNT(*) FILTER (
+    WHERE decision_shadow IN ('keep', 'suppress')
+      AND decision_shadow = decision_spec
+  )::int AS agreement_matches,
+  COUNT(*) FILTER (
+    WHERE predicted_at >= NOW() - INTERVAL '24 hours'
+  )::int AS total_24h,
+  COUNT(*) FILTER (
+    WHERE band = 'api_miss'
+      AND predicted_at >= NOW() - INTERVAL '24 hours'
+  )::int AS api_miss_24h,
+  COUNT(*) FILTER (
+    WHERE decision_shadow IN ('keep', 'suppress')
+      AND predicted_at >= NOW() - INTERVAL '24 hours'
+  )::int AS agreement_eligible_24h,
+  COUNT(*) FILTER (
+    WHERE decision_shadow IN ('keep', 'suppress')
+      AND decision_shadow = decision_spec
+      AND predicted_at >= NOW() - INTERVAL '24 hours'
+  )::int AS agreement_matches_24h
+`
+
+type FlipCountRow = {
+  total: string | number
+  mid_band: string | number
+  api_miss: string | number
+  agreement_eligible: string | number
+  agreement_matches: string | number
+  total_24h: string | number
+  api_miss_24h: string | number
+  agreement_eligible_24h: string | number
+  agreement_matches_24h: string | number
+}
+
+function countsFromRow(r: FlipCountRow): NoulFlipWindowCounts {
+  return {
+    total: Number(r.total) || 0,
+    midBand: Number(r.mid_band) || 0,
+    apiMiss: Number(r.api_miss) || 0,
+    agreementEligible: Number(r.agreement_eligible) || 0,
+    agreementMatches: Number(r.agreement_matches) || 0,
+    total24h: Number(r.total_24h) || 0,
+    apiMiss24h: Number(r.api_miss_24h) || 0,
+    agreementEligible24h: Number(r.agreement_eligible_24h) || 0,
+    agreementMatches24h: Number(r.agreement_matches_24h) || 0,
+  }
+}
+
 /**
  * All-time shadow sample vs #54 flip bars (N≥500, A≥85%, M≤20%),
  * split by strategy_key and first_seen / at_80 arm families.
@@ -418,142 +584,75 @@ export async function loadEarlyEnterNoulFlipReadiness(): Promise<EarlyEnterNoulF
     agreementMin: FLIP_AGREEMENT_MIN,
     midMax: FLIP_MID_MAX,
   }
+  const killSpec = {
+    apiMissMax: getApiMissKillRate(),
+    disagreementMax: getDisagreementKillRate(),
+    minN: KILL_SWITCH_MIN_N,
+  }
+  const emptySlice = emptyFlipCounts()
+  const emptyMetrics = flipMetrics(emptySlice)
   const emptyOverall: EarlyEnterNoulFlipReadiness['overall'] = {
     arm: 'all',
-    total: 0,
-    midBand: 0,
-    midBandRate: null,
-    agreementEligible: 0,
-    agreementMatches: 0,
-    agreementRate: null,
-    bars: evaluateFlipBars({
-      total: 0,
-      agreementRate: null,
-      midBandRate: null,
-    }),
+    ...emptySlice,
+    ...emptyMetrics,
   }
+  const emptyArm = (
+    arm: FlipArmFamily,
+  ): EarlyEnterNoulFlipArmStats => ({
+    arm,
+    ...emptySlice,
+    ...emptyMetrics,
+  })
 
   try {
     await ensureEarlyEnterNoulShadowTable()
-    const { rows } = await query<{
-      strategy_key: string
-      total: string | number
-      mid_band: string | number
-      agreement_eligible: string | number
-      agreement_matches: string | number
-    }>(
+    const { rows } = await query<FlipCountRow & { strategy_key: string }>(
       `SELECT
          strategy_key,
-         COUNT(*)::int AS total,
-         COUNT(*) FILTER (WHERE band = 'mid')::int AS mid_band,
-         COUNT(*) FILTER (
-           WHERE decision_shadow IN ('keep', 'suppress')
-         )::int AS agreement_eligible,
-         COUNT(*) FILTER (
-           WHERE decision_shadow IN ('keep', 'suppress')
-             AND decision_shadow = decision_spec
-         )::int AS agreement_matches
+         ${FLIP_COUNT_SQL}
        FROM early_enter_noul_shadow
        GROUP BY strategy_key
        ORDER BY strategy_key`,
     )
 
     const byStrategy: EarlyEnterNoulFlipStrategyStats[] = rows.map((r) => {
-      const total = Number(r.total) || 0
-      const midBand = Number(r.mid_band) || 0
-      const agreementEligible = Number(r.agreement_eligible) || 0
-      const agreementMatches = Number(r.agreement_matches) || 0
-      const rates = ratesFromCounts({
-        total,
-        midBand,
-        agreementEligible,
-        agreementMatches,
-      })
+      const counts = countsFromRow(r)
+      const metrics = flipMetrics(counts)
       return {
         strategyKey: r.strategy_key,
-        total,
-        midBand,
-        midBandRate: rates.midBandRate,
-        agreementEligible,
-        agreementMatches,
-        agreementRate: rates.agreementRate,
+        ...counts,
+        ...metrics,
         arm: flipArmFamilyFromStrategyKey(r.strategy_key),
-        bars: evaluateFlipBars({
-          total,
-          agreementRate: rates.agreementRate,
-          midBandRate: rates.midBandRate,
-        }),
       }
     })
 
     const armOrder: FlipArmFamily[] = ['first_seen', 'at_80']
     const byArm: EarlyEnterNoulFlipArmStats[] = armOrder.map((arm) => {
       const members = byStrategy.filter((s) => s.arm === arm)
-      const total = members.reduce((n, s) => n + s.total, 0)
-      const midBand = members.reduce((n, s) => n + s.midBand, 0)
-      const agreementEligible = members.reduce(
-        (n, s) => n + s.agreementEligible,
-        0,
+      const counts = members.reduce(
+        (acc, s) => addFlipCounts(acc, s),
+        emptyFlipCounts(),
       )
-      const agreementMatches = members.reduce(
-        (n, s) => n + s.agreementMatches,
-        0,
-      )
-      const rates = ratesFromCounts({
-        total,
-        midBand,
-        agreementEligible,
-        agreementMatches,
-      })
       return {
         arm,
-        total,
-        midBand,
-        midBandRate: rates.midBandRate,
-        agreementEligible,
-        agreementMatches,
-        agreementRate: rates.agreementRate,
-        bars: evaluateFlipBars({
-          total,
-          agreementRate: rates.agreementRate,
-          midBandRate: rates.midBandRate,
-        }),
+        ...counts,
+        ...flipMetrics(counts),
       }
     })
 
-    const total = byStrategy.reduce((n, s) => n + s.total, 0)
-    const midBand = byStrategy.reduce((n, s) => n + s.midBand, 0)
-    const agreementEligible = byStrategy.reduce(
-      (n, s) => n + s.agreementEligible,
-      0,
+    const overallCounts = byStrategy.reduce(
+      (acc, s) => addFlipCounts(acc, s),
+      emptyFlipCounts(),
     )
-    const agreementMatches = byStrategy.reduce(
-      (n, s) => n + s.agreementMatches,
-      0,
-    )
-    const overallRates = ratesFromCounts({
-      total,
-      midBand,
-      agreementEligible,
-      agreementMatches,
-    })
     const overall: EarlyEnterNoulFlipReadiness['overall'] = {
       arm: 'all',
-      total,
-      midBand,
-      midBandRate: overallRates.midBandRate,
-      agreementEligible,
-      agreementMatches,
-      agreementRate: overallRates.agreementRate,
-      bars: evaluateFlipBars({
-        total,
-        agreementRate: overallRates.agreementRate,
-        midBandRate: overallRates.midBandRate,
-      }),
+      ...overallCounts,
+      ...flipMetrics(overallCounts),
     }
 
     return {
       bars: barsSpec,
+      kill: killSpec,
       overall,
       byArm,
       byStrategy,
@@ -562,43 +661,16 @@ export async function loadEarlyEnterNoulFlipReadiness(): Promise<EarlyEnterNoulF
     if (isMissingSchemaError(error)) {
       return {
         bars: barsSpec,
+        kill: killSpec,
         overall: emptyOverall,
-        byArm: [
-          {
-            arm: 'first_seen',
-            total: 0,
-            midBand: 0,
-            midBandRate: null,
-            agreementEligible: 0,
-            agreementMatches: 0,
-            agreementRate: null,
-            bars: evaluateFlipBars({
-              total: 0,
-              agreementRate: null,
-              midBandRate: null,
-            }),
-          },
-          {
-            arm: 'at_80',
-            total: 0,
-            midBand: 0,
-            midBandRate: null,
-            agreementEligible: 0,
-            agreementMatches: 0,
-            agreementRate: null,
-            bars: evaluateFlipBars({
-              total: 0,
-              agreementRate: null,
-              midBandRate: null,
-            }),
-          },
-        ],
+        byArm: [emptyArm('first_seen'), emptyArm('at_80')],
         byStrategy: [],
       }
     }
     console.error('[early-enter-noul-shadow] flip readiness failed:', error)
     return {
       bars: barsSpec,
+      kill: killSpec,
       overall: emptyOverall,
       byArm: [],
       byStrategy: [],
@@ -606,7 +678,30 @@ export async function loadEarlyEnterNoulFlipReadiness(): Promise<EarlyEnterNoulF
   }
 }
 
+let killCache: { at: number; tripped: boolean } | null = null
+const KILL_CACHE_MS = 60_000
+
+/**
+ * True when all-time or 24h api_miss / disagreement exceeds the kill thresholds.
+ * Failures that hide the sample hold soft-active off. Missing schema is an empty
+ * sample (not a spike). Never enables soft-active.
+ */
+export async function isEarlyEnterNoulKillTripped(): Promise<boolean> {
+  const now = Date.now()
+  if (killCache && now - killCache.at < KILL_CACHE_MS) return killCache.tripped
+  try {
+    const readiness = await loadEarlyEnterNoulFlipReadiness()
+    const tripped = readiness.overall.kill?.tripped === true
+    killCache = { at: now, tripped }
+    return tripped
+  } catch {
+    killCache = { at: now, tripped: true }
+    return true
+  }
+}
+
 /** Test helper — reset ensure cache between tests if needed. */
 export function resetEarlyEnterNoulShadowDbEnsureForTests(): void {
   ensurePromise = null
+  killCache = null
 }

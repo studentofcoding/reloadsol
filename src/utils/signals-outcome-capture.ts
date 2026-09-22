@@ -3,6 +3,7 @@ import { fetchTradingRecordsForWallet } from '@/strategies/db'
 import { recordSignalsOutcome } from '@/strategies/outcomes'
 import { computeOpenTradeCycle } from '@/utils/simulation-trades'
 import { isSignalsStrategyId } from '@/utils/signals-strategy-id'
+import { closeOutcomeStatusFromPnl } from '@/strategies/close-outcome-status'
 
 function readEntryFeatures(
   record: TrackingRecord | undefined,
@@ -114,7 +115,7 @@ async function recordOutcomeForClose(params: {
     entryAt: readEntryAt(buyRecord),
     exitAt: new Date(record.timestamp).toISOString(),
     pnlPct: pnl.pnlPct,
-    status: pnl.pnlPct >= 0 ? 'won' : 'lost',
+    status: closeOutcomeStatusFromPnl(pnl.pnlPct),
     isSimulated: isSimulation,
     features: {
       ...readEntryFeatures(buyRecord),

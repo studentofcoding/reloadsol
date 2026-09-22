@@ -420,9 +420,13 @@ function strategyAlertTitle(
     case 'early_copy':
       return `🟡 <b>EARLY · copy trade (${mode})</b>`
     case 'close': {
-      const won =
-        typeof result === 'string' && result.trim().toLowerCase() === 'won'
-      return `${won ? '🟢' : '🔴'} <b>CLOSE (${mode})</b>`
+      const normalized =
+        typeof result === 'string' ? result.trim().toLowerCase() : ''
+      if (normalized === 'won') return `🟢 <b>CLOSE (${mode})</b>`
+      if (normalized === 'breakeven' || normalized === 'flat') {
+        return `⚪ <b>CLOSE (${mode})</b>`
+      }
+      return `🔴 <b>CLOSE (${mode})</b>`
     }
   }
 }
@@ -808,7 +812,7 @@ export async function sendStrategyTrackCloseAlert(params: {
 }): Promise<boolean> {
   if (!isStrategyTrackTelegramEnabled()) return false
 
-  const text = buildStrategyAlertText({
+  let text = buildStrategyAlertText({
     kind: 'close',
     strategyId: params.strategyId,
     strategyName: params.strategyName,
@@ -825,14 +829,28 @@ export async function sendStrategyTrackCloseAlert(params: {
     kol: params.kol,
   })
 
-  const { sendTelegramOhlcPhotoOrText } = await import(
+  const { sendTelegramOhlcPhotoOrText, loadOhlcBarsForTelegram } = await import(
     '@/strategies/ohlc-telegram-paint'
   )
+  const { loadStoredSignalOhlcBars } = await import(
+    '@/strategies/signal-ohlc-labels'
+  )
+  const { resolveCloseOhlcBars, formatGmgnChartFallbackLine } = await import(
+    '@/strategies/close-ohlc-fallback'
+  )
+  const chart = await resolveCloseOhlcBars(params.tokenAddress, {
+    loadLive: loadOhlcBarsForTelegram,
+    loadLabels: loadStoredSignalOhlcBars,
+  })
+  if (chart.source === 'none') {
+    text = `${text}\n${formatGmgnChartFallbackLine(params.tokenAddress)}`
+  }
   const sent = await sendTelegramOhlcPhotoOrText({
     tokenAddress: params.tokenAddress,
     symbol: params.tokenSymbol,
     caption: text,
     textBody: text,
+    bars: chart.bars,
     inlineKeyboard: chartBuyInlineKeyboard(params.tokenAddress),
   })
   return sent.ok

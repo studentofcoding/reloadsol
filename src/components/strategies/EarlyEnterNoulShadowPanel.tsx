@@ -21,6 +21,14 @@ type FlipBarCheck = {
   ready: boolean
 }
 
+type KillSwitchCheck = {
+  apiMissRate: number | null
+  disagreementRate: number | null
+  apiMissSpike: boolean
+  disagreementSpike: boolean
+  tripped: boolean
+}
+
 type StrategyStats = {
   strategyKey: string
   total: number
@@ -36,19 +44,30 @@ type FlipArmStats = {
   total: number
   midBand: number
   midBandRate: number | null
+  apiMiss: number
+  apiMissRate: number | null
+  total24h: number
+  apiMiss24h: number
+  apiMissRate24h: number | null
   agreementEligible: number
   agreementMatches: number
   agreementRate: number | null
   bars: FlipBarCheck
+  kill: KillSwitchCheck
 }
 
 type FlipStrategyStats = StrategyStats & {
   arm: FlipArmFamily | null
+  apiMiss: number
+  apiMissRate: number | null
+  apiMissRate24h: number | null
   bars: FlipBarCheck
+  kill: KillSwitchCheck
 }
 
 type FlipReadiness = {
   bars: { nMin: number; agreementMin: number; midMax: number }
+  kill?: { apiMissMax: number; disagreementMax: number; minN: number }
   overall: FlipArmStats
   byArm: FlipArmStats[]
   byStrategy: FlipStrategyStats[]
@@ -227,12 +246,20 @@ function BarMeter({
   )
 }
 
+function killLabel(kill: KillSwitchCheck): string {
+  const parts: string[] = []
+  if (kill.apiMissSpike) parts.push('api_miss')
+  if (kill.disagreementSpike) parts.push('disagreement')
+  return `kill: ${parts.join('+') || 'spike'}`
+}
+
 function FlipArmCard({
   title,
   subtitle,
   stats,
   bars,
   thresholds,
+  apiMissMax,
 }: {
   title: string
   subtitle?: string
@@ -243,11 +270,17 @@ function FlipArmCard({
     agreementMatches: number
     agreementEligible: number
     midBand: number
+    apiMiss: number
+    apiMissRate: number | null
+    apiMissRate24h: number | null
+    kill: KillSwitchCheck
   }
   bars: FlipBarCheck
   thresholds: { nMin: number; agreementMin: number; midMax: number }
+  apiMissMax?: number
 }) {
   const { nMin, agreementMin: aMin, midMax: mMax } = thresholds
+  const missMax = apiMissMax ?? 0.1
   return (
     <div
       className={`rounded-lg border p-3 space-y-3 ${
@@ -264,11 +297,19 @@ function FlipArmCard({
           ) : null}
         </div>
         <Chip
-          label={bars.ready ? 'flip-ready' : 'shadow sample'}
+          label={
+            stats.kill.tripped
+              ? killLabel(stats.kill)
+              : bars.ready
+                ? 'flip-ready'
+                : 'shadow sample'
+          }
           className={
-            bars.ready
-              ? 'bg-emerald-900/70 text-emerald-200'
-              : 'bg-sky-900/50 text-sky-200'
+            stats.kill.tripped
+              ? 'bg-orange-900/70 text-orange-200'
+              : bars.ready
+                ? 'bg-emerald-900/70 text-emerald-200'
+                : 'bg-sky-900/50 text-sky-200'
           }
         />
       </div>
@@ -303,6 +344,25 @@ function FlipArmCard({
               : stats.midBandRate <= mMax
                 ? 1
                 : Math.max(0, 1 - (stats.midBandRate - mMax) / mMax)
+          }
+        />
+        <BarMeter
+          label={`api_miss ≤ ${(missMax * 100).toFixed(0)}%`}
+          valueLabel={
+            stats.apiMissRate == null
+              ? '—'
+              : `${pct(stats.apiMissRate)} (${stats.apiMiss}/${stats.total})` +
+                (stats.apiMissRate24h == null
+                  ? ''
+                  : ` · 24h ${pct(stats.apiMissRate24h)}`)
+          }
+          ok={!stats.kill.apiMissSpike}
+          fill={
+            stats.apiMissRate == null
+              ? 0
+              : stats.apiMissRate <= missMax
+                ? stats.apiMissRate / missMax
+                : 1
           }
         />
       </div>
@@ -392,8 +452,9 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
         <div>
           <h2 className="text-xl font-bold text-white mb-1">Early Enter Noul shadow</h2>
           <p className="text-gray-400 text-sm">
-            Shadow funnel + #54 flip-readiness (N / agreement / mid). Decisions are
-            shadow vs SPEC; follow_spec stays with SPEC.
+            Shadow funnel + #54 flip-readiness (N / agreement / mid / api_miss).
+            Soft-fail includes api_miss. A spike holds soft-active off; it does
+            not turn soft-active on. Paper is never flipped.
           </p>
         </div>
         <span
@@ -411,9 +472,12 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
         <p className="text-gray-400 text-sm">Loading…</p>
       ) : (
         <p className="text-xs text-gray-500">
-          EARLY_ENTER_NOUL_SHADOW={data?.shadowEnabled ? '1' : '0'} · TYPESAFE=
+          EARLY_ENTER_NOUL_SHADOW={data?.shadowEnabled ? '1' : '0'} · soft-active{' '}
+          {data?.softActive ? 'on' : 'off'} · TYPESAFE=
           {data?.hasTypeSafeCreds ? 'set' : 'missing'} · all-time N{' '}
-          {flip?.overall.total ?? 0} · window rows {data?.total ?? 0}
+          {flip?.overall.total ?? 0}
+          {flip?.overall.kill?.tripped ? ' · kill tripped' : ''} · window rows{' '}
+          {data?.total ?? 0}
         </p>
       )}
 
@@ -426,8 +490,10 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
           <p className="text-[11px] text-gray-500">
             Bars: N≥{flip?.bars.nMin ?? 500} · A≥
             {((flip?.bars.agreementMin ?? 0.85) * 100).toFixed(0)}% · M≤
-            {((flip?.bars.midMax ?? 0.2) * 100).toFixed(0)}% · all-time shadow
-            sample
+            {((flip?.bars.midMax ?? 0.2) * 100).toFixed(0)}% · kill api_miss &gt;
+            {((flip?.kill?.apiMissMax ?? 0.1) * 100).toFixed(0)}% or disagreement
+            &gt; {((flip?.kill?.disagreementMax ?? 0.15) * 100).toFixed(0)}%
+            (N≥{flip?.kill?.minN ?? 20}, all-time or 24h)
           </p>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
@@ -438,6 +504,7 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
               stats={firstSeen}
               bars={firstSeen.bars}
               thresholds={flipThresholds}
+              apiMissMax={flip?.kill?.apiMissMax}
             />
           ) : null}
           {at80 ? (
@@ -447,6 +514,7 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
               stats={at80}
               bars={at80.bars}
               thresholds={flipThresholds}
+              apiMissMax={flip?.kill?.apiMissMax}
             />
           ) : null}
         </div>
@@ -460,6 +528,7 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
                   <th className="py-2 pr-3 font-medium">n</th>
                   <th className="py-2 pr-3 font-medium">agreement</th>
                   <th className="py-2 pr-3 font-medium">mid-rate</th>
+                  <th className="py-2 pr-3 font-medium">api_miss</th>
                   <th className="py-2 pr-3 font-medium">bars</th>
                 </tr>
               </thead>
@@ -482,6 +551,17 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
                       <span className="text-gray-500 text-xs ml-1">
                         ({r.midBand}/{r.total})
                       </span>
+                    </td>
+                    <td className="py-2 pr-3">
+                      {pct(r.apiMissRate)}
+                      <span className="text-gray-500 text-xs ml-1">
+                        ({r.apiMiss}/{r.total})
+                      </span>
+                      {r.kill?.tripped ? (
+                        <span className="block text-[11px] text-orange-300">
+                          {killLabel(r.kill)}
+                        </span>
+                      ) : null}
                     </td>
                     <td className="py-2 pr-3">
                       <Chip

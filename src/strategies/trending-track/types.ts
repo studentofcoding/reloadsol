@@ -18,7 +18,7 @@ export interface TrackedToken {
   peak_price_usd: number
   current_gain_percentage: number
   peak_gain_percentage: number
-  status: 'waiting' | 'tracking' | 'won' | 'lost' | 'skipped' | 'stopped'
+  status: 'waiting' | 'tracking' | 'won' | 'lost' | 'breakeven' | 'skipped' | 'stopped'
   organic_score: number | null
   market_cap: number | null
   volume_1h: number | null

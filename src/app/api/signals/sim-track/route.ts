@@ -15,6 +15,7 @@ import { getActiveSignalsForSim } from '@/strategies/load-signals'
 import { openSignalsSimPosition, SIGNALS_SIM_WALLET } from '@/strategies/telegram-alpha-sim'
 import { scoreSignalsForStrategy } from '@/strategies/signals-pipeline'
 import { recordSignalsOutcome } from '@/strategies/outcomes'
+import { closeOutcomeStatusFromPnl } from '@/strategies/close-outcome-status'
 import { mergeEntryFeaturesForOutcome } from '@/strategies/entry-feature-snapshot'
 import {
   buildFullEntryFeatureSnapshot,
@@ -121,7 +122,7 @@ async function closeSimPosition(params: {
     feesPaid: 0,
     solPriceUsd: solPrice,
     signatures: [`signals-sim-close-${Date.now()}`],
-    status: pnlPct >= 0 ? 'won' : 'lost',
+    status: closeOutcomeStatusFromPnl(pnlPct),
   })
 
   params.collect(record)
@@ -173,7 +174,7 @@ async function closeSimPosition(params: {
     entryAt: params.entryAt,
     exitAt: new Date().toISOString(),
     pnlPct,
-    status: pnlPct >= 0 ? 'won' : 'lost',
+    status: closeOutcomeStatusFromPnl(pnlPct),
     isSimulated: true,
     features: mergeEntryFeaturesForOutcome(buyFeatures, {
       ...params.entryFeatures,

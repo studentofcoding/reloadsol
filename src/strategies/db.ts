@@ -32,6 +32,7 @@ import {
   resolveReportTimeZone,
 } from './best-trade-windows'
 import { parseStrategyChain } from './types'
+import { summarizeClosedPnls } from './close-outcome-status'
 import type {
   StrategyChain,
   StrategyDefinitionRow,
@@ -1229,11 +1230,11 @@ function bucketMcapOutcomeStats(
   const pnls = rows
     .map((r) => (r.pnl_pct != null ? Number(r.pnl_pct) : null))
     .filter((v): v is number => v != null && Number.isFinite(v))
-  const wins = pnls.filter((p) => p >= 0).length
+  const summary = summarizeClosedPnls(pnls)
   return {
     trade_count: rows.length,
-    win_count: wins,
-    win_rate: rows.length ? wins / rows.length : 0,
+    win_count: summary.winCount,
+    win_rate: rows.length ? summary.winCount / rows.length : 0,
     avg_pnl_pct: pnls.length ? pnls.reduce((a, b) => a + b, 0) / pnls.length : 0,
   }
 }
@@ -1503,8 +1504,9 @@ export async function aggregateStrategyReports(params: {
     const pnls = groupRows
       .map((r: StrategyOutcomeRow) => (r.pnl_pct != null ? Number(r.pnl_pct) : null))
       .filter((v: number | null): v is number => v != null)
-    const wins = pnls.filter((p: number) => p >= 0).length
-    const losses = pnls.filter((p: number) => p < 0).length
+    const summary = summarizeClosedPnls(pnls)
+    const wins = summary.winCount
+    const losses = summary.lossCount
     const exitTimes = groupRows
       .map((r) => r.exit_at)
       .filter((v): v is string => !!v)

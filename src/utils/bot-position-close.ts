@@ -6,6 +6,7 @@ import {
 } from '@/utils/trading-records-db'
 import { calculateGainPercentage } from '@/utils/trading-math'
 import { recordTrendingBotOutcome } from '@/strategies/outcomes'
+import { closeOutcomeStatusFromPnl } from '@/strategies/close-outcome-status'
 import { notifyStrategyClose } from '@/strategies/strategy-telegram-notify'
 import {
   mergeEntryFeaturesForOutcome,
@@ -151,7 +152,7 @@ export async function finalizeBotPositionClose(
     return
   }
 
-  const finalStatus = gainPct >= 0 ? 'won' : 'lost'
+  const finalStatus = closeOutcomeStatusFromPnl(gainPct)
 
   const tracker = await queryOne<{
     id: string

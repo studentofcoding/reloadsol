@@ -3,6 +3,7 @@ import {
   buildSimOpenToast,
   claimSimOpenDedup,
   drainSimOpenAlerts,
+  isMcapFollowAlertStrategy,
   isMcapManualTradeStrategy,
   recordSimOpenAlert,
   resetSimOpenAlertsForTests,
@@ -21,6 +22,14 @@ describe('mcap-sim-open-alerts', () => {
     expect(isMcapManualTradeStrategy('mcap_enter_first_seen_rh')).toBe(true)
     expect(isMcapManualTradeStrategy('mcap_enter_at_80_rh')).toBe(true)
     expect(isMcapManualTradeStrategy('other')).toBe(false)
+  })
+
+  it('follow-alert allowlist is the two Sol arms only', () => {
+    expect(isMcapFollowAlertStrategy('mcap_enter_first_seen')).toBe(true)
+    expect(isMcapFollowAlertStrategy('mcap_enter_at_80')).toBe(true)
+    expect(isMcapFollowAlertStrategy('mcap_enter_first_seen_rh')).toBe(false)
+    expect(isMcapFollowAlertStrategy('mcap_enter_at_80_rh')).toBe(false)
+    expect(isMcapFollowAlertStrategy('other')).toBe(false)
   })
 
   it('labels strategies for copy-trade UI', () => {

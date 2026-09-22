@@ -16,6 +16,7 @@ import {
   sendStrategyTrackCloseAlert,
   sendStrategyTrackOpenAlert,
 } from '@/utils/telegram'
+import { telegramCloseStatusLabel } from '@/strategies/close-outcome-status'
 
 export function resolveStrategyDisplayName(
   domain: StrategyDomain,
@@ -234,7 +235,7 @@ export function notifyStrategyClose(params: {
       tokenAddress: params.tokenAddress,
       marketCap: params.marketCap ?? fromFeatures.marketCap,
       pnlPct: params.pnlPct,
-      status: params.status ?? (params.pnlPct >= 0 ? 'won' : 'lost'),
+      status: telegramCloseStatusLabel(params.pnlPct, params.status),
       isSimulated: params.isSimulated,
       organicScore: fromFeatures.organicScore,
       topHoldersPct: fromFeatures.topHoldersPct,

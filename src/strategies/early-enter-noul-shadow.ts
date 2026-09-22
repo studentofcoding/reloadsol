@@ -108,6 +108,102 @@ export function evaluateFlipBars(opts: {
   return { nOk, agreementOk, midOk, ready: nOk && agreementOk && midOk }
 }
 
+/**
+ * #54 kill switches. SPEC left the exact spike formula as ops fog; these
+ * defaults are the tracked thresholds (env-tunable). A spike holds soft-active
+ * off. It never turns soft-active on. Paper is untouched.
+ *
+ * api_miss rate is share of all rows (soft-fail, not only mid-band).
+ * Disagreement rate is share of keep/suppress rows that differ from SPEC.
+ * Either the all-time sample or the last 24h can trip the switch once that
+ * window has at least KILL_SWITCH_MIN_N rows.
+ */
+export const DEFAULT_API_MISS_KILL_RATE = 0.1
+export const DEFAULT_DISAGREEMENT_KILL_RATE = 0.15
+export const KILL_SWITCH_MIN_N = 20
+
+export function getApiMissKillRate(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  return parseFiniteEnv(
+    env.EARLY_ENTER_NOUL_API_MISS_KILL_RATE,
+    DEFAULT_API_MISS_KILL_RATE,
+  )
+}
+
+export function getDisagreementKillRate(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  return parseFiniteEnv(
+    env.EARLY_ENTER_NOUL_DISAGREEMENT_KILL_RATE,
+    DEFAULT_DISAGREEMENT_KILL_RATE,
+  )
+}
+
+export type KillSwitchCheck = {
+  /** All-time rates (display). Spike flags include the 24h window when merged. */
+  apiMissRate: number | null
+  disagreementRate: number | null
+  apiMissSpike: boolean
+  disagreementSpike: boolean
+  /** Hold soft-active off. Never enables it. */
+  tripped: boolean
+}
+
+export function evaluateKillSwitchWindow(opts: {
+  total: number
+  apiMiss: number
+  agreementEligible: number
+  agreementMatches: number
+  apiMissMax?: number
+  disagreementMax?: number
+  minN?: number
+}): KillSwitchCheck {
+  const apiMissMax = opts.apiMissMax ?? DEFAULT_API_MISS_KILL_RATE
+  const disagreementMax = opts.disagreementMax ?? DEFAULT_DISAGREEMENT_KILL_RATE
+  const minN = opts.minN ?? KILL_SWITCH_MIN_N
+  const apiMissRate = opts.total > 0 ? opts.apiMiss / opts.total : null
+  const disagreement = Math.max(0, opts.agreementEligible - opts.agreementMatches)
+  const disagreementRate =
+    opts.agreementEligible > 0 ? disagreement / opts.agreementEligible : null
+  const apiMissSpike =
+    opts.total >= minN && apiMissRate != null && apiMissRate > apiMissMax
+  const disagreementSpike =
+    opts.agreementEligible >= minN &&
+    disagreementRate != null &&
+    disagreementRate > disagreementMax
+  return {
+    apiMissRate,
+    disagreementRate,
+    apiMissSpike,
+    disagreementSpike,
+    tripped: apiMissSpike || disagreementSpike,
+  }
+}
+
+/** Spike if either the all-time sample or the recent window trips. Rates shown are all-time. */
+export function mergeKillSwitches(
+  allTime: KillSwitchCheck,
+  recent: KillSwitchCheck,
+): KillSwitchCheck {
+  return {
+    apiMissRate: allTime.apiMissRate,
+    disagreementRate: allTime.disagreementRate,
+    apiMissSpike: allTime.apiMissSpike || recent.apiMissSpike,
+    disagreementSpike: allTime.disagreementSpike || recent.disagreementSpike,
+    tripped: allTime.tripped || recent.tripped,
+  }
+}
+
+export function emptyKillSwitch(): KillSwitchCheck {
+  return evaluateKillSwitchWindow({
+    total: 0,
+    apiMiss: 0,
+    agreementEligible: 0,
+    agreementMatches: 0,
+  })
+}
+
 export type EarlyEnterNoulStrategyKey =
   | 'mcap_enter_first_seen'
   | 'mcap_enter_at_80'

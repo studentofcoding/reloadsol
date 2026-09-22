@@ -20,6 +20,7 @@ import {
 } from '@/utils/telegram'
 import { getGmgnKlineUrl, getGmgnTokenUrl, inferGmgnChain } from '@/utils/gmgn'
 import { scheduleOffRequestPath } from '@/strategies/schedule-off-request'
+import { isMcapFollowAlertStrategy } from '@/strategies/mcap-sim-open-alerts'
 
 /** PNG when at least one OHLC bar exists (same encode as close charts). */
 export const FOLLOW_ALERT_MIN_OHLC_BARS = 1
@@ -174,6 +175,9 @@ export type BestStrategyFollowAlertParams = {
 export async function sendBestStrategyFollowAlert(
   params: BestStrategyFollowAlertParams,
 ): Promise<{ sent: boolean; reason?: string; usedPhoto?: boolean }> {
+  if (!isMcapFollowAlertStrategy(params.strategyId)) {
+    return { sent: false, reason: 'arm_not_allowlisted' }
+  }
   if (!isStrategyTrackTelegramEnabled()) {
     return { sent: false, reason: 'telegram_disabled' }
   }

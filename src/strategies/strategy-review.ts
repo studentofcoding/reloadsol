@@ -1,4 +1,5 @@
 import type { StrategyDomain, StrategyOutcomeRow } from './types'
+import { summarizeClosedPnls } from './close-outcome-status'
 
 export type MistakePhase = 'entry' | 'management' | 'exit'
 
@@ -154,7 +155,8 @@ export function buildStrategyReview(
     const pnls = group
       .map((r) => r.pnl_pct)
       .filter((v): v is number => v != null && Number.isFinite(v))
-    const wins = pnls.filter((p) => p >= 0).length
+    const summary = summarizeClosedPnls(pnls)
+    const wins = summary.winCount
     const tags: Record<string, number> = {}
     for (const row of group) {
       for (const tag of tagsForOutcome(row)) {
@@ -165,7 +167,7 @@ export function buildStrategyReview(
       weekKey,
       tradeCount: group.length,
       winCount: wins,
-      lossCount: pnls.length - wins,
+      lossCount: summary.lossCount,
       avgPnlPct: pnls.length ? pnls.reduce((a, b) => a + b, 0) / pnls.length : 0,
       totalPnlPct: pnls.reduce((a, b) => a + b, 0),
       tags,
@@ -232,14 +234,14 @@ export function buildStrategyReview(
       .map((r) => r.pnl_pct)
       .filter((v): v is number => v != null && Number.isFinite(v))
     if (pnls.length === 0) continue
-    const wins = pnls.filter((p) => p >= 0).length
+    const summary = summarizeClosedPnls(pnls)
     scoreRows.push({
       strategyId,
       domain: domain as StrategyDomain,
       monthKey: mk,
       tradeCount: pnls.length,
       totalPnlPct: pnls.reduce((a, b) => a + b, 0),
-      winRate: wins / pnls.length,
+      winRate: summary.winRate,
     })
   }
   scoreRows.sort((a, b) => b.totalPnlPct - a.totalPnlPct)
@@ -266,9 +268,7 @@ export function buildStrategyReview(
       from,
       to,
       tradeCount: allPnls.length,
-      winRate: allPnls.length
-        ? allPnls.filter((p) => p >= 0).length / allPnls.length
-        : 0,
+      winRate: summarizeClosedPnls(allPnls).winRate,
       avgPnlPct: allPnls.length
         ? allPnls.reduce((a, b) => a + b, 0) / allPnls.length
         : 0,

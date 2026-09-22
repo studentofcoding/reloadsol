@@ -1,4 +1,5 @@
 import { query, queryOne } from '@/utils/db'
+import { isMissingSchemaError } from '@/utils/db-health'
 import { cacheDelByPrefix, cacheGet, cacheSet } from '@/utils/redis-cache'
 import {
   fetchTokenOhlc,
@@ -636,6 +637,64 @@ async function listFromDb(params: {
     [params.limit, params.offset],
   )
   return rows
+}
+
+/** Parse a signal_ohlc_labels.bars JSON value into paint bars. Drops junk rows. */
+export function parseStoredOhlcBars(raw: unknown): OhlcRugBar[] {
+  if (!Array.isArray(raw)) return []
+  const out: OhlcRugBar[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const b = item as Record<string, unknown>
+    const t = Number(b.t)
+    const o = Number(b.o)
+    const h = Number(b.h)
+    const l = Number(b.l)
+    const c = Number(b.c)
+    if (![t, o, h, l, c].every((n) => Number.isFinite(n))) continue
+    const v = b.v == null ? undefined : Number(b.v)
+    out.push({
+      t,
+      o,
+      h,
+      l,
+      c,
+      ...(v != null && Number.isFinite(v) ? { v } : {}),
+    })
+  }
+  return out
+}
+
+/**
+ * Newest non-empty stored bars for a mint. Used when live Tracker OHLC is empty.
+ * Never throws — CLOSE must still send.
+ */
+export async function loadStoredSignalOhlcBars(
+  tokenAddress: string,
+): Promise<OhlcRugBar[]> {
+  const mint = tokenAddress.trim()
+  if (!mint) return []
+  try {
+    await ensureSignalOhlcLabelsTable()
+    const row = await queryOne<{ bars: unknown }>(
+      `SELECT bars FROM signal_ohlc_labels
+       WHERE token_address = $1
+         AND jsonb_typeof(bars) = 'array'
+         AND jsonb_array_length(bars) > 0
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [mint],
+    )
+    return parseStoredOhlcBars(row?.bars)
+  } catch (error) {
+    if (!isMissingSchemaError(error)) {
+      console.warn(
+        '[signal-ohlc-labels] stored bars lookup failed:',
+        error instanceof Error ? error.message : String(error),
+      )
+    }
+    return []
+  }
 }
 
 export async function listSignalOhlcLabels(params: {

@@ -29,6 +29,7 @@ import {
 } from '@/utils/mcap-tracker'
 import { getOpenMcapSimPositions } from '@/utils/mcap-sim-track'
 import type { StrategyChain, StrategyDomain } from '@/strategies/types'
+import { closeOutcomeStatusFromPnl } from '@/strategies/close-outcome-status'
 
 const CLOSE_REASON = 'strategy_deactivated' as const
 
@@ -54,7 +55,7 @@ async function recordPriceDomainOutcome(params: {
     entryAt: params.entryAt,
     exitAt: new Date().toISOString(),
     pnlPct: params.pnlPct,
-    status: params.pnlPct >= 0 ? 'won' : 'lost',
+    status: closeOutcomeStatusFromPnl(params.pnlPct),
     isSimulated: true as const,
     features: params.features,
   }
@@ -116,7 +117,7 @@ export async function closePriceStrategySimPosition(params: {
       feesPaid: 0,
       solPriceUsd: solPrice,
       signatures: [`${params.domain}-sim-deactivate-${Date.now()}`],
-      status: pnlPct >= 0 ? 'won' : 'lost',
+      status: closeOutcomeStatusFromPnl(pnlPct),
       trading_simulation: { close_reason: CLOSE_REASON },
     }),
   )
@@ -209,7 +210,7 @@ export async function closeMcapStrategySimPositions(
           feesPaid: 0,
           solPriceUsd: solPrice,
           signatures: [`mcap-sim-deactivate-${Date.now()}`],
-          status: pnlPct >= 0 ? 'won' : 'lost',
+          status: closeOutcomeStatusFromPnl(pnlPct),
         }),
       )
 
@@ -235,7 +236,7 @@ export async function closeMcapStrategySimPositions(
         entryAt: pos.entryAt,
         exitAt: new Date().toISOString(),
         pnlPct,
-        status: pnlPct >= 0 ? 'won' : 'lost',
+        status: closeOutcomeStatusFromPnl(pnlPct),
         isSimulated: true,
         features: mergeEntryFeaturesForOutcome(pos.entryFeatures, closeFeatures),
       })

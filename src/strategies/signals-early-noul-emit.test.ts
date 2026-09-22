@@ -8,6 +8,7 @@ import * as shadowDb from './early-enter-noul-shadow-db'
 
 vi.mock('./early-enter-noul-shadow-db', () => ({
   insertEarlyEnterNoulShadowRow: vi.fn(async () => undefined),
+  isEarlyEnterNoulKillTripped: vi.fn(async () => false),
 }))
 
 afterEach(() => {
