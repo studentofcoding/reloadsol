@@ -11,9 +11,14 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added — Noul shadow token funnel analytics
 
 - `GET /api/strategies/ml/early-enter-noul-shadow` returns paginated recent rows
-  (`limit`/`offset`, default 100) with filters `hours`, `strategy_key`, `band`.
-- `EarlyEnterNoulShadowPanel` token funnel table: band chips, SPEC pass, shadow /
-  SPEC decisions; strategy_key + band filters. Emit path / paper opens unchanged.
+  (`limit`/`offset`, default 100) with filters `hours`, `strategy_key`, `arm`
+  (`first_seen`|`at_80`), `band`. Rows include `filterReason`
+  (`skipped_null`→`null_ml`).
+- All-time **#54 flip-readiness** (`flipReadiness`): n / agreement / mid-rate vs
+  N≥500 · A≥85% · M≤20%, split by `first_seen` vs `at_80` and per `strategy_key`.
+- `EarlyEnterNoulShadowPanel`: flip bars + token funnel (strategy_key,
+  spec_would_pass, noul_called, band, filter reason, shadow vs SPEC). Shadow /
+  follow language only. Emit path unchanged.
 
 ### Changed — best-strategy Telegram is mint share + OHLC, not a ranking digest
 

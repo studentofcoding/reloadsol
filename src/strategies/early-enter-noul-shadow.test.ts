@@ -2,14 +2,16 @@ import { describe, expect, it } from 'vitest'
 import {
   classifyNoulBand,
   decisionShadowFromBand,
+  evaluateFlipBars,
+  filterReasonFromBand,
   isEarlyEnterNoulShadowEnabled,
   isEarlyEnterNoulSoftActiveEnabled,
+  isNoulShadowBand,
   resolveEarlyEnterNoulStrategyKey,
   shouldEmitWithNoulSoftActive,
   DEFAULT_NOUL_NO,
   DEFAULT_NOUL_YES,
 } from './early-enter-noul-shadow'
-import { isNoulShadowBand } from './early-enter-noul-shadow'
 
 describe('classifyNoulBand', () => {
   it('maps NO=0.2 YES=0.8 bands', () => {
@@ -159,5 +161,53 @@ describe('isNoulShadowBand', () => {
     expect(isNoulShadowBand('skipped_null')).toBe(true)
     expect(isNoulShadowBand('follow_spec')).toBe(false)
     expect(isNoulShadowBand('')).toBe(false)
+  })
+})
+
+describe('filterReasonFromBand', () => {
+  it('maps skipped_null → null_ml; other bands pass through', () => {
+    expect(filterReasonFromBand('skipped_null')).toBe('null_ml')
+    expect(filterReasonFromBand('mid')).toBe('mid')
+    expect(filterReasonFromBand('suppress')).toBe('suppress')
+    expect(filterReasonFromBand('keep')).toBe('keep')
+    expect(filterReasonFromBand('api_miss')).toBe('api_miss')
+  })
+})
+
+describe('evaluateFlipBars (#54)', () => {
+  it('requires N≥500, A≥85%, M≤20%', () => {
+    expect(
+      evaluateFlipBars({
+        total: 500,
+        agreementRate: 0.85,
+        midBandRate: 0.2,
+      }),
+    ).toEqual({
+      nOk: true,
+      agreementOk: true,
+      midOk: true,
+      ready: true,
+    })
+    expect(
+      evaluateFlipBars({
+        total: 499,
+        agreementRate: 0.9,
+        midBandRate: 0.1,
+      }).ready,
+    ).toBe(false)
+    expect(
+      evaluateFlipBars({
+        total: 600,
+        agreementRate: 0.84,
+        midBandRate: 0.1,
+      }).agreementOk,
+    ).toBe(false)
+    expect(
+      evaluateFlipBars({
+        total: 600,
+        agreementRate: 0.9,
+        midBandRate: 0.21,
+      }).midOk,
+    ).toBe(false)
   })
 })
