@@ -27,6 +27,18 @@ export type NoulShadowBand =
 export type NoulShadowDecision = 'keep' | 'suppress' | 'follow_spec'
 export type NoulSpecDecision = 'keep' | 'suppress'
 
+const NOUL_SHADOW_BANDS: ReadonlySet<string> = new Set([
+  'suppress',
+  'mid',
+  'keep',
+  'skipped_null',
+  'api_miss',
+])
+
+export function isNoulShadowBand(value: string): value is NoulShadowBand {
+  return NOUL_SHADOW_BANDS.has(value)
+}
+
 export type EarlyEnterNoulStrategyKey =
   | 'mcap_enter_first_seen'
   | 'mcap_enter_at_80'

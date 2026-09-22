@@ -12,6 +12,7 @@ import type {
   NoulShadowDecision,
   NoulSpecDecision,
 } from './early-enter-noul-shadow'
+import { isNoulShadowBand } from './early-enter-noul-shadow'
 
 let ensurePromise: Promise<void> | null = null
 
@@ -172,6 +173,166 @@ export async function loadEarlyEnterNoulCompareStats(
     if (isMissingSchemaError(error)) return []
     console.error('[early-enter-noul-shadow] stats failed:', error)
     return []
+  }
+}
+
+export type EarlyEnterNoulShadowListRow = {
+  id: number
+  predictedAt: string
+  tokenAddress: string
+  symbol: string | null
+  chain: string
+  strategyKey: string
+  clMlScore: number | null
+  specWouldPass: boolean
+  noulCalled: boolean
+  noul: number | null
+  band: NoulShadowBand
+  decisionShadow: NoulShadowDecision
+  decisionSpec: NoulSpecDecision
+}
+
+export type LoadEarlyEnterNoulShadowRowsOpts = {
+  hours?: number
+  limit?: number
+  offset?: number
+  strategyKey?: string | null
+  band?: NoulShadowBand | null
+}
+
+export type LoadEarlyEnterNoulShadowRowsResult = {
+  rows: EarlyEnterNoulShadowListRow[]
+  total: number
+  limit: number
+  offset: number
+}
+
+/**
+ * Recent shadow rows for Admin funnel view — filter by hours / strategy_key / band.
+ * Default last 100 in the hours window (newest first).
+ */
+export async function loadEarlyEnterNoulShadowRows(
+  opts: LoadEarlyEnterNoulShadowRowsOpts = {},
+): Promise<LoadEarlyEnterNoulShadowRowsResult> {
+  const hours =
+    opts.hours != null && Number.isFinite(opts.hours) && opts.hours > 0
+      ? Math.min(Math.floor(opts.hours), 168)
+      : 24
+  const limitRaw = opts.limit ?? 100
+  const limit =
+    Number.isFinite(limitRaw) && limitRaw > 0
+      ? Math.min(Math.floor(limitRaw), 500)
+      : 100
+  const offsetRaw = opts.offset ?? 0
+  const offset =
+    Number.isFinite(offsetRaw) && offsetRaw >= 0 ? Math.floor(offsetRaw) : 0
+  const strategyKey =
+    opts.strategyKey && opts.strategyKey.trim() ? opts.strategyKey.trim() : null
+  const band =
+    opts.band && isNoulShadowBand(opts.band) ? opts.band : null
+
+  try {
+    await ensureEarlyEnterNoulShadowTable()
+
+    const where: string[] = [
+      `predicted_at >= NOW() - ($1 * INTERVAL '1 hour')`,
+    ]
+    const params: Array<string | number> = [hours]
+    let p = 2
+
+    if (strategyKey) {
+      where.push(`strategy_key = $${p}`)
+      params.push(strategyKey)
+      p += 1
+    }
+    if (band) {
+      where.push(`band = $${p}`)
+      params.push(band)
+      p += 1
+    }
+
+    const whereSql = where.join(' AND ')
+
+    const { rows: countRows } = await query<{ total: string | number }>(
+      `SELECT COUNT(*)::int AS total
+       FROM early_enter_noul_shadow
+       WHERE ${whereSql}`,
+      params,
+    )
+    const total = Number(countRows[0]?.total) || 0
+
+    const listParams = [...params, limit, offset]
+    const limitIdx = p
+    const offsetIdx = p + 1
+
+    const { rows } = await query<{
+      id: string | number
+      predicted_at: Date | string
+      token_address: string
+      symbol: string | null
+      chain: string
+      strategy_key: string
+      cl_ml_score: string | number | null
+      spec_would_pass: boolean
+      noul_called: boolean
+      noul: string | number | null
+      band: NoulShadowBand
+      decision_shadow: NoulShadowDecision
+      decision_spec: NoulSpecDecision
+    }>(
+      `SELECT
+         id,
+         predicted_at,
+         token_address,
+         symbol,
+         chain,
+         strategy_key,
+         cl_ml_score,
+         spec_would_pass,
+         noul_called,
+         noul,
+         band,
+         decision_shadow,
+         decision_spec
+       FROM early_enter_noul_shadow
+       WHERE ${whereSql}
+       ORDER BY predicted_at DESC, id DESC
+       LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+      listParams,
+    )
+
+    return {
+      rows: rows.map((r) => ({
+        id: Number(r.id),
+        predictedAt:
+          r.predicted_at instanceof Date
+            ? r.predicted_at.toISOString()
+            : String(r.predicted_at),
+        tokenAddress: r.token_address,
+        symbol: r.symbol ?? null,
+        chain: r.chain,
+        strategyKey: r.strategy_key,
+        clMlScore:
+          r.cl_ml_score == null || r.cl_ml_score === ''
+            ? null
+            : Number(r.cl_ml_score),
+        specWouldPass: Boolean(r.spec_would_pass),
+        noulCalled: Boolean(r.noul_called),
+        noul: r.noul == null || r.noul === '' ? null : Number(r.noul),
+        band: r.band,
+        decisionShadow: r.decision_shadow,
+        decisionSpec: r.decision_spec,
+      })),
+      total,
+      limit,
+      offset,
+    }
+  } catch (error) {
+    if (isMissingSchemaError(error)) {
+      return { rows: [], total: 0, limit, offset }
+    }
+    console.error('[early-enter-noul-shadow] list failed:', error)
+    return { rows: [], total: 0, limit, offset }
   }
 }
 

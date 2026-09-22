@@ -8,6 +8,13 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Noul shadow token funnel analytics
+
+- `GET /api/strategies/ml/early-enter-noul-shadow` returns paginated recent rows
+  (`limit`/`offset`, default 100) with filters `hours`, `strategy_key`, `band`.
+- `EarlyEnterNoulShadowPanel` token funnel table: band chips, SPEC pass, shadow /
+  SPEC decisions; strategy_key + band filters. Emit path / paper opens unchanged.
+
 ### Changed — best-strategy Telegram is mint share + OHLC, not a ranking digest
 
 - **Follow alert only** (not auto-enter / paper / soft-gate / Noul): when a Researchy-qualified best arm (`first_seen` / `80%`) hits a mint on Stage-2 open, Telegram gets a follow blast with arm name, **avg×n+win%** rank context, and chart link.

@@ -9,6 +9,7 @@ import {
   DEFAULT_NOUL_NO,
   DEFAULT_NOUL_YES,
 } from './early-enter-noul-shadow'
+import { isNoulShadowBand } from './early-enter-noul-shadow'
 
 describe('classifyNoulBand', () => {
   it('maps NO=0.2 YES=0.8 bands', () => {
@@ -146,5 +147,17 @@ describe('noul flags', () => {
         EARLY_ENTER_NOUL_SOFT_ACTIVE: '1',
       } as unknown as NodeJS.ProcessEnv),
     ).toBe(true)
+  })
+})
+
+describe('isNoulShadowBand', () => {
+  it('accepts locked band literals only', () => {
+    expect(isNoulShadowBand('keep')).toBe(true)
+    expect(isNoulShadowBand('suppress')).toBe(true)
+    expect(isNoulShadowBand('mid')).toBe(true)
+    expect(isNoulShadowBand('api_miss')).toBe(true)
+    expect(isNoulShadowBand('skipped_null')).toBe(true)
+    expect(isNoulShadowBand('follow_spec')).toBe(false)
+    expect(isNoulShadowBand('')).toBe(false)
   })
 })
