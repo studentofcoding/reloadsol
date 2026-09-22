@@ -284,6 +284,13 @@ export async function fetchTokenOhlc(params: {
   })
 }
 
+const ST_OHLC_MAX_ATTEMPTS = 3
+const ST_OHLC_RETRY_BASE_MS = 400
+
+async function sleepMs(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 async function fetchTokenOhlcUpstream(params: {
   tokenAddress: string
   timeFrom: number
@@ -321,18 +328,31 @@ async function fetchTokenOhlcUpstream(params: {
     url.searchParams.set('time_to', String(params.timeTo))
     url.searchParams.set('currency', 'usd')
 
-    try {
-      const res = await fetch(url.toString(), {
-        headers: { 'x-api-key': apiKey },
-        signal: AbortSignal.timeout(15_000),
-      })
-      if (res.ok) {
-        const body = (await res.json()) as Record<string, unknown>
-        const candles = mapStBars(body.oclhv ?? body.ohlcv)
-        if (candles.length > 0) return { candles, source: 'solanatracker' }
+    for (let attempt = 0; attempt < ST_OHLC_MAX_ATTEMPTS; attempt++) {
+      try {
+        const res = await fetch(url.toString(), {
+          headers: { 'x-api-key': apiKey },
+          signal: AbortSignal.timeout(15_000),
+        })
+        if (res.ok) {
+          const body = (await res.json()) as Record<string, unknown>
+          const candles = mapStBars(body.oclhv ?? body.ohlcv)
+          if (candles.length > 0) return { candles, source: 'solanatracker' }
+          break
+        }
+        if (res.status === 429 && attempt < ST_OHLC_MAX_ATTEMPTS - 1) {
+          const delay = ST_OHLC_RETRY_BASE_MS * 2 ** attempt
+          console.warn(
+            `[token-map-chart] SolanaTracker OHLC rate limited, retrying in ${delay}ms (attempt ${attempt + 1}/${ST_OHLC_MAX_ATTEMPTS})`,
+          )
+          await sleepMs(delay)
+          continue
+        }
+        break
+      } catch {
+        // fall through to GMGN kline below
+        break
       }
-    } catch {
-      // fall through to GMGN kline below
     }
   }
 

@@ -96,6 +96,44 @@ describe('fetchTokenOhlc', () => {
     expect(result).toEqual({ candles: [], source: 'none' })
   })
 
+  it('retries SolanaTracker on 429 then returns candles', async () => {
+    stubUpstreamOnly()
+    vi.stubEnv('SOLANATRACKER_DATA_API_KEY', 'test-key')
+    vi.useFakeTimers()
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 429 })
+      .mockResolvedValueOnce({ ok: false, status: 429 })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          oclhv: [
+            {
+              time: 1700000000,
+              open: 1,
+              high: 2,
+              low: 0.5,
+              close: 1.5,
+              volume: 10,
+            },
+          ],
+        }),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const pending = fetchTokenOhlc({
+      tokenAddress: 'So11111111111111111111111111111111111111112',
+      hours: 24,
+    })
+    await vi.runAllTimersAsync()
+    const result = await pending
+
+    expect(result.source).toBe('solanatracker')
+    expect(result.candles).toHaveLength(1)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    vi.useRealTimers()
+  })
+
   it('uses GMGN kline for 0x / robinhood addresses', async () => {
     stubUpstreamOnly()
     vi.mocked(tokenKline).mockResolvedValue({

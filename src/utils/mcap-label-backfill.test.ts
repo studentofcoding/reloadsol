@@ -194,4 +194,35 @@ describe('runMcapLabelBackfill', () => {
     expect(counts.ohlc_failed).toBe(1)
     expect(counts.ohlc_captured).toBe(1)
   })
+
+  it('counts refilled and skipped_evm outcomes', async () => {
+    const a = row({
+      token_address: 'mintA',
+      label: 'potential',
+      peak_growth_percent: 5,
+      mcap_growth_percent: 1,
+    })
+    const b = row({
+      token_address: '0x1111111111111111111111111111111111111111',
+      label: 'rugged',
+      chain: 'robinhood',
+      when_drop_40pct: '2026-09-01T00:00:00.000Z',
+      peak_growth_percent: 80,
+      mcap_growth_percent: -50,
+    })
+    const captureOhlc = vi.fn(async (record: McapSnapshot) => {
+      if (record.token_address.startsWith('0x')) return 'skipped_evm' as const
+      return 'refilled' as const
+    })
+    const counts = await runMcapLabelBackfill({
+      rows: [a, b],
+      dryRun: false,
+      nowIso: NOW,
+      updateRow: vi.fn(),
+      captureOhlc,
+    })
+    expect(counts.ohlc_refilled).toBe(1)
+    expect(counts.ohlc_skipped_evm).toBe(1)
+    expect(counts.ohlc_failed).toBe(0)
+  })
 })
