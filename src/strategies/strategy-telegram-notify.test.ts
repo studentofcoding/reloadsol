@@ -1,9 +1,35 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import {
   getStrategyNotifyFlags,
+  notifyStrategyClose,
+  notifyStrategyOpen,
   resolveStrategyDisplayName,
   telegramExtrasFromFeatures,
 } from './strategy-telegram-notify'
+
+const telegramMocks = vi.hoisted(() => ({
+  sendStrategyTrackOpenAlert: vi.fn(async () => true),
+  sendStrategyTrackCloseAlert: vi.fn(async () => true),
+}))
+
+const afterHarness = vi.hoisted(() => ({
+  queue: [] as Array<() => void | Promise<void>>,
+  mode: 'queue' as 'queue' | 'throw',
+}))
+
+vi.mock('next/server', () => ({
+  after: (fn: () => void | Promise<void>) => {
+    if (afterHarness.mode === 'throw') {
+      throw new Error('after was called outside a request scope')
+    }
+    afterHarness.queue.push(fn)
+  },
+}))
+
+vi.mock('@/utils/telegram', () => ({
+  sendStrategyTrackOpenAlert: telegramMocks.sendStrategyTrackOpenAlert,
+  sendStrategyTrackCloseAlert: telegramMocks.sendStrategyTrackCloseAlert,
+}))
 
 vi.mock('./load-signals', () => ({
   getSignalsStrategy: vi.fn(),
@@ -106,5 +132,73 @@ describe('telegramExtrasFromFeatures marketCap precedence', () => {
       { preferExit: true },
     )
     expect(marketCap).toBe(198690)
+  })
+})
+
+const closeParams = {
+  domain: 'signals' as const,
+  strategyId: 'signals_default',
+  tokenAddress: 'Mint111111111111111111111111111111111111111',
+  pnlPct: 12.5,
+  isSimulated: true,
+}
+
+describe('notifyStrategyOpen / notifyStrategyClose scheduling', () => {
+  beforeEach(() => {
+    afterHarness.mode = 'queue'
+    afterHarness.queue.length = 0
+    telegramMocks.sendStrategyTrackOpenAlert.mockReset()
+    telegramMocks.sendStrategyTrackOpenAlert.mockResolvedValue(true)
+    telegramMocks.sendStrategyTrackCloseAlert.mockReset()
+    telegramMocks.sendStrategyTrackCloseAlert.mockResolvedValue(true)
+    vi.mocked(getSignalsStrategy).mockResolvedValue({
+      id: 'signals_default',
+      is_active: true,
+      config: { notify: { telegram: true, ui: true } },
+    } as Awaited<ReturnType<typeof getSignalsStrategy>>)
+  })
+
+  it('does not send close telegram until the after() task runs', async () => {
+    notifyStrategyClose(closeParams)
+    expect(telegramMocks.sendStrategyTrackCloseAlert).not.toHaveBeenCalled()
+    expect(afterHarness.queue).toHaveLength(1)
+    await afterHarness.queue[0]!()
+    expect(telegramMocks.sendStrategyTrackCloseAlert).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not send open telegram until the after() task runs', async () => {
+    notifyStrategyOpen({
+      domain: 'signals',
+      strategyId: 'signals_default',
+      tokenSymbol: 'TEST',
+      tokenAddress: closeParams.tokenAddress,
+      isSimulated: true,
+    })
+    expect(telegramMocks.sendStrategyTrackOpenAlert).not.toHaveBeenCalled()
+    expect(afterHarness.queue).toHaveLength(1)
+    await afterHarness.queue[0]!()
+    expect(telegramMocks.sendStrategyTrackOpenAlert).toHaveBeenCalledTimes(1)
+  })
+
+  it('logs close notify failures without rejecting the scheduler', async () => {
+    telegramMocks.sendStrategyTrackCloseAlert.mockRejectedValueOnce(
+      new Error('sharp down'),
+    )
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    notifyStrategyClose(closeParams)
+    await expect(Promise.resolve(afterHarness.queue[0]!())).resolves.toBeUndefined()
+    expect(errorSpy).toHaveBeenCalled()
+    errorSpy.mockRestore()
+  })
+
+  it('uses setImmediate when after() is outside a request', async () => {
+    afterHarness.mode = 'throw'
+    notifyStrategyClose(closeParams)
+    expect(telegramMocks.sendStrategyTrackCloseAlert).not.toHaveBeenCalled()
+    expect(afterHarness.queue).toHaveLength(0)
+    await new Promise((resolve) => setImmediate(resolve))
+    await vi.waitFor(() => {
+      expect(telegramMocks.sendStrategyTrackCloseAlert).toHaveBeenCalledTimes(1)
+    })
   })
 })

@@ -124,22 +124,37 @@ export async function sendTelegramOhlcPhotoOrText(params: {
   textBody: string
   chatId?: string
   inlineKeyboard?: Array<Array<TelegramInlineButton>>
+  /** When set, encode these bars instead of fetching OHLC again. */
+  bars?: OhlcRugBar[]
 }): Promise<SendTelegramOhlcResult> {
-  const { bars, png } = await loadAndRenderOhlcPng(
-    params.tokenAddress,
-    params.symbol,
-  )
+  // sharp load failures reject. Text is only for an empty series or an
+  // encode error after sharp has loaded (png === null).
+  const loaded =
+    params.bars != null
+      ? {
+          bars: params.bars,
+          png: await renderOhlcCandlesPng(params.bars, { symbol: params.symbol }),
+        }
+      : await loadAndRenderOhlcPng(params.tokenAddress, params.symbol)
+  const { bars, png } = loaded
 
   if (png) {
-    const sent = await sendTelegramPhoto({
-      png,
-      caption: params.caption,
-      chatId: params.chatId,
-      parseMode: 'HTML',
-      inlineKeyboard: params.inlineKeyboard,
-    })
-    if (sent.ok) {
-      return { ...sent, usedPhoto: true }
+    try {
+      const sent = await sendTelegramPhoto({
+        png,
+        caption: params.caption,
+        chatId: params.chatId,
+        parseMode: 'HTML',
+        inlineKeyboard: params.inlineKeyboard,
+      })
+      if (sent.ok) {
+        return { ...sent, usedPhoto: true }
+      }
+    } catch (err) {
+      console.warn(
+        '[ohlc-telegram-paint] photo send failed; text-only',
+        err instanceof Error ? err.message : String(err),
+      )
     }
   }
 

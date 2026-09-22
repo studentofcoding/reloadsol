@@ -1,5 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+const afterHarness = vi.hoisted(() => ({
+  queue: [] as Array<() => void | Promise<void>>,
+}))
+
+vi.mock('next/server', () => ({
+  after: (fn: () => void | Promise<void>) => {
+    afterHarness.queue.push(fn)
+  },
+}))
+
 vi.mock('@/utils/telegram', () => ({
   isStrategyTrackTelegramEnabled: () => true,
   sendTelegramMessage: vi.fn(async () => ({ ok: true, messageId: 1, chatId: '1' })),
@@ -50,12 +60,14 @@ import {
   followAlertArmLabel,
   formatAvgXnRankContext,
   isOhlcTooThinForFollowAlert,
+  notifyBestStrategyFollowAlert,
   resetFollowAlertCooldownForTests,
   sendBestStrategyFollowAlert,
 } from './best-strategies-share-notify'
 
 afterEach(() => {
   vi.clearAllMocks()
+  afterHarness.queue.length = 0
   resetFollowAlertCooldownForTests()
 })
 
@@ -108,12 +120,13 @@ describe('follow alert hygiene', () => {
     expect(ctx).not.toContain('sum')
   })
 
-  it('treats thin OHLC as needing GMGN fallback', () => {
+  it('uses a PNG chart whenever at least one OHLC bar exists', () => {
     expect(isOhlcTooThinForFollowAlert(0)).toBe(true)
     expect(isOhlcTooThinForFollowAlert(FOLLOW_ALERT_MIN_OHLC_BARS - 1)).toBe(
       true,
     )
     expect(isOhlcTooThinForFollowAlert(FOLLOW_ALERT_MIN_OHLC_BARS)).toBe(false)
+    expect(FOLLOW_ALERT_MIN_OHLC_BARS).toBe(1)
   })
 
   it('cooldown blocks duplicate mint+arm blasts', () => {
@@ -122,7 +135,7 @@ describe('follow alert hygiene', () => {
     expect(claimFollowAlertCooldown('mcap_enter_first_seen', 'MintA')).toBe(true)
   })
 
-  it('prefers GMGN URL text when OHLC bars are thin', async () => {
+  it('sends GMGN text only when there are no OHLC bars', async () => {
     vi.mocked(loadOhlcBarsForTelegram).mockResolvedValueOnce([])
     const result = await sendBestStrategyFollowAlert({
       strategyId: 'mcap_enter_at_80',
@@ -140,17 +153,9 @@ describe('follow alert hygiene', () => {
     expect(text).toContain('gmgn.cc')
   })
 
-  it('uses OHLC photo path when bars are dense enough', async () => {
-    vi.mocked(loadOhlcBarsForTelegram).mockResolvedValueOnce(
-      Array.from({ length: FOLLOW_ALERT_MIN_OHLC_BARS }, (_, i) => ({
-        t: i,
-        o: 1,
-        h: 2,
-        l: 0.5,
-        c: 1.5,
-        v: 1,
-      })),
-    )
+  it('uses the close-chart OHLC PNG path when any bars exist', async () => {
+    const bars = [{ t: 1, o: 1, h: 2, l: 0.5, c: 1.5, v: 1 }]
+    vi.mocked(loadOhlcBarsForTelegram).mockResolvedValueOnce(bars)
     const result = await sendBestStrategyFollowAlert({
       strategyId: 'mcap_enter_first_seen',
       tokenAddress: 'MintABC',
@@ -159,10 +164,32 @@ describe('follow alert hygiene', () => {
       force: true,
     })
     expect(result.sent).toBe(true)
-    expect(sendTelegramOhlcPhotoOrText).toHaveBeenCalled()
-    const caption = vi.mocked(sendTelegramOhlcPhotoOrText).mock.calls[0]![0]
-      .caption as string
-    expect(caption).toContain('first_seen')
-    expect(caption).toContain('Follow alert')
+    expect(result.usedPhoto).toBe(true)
+    expect(sendTelegramMessage).not.toHaveBeenCalled()
+    expect(sendTelegramOhlcPhotoOrText).toHaveBeenCalledTimes(1)
+    const arg = vi.mocked(sendTelegramOhlcPhotoOrText).mock.calls[0]![0]
+    expect(arg.bars).toEqual(bars)
+    expect(arg.caption).toContain('first_seen')
+    expect(arg.caption).toContain('Follow alert')
+  })
+
+  it('does not encode the follow chart until after the response task runs', async () => {
+    const bars = [{ t: 1, o: 1, h: 2, l: 0.5, c: 1.5, v: 1 }]
+    vi.mocked(loadOhlcBarsForTelegram).mockResolvedValueOnce(bars)
+    notifyBestStrategyFollowAlert({
+      strategyId: 'mcap_enter_at_80',
+      tokenAddress: 'MintDEF',
+      tokenSymbol: 'TEST',
+      mcap: 90_000,
+      force: true,
+    })
+    expect(sendTelegramOhlcPhotoOrText).not.toHaveBeenCalled()
+    expect(loadOhlcBarsForTelegram).not.toHaveBeenCalled()
+    expect(afterHarness.queue).toHaveLength(1)
+    await afterHarness.queue[0]!()
+    expect(sendTelegramOhlcPhotoOrText).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(sendTelegramOhlcPhotoOrText).mock.calls[0]![0].bars).toEqual(
+      bars,
+    )
   })
 })

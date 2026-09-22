@@ -25,6 +25,11 @@
 # Webpack is not used: ioredis (dns) / node:diagnostics_channel break the client graph.
 # onnxruntime native libs are platform-specific; verify accepts .so or .dylib so a
 # Mac ship is not blocked. Linux Pattern ML still wants linux-x64 .so in the image.
+# sharp is the same class of bug with a harder failure: a Mac standalone traces
+# @img/sharp-darwin-* only, and dlopen of that Mach-O in the Linux container is
+# SIGSEGV (exit 139 / Cloudflare 522). This script strips those Darwin packages
+# from the shipped tree. Dockerfile.web then installs the lockfile sharp build
+# for linux-x64 glibc — do not rely on the Mac binary as the only sharp.node.
 
 set -euo pipefail
 
@@ -153,6 +158,13 @@ log "Rsync .next/static/ → ${VPS_HOST}:${VPS_DIR}/.next/static/"
 rsync -az --delete \
   "$ROOT/.next/static/" \
   "${VPS_HOST}:${VPS_DIR}/.next/static/"
+
+# Mirror the onnxruntime note: a Mac ship may contain Darwin native addons.
+# onnxruntime is allowed to (.so or .dylib). sharp must not — Darwin .node is
+# removed here so it is never the only binary Docker could load. linux-x64
+# sharp is installed in Dockerfile.web from the lockfile version.
+log "Stripping Darwin sharp binaries from shipped standalone (Dockerfile.web installs linux-x64 sharp) ..."
+ssh_vps "cd '${VPS_DIR}' && if [ -d .next/standalone/node_modules ]; then find .next/standalone/node_modules -type d \\( -name 'sharp-darwin-arm64' -o -name 'sharp-darwin-x64' -o -name 'sharp-libvips-darwin-arm64' -o -name 'sharp-libvips-darwin-x64' \\) -print0 | xargs -0 -r rm -rf; fi"
 
 log "Remote: ${REMOTE_COMPOSE} build web && up -d --no-deps web"
 ssh_vps "cd '${VPS_DIR}' && ${REMOTE_COMPOSE} build web && ${REMOTE_COMPOSE} up -d --no-deps web"

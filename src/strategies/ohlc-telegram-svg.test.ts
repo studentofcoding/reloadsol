@@ -54,6 +54,10 @@ describe('renderOhlcCandlesSvg', () => {
     expect(rectCount).toBeGreaterThanOrEqual(36)
   })
 
+  it('returns null for empty bars', async () => {
+    expect(await renderOhlcCandlesPng([])).toBeNull()
+  })
+
   it('rasterizes PNG via sharp', async () => {
     const png = await renderOhlcCandlesPng(
       [

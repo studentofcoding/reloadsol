@@ -1,7 +1,8 @@
 /**
  * Best-strategy FOLLOW alert (Telegram) — not entry / soft-gate / Noul / paper.
- * Room hygiene: label as follow only; mint+arm cooldown; thin OHLC → GMGN URL;
- * blast names arm(s) + avg×n rank context + chart link.
+ * Room hygiene: label as follow only; mint+arm cooldown. No OHLC bars → GMGN
+ * URL text. Any bars → the same sharp OHLC PNG as strategy close charts.
+ * Blast names arm(s) + avg×n rank context + chart link.
  */
 
 import {
@@ -18,9 +19,10 @@ import {
   sendTelegramMessage,
 } from '@/utils/telegram'
 import { getGmgnKlineUrl, getGmgnTokenUrl, inferGmgnChain } from '@/utils/gmgn'
+import { scheduleOffRequestPath } from '@/strategies/schedule-off-request'
 
-/** Below this bar count, prefer GMGN chart URL over a sparse OHLC image. */
-export const FOLLOW_ALERT_MIN_OHLC_BARS = 24
+/** PNG when at least one OHLC bar exists (same encode as close charts). */
+export const FOLLOW_ALERT_MIN_OHLC_BARS = 1
 
 const FOLLOW_DEDUP_WINDOW_MS = 24 * 60 * 60 * 1000
 const followRecentKeys = new Map<string, number>()
@@ -191,9 +193,8 @@ export async function sendBestStrategyFollowAlert(
   const reloadChart = formatReloadsolChartLink(params.tokenAddress)
 
   const bars = await loadOhlcBarsForTelegram(params.tokenAddress)
-  const thin = isOhlcTooThinForFollowAlert(bars.length)
 
-  if (thin) {
+  if (isOhlcTooThinForFollowAlert(bars.length)) {
     const text = buildBestStrategyFollowAlertHtml({
       strategyId: params.strategyId,
       tokenSymbol: params.tokenSymbol,
@@ -235,6 +236,7 @@ export async function sendBestStrategyFollowAlert(
     symbol: params.tokenSymbol,
     caption: text,
     textBody: text,
+    bars,
     inlineKeyboard: [
       [
         { text: 'Chart', url: reloadChart },
@@ -249,6 +251,19 @@ export async function sendBestStrategyFollowAlert(
     reason: sent.ok ? undefined : 'send_failed',
     usedPhoto: sent.usedPhoto,
   }
+}
+
+/**
+ * Schedule a follow alert after the HTTP response. Sharp PNG encode must not
+ * run on the request turn. Load failures reject inside the task and are logged;
+ * encode errors after sharp loads fall back to text inside the photo helper.
+ */
+export function notifyBestStrategyFollowAlert(
+  params: BestStrategyFollowAlertParams,
+): void {
+  scheduleOffRequestPath('[mcap-sim-open] follow alert failed', () =>
+    sendBestStrategyFollowAlert(params).then(() => undefined),
+  )
 }
 
 /** @deprecated use sendBestStrategyFollowAlert */

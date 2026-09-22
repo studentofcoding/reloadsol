@@ -77,7 +77,9 @@ The production VPS is ~3.6Gi and co-hosts Flowey. Host `next build` OOMs and can
 bash scripts/ship-standalone-to-vps.sh
 ```
 
-That script: `npm run build` → `verify-standalone-build.sh` → rsync `.next/standalone/` + `.next/static/` → remote `docker compose -f docker-compose.yml -f docker-compose.prod.yml build web && up -d --no-deps web` → optional `/api/health` smoke.
+That script: `npm run build` → `verify-standalone-build.sh` → rsync `.next/standalone/` + `.next/static/` → strip Darwin `@img/sharp-*` from the shipped tree → remote `docker compose -f docker-compose.yml -f docker-compose.prod.yml build web && up -d --no-deps web` → optional `/api/health` smoke.
+
+`Dockerfile.web` then installs lockfile `sharp` for linux-x64 glibc. A Mac standalone's Darwin `sharp.node` segfaults in the Linux container (exit 139, Cloudflare 522). Verify still accepts a Darwin-only sharp tree so the Mac ship is not blocked — same split as onnxruntime (`.so` or `.dylib` locally, Linux binary in the image).
 
 On the VPS, `scripts/docker-deploy.sh` **skips** host `next build` when that standalone already verifies. If it would need a host build and total RAM is &lt;4096MB, it **refuses** unless `DEPLOY_ALLOW_HOST_BUILD=1` (stops web/cron/social first; Turbopack; `NODE_OPTIONS=1536`).
 

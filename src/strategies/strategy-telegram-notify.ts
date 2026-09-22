@@ -1,4 +1,5 @@
 import type { StrategyDomain, StrategyNotifyConfig } from './types'
+import { scheduleOffRequestPath } from './schedule-off-request'
 import {
   DLMM_STRATEGY_DEFAULTS,
   GMGN_STRATEGIES,
@@ -160,6 +161,16 @@ export function telegramExtrasFromFeatures(
   }
 }
 
+/**
+ * Open/close Telegram (including sharp PNG) must not run on the HTTP turn.
+ */
+function scheduleStrategyTelegram(
+  label: 'open' | 'close',
+  work: () => Promise<void>,
+): void {
+  scheduleOffRequestPath(`[strategy-telegram] ${label} notify failed`, work)
+}
+
 export function notifyStrategyOpen(params: {
   domain: StrategyDomain
   strategyId: string
@@ -174,7 +185,7 @@ export function notifyStrategyOpen(params: {
   kol?: number | null
 }): void {
   const fromFeatures = telegramExtrasFromFeatures(params.features)
-  void (async () => {
+  scheduleStrategyTelegram('open', async () => {
     const flags = await getStrategyNotifyFlags(params.domain, params.strategyId)
     if (!flags.telegram) return
     await sendStrategyTrackOpenAlert({
@@ -190,8 +201,6 @@ export function notifyStrategyOpen(params: {
       sm: params.sm ?? fromFeatures.sm,
       kol: params.kol ?? fromFeatures.kol,
     })
-  })().catch((err) => {
-    console.error('[strategy-telegram] open notify failed:', err)
   })
 }
 
@@ -214,7 +223,7 @@ export function notifyStrategyClose(params: {
     preferExit: true,
   })
 
-  void (async () => {
+  scheduleStrategyTelegram('close', async () => {
     const flags = await getStrategyNotifyFlags(params.domain, params.strategyId)
     if (!flags.telegram) return
     await sendStrategyTrackCloseAlert({
@@ -232,7 +241,5 @@ export function notifyStrategyClose(params: {
       sm: fromFeatures.sm,
       kol: fromFeatures.kol,
     })
-  })().catch((err) => {
-    console.error('[strategy-telegram] close notify failed:', err)
   })
 }

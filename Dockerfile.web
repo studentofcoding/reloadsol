@@ -1,6 +1,12 @@
 # Runner-only image — requires a pre-built Next.js standalone bundle on the host.
 # Run before building: npm run build
 # (Produces .next/standalone via output: 'standalone' in next.config.js)
+#
+# Mac `next build` traces Darwin @img/sharp-* into that bundle. dlopen of the
+# Mach-O sharp.node in this Linux container is SIGSEGV (exit 139) and Cloudflare
+# 522 while Docker restarts reloadsol-web. Install the lockfile sharp build for
+# linux-x64 glibc after the copy and drop any Darwin binaries. The image build
+# fails unless require('sharp') resolves @img/sharp-linux-x64 and encodes a PNG.
 
 FROM node:20-slim AS runner
 WORKDIR /app
@@ -14,11 +20,42 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
+# Next image optimizer and serverExternalPackages sharp both load this install.
+ENV NEXT_SHARP_PATH=/app/node_modules/sharp
+
+# Cached layer: exact sharp version from the lockfile (package.json is ^0.35.3).
+COPY package.json package-lock.json /tmp/sharp-pin/
+RUN set -eu \
+  && SHARP_VERSION="$(node -e 'const lock=require("/tmp/sharp-pin/package-lock.json"); const v=lock.packages&&lock.packages["node_modules/sharp"]&&lock.packages["node_modules/sharp"].version; if(!v){process.exit(1)} process.stdout.write(String(v))')" \
+  && mkdir -p /opt/sharp-linux \
+  && npm install --prefix /opt/sharp-linux --no-package-lock --os=linux --cpu=x64 --libc=glibc "sharp@${SHARP_VERSION}" \
+  && find /opt/sharp-linux/node_modules/@img/sharp-linux-x64 -name '*.node' | grep -q . \
+  && rm -rf /tmp/sharp-pin /root/.npm
 
 COPY public ./public
 COPY .next/standalone ./
 COPY .next/static ./.next/static
-RUN chown -R nextjs:nodejs /app
+RUN set -eu \
+  && mkdir -p /app/node_modules \
+  && rm -rf /app/node_modules/sharp \
+            /app/node_modules/@img/sharp-darwin-arm64 \
+            /app/node_modules/@img/sharp-darwin-x64 \
+            /app/node_modules/@img/sharp-libvips-darwin-arm64 \
+            /app/node_modules/@img/sharp-libvips-darwin-x64 \
+            /app/node_modules/@img/sharp-linux-x64 \
+            /app/node_modules/@img/sharp-linuxmusl-x64 \
+            /app/node_modules/@img/sharp-libvips-linux-x64 \
+            /app/node_modules/@img/sharp-libvips-linuxmusl-x64 \
+            /app/node_modules/@img/sharp-wasm32 \
+  && find /app/node_modules -type d \( -name 'sharp-darwin-arm64' -o -name 'sharp-darwin-x64' -o -name 'sharp-libvips-darwin-arm64' -o -name 'sharp-libvips-darwin-x64' \) -print0 | xargs -0 -r rm -rf \
+  && cp -a /opt/sharp-linux/node_modules/. /app/node_modules/ \
+  && find /app/node_modules/@img/sharp-linux-x64 -name '*.node' | grep -q . \
+  && if find /app/node_modules -type d \( -name 'sharp-darwin-arm64' -o -name 'sharp-darwin-x64' -o -name 'sharp-libvips-darwin-arm64' -o -name 'sharp-libvips-darwin-x64' \) | grep -q .; then \
+       echo "Darwin sharp binaries remain in the image" >&2; \
+       exit 1; \
+     fi \
+  && node --input-type=module -e 'import sharp from "sharp"; import { createRequire } from "node:module"; const require = createRequire(import.meta.url); const binding = require.resolve("@img/sharp-linux-x64/sharp.node"); if (!binding.includes("sharp-linux-x64")) { console.error("sharp did not resolve linux-x64", binding); process.exit(1); } const png = await sharp(Buffer.from("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\"><rect width=\"8\" height=\"8\" fill=\"black\"/></svg>")).png().toBuffer(); if (png.length < 8 || png[0] !== 0x89 || png[1] !== 0x50 || png[2] !== 0x4e || png[3] !== 0x47) { console.error("sharp PNG encode failed"); process.exit(1); } console.log("sharp linux-x64 PNG", png.length);' \
+  && chown -R nextjs:nodejs /app
 
 USER nextjs
 EXPOSE 3000

@@ -5,7 +5,6 @@
  * so the SVG stays small and the candles are crisp at 1px-per-column.
  */
 
-import sharp from 'sharp'
 import type { OhlcRugBar } from '@/strategies/ohlc-rug-rules'
 
 export type OhlcSvgOpts = {
@@ -223,18 +222,46 @@ export function renderOhlcCandlesSvg(
   return parts.join('')
 }
 
-/** Rasterize SVG candles to PNG. Empty / sharp fail → null. */
+type SharpEncode = (input: Buffer) => {
+  png: () => { toBuffer: () => Promise<Buffer> }
+}
+
+function resolveSharpFactory(mod: unknown): SharpEncode | null {
+  if (typeof mod === 'function') return mod as SharpEncode
+  if (mod && typeof mod === 'object' && 'default' in mod) {
+    const loaded = (mod as { default: unknown }).default
+    if (typeof loaded === 'function') return loaded as SharpEncode
+  }
+  return null
+}
+
+/** Dynamic import so a missing native binding is a rejected promise, not a top-level crash. */
+async function loadSharpEncoder(): Promise<SharpEncode> {
+  const mod = await import('sharp')
+  const sharp = resolveSharpFactory(mod)
+  if (!sharp) {
+    throw new Error('[ohlc-telegram-svg] sharp export is not a function')
+  }
+  return sharp
+}
+
+/**
+ * Rasterize SVG candles to PNG.
+ * Empty series → null (text chart). sharp must load; a load failure rejects.
+ * Encode errors after a successful load → null so the caller can send text.
+ */
 export async function renderOhlcCandlesPng(
   bars: OhlcRugBar[],
   opts: OhlcSvgOpts = {},
 ): Promise<Buffer | null> {
   const svg = renderOhlcCandlesSvg(bars, opts)
   if (!svg) return null
+  const sharp = await loadSharpEncoder()
   try {
     return await sharp(Buffer.from(svg)).png().toBuffer()
   } catch (err) {
     console.warn(
-      '[ohlc-telegram-svg] sharp PNG failed',
+      '[ohlc-telegram-svg] sharp PNG encode failed',
       err instanceof Error ? err.message : String(err),
     )
     return null
