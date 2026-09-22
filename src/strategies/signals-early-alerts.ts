@@ -8,6 +8,15 @@ import {
   isEarlyEnterMlSoftGateEnabled,
   passesEarlyEnterMlSoftGate,
 } from './signals-early-ml-gate'
+import {
+  isEarlyEnterNoulShadowEnabled,
+  isEarlyEnterNoulSoftActiveEnabled,
+  resolveEarlyEnterNoulStrategyKey,
+  shouldEmitWithNoulSoftActive,
+} from './early-enter-noul-shadow'
+import { evaluateEarlyEnterNoulShadow } from './early-enter-noul-evaluate'
+import type { TypeSafeNoulCallResult } from './typesafe-noul'
+import type { EarlyEnterNoulState } from './early-enter-noul-shadow'
 import type { ScoredSignal } from './signals-pipeline'
 
 export type SignalsEarlyAlert = {
@@ -211,6 +220,102 @@ export function emitSignalsEarlyAlertsFromScored(
       tokenSymbol: signal.token_symbol,
       entryMcap: signal.current_mcap,
       growthPercent: signal.mcap_growth_percent || 0,
+      score: signal.score,
+      rationale: signal.rationale,
+      entryAt: signal.last_updated_at || signal.first_seen_at,
+      pWinner: signal.ml_pattern_p_winner ?? null,
+      predicted: signal.ml_pattern_predicted ?? null,
+      mlClosedLoopScore: signal.ml_closed_loop_score ?? null,
+      mlClosedLoopVersion: signal.ml_closed_loop_version ?? null,
+      chain,
+    })
+    if (alert) recorded.push(alert)
+  }
+  return recorded
+}
+
+
+export type EmitEarlyEnterOpts = {
+  mlSoftGateEnabled?: boolean
+  mlMin?: number
+  /** Active mcap strategy ids for Noul arm scope (first_seen / at_80 / _rh). */
+  activeNoulStrategyKeys?: Iterable<string>
+  noulShadowEnabled?: boolean
+  noulSoftActive?: boolean
+  /** Injectable TypeSafe call for tests. */
+  callNoul?: (
+    state: EarlyEnterNoulState,
+  ) => Promise<TypeSafeNoulCallResult>
+}
+
+/**
+ * Stage-1 Early Enter emit with optional Jev Noul shadow beside the soft gate.
+ * Shadow rows only for locked mcap arms; toast stays SPEC-owned until soft-active.
+ * Paper / sim-open never call this with Noul — keep those paths on the sync helper.
+ */
+export async function emitSignalsEarlyAlertsFromScoredAsync(
+  signals: ScoredSignal[],
+  chain: AppNetwork = 'sol',
+  opts?: EmitEarlyEnterOpts,
+): Promise<SignalsEarlyAlert[]> {
+  const gateEnabled = opts?.mlSoftGateEnabled ?? isEarlyEnterMlSoftGateEnabled()
+  const mlMin = opts?.mlMin ?? getEarlyEnterMlMin()
+  const shadowEnabled = opts?.noulShadowEnabled ?? isEarlyEnterNoulShadowEnabled()
+  const softActive = opts?.noulSoftActive ?? isEarlyEnterNoulSoftActiveEnabled()
+  const activeKeys = opts?.activeNoulStrategyKeys
+
+  const recorded: SignalsEarlyAlert[] = []
+  for (const signal of signals) {
+    if (!shouldEmitSignalsEarlyAlert(signal)) continue
+
+    const growth = signal.mcap_growth_percent || 0
+    const specWouldPass = passesEarlyEnterMlSoftGate(signal.ml_closed_loop_score, {
+      enabled: gateEnabled,
+      min: mlMin,
+    })
+
+    let band: import('./early-enter-noul-shadow').NoulShadowBand | null = null
+
+    if (shadowEnabled && activeKeys) {
+      const strategyKey = resolveEarlyEnterNoulStrategyKey({
+        chain,
+        growthPercent: growth,
+        activeStrategyKeys: activeKeys,
+      })
+      if (strategyKey) {
+        try {
+          const evalResult = await evaluateEarlyEnterNoulShadow({
+            tokenAddress: signal.token_address,
+            symbol: signal.token_symbol,
+            chain,
+            strategyKey,
+            clMlScore: signal.ml_closed_loop_score,
+            clModelVersion: signal.ml_closed_loop_version,
+            mlSoftGateEnabled: gateEnabled,
+            mlMin,
+            callNoul: opts?.callNoul,
+          })
+          band = evalResult.band
+        } catch (err) {
+          // Never throw past Early Enter emit — treat as soft-fail → SPEC.
+          console.error('[early-enter-noul] evaluate failed:', err)
+          band = 'api_miss'
+        }
+      }
+    }
+
+    const shouldEmit = shouldEmitWithNoulSoftActive({
+      specWouldPass,
+      softActive: softActive && band != null,
+      band,
+    })
+    if (!shouldEmit) continue
+
+    const alert = recordSignalsEarlyAlert({
+      tokenAddress: signal.token_address,
+      tokenSymbol: signal.token_symbol,
+      entryMcap: signal.current_mcap,
+      growthPercent: growth,
       score: signal.score,
       rationale: signal.rationale,
       entryAt: signal.last_updated_at || signal.first_seen_at,

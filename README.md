@@ -313,6 +313,10 @@ Closed-loop `mlScore` is an adjuster on combined score (so phase-3 TP/SL can see
 | `ML_PAPER_MIN_ML` | `0.5` | Skip when ML is on and `mlScore` is below this |
 | `EARLY_ENTER_ML_SOFT_GATE` | **on** | Toast+Telegram emit only when closed-loop `mlScore` (`cl-*`) is finite and ≥ `EARLY_ENTER_ML_MIN`. `0`/`false` restores pre-SPEC emit. Does **not** change paper / sim-open. |
 | `EARLY_ENTER_ML_MIN` | `0.55` | Closed-loop cut for the Early Enter soft gate |
+| `EARLY_ENTER_NOUL_SHADOW` | **on** | Write `early_enter_noul_shadow` rows + call TypeSafe Noul on locked mcap arms. Soft-fail → SPEC. |
+| `EARLY_ENTER_NOUL_SOFT_ACTIVE` | **off** | When on (ops after §7 bar), Noul keep/suppress may drive toast; mid/api_miss still → SPEC. Kill switch forces off. Never auto-flips from N/agreement in v1. |
+| `EARLY_ENTER_NOUL_NO` / `YES` | `0.2` / `0.8` | Mid-band edges for Noul soft-fail. |
+| `TYPESAFE_API_KEY` | (ops) | TypeSafe/Jev creds (#56). Missing → `api_miss`. Do not commit secrets. |
 
 ```bash
 npm run ml:backfill-labels -- --principals

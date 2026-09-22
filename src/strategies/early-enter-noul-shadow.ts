@@ -1,0 +1,195 @@
+/**
+ * Jev Noul soft-gate shadow beside Early Enter (SPEC-jev-soft-gate-shadow-v1).
+ * Pure helpers — band classify, arm fog pick, flags. No paper / sim-open.
+ *
+ * Soft-fail (mid / api_miss) is never described as "low confidence" —
+ * Noul has no confidence field.
+ */
+
+import type { AppNetwork } from '@/utils/app-network'
+import {
+  getEarlyEnterMlMin,
+  isEarlyEnterMlSoftGateEnabled,
+  passesEarlyEnterMlSoftGate,
+} from './signals-early-ml-gate'
+
+export const DEFAULT_NOUL_NO = 0.2
+export const DEFAULT_NOUL_YES = 0.8
+export const NOUL_GROWTH_ARM_CUT = 80
+
+export type NoulShadowBand =
+  | 'suppress'
+  | 'mid'
+  | 'keep'
+  | 'skipped_null'
+  | 'api_miss'
+
+export type NoulShadowDecision = 'keep' | 'suppress' | 'follow_spec'
+export type NoulSpecDecision = 'keep' | 'suppress'
+
+export type EarlyEnterNoulStrategyKey =
+  | 'mcap_enter_first_seen'
+  | 'mcap_enter_at_80'
+  | 'mcap_enter_first_seen_rh'
+  | 'mcap_enter_at_80_rh'
+
+export const EARLY_ENTER_NOUL_STRATEGY_KEYS = [
+  'mcap_enter_first_seen',
+  'mcap_enter_at_80',
+  'mcap_enter_first_seen_rh',
+  'mcap_enter_at_80_rh',
+] as const
+
+export type EarlyEnterNoulState = {
+  token_address: string
+  chain: AppNetwork
+  cl_ml_score: number
+  cl_model_version: string
+  EARLY_ENTER_ML_MIN: number
+  EARLY_ENTER_ML_SOFT_GATE: boolean
+  spec_would_pass: boolean
+  symbol?: string
+}
+
+function parseOnOffEnv(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined || value === '') return fallback
+  if (value === 'true' || value === '1') return true
+  if (value === 'false' || value === '0') return false
+  return fallback
+}
+
+function parseFiniteEnv(
+  value: string | undefined,
+  fallback: number,
+): number {
+  if (value === undefined || value === '') return fallback
+  const n = Number(value)
+  return Number.isFinite(n) ? n : fallback
+}
+
+/** Default on — write shadow rows + call Noul when arm-scoped. */
+export function isEarlyEnterNoulShadowEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return parseOnOffEnv(env.EARLY_ENTER_NOUL_SHADOW, true)
+}
+
+/**
+ * Soft-active: Noul keep/suppress may drive toast. Default OFF.
+ * Kill switch env forces off (ops spike → shadow-only). Does NOT auto-flip
+ * from N/agreement in v1 — human flag only.
+ */
+export function isEarlyEnterNoulSoftActiveEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (parseOnOffEnv(env.EARLY_ENTER_NOUL_KILL_SWITCH, false)) return false
+  return parseOnOffEnv(env.EARLY_ENTER_NOUL_SOFT_ACTIVE, false)
+}
+
+export function getEarlyEnterNoulNo(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  return parseFiniteEnv(env.EARLY_ENTER_NOUL_NO, DEFAULT_NOUL_NO)
+}
+
+export function getEarlyEnterNoulYes(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  return parseFiniteEnv(env.EARLY_ENTER_NOUL_YES, DEFAULT_NOUL_YES)
+}
+
+export function classifyNoulBand(
+  noul: number | null,
+  opts?: { no?: number; yes?: number; apiMiss?: boolean },
+): NoulShadowBand {
+  if (opts?.apiMiss) return 'api_miss'
+  if (noul == null || !Number.isFinite(noul)) return 'api_miss'
+  const no = opts?.no ?? DEFAULT_NOUL_NO
+  const yes = opts?.yes ?? DEFAULT_NOUL_YES
+  if (noul <= no) return 'suppress'
+  if (noul >= yes) return 'keep'
+  return 'mid'
+}
+
+export function decisionShadowFromBand(
+  band: NoulShadowBand,
+): NoulShadowDecision {
+  if (band === 'keep') return 'keep'
+  if (band === 'suppress') return 'suppress'
+  return 'follow_spec'
+}
+
+export function decisionSpecFromPass(specWouldPass: boolean): NoulSpecDecision {
+  return specWouldPass ? 'keep' : 'suppress'
+}
+
+/**
+ * Fog arm pick: growth < 80 → first_seen*; growth ≥ 80 (and < 100 Stage-1) → at_80*.
+ * Returns null when that strategy is not in the active set.
+ */
+export function resolveEarlyEnterNoulStrategyKey(opts: {
+  chain: AppNetwork
+  growthPercent: number
+  activeStrategyKeys: Iterable<string>
+}): EarlyEnterNoulStrategyKey | null {
+  const active = opts.activeStrategyKeys instanceof Set
+    ? opts.activeStrategyKeys
+    : new Set(opts.activeStrategyKeys)
+  const rh = opts.chain === 'robinhood'
+  const key: EarlyEnterNoulStrategyKey =
+    opts.growthPercent < NOUL_GROWTH_ARM_CUT
+      ? rh
+        ? 'mcap_enter_first_seen_rh'
+        : 'mcap_enter_first_seen'
+      : rh
+        ? 'mcap_enter_at_80_rh'
+        : 'mcap_enter_at_80'
+  return active.has(key) ? key : null
+}
+
+export function buildEarlyEnterNoulState(opts: {
+  tokenAddress: string
+  chain: AppNetwork
+  clMlScore: number
+  clModelVersion: string | null | undefined
+  specWouldPass: boolean
+  symbol?: string | null
+  mlMin?: number
+  mlSoftGateEnabled?: boolean
+}): EarlyEnterNoulState {
+  return {
+    token_address: opts.tokenAddress,
+    chain: opts.chain,
+    cl_ml_score: opts.clMlScore,
+    cl_model_version: opts.clModelVersion || 'cl-unknown',
+    EARLY_ENTER_ML_MIN: opts.mlMin ?? getEarlyEnterMlMin(),
+    EARLY_ENTER_ML_SOFT_GATE:
+      opts.mlSoftGateEnabled ?? isEarlyEnterMlSoftGateEnabled(),
+    spec_would_pass: opts.specWouldPass,
+    ...(opts.symbol ? { symbol: opts.symbol } : {}),
+  }
+}
+
+/**
+ * Whether toast/Telegram should emit given SPEC pass + optional Noul soft-active.
+ * Soft-fail bands (mid / api_miss / skipped_null) always fall back to SPEC.
+ * Paper never calls this path.
+ */
+export function shouldEmitWithNoulSoftActive(opts: {
+  specWouldPass: boolean
+  softActive: boolean
+  band: NoulShadowBand | null
+}): boolean {
+  if (!opts.softActive || opts.band == null) return opts.specWouldPass
+  if (opts.band === 'keep') return true
+  if (opts.band === 'suppress') return false
+  // mid | api_miss | skipped_null → follow SPEC
+  return opts.specWouldPass
+}
+
+export function computeSpecWouldPass(
+  mlScore: number | null | undefined,
+  opts?: { min?: number; enabled?: boolean },
+): boolean {
+  return passesEarlyEnterMlSoftGate(mlScore, opts)
+}
