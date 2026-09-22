@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   buildSimOpenToast,
+  claimSimOpenDedup,
   drainSimOpenAlerts,
   isMcapManualTradeStrategy,
   recordSimOpenAlert,
@@ -152,6 +153,12 @@ describe('mcap-sim-open-alerts', () => {
       }),
     ).toBeNull()
     expect(drainSimOpenAlerts('sol')).toHaveLength(0)
+  })
+
+  it('claimSimOpenDedup is once per strategy+mint', () => {
+    expect(claimSimOpenDedup('mcap_enter_at_80', 'MintABC')).toBe(true)
+    expect(claimSimOpenDedup('mcap_enter_at_80', 'MintABC')).toBe(false)
+    expect(claimSimOpenDedup('mcap_enter_first_seen', 'MintABC')).toBe(true)
   })
 
   it('builds toast message with strategy and entry mcap', () => {

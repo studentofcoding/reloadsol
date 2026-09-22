@@ -150,14 +150,20 @@ export async function GET(request: NextRequest) {
             return
           }
           const strategyIds = [signalsId]
-          const [peaks, tracked] = await Promise.all([
+          const [peaks, tracked, bestIds] = await Promise.all([
             lookupSmKolPeaksForMint(alert.tokenAddress),
             fetchMcapTrackingRow(alert.tokenAddress),
+            import('@/strategies/best-strategies-qualify').then((m) =>
+              m.getQualifiedBestStrategyIds(),
+            ),
           ])
           if (tracked) {
             const registry = await getMergedMcapTrackerRegistry(chain)
             for (const id of mcapIds) {
-              if (registry[id]?.is_active) strategyIds.push(id)
+              // Only list mcap arms that currently qualify as best emitters.
+              if (registry[id]?.is_active && bestIds.has(id)) {
+                strategyIds.push(id)
+              }
             }
           }
           if (notify.telegram) {

@@ -8,6 +8,12 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — best-strategy Telegram is mint share + OHLC, not a ranking digest
+
+- When a strategy that currently qualifies as **best** (locked rank `avg pnl% × n + win%`, Researchy floors all-time n≥30 or 7d n≥10) opens a mint on the mcap Stage-2 path, Telegram gets a copy-trade alert with OHLC (`sendMcapSimManualTradeAlert` / `ohlc-telegram-paint`).
+- Early Enter lists only best-qualified mcap arms beside signals. Dedup remains 24h per strategy+mint.
+- Qualified set is Redis-cached ~15m (`best-strategies-qualify.ts`). Uses existing `TELEGRAM_*` env.
+
 ### Changed — low-RAM VPS deploys skip host `next build`
 
 - On hosts with **&lt;4Gi total RAM**, `scripts/docker-deploy.sh` (and `docker-up.sh` / `deploy-tencent.sh build`) **refuse** a host `next build` unless `DEPLOY_ALLOW_HOST_BUILD=1`. The escape hatch still stops web/cron/social first, keeps **Turbopack**, and uses `NODE_OPTIONS=1536`. Webpack is not re-enabled (ioredis dns / `node:diagnostics_channel`).
