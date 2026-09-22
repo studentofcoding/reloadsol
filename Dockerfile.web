@@ -5,7 +5,8 @@
 # Mac `next build` traces Darwin @img/sharp-* into that bundle. dlopen of the
 # Mach-O sharp.node in this Linux container is SIGSEGV (exit 139) and Cloudflare
 # 522 while Docker restarts reloadsol-web. Install the lockfile sharp build for
-# linux-x64 glibc after the copy and drop any Darwin binaries.
+# linux-x64 glibc after the copy and drop any Darwin binaries. The image build
+# fails unless require('sharp') resolves @img/sharp-linux-x64 and encodes a PNG.
 
 FROM node:20-slim AS runner
 WORKDIR /app

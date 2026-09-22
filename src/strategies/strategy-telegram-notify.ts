@@ -1,5 +1,5 @@
-import { after } from 'next/server'
 import type { StrategyDomain, StrategyNotifyConfig } from './types'
+import { scheduleOffRequestPath } from './schedule-off-request'
 import {
   DLMM_STRATEGY_DEFAULTS,
   GMGN_STRATEGIES,
@@ -163,26 +163,12 @@ export function telegramExtrasFromFeatures(
 
 /**
  * Open/close Telegram (including sharp PNG) must not run on the HTTP turn.
- * `after()` runs once the response is finished. Outside a Next request
- * (cron, scripts) it throws, and the work is deferred with setImmediate.
- * Failures are logged here and never reject into the caller.
  */
 function scheduleStrategyTelegram(
   label: 'open' | 'close',
   work: () => Promise<void>,
 ): void {
-  const task = (): Promise<void> =>
-    work().catch((err) => {
-      console.error(`[strategy-telegram] ${label} notify failed:`, err)
-    })
-
-  try {
-    after(task)
-  } catch {
-    setImmediate(() => {
-      void task()
-    })
-  }
+  scheduleOffRequestPath(`[strategy-telegram] ${label} notify failed`, work)
 }
 
 export function notifyStrategyOpen(params: {

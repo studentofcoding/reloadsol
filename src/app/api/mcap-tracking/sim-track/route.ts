@@ -329,12 +329,13 @@ async function openSimPosition(params: {
     }
 
     // Follow alert only — not entry / soft-gate / Noul / paper.
+    // Scheduled after the response so sharp PNG encode is off this request.
     if (notify.telegram && isBest) {
       try {
-        const { sendBestStrategyFollowAlert } = await import(
+        const { notifyBestStrategyFollowAlert } = await import(
           '@/strategies/best-strategies-share-notify'
         )
-        await sendBestStrategyFollowAlert({
+        notifyBestStrategyFollowAlert({
           strategyId: manualStrategyId,
           tokenSymbol: params.symbol,
           tokenAddress: params.mintAddress,
