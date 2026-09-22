@@ -298,51 +298,50 @@ async function openSimPosition(params: {
 
   const {
     isMcapManualTradeStrategy,
-    recordSimOpenAlert,
+    claimSimOpenDedup,
+    pushSimOpenAlertAfterClaim,
   } = await import('@/strategies/mcap-sim-open-alerts')
 
   if (isMcapManualTradeStrategy(params.strategyId)) {
     const manualStrategyId = params.strategyId
-    const { getStrategyNotifyFlags, resolveStrategyDisplayName } = await import(
+    const { getStrategyNotifyFlags } = await import(
       '@/strategies/strategy-telegram-notify'
     )
+    const { isQualifiedBestStrategy } = await import(
+      '@/strategies/best-strategies-qualify'
+    )
     const notify = await getStrategyNotifyFlags('mcap_tracker', manualStrategyId)
+    const isBest = await isQualifiedBestStrategy(manualStrategyId)
+
+    // UI toast (Stage-2 sim open) — separate from follow-alert Telegram.
     if (notify.ui) {
-      recordSimOpenAlert({
-        strategyId: manualStrategyId,
-        tokenAddress: params.mintAddress,
-        tokenSymbol: params.symbol,
-        entryMcap: params.entryMcap,
-        entryAt: params.entryAt,
-        entryTemplate: params.entryTemplate,
-      })
-    }
-    if (notify.telegram) {
-      const { sendStrategyTrackOpenAlert } = await import('@/utils/telegram')
-      const feats = scoredEntryFeatures ?? {}
-      const readNum = (...keys: string[]): number | null => {
-        for (const key of keys) {
-          const v = feats[key]
-          if (typeof v === 'number' && Number.isFinite(v)) return v
-        }
-        return null
-      }
-      try {
-        await sendStrategyTrackOpenAlert({
+      const freshUi = claimSimOpenDedup(manualStrategyId, params.mintAddress)
+      if (freshUi) {
+        pushSimOpenAlertAfterClaim({
           strategyId: manualStrategyId,
-          strategyName: resolveStrategyDisplayName('mcap_tracker', manualStrategyId),
-          domain: 'mcap_tracker',
+          tokenAddress: params.mintAddress,
+          tokenSymbol: params.symbol,
+          entryMcap: params.entryMcap,
+          entryAt: params.entryAt,
+          entryTemplate: params.entryTemplate,
+        })
+      }
+    }
+
+    // Follow alert only — not entry / soft-gate / Noul / paper.
+    if (notify.telegram && isBest) {
+      try {
+        const { sendBestStrategyFollowAlert } = await import(
+          '@/strategies/best-strategies-share-notify'
+        )
+        await sendBestStrategyFollowAlert({
+          strategyId: manualStrategyId,
           tokenSymbol: params.symbol,
           tokenAddress: params.mintAddress,
-          marketCap: params.entryMcap,
-          isSimulated: true,
-          organicScore: params.snapshot.organic_score,
-          topHoldersPct: params.snapshot.top_holders_pct,
-          sm: readNum('sm', 'sm_count', 'smart_money_count'),
-          kol: readNum('kol', 'kol_count'),
+          mcap: params.entryMcap,
         })
       } catch (err) {
-        console.error('[mcap-sim-open] telegram alert failed:', err)
+        console.error('[mcap-sim-open] follow alert failed:', err)
       }
     }
   } else {

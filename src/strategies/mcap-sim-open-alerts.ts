@@ -66,6 +66,45 @@ export function simOpenDedupKey(strategyId: string, tokenAddress: string): strin
   return `sim_open:${strategyId}:${tokenAddress}`
 }
 
+/** Claim 24h mint+strategy slot. Returns false if already claimed. */
+export function claimSimOpenDedup(
+  strategyId: string,
+  tokenAddress: string,
+): boolean {
+  const now = Date.now()
+  pruneRecentKeys(now)
+  const key = simOpenDedupKey(strategyId, tokenAddress)
+  const last = recentKeys.get(key)
+  if (last && now - last <= DEDUP_WINDOW_MS) return false
+  recentKeys.set(key, now)
+  return true
+}
+
+/** Buffer a toast after claimSimOpenDedup already reserved the slot. */
+export function pushSimOpenAlertAfterClaim(params: {
+  strategyId: McapManualTradeStrategyId
+  tokenAddress: string
+  tokenSymbol: string
+  entryMcap: number
+  entryAt: string
+  entryTemplate: 'first_seen' | 'milestone_80'
+}): McapSimOpenAlert {
+  const alert: McapSimOpenAlert = {
+    strategyId: params.strategyId,
+    strategyName: strategyLabelForManualTrade(params.strategyId),
+    tokenAddress: params.tokenAddress,
+    tokenSymbol: params.tokenSymbol || 'UNKNOWN',
+    entryMcap: params.entryMcap,
+    entryAt: params.entryAt,
+    entryTemplate: params.entryTemplate,
+    recordedAt: Date.now(),
+    delivered: false,
+  }
+  pending.push(alert)
+  while (pending.length > MAX_BUFFER) pending.shift()
+  return alert
+}
+
 export function recordSimOpenAlert(params: {
   strategyId: string
   tokenAddress: string
@@ -75,32 +114,15 @@ export function recordSimOpenAlert(params: {
   entryTemplate: 'first_seen' | 'milestone_80'
 }): McapSimOpenAlert | null {
   if (!isMcapManualTradeStrategy(params.strategyId)) return null
-
-  const now = Date.now()
-  pruneRecentKeys(now)
-
-  const key = simOpenDedupKey(params.strategyId, params.tokenAddress)
-  const last = recentKeys.get(key)
-  if (last && now - last <= DEDUP_WINDOW_MS) return null
-
-  recentKeys.set(key, now)
-
-  const alert: McapSimOpenAlert = {
+  if (!claimSimOpenDedup(params.strategyId, params.tokenAddress)) return null
+  return pushSimOpenAlertAfterClaim({
     strategyId: params.strategyId,
-    strategyName: strategyLabelForManualTrade(params.strategyId),
     tokenAddress: params.tokenAddress,
-    tokenSymbol: params.tokenSymbol || 'UNKNOWN',
+    tokenSymbol: params.tokenSymbol,
     entryMcap: params.entryMcap,
     entryAt: params.entryAt,
     entryTemplate: params.entryTemplate,
-    recordedAt: now,
-    delivered: false,
-  }
-
-  pending.push(alert)
-  while (pending.length > MAX_BUFFER) pending.shift()
-
-  return alert
+  })
 }
 
 export function buildSimOpenToast(alert: McapSimOpenAlert): McapToast {

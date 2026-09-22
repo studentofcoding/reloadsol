@@ -8,6 +8,13 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — best-strategy Telegram is mint share + OHLC, not a ranking digest
+
+- **Follow alert only** (not auto-enter / paper / soft-gate / Noul): when a Researchy-qualified best arm (`first_seen` / `80%`) hits a mint on Stage-2 open, Telegram gets a follow blast with arm name, **avg×n+win%** rank context, and chart link.
+- Thin Sol OHLC → **GMGN chart URL** (no sparse OHLC image). Dense OHLC → photo via `ohlc-telegram-paint`.
+- Mint+arm cooldown (24h) blocks duplicate follow blasts. UI Stage-2 toast stays separate.
+- Below Researchy floor → hypothesis only (never ranked blast). sum% footnote only.
+
 ### Changed — low-RAM VPS deploys skip host `next build`
 
 - On hosts with **&lt;4Gi total RAM**, `scripts/docker-deploy.sh` (and `docker-up.sh` / `deploy-tencent.sh build`) **refuse** a host `next build` unless `DEPLOY_ALLOW_HOST_BUILD=1`. The escape hatch still stops web/cron/social first, keeps **Turbopack**, and uses `NODE_OPTIONS=1536`. Webpack is not re-enabled (ioredis dns / `node:diagnostics_channel`).

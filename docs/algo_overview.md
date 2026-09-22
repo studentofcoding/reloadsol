@@ -91,7 +91,7 @@ Each subsection: **Capture** (what triggers entry) → **Calculate** (filters/sc
 - **Result:** SL -50%, TP **200%**, max hold 96h, sim buy 0.01 SOL → `recordMcapTrackerOutcome`. Sim wallet: `mcap-tracker-sim`.
 - **Why WR / ~+200% windows look strong vs other domains:** shared exit books TP at +200% growth from entry baseline (`first_mcap` for first_seen; live fill for at_80). Winners cluster near the TP ceiling; ATT/DLMM/GMGN use different exit geometry — do not treat high mcap WR as a secret filter.
 - **Pattern ML hook:** shadow scores `ml_pattern_p_winner`, `ml_pattern_predicted` on entry (`entry-pattern-scorer`).
-- **Manual copy-trade alert (Stage 2):** on sim open → Telegram (`sendMcapSimManualTradeAlert`) + UI toast (poll `GET /api/mcap-tracking/sim-open-alerts`). Deduped 24h per strategy+mint.
+- **Manual follow alert (Stage 2):** on sim open → UI toast when `notify.ui`; Telegram **follow alert** (not auto-enter) only when the arm is a best emitter — arm name + avg×n rank + chart (OHLC or GMGN if thin). Mint+arm 24h cooldown. Soft-gate / Noul / paper out of path.
 - **Early alert (Stage 1):** Signals `enter` + growth &lt;100% → `sendSignalsEarlyEnterAlert` + Early Enter toast (independent of sim open). Pattern ML shadow (`p_winner`) attached for display only.
 
 ### `mcap_enter_at_80` (mcap_tracker — primary thesis)
@@ -100,7 +100,7 @@ Each subsection: **Capture** (what triggers entry) → **Calculate** (filters/sc
 - **Calculate:** `entryTemplate: milestone_80` — eligible when token hits 80% mcap growth (within `recencyMinutes`). **Fill = live `current_mcap` at open** (copy-trade honest).
 - **Result:** same exit defaults as `mcap_enter_first_seen`.
 - **Pattern ML hook:** same shadow fields on entry.
-- **Manual copy-trade alert:** Stage 2 Telegram Entry mcap = fill at open; Stage 1 may have already fired from Signals scoring.
+- **Manual follow alert:** Stage 2 Telegram only when arm qualifies as best emitter (follow alert, not auto-enter); Stage 1 Early Enter is a separate path.
 
 ### `dlmm_default` (dlmm)
 
