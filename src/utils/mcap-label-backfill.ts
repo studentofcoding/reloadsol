@@ -10,7 +10,25 @@ import {
   type TokenLabel,
 } from '@/utils/mcap-tracker'
 
-export const MCAP_LABEL_BACKFILL_OHLC_CONCURRENCY = 3
+export const MCAP_LABEL_BACKFILL_OHLC_CONCURRENCY = Math.max(
+  1,
+  Number.parseInt(process.env.MCAP_OHLC_CONCURRENCY ?? '2', 10) || 2,
+)
+
+/**
+ * Default `mcap:backfill-labels` OHLC decision.
+ * Empty bars (`none`, `backfill_empty`, or any other source) are refillable.
+ * A non-empty card is left alone. Missing row is a fresh capture.
+ * `backfill_empty` is a gallery-load cooldown, not a permanent skip here.
+ */
+export function planMcapOhlcCapture(
+  existing: { bars?: unknown } | null | undefined,
+): 'capture' | 'refill' | 'existing' {
+  if (!existing) return 'capture'
+  const bars = existing.bars
+  if (!Array.isArray(bars) || bars.length === 0) return 'refill'
+  return 'existing'
+}
 
 export type McapLabelBackfillPlan = {
   /** Label, drop stamps, or peak fields differ from the loaded row. */
@@ -26,6 +44,8 @@ export type McapLabelBackfillCounts = {
   label_unchanged: number
   ohlc_captured: number
   ohlc_existing: number
+  ohlc_refilled: number
+  ohlc_skipped_evm: number
   ohlc_failed: number
   ohlc_potential_total: number
   ohlc_rug_total: number
@@ -163,7 +183,9 @@ export async function runMcapLabelBackfill(options: {
   nowIso?: string
   concurrency?: number
   updateRow: (record: McapSnapshot) => Promise<void>
-  captureOhlc: (record: McapSnapshot) => Promise<'captured' | 'existing'>
+  captureOhlc: (
+    record: McapSnapshot,
+  ) => Promise<'captured' | 'existing' | 'refilled' | 'skipped_evm'>
   countOhlcTotals?: () => Promise<{ potential: number; rug: number }>
 }): Promise<McapLabelBackfillCounts> {
   const nowIso = options.nowIso ?? new Date().toISOString()
@@ -174,6 +196,8 @@ export async function runMcapLabelBackfill(options: {
     label_unchanged: 0,
     ohlc_captured: 0,
     ohlc_existing: 0,
+    ohlc_refilled: 0,
+    ohlc_skipped_evm: 0,
     ohlc_failed: 0,
     ohlc_potential_total: 0,
     ohlc_rug_total: 0,
@@ -204,6 +228,8 @@ export async function runMcapLabelBackfill(options: {
     for (const result of results) {
       if (result === 'captured') counts.ohlc_captured += 1
       else if (result === 'existing') counts.ohlc_existing += 1
+      else if (result === 'refilled') counts.ohlc_refilled += 1
+      else if (result === 'skipped_evm') counts.ohlc_skipped_evm += 1
       else counts.ohlc_failed += 1
     }
   }

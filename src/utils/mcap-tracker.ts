@@ -457,6 +457,7 @@ export async function capturePendingMcapAutoLabelOhlc(
       label: pending,
       tokenSymbol: record.token_symbol,
       source: 'mcap_auto_label',
+      chain: record.chain,
     })
   } catch (error) {
     log.warn('price_tracking', 'OHLC capture failed after auto-label', {

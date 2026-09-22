@@ -16,6 +16,7 @@ vi.mock('@/utils/unified-logger', () => ({
 
 import {
   planMcapLabelBackfill,
+  planMcapOhlcCapture,
   runMcapLabelBackfill,
 } from './mcap-label-backfill'
 import type { McapSnapshot } from './mcap-tracker'
@@ -117,6 +118,23 @@ describe('planMcapLabelBackfill', () => {
   })
 })
 
+describe('planMcapOhlcCapture', () => {
+  it('refills backfill_empty and none, skips cards that already have bars', () => {
+    expect(planMcapOhlcCapture(null)).toBe('capture')
+    expect(
+      planMcapOhlcCapture({ bars: [], ohlc_source: 'backfill_empty' } as {
+        bars: unknown
+      }),
+    ).toBe('refill')
+    expect(planMcapOhlcCapture({ bars: [] })).toBe('refill')
+    expect(
+      planMcapOhlcCapture({
+        bars: [{ t: 1, o: 1, h: 1, l: 1, c: 1 }],
+      }),
+    ).toBe('existing')
+  })
+})
+
 describe('runMcapLabelBackfill', () => {
   it('dry-run writes nothing', async () => {
     const record = row({ mcap_growth_percent: -45, label: null })
@@ -193,5 +211,36 @@ describe('runMcapLabelBackfill', () => {
     expect(counts.scanned).toBe(2)
     expect(counts.ohlc_failed).toBe(1)
     expect(counts.ohlc_captured).toBe(1)
+  })
+
+  it('counts refilled and skipped_evm outcomes', async () => {
+    const a = row({
+      token_address: 'mintA',
+      label: 'potential',
+      peak_growth_percent: 5,
+      mcap_growth_percent: 1,
+    })
+    const b = row({
+      token_address: '0x1111111111111111111111111111111111111111',
+      label: 'rugged',
+      chain: 'robinhood',
+      when_drop_40pct: '2026-09-01T00:00:00.000Z',
+      peak_growth_percent: 80,
+      mcap_growth_percent: -50,
+    })
+    const captureOhlc = vi.fn(async (record: McapSnapshot) => {
+      if (record.token_address.startsWith('0x')) return 'skipped_evm' as const
+      return 'refilled' as const
+    })
+    const counts = await runMcapLabelBackfill({
+      rows: [a, b],
+      dryRun: false,
+      nowIso: NOW,
+      updateRow: vi.fn(),
+      captureOhlc,
+    })
+    expect(counts.ohlc_refilled).toBe(1)
+    expect(counts.ohlc_skipped_evm).toBe(1)
+    expect(counts.ohlc_failed).toBe(0)
   })
 })

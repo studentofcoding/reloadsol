@@ -13,9 +13,15 @@ import {
   type SignalOhlcLabelKind,
   type TrackContext,
 } from '@/strategies/signal-ohlc-window'
+import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
+import { isEvmTokenAddress } from '@/utils/gmgn-cli'
 
-/** Marked after one failed ST backfill so gallery does not retry every load */
-const BACKFILL_EMPTY_SOURCE = 'backfill_empty'
+/**
+ * Gallery cooldown marker after a failed soft backfill so list loads do not
+ * hammer ST/GMGN every request. Soft overwrite / mcap --refill-empty still
+ * replace these rows when real bars arrive.
+ */
+export const BACKFILL_EMPTY_SOURCE = 'backfill_empty'
 const BACKFILL_CONCURRENCY = 3
 
 const ENSURE_SQL = `
@@ -178,12 +184,36 @@ function filterBarsToWindow(
   return bars.filter((b) => b.t >= startSec && b.t <= endSec)
 }
 
-function rowBarsEmpty(row: SignalOhlcLabelRow): boolean {
+export function rowBarsEmpty(
+  row: Pick<SignalOhlcLabelRow, 'bars'> | { bars?: unknown },
+): boolean {
   return !Array.isArray(row.bars) || row.bars.length === 0
 }
 
+/** Empty corpus slots (bars=[]) that soft overwrite / --refill-empty may refill. */
+export function isEmptySignalOhlcSlot(
+  row: Pick<SignalOhlcLabelRow, 'bars' | 'ohlc_source'> | { bars?: unknown },
+): boolean {
+  return rowBarsEmpty(row)
+}
+
+/**
+ * Gallery list cooldown only: do not re-hit ST/GMGN on every page load after
+ * one failed attempt (`backfill_empty`). This is not a UNIQUE lock.
+ * `npm run mcap:backfill-labels` uses planMcapOhlcCapture and soft-overwrites
+ * these rows when a later fetch returns bars.
+ */
 function needsOhlcBackfill(row: SignalOhlcLabelRow): boolean {
   return rowBarsEmpty(row) && row.ohlc_source !== BACKFILL_EMPTY_SOURCE
+}
+
+function resolveOhlcChain(
+  tokenAddress: string,
+  chain?: string | null,
+): GmgnTradeChain | undefined {
+  if (chain === 'robinhood' || chain === 'sol') return chain
+  if (isEvmTokenAddress(tokenAddress)) return 'robinhood'
+  return undefined
 }
 
 async function mapPool<T, R>(
@@ -207,12 +237,15 @@ async function mapPool<T, R>(
 
 /**
  * One-shot backfill for gallery rows with empty bars (ST / gmgn token-ohlc path).
- * Failed attempts set ohlc_source=backfill_empty so we do not hammer ST.
+ * Failed attempts set ohlc_source=backfill_empty so gallery list loads do not
+ * hammer ST; mcap --refill-empty / capture soft-overwrite still refill them.
  */
 export async function backfillEmptySignalOhlcBars(
   row: SignalOhlcLabelRow,
+  opts?: { force?: boolean },
 ): Promise<SignalOhlcLabelRow> {
-  if (!needsOhlcBackfill(row)) return row
+  if (!opts?.force && !needsOhlcBackfill(row)) return row
+  if (opts?.force && !rowBarsEmpty(row)) return row
 
   const startMs = new Date(row.window_start).getTime()
   const endMs = new Date(row.window_end).getTime()
@@ -230,6 +263,7 @@ export async function backfillEmptySignalOhlcBars(
   let bars: OhlcRugBar[] = []
   let ohlcSource = 'none'
   let fullSeries: OhlcRugBar[] = []
+  const chain = resolveOhlcChain(row.token_address)
 
   try {
     const cached = await getCachedTokenOhlc24h1m(row.token_address)
@@ -245,6 +279,7 @@ export async function backfillEmptySignalOhlcBars(
         timeFrom: startSec,
         timeTo: endSec,
         interval: '1m',
+        chain,
       })
       const mapped = tokenOhlcToRugBars(candles)
       if (mapped.length > 0) fullSeries = mapped
@@ -257,6 +292,7 @@ export async function backfillEmptySignalOhlcBars(
         tokenAddress: row.token_address,
         hours: 24,
         interval: '1m',
+        chain,
       })
       fullSeries = tokenOhlcToRugBars(candles)
       if (fullSeries.length > 0) {
@@ -276,6 +312,8 @@ export async function backfillEmptySignalOhlcBars(
   }
 
   if (bars.length === 0) {
+    // Gallery cooldown only — do not invent a new empty INSERT. Soft overwrite
+    // / --refill-empty still treat this row as refillable.
     await query(
       `UPDATE signal_ohlc_labels SET ohlc_source = $2
        WHERE id = $1::uuid
@@ -336,26 +374,35 @@ async function backfillEmptyRows(
   return out
 }
 
-/** Capture once per (token, label). Prefer cached 24h×1m window; else narrow ST. */
+/** Capture once per (token, label). Prefer cached 24h×1m window; else narrow ST/GMGN.
+ * Does not INSERT empty bars (would lock UNIQUE(token_address, label)).
+ * Soft-overwrites existing empty slots (`none` / `backfill_empty` / bars=[]) when bars arrive.
+ */
 export async function captureSignalOhlcLabel(params: {
   tokenAddress: string
   /** UI label: potential | rugged | rug */
   label: string
   source?: string
   tokenSymbol?: string | null
+  /** Optional chain hint (sol | robinhood). 0x mints default to robinhood. */
+  chain?: string | null
 }): Promise<string | null> {
   const storeLabel = toSignalOhlcStoreLabel(params.label)
   if (!storeLabel) return null
 
   await ensureSignalOhlcLabelsTable()
 
-  const existing = await queryOne<{ id: string }>(
-    `SELECT id FROM signal_ohlc_labels
+  const existing = await queryOne<
+    Pick<SignalOhlcLabelRow, 'id' | 'bars' | 'ohlc_source'>
+  >(
+    `SELECT id, bars, ohlc_source FROM signal_ohlc_labels
      WHERE token_address = $1 AND label = $2
      LIMIT 1`,
     [params.tokenAddress, storeLabel],
   )
-  if (existing) return existing.id
+  if (existing && !isEmptySignalOhlcSlot(existing)) {
+    return existing.id
+  }
 
   const { ctx, symbol } = await loadTrackContext(params.tokenAddress)
   const { startMs, endMs, endReason } = resolveCaptureWindowMs(
@@ -364,43 +411,83 @@ export async function captureSignalOhlcLabel(params: {
   )
   const startSec = Math.floor(startMs / 1000)
   const endSec = Math.floor(endMs / 1000)
+  const chain = resolveOhlcChain(params.tokenAddress, params.chain)
 
   let bars: OhlcRugBar[] = []
   let ohlcSource = 'none'
   let fullSeries: OhlcRugBar[] = []
 
-  const cached = await getCachedTokenOhlc24h1m(params.tokenAddress)
-  if (cached.candles.length > 0) {
-    fullSeries = tokenOhlcToRugBars(cached.candles)
-    bars = filterBarsToWindow(fullSeries, startSec, endSec)
-    if (bars.length > 0) ohlcSource = cached.source || 'solanatracker'
-  }
+  try {
+    const cached = await getCachedTokenOhlc24h1m(params.tokenAddress)
+    if (cached.candles.length > 0) {
+      fullSeries = tokenOhlcToRugBars(cached.candles)
+      bars = filterBarsToWindow(fullSeries, startSec, endSec)
+      if (bars.length > 0) ohlcSource = cached.source || 'solanatracker'
+    }
 
-  // Window outside cache / brand-new mint — narrow ST pull
-  if (bars.length === 0) {
-    const { candles, source } = await fetchTokenOhlc({
-      tokenAddress: params.tokenAddress,
-      timeFrom: startSec,
-      timeTo: endSec,
-      interval: '1m',
+    // Window outside cache / brand-new mint — narrow ST / GMGN pull
+    if (bars.length === 0) {
+      const { candles, source } = await fetchTokenOhlc({
+        tokenAddress: params.tokenAddress,
+        timeFrom: startSec,
+        timeTo: endSec,
+        interval: '1m',
+        chain,
+      })
+      const mapped = tokenOhlcToRugBars(candles)
+      if (mapped.length > 0) fullSeries = mapped
+      bars = filterBarsToWindow(mapped, startSec, endSec)
+      if (bars.length > 0) ohlcSource = source || 'none'
+    }
+
+    // Still empty: last 10 of whatever series we have (Freeview-style)
+    if (bars.length === 0 && fullSeries.length > 0) {
+      bars = takeLastOhlcBars(fullSeries, 10)
+      ohlcSource = 'last10_fallback'
+    }
+  } catch (err) {
+    console.warn('[signal-ohlc-labels] capture fetch failed', {
+      mint: params.tokenAddress,
+      error: err instanceof Error ? err.message : String(err),
     })
-    const mapped = tokenOhlcToRugBars(candles)
-    if (mapped.length > 0) fullSeries = mapped
-    bars = filterBarsToWindow(mapped, startSec, endSec)
-    if (bars.length > 0) ohlcSource = source || 'none'
+    return null
   }
 
-  // Still empty: last 10 of whatever series we have (Freeview-style)
-  if (bars.length === 0 && fullSeries.length > 0) {
-    bars = takeLastOhlcBars(fullSeries, 10)
-    ohlcSource = 'last10_fallback'
+  // Never lock UNIQUE with an empty corpus card — refill can retry later.
+  if (bars.length === 0) {
+    return null
   }
 
-  let windowStartIso = new Date(startMs).toISOString()
-  let windowEndIso = new Date(endMs).toISOString()
-  if (bars.length > 0) {
-    windowStartIso = new Date(bars[0]!.t * 1000).toISOString()
-    windowEndIso = new Date(bars[bars.length - 1]!.t * 1000).toISOString()
+  const windowStartIso = new Date(bars[0]!.t * 1000).toISOString()
+  const windowEndIso = new Date(bars[bars.length - 1]!.t * 1000).toISOString()
+
+  if (existing) {
+    const updated = await queryOne<{ id: string }>(
+      `UPDATE signal_ohlc_labels
+       SET token_symbol = COALESCE($2, token_symbol),
+           window_start = $3::timestamptz,
+           window_end = $4::timestamptz,
+           ohlc_source = $5,
+           bars = $6::jsonb,
+           end_reason = $7,
+           source = COALESCE($8, source)
+       WHERE id = $1::uuid
+         AND (bars = '[]'::jsonb OR jsonb_array_length(bars) = 0
+              OR ohlc_source IN ('none', 'backfill_empty'))
+       RETURNING id`,
+      [
+        existing.id,
+        params.tokenSymbol ?? symbol,
+        windowStartIso,
+        windowEndIso,
+        ohlcSource,
+        JSON.stringify(bars),
+        endReason,
+        params.source ?? null,
+      ],
+    )
+    await invalidateSignalOhlcLabelsCache(storeLabel)
+    return updated?.id ?? existing.id
   }
 
   const { rows } = await query<{ id: string }>(
@@ -408,7 +495,17 @@ export async function captureSignalOhlcLabel(params: {
        token_address, token_symbol, label, window_start, window_end,
        ohlc_interval, ohlc_source, bars, end_reason, source
      ) VALUES ($1, $2, $3, $4, $5, '1m', $6, $7::jsonb, $8, $9)
-     ON CONFLICT (token_address, label) DO NOTHING
+     ON CONFLICT (token_address, label) DO UPDATE SET
+       token_symbol = COALESCE(EXCLUDED.token_symbol, signal_ohlc_labels.token_symbol),
+       window_start = EXCLUDED.window_start,
+       window_end = EXCLUDED.window_end,
+       ohlc_source = EXCLUDED.ohlc_source,
+       bars = EXCLUDED.bars,
+       end_reason = EXCLUDED.end_reason,
+       source = COALESCE(EXCLUDED.source, signal_ohlc_labels.source)
+     WHERE signal_ohlc_labels.bars = '[]'::jsonb
+        OR jsonb_array_length(signal_ohlc_labels.bars) = 0
+        OR signal_ohlc_labels.ohlc_source IN ('none', 'backfill_empty')
      RETURNING id`,
     [
       params.tokenAddress,
