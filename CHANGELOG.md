@@ -13,7 +13,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Flat pnl (`0` or dust) is **breakeven**, not won. Win% numerator excludes flats. Telegram CLOSE says BREAKEVEN. Rank cache key bumped so avg×n+win% does not keep the old inflated board.
 - CLOSE Telegram tries live Tracker OHLC, then stored `signal_ohlc_labels.bars`, else a GMGN link (no fake chart). A slow 429 does not hold the close when label bars already exist.
 - Telegram follow blast is only `mcap_enter_first_seen` and `mcap_enter_at_80`. RH twins stay on the in-app toast. Buy stays Jupiter.
-- Noul flip-readiness counts **api_miss** rate (soft-fail) and trips a kill switch on an api_miss or disagreement spike (all-time or 24h). Soft-active stays off; a spike never enables it. Paper is unchanged.
+- Noul #54 leaves **api_miss** out of agreement (A) and mid-rate (M). miss% (api_miss / all rows) is its own flip kill: too high, including a 24h spike, means not flip-ready. Soft-fail still follows SPEC. Soft-active stays off. Paper is unchanged. miss is not suppress disagreement.
 
 ### Fixed — Linux web image no longer loads Darwin `sharp` (exit 139 / CF 522)
 

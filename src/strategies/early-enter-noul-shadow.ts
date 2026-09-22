@@ -87,14 +87,48 @@ export type FlipBarCheck = {
   nOk: boolean
   agreementOk: boolean
   midOk: boolean
-  /** All three bars met (shadow sample ready for #54 consider). */
+  /** miss% at or under the kill. Separate from A and from suppress disagreement. */
+  missOk: boolean
+  /** N, A, M, and miss% all clear. Does not turn soft-active on. */
   ready: boolean
+}
+
+/**
+ * A and M must already exclude api_miss.
+ * Agreement is keep/suppress only. Mid denominator is non-miss rows.
+ * miss% is api_miss / all rows — its own #54 kill, not a disagreement rate.
+ */
+export function noulFlipSampleRates(opts: {
+  total: number
+  midBand: number
+  apiMiss: number
+  agreementEligible: number
+  agreementMatches: number
+}): {
+  agreementRate: number | null
+  midBandRate: number | null
+  apiMissRate: number | null
+  midDenom: number
+} {
+  const midDenom = Math.max(0, opts.total - opts.apiMiss)
+  return {
+    agreementRate:
+      opts.agreementEligible > 0
+        ? opts.agreementMatches / opts.agreementEligible
+        : null,
+    midBandRate: midDenom > 0 ? opts.midBand / midDenom : null,
+    apiMissRate: opts.total > 0 ? opts.apiMiss / opts.total : null,
+    midDenom,
+  }
 }
 
 export function evaluateFlipBars(opts: {
   total: number
   agreementRate: number | null
   midBandRate: number | null
+  /** When omitted, miss is not applied (callers that have a rate must pass it). */
+  apiMissRate?: number | null
+  apiMissMax?: number
 }): FlipBarCheck {
   const nOk = opts.total >= FLIP_N_MIN
   const agreementOk =
@@ -105,7 +139,34 @@ export function evaluateFlipBars(opts: {
     opts.midBandRate != null &&
     Number.isFinite(opts.midBandRate) &&
     opts.midBandRate <= FLIP_MID_MAX
-  return { nOk, agreementOk, midOk, ready: nOk && agreementOk && midOk }
+  const missMax = opts.apiMissMax ?? DEFAULT_API_MISS_KILL_RATE
+  const missOk =
+    opts.apiMissRate == null ||
+    !Number.isFinite(opts.apiMissRate) ||
+    opts.apiMissRate <= missMax
+  return {
+    nOk,
+    agreementOk,
+    midOk,
+    missOk,
+    ready: nOk && agreementOk && midOk && missOk,
+  }
+}
+
+/**
+ * A 24h miss spike blocks flip even when the all-time miss% is still under the kill.
+ * Disagreement among keep/suppress is not applied here.
+ */
+export function flipBarsWithMissKill(
+  bars: FlipBarCheck,
+  apiMissSpike: boolean,
+): FlipBarCheck {
+  const missOk = bars.missOk && !apiMissSpike
+  return {
+    ...bars,
+    missOk,
+    ready: bars.nOk && bars.agreementOk && bars.midOk && missOk,
+  }
 }
 
 /**
@@ -113,10 +174,10 @@ export function evaluateFlipBars(opts: {
  * defaults are the tracked thresholds (env-tunable). A spike holds soft-active
  * off. It never turns soft-active on. Paper is untouched.
  *
- * api_miss rate is share of all rows (soft-fail, not only mid-band).
- * Disagreement rate is share of keep/suppress rows that differ from SPEC.
- * Either the all-time sample or the last 24h can trip the switch once that
- * window has at least KILL_SWITCH_MIN_N rows.
+ * miss% = api_miss / all rows. It is not suppress-vs-SPEC disagreement
+ * (that lives only in the agreement bar, which already excludes api_miss).
+ * miss% above the max blocks flip. It never turns soft-active on.
+ * All-time or last-24h can trip once that window has KILL_SWITCH_MIN_N rows.
  */
 export const DEFAULT_API_MISS_KILL_RATE = 0.1
 export const DEFAULT_DISAGREEMENT_KILL_RATE = 0.15
@@ -146,7 +207,10 @@ export type KillSwitchCheck = {
   disagreementRate: number | null
   apiMissSpike: boolean
   disagreementSpike: boolean
-  /** Hold soft-active off. Never enables it. */
+  /**
+   * miss% kill only. Disagreement among keep/suppress is the A bar, not this flag.
+   * Holds flip off. Never enables soft-active.
+   */
   tripped: boolean
 }
 
@@ -177,7 +241,7 @@ export function evaluateKillSwitchWindow(opts: {
     disagreementRate,
     apiMissSpike,
     disagreementSpike,
-    tripped: apiMissSpike || disagreementSpike,
+    tripped: apiMissSpike,
   }
 }
 

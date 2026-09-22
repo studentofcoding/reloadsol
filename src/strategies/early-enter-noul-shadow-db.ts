@@ -17,6 +17,8 @@ import {
   evaluateFlipBars,
   evaluateKillSwitchWindow,
   filterReasonFromBand,
+  flipBarsWithMissKill,
+  noulFlipSampleRates,
   flipArmFamilyFromStrategyKey,
   getApiMissKillRate,
   getDisagreementKillRate,
@@ -141,8 +143,8 @@ export type EarlyEnterNoulCompareStats = {
 }
 
 /**
- * Agreement excludes follow_spec and skipped_null from numerator/denominator (SPEC fog default).
- * Mid-band rate = share with band = mid over all rows in window.
+ * Agreement is keep/suppress only — api_miss (follow_spec) is excluded from A.
+ * Mid-band rate = band mid / non-miss rows. miss% is api_miss / all rows.
  */
 export async function loadEarlyEnterNoulCompareStats(
   hours = 24,
@@ -164,9 +166,11 @@ export async function loadEarlyEnterNoulCompareStats(
          COUNT(*) FILTER (WHERE band = 'api_miss')::int AS api_miss,
          COUNT(*) FILTER (
            WHERE decision_shadow IN ('keep', 'suppress')
+             AND band <> 'api_miss'
          )::int AS agreement_eligible,
          COUNT(*) FILTER (
            WHERE decision_shadow IN ('keep', 'suppress')
+             AND band <> 'api_miss'
              AND decision_shadow = decision_spec
          )::int AS agreement_matches
        FROM early_enter_noul_shadow
@@ -182,17 +186,23 @@ export async function loadEarlyEnterNoulCompareStats(
       const apiMiss = Number(r.api_miss) || 0
       const agreementEligible = Number(r.agreement_eligible) || 0
       const agreementMatches = Number(r.agreement_matches) || 0
+      const rates = noulFlipSampleRates({
+        total,
+        midBand,
+        apiMiss,
+        agreementEligible,
+        agreementMatches,
+      })
       return {
         strategyKey: r.strategy_key,
         total,
         midBand,
-        midBandRate: total > 0 ? midBand / total : null,
+        midBandRate: rates.midBandRate,
         apiMiss,
-        apiMissRate: total > 0 ? apiMiss / total : null,
+        apiMissRate: rates.apiMissRate,
         agreementEligible,
         agreementMatches,
-        agreementRate:
-          agreementEligible > 0 ? agreementMatches / agreementEligible : null,
+        agreementRate: rates.agreementRate,
       }
     })
   } catch (error) {
@@ -413,7 +423,7 @@ export type EarlyEnterNoulFlipReadiness = {
     agreementMin: number
     midMax: number
   }
-  /** #54 kill thresholds. A spike holds soft-active off; it does not enable it. */
+  /** #54 miss% kill. Above the max blocks flip and holds soft-active off. Does not enable it. */
   kill: {
     apiMissMax: number
     disagreementMax: number
@@ -425,21 +435,14 @@ export type EarlyEnterNoulFlipReadiness = {
   byStrategy: EarlyEnterNoulFlipStrategyStats[]
 }
 
-function ratesFromCounts(opts: {
-  total: number
-  midBand: number
-  agreementEligible: number
-  agreementMatches: number
-}): Pick<
-  EarlyEnterNoulCompareStats,
-  'midBandRate' | 'agreementRate'
-> {
-  const { total, midBand, agreementEligible, agreementMatches } = opts
-  return {
-    midBandRate: total > 0 ? midBand / total : null,
-    agreementRate:
-      agreementEligible > 0 ? agreementMatches / agreementEligible : null,
-  }
+function ratesFromCounts(slice: NoulFlipWindowCounts) {
+  return noulFlipSampleRates({
+    total: slice.total,
+    midBand: slice.midBand,
+    apiMiss: slice.apiMiss,
+    agreementEligible: slice.agreementEligible,
+    agreementMatches: slice.agreementMatches,
+  })
 }
 
 function emptyFlipCounts(): NoulFlipWindowCounts {
@@ -505,17 +508,24 @@ function flipMetrics(slice: NoulFlipWindowCounts): {
   kill: KillSwitchCheck
 } {
   const rates = ratesFromCounts(slice)
-  return {
-    midBandRate: rates.midBandRate,
-    apiMissRate: slice.total > 0 ? slice.apiMiss / slice.total : null,
-    apiMissRate24h: slice.total24h > 0 ? slice.apiMiss24h / slice.total24h : null,
-    agreementRate: rates.agreementRate,
-    bars: evaluateFlipBars({
+  const kill = killForCounts(slice)
+  const bars = flipBarsWithMissKill(
+    evaluateFlipBars({
       total: slice.total,
       agreementRate: rates.agreementRate,
       midBandRate: rates.midBandRate,
+      apiMissRate: rates.apiMissRate,
+      apiMissMax: getApiMissKillRate(),
     }),
-    kill: killForCounts(slice),
+    kill.apiMissSpike,
+  )
+  return {
+    midBandRate: rates.midBandRate,
+    apiMissRate: rates.apiMissRate,
+    apiMissRate24h: slice.total24h > 0 ? slice.apiMiss24h / slice.total24h : null,
+    agreementRate: rates.agreementRate,
+    bars,
+    kill,
   }
 }
 
@@ -525,9 +535,11 @@ const FLIP_COUNT_SQL = `
   COUNT(*) FILTER (WHERE band = 'api_miss')::int AS api_miss,
   COUNT(*) FILTER (
     WHERE decision_shadow IN ('keep', 'suppress')
+      AND band <> 'api_miss'
   )::int AS agreement_eligible,
   COUNT(*) FILTER (
     WHERE decision_shadow IN ('keep', 'suppress')
+      AND band <> 'api_miss'
       AND decision_shadow = decision_spec
   )::int AS agreement_matches,
   COUNT(*) FILTER (
@@ -539,10 +551,12 @@ const FLIP_COUNT_SQL = `
   )::int AS api_miss_24h,
   COUNT(*) FILTER (
     WHERE decision_shadow IN ('keep', 'suppress')
+      AND band <> 'api_miss'
       AND predicted_at >= NOW() - INTERVAL '24 hours'
   )::int AS agreement_eligible_24h,
   COUNT(*) FILTER (
     WHERE decision_shadow IN ('keep', 'suppress')
+      AND band <> 'api_miss'
       AND decision_shadow = decision_spec
       AND predicted_at >= NOW() - INTERVAL '24 hours'
   )::int AS agreement_matches_24h
@@ -682,7 +696,7 @@ let killCache: { at: number; tripped: boolean } | null = null
 const KILL_CACHE_MS = 60_000
 
 /**
- * True when all-time or 24h api_miss / disagreement exceeds the kill thresholds.
+ * True when all-time or 24h miss% exceeds the kill threshold.
  * Failures that hide the sample hold soft-active off. Missing schema is an empty
  * sample (not a spike). Never enables soft-active.
  */
