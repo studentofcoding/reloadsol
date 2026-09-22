@@ -38,7 +38,14 @@ import { searchTokenStats } from '@/utils/jupiter-pools-test'
 import { fetchJupiterPriceRaw } from '@/utils/jupiter-api'
 import { loadStrategyDefinitionRows } from './db'
 import { fetchRecentSocialEvents, fetchSocialRollup } from './social/db'
-import { locateTokenByAddress, normalizeLookupAddress } from './token-locate'
+import {
+  locateTokenByAddress,
+  mcapTrackedAlgoTesterHref,
+  normalizeLookupAddress,
+  strategyPresenceTitle,
+} from './token-locate'
+
+const SEED = 'AVXPQqxd32ABAP5F7shHKNeWBpos9miktdH3uKqgXYJZ'
 
 const MINT = 'So11111111111111111111111111111111111111112'
 
@@ -197,6 +204,96 @@ describe('locateTokenByAddress', () => {
       const sql = String(c[0])
       expect(sql).not.toMatch(/chain\s*=\s*\$/i)
     }
+  })
+})
+
+describe('tracked mcap presence honesty', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(loadStrategyDefinitionRows).mockResolvedValue([])
+    vi.mocked(fetchJupiterV2SearchRaw).mockResolvedValue([])
+    vi.mocked(fetchTokenMetadataFromJupiter).mockResolvedValue(null)
+    vi.mocked(fetchJupiterDatapiSearchRaw).mockResolvedValue([])
+    vi.mocked(fetchJupiterPriceRaw).mockResolvedValue(null)
+    vi.mocked(searchTokenStats).mockResolvedValue(null)
+    vi.mocked(fetchSocialRollup).mockResolvedValue(null)
+    vi.mocked(fetchRecentSocialEvents).mockResolvedValue([])
+    vi.mocked(queryOne).mockResolvedValue(null)
+    vi.mocked(query).mockResolvedValue({ rows: [], rowCount: 0 })
+  })
+
+  it('titles a tracking-only seed mint Tracked and deep-links open positions', async () => {
+    vi.mocked(queryOne).mockImplementation(async (sql: string) => {
+      if (sql.includes('token_mcap_tracking')) {
+        return {
+          token_address: SEED,
+          token_symbol: 'suit',
+          label: 'potential',
+          first_mcap: 100_000,
+          first_seen_at: '2026-09-01T03:00:00.000Z',
+          current_mcap: 250_000,
+          mcap_growth_percent: 4481,
+        }
+      }
+      return null
+    })
+
+    const result = await locateTokenByAddress(SEED, { chain: 'sol' })
+    const tracked = result.strategyPresence.find((p) => p.source === 'token_mcap_tracking')
+    expect(tracked).toBeTruthy()
+    expect(tracked?.strategyId).toBeNull()
+    expect(tracked?.linkLabel).toBe('Open positions')
+    expect(tracked?.note).toBe('Tracked on MCap — not an open strategy')
+    expect(strategyPresenceTitle(tracked!)).toBe('Tracked')
+    expect(strategyPresenceTitle(tracked!)).not.toBe('token_mcap_tracking')
+    expect(tracked?.deepLink).toContain('tab=open')
+    expect(tracked?.deepLink).toContain('domain=mcap_tracker')
+    expect(tracked?.deepLink).toContain(`tokenAddress=${SEED}`)
+    expect(tracked?.deepLink).toContain('chain=sol')
+    expect(tracked?.deepLink).not.toBe('/dev/algo-tester')
+  })
+
+  it('omits chain on the tracked href when locate is not chain-scoped', async () => {
+    vi.mocked(queryOne).mockImplementation(async (sql: string) => {
+      if (sql.includes('token_mcap_tracking')) {
+        return { token_address: SEED, token_symbol: 'suit', label: 'potential' }
+      }
+      return null
+    })
+    const result = await locateTokenByAddress(SEED)
+    const tracked = result.strategyPresence.find((p) => p.source === 'token_mcap_tracking')
+    expect(tracked?.deepLink).toBe(mcapTrackedAlgoTesterHref(SEED))
+    expect(tracked?.deepLink).not.toMatch(/[?&]chain=/)
+  })
+
+  it('keeps strategy outcome rows on the closed deep link', async () => {
+    vi.mocked(loadStrategyDefinitionRows).mockResolvedValue([
+      { id: 'mcap_enter_first_seen', name: 'Enter at first seen' } as never,
+    ])
+    vi.mocked(query).mockImplementation(async (sql: string) => {
+      if (String(sql).includes('GROUP BY domain')) {
+        return {
+          rows: [
+            {
+              domain: 'mcap_tracker',
+              strategy_id: 'mcap_enter_first_seen',
+              record_count: 1,
+              last_seen_at: '2026-09-01T00:00:00.000Z',
+            },
+          ],
+          rowCount: 1,
+        }
+      }
+      return { rows: [], rowCount: 0 }
+    })
+
+    const result = await locateTokenByAddress(MINT)
+    const outcome = result.strategyPresence.find((p) => p.source === 'strategy_outcomes')
+    expect(outcome?.strategyId).toBe('mcap_enter_first_seen')
+    expect(outcome?.linkLabel).toBeUndefined()
+    expect(outcome?.deepLink).toContain('tab=closed')
+    expect(outcome?.deepLink).toContain(`tokenAddress=${encodeURIComponent(MINT)}`)
+    expect(strategyPresenceTitle(outcome!)).toBe('Enter at first seen')
   })
 })
 

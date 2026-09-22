@@ -14,95 +14,12 @@ import {
 import { isTrackerSocialJoinEnabled } from '@/utils/tracker-flags'
 import { loadTrackerSocialJoinMap } from '@/app/api/mcap-tracking/join-trending-social'
 import type { TrendingSocialFields } from '@/utils/tracker-social-join'
+import { buildMcapListWhere } from '@/app/api/mcap-tracking/list-where'
 
 const LIST_SORT_COLUMNS = new Set([
   'last_updated_at', 'first_seen_at', 'mcap_growth_percent',
   'current_mcap', 'first_mcap', 'token_symbol', 'token_address',
 ])
-
-function getTimeFilterCutoff(timeFilter: string): Date | null {
-  if (timeFilter === 'all') return null
-  const now = new Date()
-  switch (timeFilter) {
-    case '1h': return new Date(now.getTime() - 60 * 60 * 1000)
-    case '4h': return new Date(now.getTime() - 4 * 60 * 60 * 1000)
-    case '24h': return new Date(now.getTime() - 24 * 60 * 60 * 1000)
-    case '3d': return new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000)
-    case '7d': return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-    case '1m': return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
-    default: return null
-  }
-}
-
-type McapListFilterParams = {
-  chain?: string
-  search?: string
-  timeFilter?: string
-  performanceFilter?: string
-  minGrowth?: string | null
-  maxGrowth?: string | null
-  minMcap?: string | null
-  maxMcap?: string | null
-  statsOnly?: boolean
-}
-
-function buildMcapListWhere(params: McapListFilterParams): { sql: string; values: unknown[] } {
-  const conditions: string[] = []
-  const values: unknown[] = []
-
-  if (params.statsOnly) {
-    conditions.push('mcap_growth_percent IS NOT NULL')
-    conditions.push('current_mcap IS NOT NULL')
-    conditions.push('first_mcap IS NOT NULL')
-    conditions.push('first_mcap > 0')
-    conditions.push('current_mcap > 0')
-  }
-
-  if (params.chain) {
-    values.push(params.chain)
-    conditions.push(`chain = $${values.length}`)
-  }
-
-  if (params.search) {
-    values.push(`%${params.search}%`)
-    conditions.push(`(token_symbol ILIKE $${values.length} OR token_address ILIKE $${values.length})`)
-  }
-
-  const cutoff = getTimeFilterCutoff(params.timeFilter || 'all')
-  if (cutoff) {
-    values.push(cutoff.toISOString())
-    conditions.push(`first_seen_at >= $${values.length}`)
-  }
-
-  const performanceFilter = params.performanceFilter || 'all'
-  if (performanceFilter === 'gainers') {
-    conditions.push('mcap_growth_percent > 0')
-  } else if (performanceFilter === 'losers') {
-    conditions.push('mcap_growth_percent < 0')
-  } else if (performanceFilter === 'top_performers') {
-    conditions.push('mcap_growth_percent >= 100')
-  }
-
-  if (params.minGrowth != null && params.minGrowth !== '') {
-    values.push(parseFloat(params.minGrowth))
-    conditions.push(`mcap_growth_percent >= $${values.length}`)
-  }
-  if (params.maxGrowth != null && params.maxGrowth !== '') {
-    values.push(parseFloat(params.maxGrowth))
-    conditions.push(`mcap_growth_percent <= $${values.length}`)
-  }
-  if (params.minMcap != null && params.minMcap !== '') {
-    values.push(parseFloat(params.minMcap))
-    conditions.push(`first_mcap >= $${values.length}`)
-  }
-  if (params.maxMcap != null && params.maxMcap !== '') {
-    values.push(parseFloat(params.maxMcap))
-    conditions.push(`first_mcap <= $${values.length}`)
-  }
-
-  const sql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
-  return { sql, values }
-}
 
 export async function GET(request: NextRequest) {
   await connection()
@@ -158,7 +75,7 @@ export async function GET(request: NextRequest) {
       // Get current SOL price for calculations
       const solPriceUSD = await getSolPriceUSD()
 
-      const filterParams: McapListFilterParams = {
+      const filterParams = {
         chain: parseStrategyChain(searchParams.get('chain')),
         search,
         timeFilter,
@@ -167,8 +84,12 @@ export async function GET(request: NextRequest) {
         maxGrowth,
         minMcap,
         maxMcap,
+        label: searchParams.get('label'),
       }
-      const { sql: whereClause, values: whereValues } = buildMcapListWhere(filterParams)
+      const { sql: whereClause, values: whereValues, error: whereError } = buildMcapListWhere(filterParams)
+      if (whereError) {
+        return NextResponse.json({ success: false, error: whereError }, { status: 400 })
+      }
 
       const sortColumn = LIST_SORT_COLUMNS.has(sortBy) ? sortBy : 'last_updated_at'
       const sortDir = sortOrder === 'asc' ? 'ASC' : 'DESC'
@@ -189,10 +110,13 @@ export async function GET(request: NextRequest) {
         listValues,
       )
 
-      const { sql: statsWhere, values: statsValues } = buildMcapListWhere({
+      const { sql: statsWhere, values: statsValues, error: statsError } = buildMcapListWhere({
         ...filterParams,
         statsOnly: true,
       })
+      if (statsError) {
+        return NextResponse.json({ success: false, error: statsError }, { status: 400 })
+      }
       const { rows: allData } = await query<{
         mcap_growth_percent: number
         current_mcap: number

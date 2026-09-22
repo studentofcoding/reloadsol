@@ -1,5 +1,6 @@
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import type { McapToast } from '@/types/mcap-toasts';
+import type { TrackerListLabel } from '@/utils/tracker-label';
 
 export interface FilterOptions {
   search: string;
@@ -12,6 +13,8 @@ export interface FilterOptions {
   excludeZeroPnl: boolean;
   timeFilter: "1h" | "4h" | "24h" | "3d" | "7d" | "1m" | "all";
   performanceFilter: "all" | "gainers" | "losers" | "top_performers";
+  /** Tracker chip. Omit or "all" keeps today's unfiltered list. */
+  label?: TrackerListLabel;
 }
 
 export interface McapTrackingData {
@@ -103,6 +106,9 @@ export function useMCapTracker({
       if (filters.maxGrowth) params.append('maxGrowth', filters.maxGrowth);
       if (filters.minMcap) params.append('minMcap', filters.minMcap);
       if (filters.maxMcap) params.append('maxMcap', filters.maxMcap);
+      if (filters.label && filters.label !== 'all') {
+        params.append('label', filters.label);
+      }
 
       const res = await fetch(`/api/mcap-tracking?${params.toString()}`);
       if (!res.ok) {

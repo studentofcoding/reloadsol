@@ -211,7 +211,7 @@ function AlgoTesterHubContent() {
         query={query}
         strategyOptions={strategyOptions}
         showSimulated={query.tab !== "config"}
-        showToken={query.tab === "closed"}
+        showToken={query.tab === "open" || query.tab === "closed"}
         onPatch={patchQuery}
       />
 
@@ -262,6 +262,7 @@ function AlgoTesterHubContent() {
             domain={query.domain}
             strategyId={query.strategyId}
             simulated={query.simulated}
+            tokenAddress={query.tokenAddress}
           />
         </div>
       )}

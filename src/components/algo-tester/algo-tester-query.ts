@@ -185,13 +185,16 @@ export function filterAlgoPositions<T extends AlgoPositionFilterRow>(
     domain?: string;
     strategyId?: string;
     simulated?: AlgoTesterSimulated;
+    tokenAddress?: string;
   },
 ): T[] {
+  const mint = f.tokenAddress?.trim() ?? "";
   return rows.filter((p) => {
     if (f.domain && p.domain !== f.domain) return false;
     if (f.strategyId && p.strategyId !== f.strategyId) return false;
     if (f.simulated === "sim" && !p.isSimulated) return false;
     if (f.simulated === "live" && p.isSimulated) return false;
+    if (mint && p.tokenAddress !== mint) return false;
     return true;
   });
 }
@@ -200,7 +203,12 @@ export function openPositionsEmptyCopy(f: {
   domain?: string;
   strategyId?: string;
   simulated?: AlgoTesterSimulated;
+  tokenAddress?: string;
 }): string {
+  const mint = f.tokenAddress?.trim() ?? "";
+  if (f.domain && mint && !f.strategyId && (!f.simulated || f.simulated === "all")) {
+    return `No open ${f.domain} positions for ${mint}`;
+  }
   if (f.domain && !f.strategyId && (!f.simulated || f.simulated === "all")) {
     return `No open ${f.domain} positions`;
   }
@@ -209,8 +217,12 @@ export function openPositionsEmptyCopy(f: {
     f.domain || null,
     f.strategyId || null,
   ].filter(Boolean);
-  if (bits.length === 0) return "No open algo positions";
-  return `No open ${bits.join(" ")} positions`;
+  if (bits.length === 0) {
+    return mint ? `No open algo positions for ${mint}` : "No open algo positions";
+  }
+  return mint
+    ? `No open ${bits.join(" ")} positions for ${mint}`
+    : `No open ${bits.join(" ")} positions`;
 }
 
 export type StrategyIdOption = {

@@ -191,10 +191,12 @@ export function AlgoOpenPositionsTab({
   domain,
   strategyId,
   simulated,
+  tokenAddress,
 }: {
   domain?: string;
   strategyId?: string;
   simulated?: AlgoTesterSimulated;
+  tokenAddress?: string;
 }) {
   const { network } = useAppNetwork();
 
@@ -216,8 +218,9 @@ export function AlgoOpenPositionsTab({
         domain,
         strategyId,
         simulated,
+        tokenAddress,
       }),
-    [data?.open, domain, strategyId, simulated],
+    [data?.open, domain, strategyId, simulated, tokenAddress],
   );
 
   const missingMints = useMemo(
@@ -252,7 +255,7 @@ export function AlgoOpenPositionsTab({
         </div>
       ) : open.length === 0 ? (
         <div className="text-sm text-gray-500 py-6 text-center">
-          {openPositionsEmptyCopy({ domain, strategyId, simulated })}
+          {openPositionsEmptyCopy({ domain, strategyId, simulated, tokenAddress })}
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">

@@ -15,6 +15,11 @@ import {
   FilterOptions,
 } from "@/hooks/useMCapTracker";
 import {
+  TRACKER_LABEL_CHIPS,
+  normalizeTrackerListLabel,
+  trackerLabelDisplay,
+} from "@/utils/tracker-label";
+import {
   analyticsMaxAgeFromTimeFilter,
   useTokenAnalytics,
   type AnalyticsMissingMint,
@@ -172,6 +177,7 @@ export default function TrackerTab() {
   const router = useRouter();
   const pathname = usePathname();
   const urlSearch = searchParams.get("search")?.trim() ?? "";
+  const urlLabel = normalizeTrackerListLabel(searchParams.get("label"));
   const queryClient = useQueryClient();
   const { network } = useAppNetwork();
   const { connection } = useConnection();
@@ -226,6 +232,16 @@ export default function TrackerTab() {
     router.replace(query ? `${pathname}?${query}` : pathname);
   };
 
+  const setLabelFilter = (next: (typeof TRACKER_LABEL_CHIPS)[number]["id"]) => {
+    setPage(1);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", "tracker");
+    if (next === "all") params.delete("label");
+    else params.set("label", next);
+    const query = params.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname);
+  };
+
   // Compute effective mcap filters
   const effectiveMcapFilters = React.useMemo(() => {
     if (activeMcapFilter) {
@@ -250,8 +266,13 @@ export default function TrackerTab() {
   }, [activeMcapFilter, filters.minMcap, filters.maxMcap]);
 
   const queryFilters = useMemo<FilterOptions>(
-    () => ({ ...filters, search: urlSearch, ...effectiveMcapFilters }),
-    [filters, urlSearch, effectiveMcapFilters],
+    () => ({
+      ...filters,
+      search: urlSearch,
+      ...effectiveMcapFilters,
+      label: urlLabel,
+    }),
+    [filters, urlSearch, effectiveMcapFilters, urlLabel],
   );
 
   const {
@@ -2042,6 +2063,26 @@ export default function TrackerTab() {
           </div>
         </div>
 
+        <div className="flex flex-wrap gap-2 mb-4">
+          {TRACKER_LABEL_CHIPS.map((chip) => {
+            const selected = urlLabel === chip.id;
+            return (
+              <button
+                key={chip.id}
+                type="button"
+                onClick={() => setLabelFilter(chip.id)}
+                className={`rounded-full px-3 py-1 text-sm font-medium transition-colors ${
+                  selected
+                    ? "bg-white text-black"
+                    : "bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white"
+                }`}
+              >
+                {chip.label}
+              </button>
+            );
+          })}
+        </div>
+
         {/* ... existing filter controls ... */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <div>
@@ -2409,6 +2450,7 @@ export default function TrackerTab() {
 
         {displayedRows.map(({ token, analytics, insights, scores, missing }) => {
           const holding = lookupHolding(holdingsByMint, token.token_address);
+          const labelChip = trackerLabelDisplay(token.label);
           return (
           <div
             key={token.token_address}
@@ -2439,6 +2481,11 @@ export default function TrackerTab() {
                     <h3 className="text-lg font-semibold text-white truncate">
                       {token.token_symbol}
                     </h3>
+                    {labelChip ? (
+                      <span className="shrink-0 rounded px-1.5 py-0.5 text-xs font-medium bg-gray-700 text-gray-100 border border-gray-600">
+                        {labelChip}
+                      </span>
+                    ) : null}
                     <span
                       className={`text-2xl ${getGrowthColor(token.mcap_growth_percent)}`}
                     >
