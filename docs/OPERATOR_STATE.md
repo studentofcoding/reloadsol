@@ -144,7 +144,7 @@ From `ml/artifacts/pattern-gate/model.meta.json` (330 train / 66 test):
 
 - When mcap sim-track opens for **`mcap_enter_first_seen`** / **`mcap_enter_at_80`** (and RH twins).
 - **UI toast** gated by that strategy’s `config.notify.ui` (same sync rules). Toast category `sim_open` (**Mcap Sim Open**).
-- **Telegram** only when the strategy currently qualifies as a **best emitter** (rank lock `avg×n+win%` + Researchy min-n: all-time ≥30 or 7d ≥10) **and** `config.notify.telegram` is on. Message is copy-trade + OHLC chart (`sendBestStrategyShareTelegram`).
+- **Telegram** only when the strategy currently qualifies as a **best emitter** (rank lock `avg×n+win%`; Researchy min-n: all-time ≥30 or 7d ≥10; below floor = hypothesis only, never blast top slots; sum% footnote only) **and** `config.notify.telegram` is on. Message is copy-trade + OHLC chart (`sendBestStrategyShareTelegram`).
 - Dedup: one per strategy+mint per 24h (shared UI/TG slot). Still fires even if Stage 1 already alerted.
 
 Shared:
