@@ -1,3 +1,4 @@
+import { after } from 'next/server'
 import type { StrategyDomain, StrategyNotifyConfig } from './types'
 import {
   DLMM_STRATEGY_DEFAULTS,
@@ -160,6 +161,30 @@ export function telegramExtrasFromFeatures(
   }
 }
 
+/**
+ * Open/close Telegram (including sharp PNG) must not run on the HTTP turn.
+ * `after()` runs once the response is finished. Outside a Next request
+ * (cron, scripts) it throws, and the work is deferred with setImmediate.
+ * Failures are logged here and never reject into the caller.
+ */
+function scheduleStrategyTelegram(
+  label: 'open' | 'close',
+  work: () => Promise<void>,
+): void {
+  const task = (): Promise<void> =>
+    work().catch((err) => {
+      console.error(`[strategy-telegram] ${label} notify failed:`, err)
+    })
+
+  try {
+    after(task)
+  } catch {
+    setImmediate(() => {
+      void task()
+    })
+  }
+}
+
 export function notifyStrategyOpen(params: {
   domain: StrategyDomain
   strategyId: string
@@ -174,7 +199,7 @@ export function notifyStrategyOpen(params: {
   kol?: number | null
 }): void {
   const fromFeatures = telegramExtrasFromFeatures(params.features)
-  void (async () => {
+  scheduleStrategyTelegram('open', async () => {
     const flags = await getStrategyNotifyFlags(params.domain, params.strategyId)
     if (!flags.telegram) return
     await sendStrategyTrackOpenAlert({
@@ -190,8 +215,6 @@ export function notifyStrategyOpen(params: {
       sm: params.sm ?? fromFeatures.sm,
       kol: params.kol ?? fromFeatures.kol,
     })
-  })().catch((err) => {
-    console.error('[strategy-telegram] open notify failed:', err)
   })
 }
 
@@ -214,7 +237,7 @@ export function notifyStrategyClose(params: {
     preferExit: true,
   })
 
-  void (async () => {
+  scheduleStrategyTelegram('close', async () => {
     const flags = await getStrategyNotifyFlags(params.domain, params.strategyId)
     if (!flags.telegram) return
     await sendStrategyTrackCloseAlert({
@@ -232,7 +255,5 @@ export function notifyStrategyClose(params: {
       sm: fromFeatures.sm,
       kol: fromFeatures.kol,
     })
-  })().catch((err) => {
-    console.error('[strategy-telegram] close notify failed:', err)
   })
 }

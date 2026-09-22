@@ -5,8 +5,13 @@
  * so the SVG stays small and the candles are crisp at 1px-per-column.
  */
 
-import sharp from 'sharp'
+import { createRequire } from 'node:module'
+import { closeSync, openSync, readdirSync, readSync } from 'node:fs'
+import { arch, platform } from 'node:os'
+import { dirname, join } from 'node:path'
 import type { OhlcRugBar } from '@/strategies/ohlc-rug-rules'
+
+const require = createRequire(import.meta.url)
 
 export type OhlcSvgOpts = {
   width?: number
@@ -223,7 +228,134 @@ export function renderOhlcCandlesSvg(
   return parts.join('')
 }
 
-/** Rasterize SVG candles to PNG. Empty / sharp fail → null. */
+type SharpEncode = (input: Buffer) => {
+  png: () => { toBuffer: () => Promise<Buffer> }
+}
+
+/**
+ * True when the first bytes of `filePath` are a native addon this process can
+ * dlopen. A Darwin Mach-O `sharp.node` copied into the Linux image segfaults
+ * (exit 139) inside dlopen; refuse it before `import('sharp')`.
+ */
+export function isLoadableSharpNativeBinary(filePath: string): boolean {
+  let fd: number | null = null
+  try {
+    fd = openSync(filePath, 'r')
+    const magic = Buffer.alloc(4)
+    const n = readSync(fd, magic, 0, 4, 0)
+    if (n < 4) return false
+    const os = platform()
+    if (os === 'linux') {
+      return (
+        magic[0] === 0x7f &&
+        magic[1] === 0x45 &&
+        magic[2] === 0x4c &&
+        magic[3] === 0x46
+      )
+    }
+    if (os === 'darwin') {
+      const hex = magic.toString('hex')
+      return (
+        hex === 'cffaedfe' ||
+        hex === 'feedfacf' ||
+        hex === 'cefaedfe' ||
+        hex === 'feedface'
+      )
+    }
+    return true
+  } catch {
+    return false
+  } finally {
+    if (fd != null) closeSync(fd)
+  }
+}
+
+/** sharp's runtime id: `linux-x64`, `linuxmusl-x64`, `darwin-arm64`, … */
+function sharpRuntimePlatform(): string | null {
+  const os = platform()
+  if (os !== 'linux' && os !== 'darwin' && os !== 'win32') return null
+  let libc = ''
+  if (os === 'linux') {
+    try {
+      const detectLibc = require('detect-libc') as {
+        isNonGlibcLinuxSync: () => boolean
+        familySync: () => string | null
+      }
+      if (detectLibc.isNonGlibcLinuxSync()) {
+        libc = detectLibc.familySync() ?? ''
+      }
+    } catch {
+      libc = ''
+    }
+  }
+  return `${os}${libc}-${arch()}`
+}
+
+function sharpNativeNodeFiles(resolvedEntry: string): string[] {
+  if (resolvedEntry.endsWith('.node')) return [resolvedEntry]
+  try {
+    return readdirSync(join(dirname(resolvedEntry), 'lib'))
+      .filter((name) => name.endsWith('.node'))
+      .map((name) => join(dirname(resolvedEntry), 'lib', name))
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Resolve `@img/sharp-<platform>/sharp.node` without loading it. Missing or
+ * wrong-format bindings skip the import so a Mac-traced Darwin binary is never
+ * dlopen'd on Linux.
+ */
+function sharpNativeBindingIsLoadable(): boolean {
+  const runtime = sharpRuntimePlatform()
+  if (!runtime) return false
+  let resolved: string
+  try {
+    resolved = require.resolve(`@img/sharp-${runtime}/sharp.node`)
+  } catch {
+    return false
+  }
+  const nodes = sharpNativeNodeFiles(resolved)
+  return nodes.length > 0 && nodes.every((file) => isLoadableSharpNativeBinary(file))
+}
+
+function resolveSharpFactory(mod: unknown): SharpEncode | null {
+  if (typeof mod === 'function') return mod as SharpEncode
+  if (mod && typeof mod === 'object' && 'default' in mod) {
+    const loaded = (mod as { default: unknown }).default
+    if (typeof loaded === 'function') return loaded as SharpEncode
+  }
+  return null
+}
+
+async function loadSharpEncoder(): Promise<SharpEncode | null> {
+  if (!sharpNativeBindingIsLoadable()) {
+    console.warn(
+      '[ohlc-telegram-svg] sharp native binding missing or wrong platform; chart PNG skipped',
+    )
+    return null
+  }
+  try {
+    const mod = await import('sharp')
+    const sharp = resolveSharpFactory(mod)
+    if (!sharp) {
+      console.warn(
+        '[ohlc-telegram-svg] sharp export is not a function; chart PNG skipped',
+      )
+      return null
+    }
+    return sharp
+  } catch (err) {
+    console.warn(
+      '[ohlc-telegram-svg] sharp load failed; chart PNG skipped',
+      err instanceof Error ? err.message : String(err),
+    )
+    return null
+  }
+}
+
+/** Rasterize SVG candles to PNG. Empty / sharp fail → null (never throws). */
 export async function renderOhlcCandlesPng(
   bars: OhlcRugBar[],
   opts: OhlcSvgOpts = {},
@@ -231,6 +363,8 @@ export async function renderOhlcCandlesPng(
   const svg = renderOhlcCandlesSvg(bars, opts)
   if (!svg) return null
   try {
+    const sharp = await loadSharpEncoder()
+    if (!sharp) return null
     return await sharp(Buffer.from(svg)).png().toBuffer()
   } catch (err) {
     console.warn(

@@ -48,6 +48,10 @@ const nextConfig = {
       '**/venv/**',
       '**/.git/**',
       '**/ml/__pycache__/**',
+      // Mac ships trace @img/sharp-darwin-*. dlopen of that Mach-O in the
+      // Linux web image segfaults (exit 139). Dockerfile.web installs linux-x64.
+      '**/@img/sharp-darwin-*/**',
+      '**/@img/sharp-libvips-darwin-*/**',
     ],
   },
   outputFileTracingIncludes: {
@@ -68,7 +72,7 @@ const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   transpilePackages: ['@jup-ag/wallet-adapter', '@sfinterface/numbers'],
-  serverExternalPackages: ['puppeteer', 'bigint-buffer', 'onnxruntime-node'],
+  serverExternalPackages: ['puppeteer', 'bigint-buffer', 'onnxruntime-node', 'sharp'],
 
   // Faster dev compiles: tree-shake heavy package entrypoints (Turbopack + webpack)
   experimental: {

@@ -125,21 +125,39 @@ export async function sendTelegramOhlcPhotoOrText(params: {
   chatId?: string
   inlineKeyboard?: Array<Array<TelegramInlineButton>>
 }): Promise<SendTelegramOhlcResult> {
-  const { bars, png } = await loadAndRenderOhlcPng(
-    params.tokenAddress,
-    params.symbol,
-  )
+  let bars: OhlcRugBar[] = []
+  let png: Buffer | null = null
+  try {
+    const loaded = await loadAndRenderOhlcPng(
+      params.tokenAddress,
+      params.symbol,
+    )
+    bars = loaded.bars
+    png = loaded.png
+  } catch (err) {
+    console.warn(
+      '[ohlc-telegram-paint] chart encode failed; text-only',
+      err instanceof Error ? err.message : String(err),
+    )
+  }
 
   if (png) {
-    const sent = await sendTelegramPhoto({
-      png,
-      caption: params.caption,
-      chatId: params.chatId,
-      parseMode: 'HTML',
-      inlineKeyboard: params.inlineKeyboard,
-    })
-    if (sent.ok) {
-      return { ...sent, usedPhoto: true }
+    try {
+      const sent = await sendTelegramPhoto({
+        png,
+        caption: params.caption,
+        chatId: params.chatId,
+        parseMode: 'HTML',
+        inlineKeyboard: params.inlineKeyboard,
+      })
+      if (sent.ok) {
+        return { ...sent, usedPhoto: true }
+      }
+    } catch (err) {
+      console.warn(
+        '[ohlc-telegram-paint] photo send failed; text-only',
+        err instanceof Error ? err.message : String(err),
+      )
     }
   }
 
