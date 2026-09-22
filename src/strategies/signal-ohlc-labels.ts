@@ -197,7 +197,12 @@ export function isEmptySignalOhlcSlot(
   return rowBarsEmpty(row)
 }
 
-/** Gallery list: retry empty `none` rows; skip `backfill_empty` cooldown. */
+/**
+ * Gallery list cooldown only: do not re-hit ST/GMGN on every page load after
+ * one failed attempt (`backfill_empty`). This is not a UNIQUE lock.
+ * `npm run mcap:backfill-labels` uses planMcapOhlcCapture and soft-overwrites
+ * these rows when a later fetch returns bars.
+ */
 function needsOhlcBackfill(row: SignalOhlcLabelRow): boolean {
   return rowBarsEmpty(row) && row.ohlc_source !== BACKFILL_EMPTY_SOURCE
 }

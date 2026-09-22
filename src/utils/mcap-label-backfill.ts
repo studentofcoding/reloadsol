@@ -15,6 +15,21 @@ export const MCAP_LABEL_BACKFILL_OHLC_CONCURRENCY = Math.max(
   Number.parseInt(process.env.MCAP_OHLC_CONCURRENCY ?? '2', 10) || 2,
 )
 
+/**
+ * Default `mcap:backfill-labels` OHLC decision.
+ * Empty bars (`none`, `backfill_empty`, or any other source) are refillable.
+ * A non-empty card is left alone. Missing row is a fresh capture.
+ * `backfill_empty` is a gallery-load cooldown, not a permanent skip here.
+ */
+export function planMcapOhlcCapture(
+  existing: { bars?: unknown } | null | undefined,
+): 'capture' | 'refill' | 'existing' {
+  if (!existing) return 'capture'
+  const bars = existing.bars
+  if (!Array.isArray(bars) || bars.length === 0) return 'refill'
+  return 'existing'
+}
+
 export type McapLabelBackfillPlan = {
   /** Label, drop stamps, or peak fields differ from the loaded row. */
   persist: boolean

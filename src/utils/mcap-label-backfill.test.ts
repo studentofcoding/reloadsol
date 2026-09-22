@@ -16,6 +16,7 @@ vi.mock('@/utils/unified-logger', () => ({
 
 import {
   planMcapLabelBackfill,
+  planMcapOhlcCapture,
   runMcapLabelBackfill,
 } from './mcap-label-backfill'
 import type { McapSnapshot } from './mcap-tracker'
@@ -114,6 +115,23 @@ describe('planMcapLabelBackfill', () => {
     expect(record.label).toBe('rugged')
     expect(plan.capture).toBe(true)
     expect(plan.labelChanged).toBe(false)
+  })
+})
+
+describe('planMcapOhlcCapture', () => {
+  it('refills backfill_empty and none, skips cards that already have bars', () => {
+    expect(planMcapOhlcCapture(null)).toBe('capture')
+    expect(
+      planMcapOhlcCapture({ bars: [], ohlc_source: 'backfill_empty' } as {
+        bars: unknown
+      }),
+    ).toBe('refill')
+    expect(planMcapOhlcCapture({ bars: [] })).toBe('refill')
+    expect(
+      planMcapOhlcCapture({
+        bars: [{ t: 1, o: 1, h: 1, l: 1, c: 1 }],
+      }),
+    ).toBe('existing')
   })
 })
 

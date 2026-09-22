@@ -36,7 +36,7 @@ describe('backfillEmptySignalOhlcBars', () => {
     vi.resetModules()
   })
 
-  it('fills empty bars from 24h cache and skips when backfill_empty', async () => {
+  it('fills empty none rows from cache; gallery cooldown skips backfill_empty until mcap refill', async () => {
     const updateCalls: unknown[] = []
     vi.doMock('@/utils/db', () => ({
       query: vi.fn(async (sql: string, params?: unknown[]) => {

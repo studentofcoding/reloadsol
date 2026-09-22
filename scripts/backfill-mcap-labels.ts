@@ -5,16 +5,20 @@
  * Host CLI needs Postgres via DATABASE_URL or DATABASE_URL_DIRECT
  * (same notes as scripts/backfill-ml-labels.ts).
  *
- *   npx tsx scripts/backfill-mcap-labels.ts [--dry-run] [--refill-empty] [--sol-only]
+ *   npx tsx scripts/backfill-mcap-labels.ts [--dry-run] [--sol-only]
+ *   npm run mcap:backfill-labels
  *   npm run mcap:backfill-labels -- --dry-run
- *   npm run mcap:backfill-labels -- --refill-empty --sol-only
+ *
+ * A plain re-run soft-overwrites empty OHLC rows (bars=[], including
+ * ohlc_source none and backfill_empty) and captures missing rows.
+ * Non-empty gmgn / solanatracker / last10_fallback cards are left alone.
+ * Empty fetch does not INSERT (no UNIQUE lock); it counts as ohlc_failed.
  *
  * OHLC concurrency default is 2 (override with MCAP_OHLC_CONCURRENCY).
  * Does not write dlmm_potential_list or token_rug_list.
  * --dry-run: no UPDATE and no OHLC network.
- * --refill-empty: only tokens whose OHLC row is missing or empty
- *   (ohlc_source none/backfill_empty or bars=[]). Soft-overwrites empties.
- * --sol-only: skip 0x / EVM mints (GMGN robinhood path) to avoid empty spam.
+ * --refill-empty: accepted alias; plain run already refills empties.
+ * --sol-only: skip 0x / EVM mints (GMGN robinhood path).
  */
 
 import { config as loadEnv } from 'dotenv'
@@ -72,11 +76,14 @@ function parseArgs(argv: string[]): CliArgs {
 Soft-overwrites token_mcap_tracking labels with live auto-label rules and
 captures OHLC for potential / rugged.
 
+A plain run retries OHLC when the corpus row is missing or bars=[].
+backfill_empty / none are refillable. Non-empty cards are skipped.
+Failed fetch does not insert an empty row (ohlc_failed).
+
 Options:
   --dry-run        Print counts only. No UPDATE and no OHLC fetch.
-  --refill-empty   Only capture when OHLC is missing or empty
-                   (none / backfill_empty / bars=[]). Soft-overwrites empties.
-  --sol-only       Skip 0x EVM mints (do not write empty Sol-source cards).
+  --refill-empty   Explicit alias for the empty/missing OHLC retry.
+  --sol-only       Skip 0x EVM mints.
 
 Env:
   MCAP_OHLC_CONCURRENCY   Parallel OHLC fetches (default 2).
@@ -107,13 +114,15 @@ function printHostDbConnectionHint(err: unknown): void {
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2))
   resolveHostDatabaseUrl()
-  const { MCAP_LABEL_BACKFILL_OHLC_CONCURRENCY, runMcapLabelBackfill } =
-    await import('../src/utils/mcap-label-backfill')
-  const { query, queryOne } = await import('../src/utils/db')
   const {
-    captureSignalOhlcLabel,
-    isEmptySignalOhlcSlot,
-  } = await import('../src/strategies/signal-ohlc-labels')
+    MCAP_LABEL_BACKFILL_OHLC_CONCURRENCY,
+    planMcapOhlcCapture,
+    runMcapLabelBackfill,
+  } = await import('../src/utils/mcap-label-backfill')
+  const { query, queryOne } = await import('../src/utils/db')
+  const { captureSignalOhlcLabel } = await import(
+    '../src/strategies/signal-ohlc-labels'
+  )
   const { toSignalOhlcStoreLabel } = await import('../src/strategies/signal-ohlc-window')
   const { isEvmTokenAddress } = await import('../src/utils/gmgn-cli')
   type Snap = import('../src/utils/mcap-tracker').McapSnapshot
@@ -177,14 +186,10 @@ async function main(): Promise<void> {
         [record.token_address, store],
       )
 
-      if (existing && !isEmptySignalOhlcSlot(existing)) {
-        return 'existing'
-      }
-
-      // Default full pass: leave empty slots alone (use --refill-empty to retry).
-      if (existing && !args.refillEmpty) {
-        return 'existing'
-      }
+      const ohlcPlan = planMcapOhlcCapture(existing)
+      // Non-empty cards stay. Empty (none / backfill_empty / bars=[]) refill
+      // on a plain re-run — backfill_empty is not a permanent skip.
+      if (ohlcPlan === 'existing') return 'existing'
 
       const id = await captureSignalOhlcLabel({
         tokenAddress: record.token_address,
@@ -194,7 +199,7 @@ async function main(): Promise<void> {
         chain: record.chain ?? (isEvm ? 'robinhood' : 'sol'),
       })
       if (!id) throw new Error('OHLC capture returned no bars / no id')
-      return existing ? 'refilled' : 'captured'
+      return ohlcPlan === 'refill' ? 'refilled' : 'captured'
     },
     countOhlcTotals: async () => {
       const { rows: totals } = await query<{ label: string; count: number }>(
