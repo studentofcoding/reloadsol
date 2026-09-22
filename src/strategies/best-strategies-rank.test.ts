@@ -5,7 +5,7 @@ import {
   bestStrategyCompositeScore,
   qualifyBestStrategies,
   qualifiesResearchyMinN,
-  rankBestStrategies,
+  rankedBestStrategyIds,
 } from './best-strategies-rank'
 import type { StrategyReportBreakdown } from './types'
 
@@ -41,17 +41,17 @@ describe('qualifiesResearchyMinN', () => {
   })
 })
 
-describe('qualifyBestStrategies', () => {
-  it('excludes tiny-n strategies even with high avg', () => {
-    const ranked = qualifyBestStrategies({
+describe('qualifyBestStrategies (Researchy lock)', () => {
+  it('keeps Sell-over-100 style tiny-n out of ranked top slots', () => {
+    const board = qualifyBestStrategies({
       allTime: [
         bucket({
-          strategy_id: 'tiny_moon',
+          strategy_id: 'signals_sell_over_100',
           domain: 'signals',
-          trade_count: 4,
+          trade_count: 6,
           win_rate: 1,
-          avg_pnl_pct: 200,
-          total_pnl_pct: 800,
+          avg_pnl_pct: 500,
+          total_pnl_pct: 3000,
         }),
         bucket({
           strategy_id: 'mcap_enter_at_80',
@@ -73,15 +73,54 @@ describe('qualifyBestStrategies', () => {
       week: [],
       topN: 5,
     })
-    expect(ranked.map((r) => r.strategy_id)).toEqual([
+
+    expect(board.ranked.map((r) => r.strategy_id)).toEqual([
       'mcap_enter_at_80',
       'mcap_enter_first_seen',
     ])
-    expect(ranked.some((r) => r.strategy_id === 'tiny_moon')).toBe(false)
+    expect(
+      board.hypothesis.some((r) => r.strategy_id === 'signals_sell_over_100'),
+    ).toBe(true)
+    expect(
+      board.hypothesis.find((r) => r.strategy_id === 'signals_sell_over_100')
+        ?.hypothesis,
+    ).toBe(true)
+    expect(rankedBestStrategyIds(board)).not.toContain('signals_sell_over_100')
+  })
+
+  it('does not use sum% to order ranked slots (footnote only)', () => {
+    const board = qualifyBestStrategies({
+      allTime: [
+        bucket({
+          strategy_id: 'aaa_low_sum',
+          domain: 'mcap_tracker',
+          trade_count: 30,
+          win_rate: 0.5,
+          avg_pnl_pct: 10,
+          total_pnl_pct: 50,
+        }),
+        bucket({
+          strategy_id: 'zzz_high_sum',
+          domain: 'mcap_tracker',
+          trade_count: 30,
+          win_rate: 0.5,
+          avg_pnl_pct: 10,
+          total_pnl_pct: 9999,
+        }),
+      ],
+      week: [],
+      topN: 5,
+    })
+    // Same composite → stable strategy_id order; high sum% must not jump ahead.
+    expect(board.ranked.map((r) => r.strategy_id)).toEqual([
+      'aaa_low_sum',
+      'zzz_high_sum',
+    ])
+    expect(board.ranked[1]?.sum_pnl_pct).toBe(9999)
   })
 
   it('admits via 7d floor when all-time is thin', () => {
-    const ranked = qualifyBestStrategies({
+    const board = qualifyBestStrategies({
       allTime: [
         bucket({
           strategy_id: 'fresh',
@@ -104,60 +143,36 @@ describe('qualifyBestStrategies', () => {
       ],
       topN: 3,
     })
-    expect(ranked).toHaveLength(1)
-    expect(ranked[0]?.strategy_id).toBe('fresh')
+    expect(board.ranked).toHaveLength(1)
+    expect(board.ranked[0]?.strategy_id).toBe('fresh')
+    expect(board.ranked[0]?.hypothesis).toBe(false)
+    expect(board.hypothesis).toHaveLength(0)
   })
 
-  it('ranks by composite then sum% secondary', () => {
-    const ranked = qualifyBestStrategies({
+  it('orders ranked by avg×n+win% only', () => {
+    const board = qualifyBestStrategies({
       allTime: [
         bucket({
-          strategy_id: 'a',
+          strategy_id: 'solid',
           domain: 'mcap_tracker',
-          trade_count: 30,
-          win_rate: 0.5,
-          avg_pnl_pct: 10,
-          total_pnl_pct: 50,
+          trade_count: 40,
+          win_rate: 0.55,
+          avg_pnl_pct: 15,
+          total_pnl_pct: 100,
         }),
         bucket({
-          strategy_id: 'b',
+          strategy_id: 'weaker',
           domain: 'mcap_tracker',
           trade_count: 30,
           win_rate: 0.5,
           avg_pnl_pct: 10,
-          total_pnl_pct: 200,
+          total_pnl_pct: 9000,
         }),
       ],
       week: [],
       topN: 5,
     })
-    // same score 10*30+50=350; sum% breaks tie
-    expect(ranked.map((r) => r.strategy_id)).toEqual(['b', 'a'])
-  })
-})
-
-describe('rankBestStrategies', () => {
-  it('sorts by locked composite', () => {
-    const ranked = rankBestStrategies(
-      [
-        bucket({
-          strategy_id: 'solid',
-          domain: 'mcap_tracker',
-          trade_count: 20,
-          win_rate: 0.55,
-          avg_pnl_pct: 15,
-        }),
-        bucket({
-          strategy_id: 'low',
-          domain: 'signals',
-          trade_count: 5,
-          win_rate: 1,
-          avg_pnl_pct: 10,
-        }),
-      ],
-      { topN: 10 },
-    )
-    expect(ranked[0]?.strategy_id).toBe('solid')
-    expect(ranked[0]?.score).toBe(15 * 20 + 55)
+    expect(board.ranked[0]?.strategy_id).toBe('solid')
+    expect(board.ranked[0]?.score).toBe(15 * 40 + 55)
   })
 })

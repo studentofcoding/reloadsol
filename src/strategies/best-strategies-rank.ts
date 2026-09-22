@@ -1,11 +1,16 @@
 /**
- * Locked best-strategies ranking: avg pnl% × n + win% (sum% secondary).
- * Researchy min-n floors gate which keys may count as “best” emitters.
+ * Researchy room lock (honor exactly):
+ * 1. Rank primary: avg pnl% × n + win%
+ * 2. sum% is footnote only (never a rank key)
+ * 3. Min-n floors — below floor cannot win top slots:
+ *    - all-time n ≥ 30
+ *    - 7d window n ≥ 10
+ *    Below floor → omit from ranked list, or list under hypothesis / low-n only.
  */
 
 import type { StrategyDomain, StrategyReportBreakdown } from './types'
 
-/** Researchy floors — tiny-n strategies never qualify as best emitters. */
+/** Researchy floors — tiny-n strategies never win ranked / Telegram top slots. */
 export const RESEARCHY_MIN_N_ALL_TIME = 30
 export const RESEARCHY_MIN_N_7D = 10
 
@@ -17,14 +22,23 @@ export type BestStrategyRankRow = {
   name: string
   is_simulated: boolean
   n: number
+  all_time_n: number
+  week_n: number
   avg_pnl_pct: number
   win_pct: number
-  /** Primary rank key: avg_pnl_pct × n + win_pct */
+  /** Primary rank key only: avg_pnl_pct × n + win_pct */
   score: number
-  /** Secondary tie-break: sum of pnl% */
+  /** Footnote only — never used to order ranked slots. */
   sum_pnl_pct: number
-  /** True when sample is below Researchy all-time floor (still may pass via 7d). */
-  thin_all_time: boolean
+  /** Below Researchy floor (hypothesis / low-n). */
+  hypothesis: boolean
+}
+
+export type BestStrategiesBoard = {
+  /** Passed Researchy min-n; ordered by avg×n+win% only. */
+  ranked: BestStrategyRankRow[]
+  /** Below floor — footnote / low-n only; never top slots. */
+  hypothesis: BestStrategyRankRow[]
 }
 
 /** Locked primary score: avg pnl% × n + win%. */
@@ -46,59 +60,42 @@ export function qualifiesResearchyMinN(
   )
 }
 
-export function rankBestStrategies(
-  breakdown: StrategyReportBreakdown[],
-  options?: {
-    topN?: number
-    names?: Record<string, string>
-    domains?: StrategyDomain[]
-    minN?: number
-  },
-): BestStrategyRankRow[] {
-  const topN = options?.topN ?? DEFAULT_BEST_STRATEGIES_TOP_N
-  const domainFilter = options?.domains ? new Set(options.domains) : null
-  const minN = options?.minN ?? 1
-
-  const rows: BestStrategyRankRow[] = []
-  for (const b of breakdown) {
-    if (b.trade_count < minN) continue
-    if (domainFilter && !domainFilter.has(b.domain)) continue
-    const winPct = b.win_rate * 100
-    const score = bestStrategyCompositeScore(
-      b.avg_pnl_pct,
-      b.trade_count,
-      winPct,
-    )
-    const nameKey = `${b.domain}|${b.strategy_id}`
-    rows.push({
-      strategy_id: b.strategy_id,
-      domain: b.domain,
-      name:
-        options?.names?.[nameKey] ??
-        options?.names?.[b.strategy_id] ??
-        b.strategy_id,
-      is_simulated: b.is_simulated,
-      n: b.trade_count,
-      avg_pnl_pct: b.avg_pnl_pct,
-      win_pct: winPct,
-      score,
-      sum_pnl_pct: b.total_pnl_pct,
-      thin_all_time: b.trade_count < RESEARCHY_MIN_N_ALL_TIME,
-    })
+function toRankRow(
+  b: StrategyReportBreakdown,
+  names: Record<string, string> | undefined,
+  allTimeN: number,
+  weekN: number,
+): BestStrategyRankRow {
+  const winPct = b.win_rate * 100
+  const n = b.trade_count
+  const nameKey = `${b.domain}|${b.strategy_id}`
+  const hypothesis = !qualifiesResearchyMinN(allTimeN, weekN)
+  return {
+    strategy_id: b.strategy_id,
+    domain: b.domain,
+    name:
+      names?.[nameKey] ?? names?.[b.strategy_id] ?? b.strategy_id,
+    is_simulated: b.is_simulated,
+    n,
+    all_time_n: allTimeN,
+    week_n: weekN,
+    avg_pnl_pct: b.avg_pnl_pct,
+    win_pct: winPct,
+    score: bestStrategyCompositeScore(b.avg_pnl_pct, n, winPct),
+    sum_pnl_pct: b.total_pnl_pct,
+    hypothesis,
   }
+}
 
-  rows.sort((a, b) => {
-    if (a.score !== b.score) return b.score - a.score
-    if (a.sum_pnl_pct !== b.sum_pnl_pct) return b.sum_pnl_pct - a.sum_pnl_pct
-    return a.strategy_id.localeCompare(b.strategy_id)
-  })
-
-  return rows.slice(0, topN)
+/** Sort by locked primary only; stable id for ties. sum% is never a sort key. */
+function sortByLockedPrimary(a: BestStrategyRankRow, b: BestStrategyRankRow): number {
+  if (a.score !== b.score) return b.score - a.score
+  return a.strategy_id.localeCompare(b.strategy_id)
 }
 
 /**
- * Merge all-time + 7d buckets: keep strategies that pass Researchy min-n,
- * score with all-time stats when available else 7d, then take top N.
+ * Build ranked + hypothesis boards from all-time and 7d breakdowns.
+ * Tiny-n (e.g. Sell-over-100 with small n) never enter `ranked`.
  */
 export function qualifyBestStrategies(params: {
   allTime: StrategyReportBreakdown[]
@@ -106,7 +103,7 @@ export function qualifyBestStrategies(params: {
   topN?: number
   names?: Record<string, string>
   domains?: StrategyDomain[]
-}): BestStrategyRankRow[] {
+}): BestStrategiesBoard {
   const topN = params.topN ?? DEFAULT_BEST_STRATEGIES_TOP_N
   const domainFilter = params.domains ? new Set(params.domains) : null
 
@@ -148,7 +145,7 @@ export function qualifyBestStrategies(params: {
         cur.total_pnl_pct = b.total_pnl_pct
       } else {
         cur.weekN = b.trade_count
-        // Prefer all-time for score; fill from week only if no all-time yet.
+        // Prefer all-time for score inputs; fill from week only if no all-time yet.
         if (cur.allTimeN === 0) {
           cur.avg_pnl_pct = b.avg_pnl_pct
           cur.win_rate = b.win_rate
@@ -162,11 +159,12 @@ export function qualifyBestStrategies(params: {
   ingest(params.allTime, 'all')
   ingest(params.week, 'week')
 
-  const eligible: StrategyReportBreakdown[] = []
+  const ranked: BestStrategyRankRow[] = []
+  const hypothesis: BestStrategyRankRow[] = []
+
   for (const agg of byKey.values()) {
-    if (!qualifiesResearchyMinN(agg.allTimeN, agg.weekN)) continue
     const n = agg.allTimeN > 0 ? agg.allTimeN : agg.weekN
-    eligible.push({
+    const breakdown: StrategyReportBreakdown = {
       strategy_id: agg.strategy_id,
       domain: agg.domain,
       is_simulated: agg.is_simulated,
@@ -178,12 +176,30 @@ export function qualifyBestStrategies(params: {
       median_pnl_pct: agg.avg_pnl_pct,
       total_pnl_pct: agg.total_pnl_pct,
       last_exit_at: null,
-    })
+    }
+    const row = toRankRow(
+      breakdown,
+      params.names,
+      agg.allTimeN,
+      agg.weekN,
+    )
+    if (row.hypothesis) {
+      hypothesis.push(row)
+    } else {
+      ranked.push(row)
+    }
   }
 
-  return rankBestStrategies(eligible, {
-    topN,
-    names: params.names,
-    minN: 1,
-  })
+  ranked.sort(sortByLockedPrimary)
+  hypothesis.sort(sortByLockedPrimary)
+
+  return {
+    ranked: ranked.slice(0, topN),
+    hypothesis,
+  }
+}
+
+/** Ranked strategy_ids only (Telegram blast gate). Hypothesis never included. */
+export function rankedBestStrategyIds(board: BestStrategiesBoard): string[] {
+  return [...new Set(board.ranked.map((r) => r.strategy_id))]
 }

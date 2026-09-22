@@ -1,22 +1,24 @@
 /**
- * Cached set of strategy_ids that currently qualify as “best” emitters
- * (Researchy min-n + locked avg×n+win% rank).
+ * Cached set of strategy_ids that currently qualify as “best” emitters.
+ * Researchy lock: avg×n+win% among strategies that pass min-n floors.
+ * Hypothesis / low-n never enter this set.
  */
 
 import { aggregateStrategyReports } from './db'
 import {
   DEFAULT_BEST_STRATEGIES_TOP_N,
   qualifyBestStrategies,
+  rankedBestStrategyIds,
   type BestStrategyRankRow,
+  type BestStrategiesBoard,
 } from './best-strategies-rank'
 import type { StrategyDomain } from './types'
 import { cacheGet, cacheSet } from '@/utils/redis-cache'
 
-const CACHE_KEY = 'best_strategies:qualified_ids_v1'
+const CACHE_KEY = 'best_strategies:qualified_ids_v2'
 const CACHE_TTL_S = 15 * 60
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000
 
-/** Domains that typically have outcomes (mcap principals are the high-n winners today). */
 const DEFAULT_DOMAINS: StrategyDomain[] = [
   'mcap_tracker',
   'trending_bot',
@@ -28,6 +30,8 @@ export type QualifiedBestStrategies = {
   refreshedAtMs: number
   ids: string[]
   rows: BestStrategyRankRow[]
+  /** Below-floor strategies (footnote only; never Telegram blast). */
+  hypothesis: BestStrategyRankRow[]
 }
 
 function readTopN(): number {
@@ -46,20 +50,20 @@ export async function refreshQualifiedBestStrategies(): Promise<QualifiedBestStr
     aggregateStrategyReports({ from: weekFrom }),
   ])
 
-  const rows = qualifyBestStrategies({
+  const board: BestStrategiesBoard = qualifyBestStrategies({
     allTime: allTime.breakdown,
     week: week.breakdown,
     topN,
     domains: DEFAULT_DOMAINS,
   })
 
-  // Collapse SIM/LIVE twins: any mode that qualifies counts the strategy_id.
-  const ids = [...new Set(rows.map((r) => r.strategy_id))]
+  const ids = rankedBestStrategyIds(board)
 
   const payload: QualifiedBestStrategies = {
     refreshedAtMs: Date.now(),
     ids,
-    rows,
+    rows: board.ranked,
+    hypothesis: board.hypothesis,
   }
   await cacheSet(CACHE_KEY, payload, CACHE_TTL_S)
   return payload
@@ -67,7 +71,7 @@ export async function refreshQualifiedBestStrategies(): Promise<QualifiedBestStr
 
 export async function getQualifiedBestStrategyIds(): Promise<Set<string>> {
   const cached = await cacheGet<QualifiedBestStrategies>(CACHE_KEY)
-  if (cached?.ids?.length) {
+  if (cached?.ids) {
     return new Set(cached.ids)
   }
   const fresh = await refreshQualifiedBestStrategies()
