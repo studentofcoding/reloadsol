@@ -3,11 +3,12 @@ import { log } from '@/utils/unified-logger'
 import { fetchAndScoreSignals, type ScoredSignal } from '@/strategies/signals-pipeline'
 import {
   attachPatternShadowToAlert,
-  emitSignalsEarlyAlertsFromScored,
+  emitSignalsEarlyAlertsFromScoredAsync,
   shouldEmitSignalsEarlyAlert,
 } from '@/strategies/signals-early-alerts'
 import { attachClosedLoopScoresToSignals } from '@/strategies/signals-early-closed-loop'
 import { isEarlyEnterMlSoftGateEnabled } from '@/strategies/signals-early-ml-gate'
+import { isEarlyEnterNoulShadowEnabled } from '@/strategies/early-enter-noul-shadow'
 import {
   getCachedStage1PatternScore,
   scoreStage1PatternBatch,
@@ -81,13 +82,37 @@ export async function GET(request: NextRequest) {
 
     // Pattern ML shadow on Stage-1 candidates (display only; never gates enter)
     const withPattern = await enrichSignalsWithPatternShadow(rawSignals)
-    const signals = isEarlyEnterMlSoftGateEnabled()
+    // Closed-loop scores for soft gate and/or Noul shadow state.
+    const needClosedLoop =
+      isEarlyEnterMlSoftGateEnabled() || isEarlyEnterNoulShadowEnabled()
+    const signals = needClosedLoop
       ? await attachClosedLoopScoresToSignals(withPattern, { chain })
       : withPattern
 
+    // Active locked mcap arms for Noul scope (first_seen / at_80 / _rh twins).
+    let activeNoulStrategyKeys: string[] = []
+    if (isEarlyEnterNoulShadowEnabled()) {
+      try {
+        const { getMergedMcapTrackerRegistry } = await import(
+          '@/strategies/load-mcap-tracker'
+        )
+        const registry = await getMergedMcapTrackerRegistry(chain)
+        const mcapIds =
+          chain === 'robinhood'
+            ? (['mcap_enter_first_seen_rh', 'mcap_enter_at_80_rh'] as const)
+            : (['mcap_enter_first_seen', 'mcap_enter_at_80'] as const)
+        activeNoulStrategyKeys = mcapIds.filter((id) => registry[id]?.is_active)
+      } catch (err) {
+        console.error('[signals] noul arm registry load failed:', err)
+      }
+    }
+
     // Stage-1 copy-trade alerts: enter + growth < 100% (24h dedup; safe on UI + worker polls)
     // Soft gate (closed-loop mlScore ≥ 0.55) runs inside emit, before record.
-    const earlyAlerts = emitSignalsEarlyAlertsFromScored(signals, chain)
+    // Noul shadow sits beside soft gate (log-only until EARLY_ENTER_NOUL_SOFT_ACTIVE).
+    const earlyAlerts = await emitSignalsEarlyAlertsFromScoredAsync(signals, chain, {
+      activeNoulStrategyKeys,
+    })
     if (earlyAlerts.length > 0) {
       const { sendSignalsEarlyEnterAlert } = await import('@/utils/telegram')
       const { insertSocialEvents } = await import('@/strategies/social/db')

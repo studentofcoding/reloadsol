@@ -34,6 +34,7 @@ import OutcomeReviewModal, {
 } from "@/components/strategies/OutcomeReviewModal";
 import CombinedScoreWeightsPanel from "@/components/strategies/CombinedScoreWeightsPanel";
 import EvalEnginePanel from "@/components/strategies/EvalEnginePanel";
+import EarlyEnterNoulShadowPanel from "@/components/strategies/EarlyEnterNoulShadowPanel";
 import Ml2ExitOverlayPanel from "@/components/strategies/Ml2ExitOverlayPanel";
 import StrategyReviewPanel from "@/components/strategies/StrategyReviewPanel";
 import ScrollableMenuRow from "@/components/ScrollableMenuRow";
@@ -3406,6 +3407,9 @@ function StrategyConfigTab({
         onNotify={(kind, title, detail) => onToast(kind, title, detail ?? "")}
       />
       <EvalEnginePanel
+        onNotify={(kind, title, detail) => onToast(kind, title, detail ?? "")}
+      />
+      <EarlyEnterNoulShadowPanel
         onNotify={(kind, title, detail) => onToast(kind, title, detail ?? "")}
       />
       <Ml2ExitOverlayPanel
