@@ -22,7 +22,7 @@ function bar(
 }
 
 describe('renderOhlcCandlesPng sharp failure', () => {
-  it('returns null and does not throw when sharp cannot encode', async () => {
+  it('returns null when sharp loaded but PNG encode throws', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const png = await renderOhlcCandlesPng(
       [bar(1, 1, 1.2, 0.9, 1.1), bar(2, 1.1, 1.3, 1.0, 0.95)],

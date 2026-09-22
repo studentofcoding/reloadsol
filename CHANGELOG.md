@@ -10,9 +10,9 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed — Linux web image no longer loads Darwin `sharp` (exit 139 / CF 522)
 
-- `Dockerfile.web` installs the lockfile `sharp` build for `linux`/`x64` glibc after the standalone copy and deletes `@img/sharp-darwin-*`. A Mac `next build` traces the Darwin `.node`; dlopen of that Mach-O in `reloadsol-web` was SIGSEGV (exit 139) and Cloudflare 522 while Docker restarted the origin.
+- `Dockerfile.web` replaces traced `sharp` with the lockfile build for `linux`/`x64` glibc (`NEXT_SHARP_PATH=/app/node_modules/sharp`) and deletes `@img/sharp-darwin-*`. The image build encodes a PNG with that binary and fails if it cannot. A Mac `next build` traces the Darwin `.node`; dlopen of that Mach-O in `reloadsol-web` was SIGSEGV (exit 139) and Cloudflare 522 while Docker restarted the origin.
 - `scripts/ship-standalone-to-vps.sh` strips those Darwin packages from the shipped tree (same idea as the onnxruntime native-lib note: a Mac ship must not leave the wrong binary as the only one). `sharp` is a `serverExternalPackages` entry so the runtime loads `/app/node_modules/sharp`.
-- Strategy open/close Telegram is scheduled with Next `after()` (or `setImmediate` outside a request) so chart encode is not on the HTTP turn. `renderOhlcCandlesPng` dynamic-imports `sharp` only after the platform `.node` looks loadable; a missing or Mach-O binding skips the PNG and the close still sends text.
+- Strategy open/close Telegram is scheduled with Next `after()` (or `setImmediate` outside a request) so chart encode is not on the HTTP turn. Close charts still render as PNG when `sharp` loads. Text is only for an empty SVG or a PNG encode error after that load. The image build fails if linux-x64 `sharp` cannot encode a PNG.
 
 ### Added — Noul shadow token funnel analytics
 

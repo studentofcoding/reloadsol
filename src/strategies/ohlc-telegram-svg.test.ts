@@ -1,9 +1,5 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
-  isLoadableSharpNativeBinary,
   renderOhlcCandlesPng,
   renderOhlcCandlesSvg,
 } from './ohlc-telegram-svg'
@@ -60,26 +56,6 @@ describe('renderOhlcCandlesSvg', () => {
 
   it('returns null for empty bars', async () => {
     expect(await renderOhlcCandlesPng([])).toBeNull()
-  })
-
-  it('accepts only this platform native magic', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'sharp-magic-'))
-    const elf = join(dir, 'elf.node')
-    const macho = join(dir, 'macho.node')
-    try {
-      writeFileSync(elf, Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0, 0, 0, 0]))
-      writeFileSync(macho, Buffer.from([0xcf, 0xfa, 0xed, 0xfe, 0, 0, 0, 0]))
-      expect(isLoadableSharpNativeBinary(join(dir, 'missing.node'))).toBe(false)
-      if (process.platform === 'linux') {
-        expect(isLoadableSharpNativeBinary(elf)).toBe(true)
-        expect(isLoadableSharpNativeBinary(macho)).toBe(false)
-      } else if (process.platform === 'darwin') {
-        expect(isLoadableSharpNativeBinary(elf)).toBe(false)
-        expect(isLoadableSharpNativeBinary(macho)).toBe(true)
-      }
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
   })
 
   it('rasterizes PNG via sharp', async () => {

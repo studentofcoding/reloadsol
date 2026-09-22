@@ -125,21 +125,12 @@ export async function sendTelegramOhlcPhotoOrText(params: {
   chatId?: string
   inlineKeyboard?: Array<Array<TelegramInlineButton>>
 }): Promise<SendTelegramOhlcResult> {
-  let bars: OhlcRugBar[] = []
-  let png: Buffer | null = null
-  try {
-    const loaded = await loadAndRenderOhlcPng(
-      params.tokenAddress,
-      params.symbol,
-    )
-    bars = loaded.bars
-    png = loaded.png
-  } catch (err) {
-    console.warn(
-      '[ohlc-telegram-paint] chart encode failed; text-only',
-      err instanceof Error ? err.message : String(err),
-    )
-  }
+  // sharp load failures reject. Text is only for an empty series or an
+  // encode error after sharp has loaded (png === null).
+  const { bars, png } = await loadAndRenderOhlcPng(
+    params.tokenAddress,
+    params.symbol,
+  )
 
   if (png) {
     try {
