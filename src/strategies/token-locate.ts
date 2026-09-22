@@ -15,6 +15,13 @@ import { formatJupiterTokenLink } from '@/utils/telegram'
 import { resolveTrackerStrategyId } from '@/utils/trading-simulation'
 import { loadStrategyDefinitionRows } from './db'
 import { fetchRecentSocialEvents, fetchSocialRollup } from './social/db'
+import { mcapTrackedAlgoTesterHref } from '@/utils/tracker-label'
+
+export {
+  isTrackedMcapPresence,
+  mcapTrackedAlgoTesterHref,
+  strategyPresenceTitle,
+} from '@/utils/tracker-label'
 
 export type RawSectionDataTier = 'raw' | 'jupiter_enriched' | 'internal'
 
@@ -41,6 +48,10 @@ export type StrategyPresence = {
   recordCount?: number
   lastSeenAt?: string
   deepLink?: string
+  /** Lane link text. Tracking-only rows use "Open positions"; others stay Open. */
+  linkLabel?: string
+  /** Shown under the row. Tracking-only: not an open strategy. */
+  note?: string
 }
 
 export type JupiterEnrichment = {
@@ -245,6 +256,7 @@ function nameFor(
 
 function buildStrategyPresence(params: {
   address: string
+  chain?: GmgnTradeChain
   links: TokenLocateResult['links']
   nameMap: Map<string, string>
   outcomeGroups: Record<string, unknown>[]
@@ -260,6 +272,7 @@ function buildStrategyPresence(params: {
   const presence: StrategyPresence[] = []
   const {
     address,
+    chain,
     links,
     nameMap,
     outcomeGroups,
@@ -301,13 +314,16 @@ function buildStrategyPresence(params: {
   }
 
   if (mcapRow) {
+    const mint = toStr(mcapRow.token_address) ?? address
     presence.push({
       domain: 'mcap_tracker',
       strategyId: null,
       strategyName: null,
       source: 'token_mcap_tracking',
       label: toStr(mcapRow.label),
-      deepLink: links.algoTester,
+      deepLink: mcapTrackedAlgoTesterHref(mint, chain),
+      linkLabel: 'Open positions',
+      note: 'Tracked on MCap — not an open strategy',
     })
   }
 
@@ -617,6 +633,7 @@ export async function locateTokenByAddress(
 
   const strategyPresence = buildStrategyPresence({
     address,
+    chain,
     links,
     nameMap,
     outcomeGroups,

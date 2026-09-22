@@ -3,6 +3,10 @@
 import TokenMapActivityRow from '@/components/token-locate/TokenMapActivityRow'
 import type { StrategyPresence } from '@/strategies/token-locate'
 import type { TokenMapActivityItem, TokenMapDomain } from '@/strategies/token-map-types'
+import {
+  strategyPresenceTitle,
+  trackerLabelDisplay,
+} from '@/utils/tracker-label'
 
 export default function TokenMapLane({
   domain,
@@ -19,6 +23,12 @@ export default function TokenMapLane({
 }) {
   const present = presence.length > 0
   const primary = presence[0]
+  const headerChip = present
+    ? trackerLabelDisplay(primary?.label) ??
+      primary?.label ??
+      primary?.status ??
+      'present'
+    : 'absent'
 
   return (
     <section className="flex w-72 shrink-0 flex-col rounded-lg border border-gray-700 bg-gray-950/60">
@@ -32,7 +42,7 @@ export default function TokenMapLane({
                 : 'bg-gray-800 text-gray-500'
             }`}
           >
-            {present ? primary?.label ?? primary?.status ?? 'present' : 'absent'}
+            {headerChip}
           </span>
         </div>
         <p className="mt-0.5 font-mono text-xs text-gray-600">{domain}</p>
@@ -41,18 +51,23 @@ export default function TokenMapLane({
             {presence.slice(0, 3).map((row, i) => (
               <div
                 key={`${row.source}-${row.strategyId ?? i}`}
-                className="flex items-center justify-between gap-2 text-xs text-gray-400"
+                className="text-xs text-gray-400"
               >
-                <span className="truncate">
-                  {row.strategyName ?? row.strategyId ?? row.source}
-                </span>
-                {row.deepLink ? (
-                  <a
-                    href={row.deepLink}
-                    className="shrink-0 text-blue-400 hover:underline"
-                  >
-                    Open
-                  </a>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate">{strategyPresenceTitle(row)}</span>
+                  {row.deepLink ? (
+                    <a
+                      href={row.deepLink}
+                      className="shrink-0 text-blue-400 hover:underline"
+                    >
+                      {row.linkLabel ?? 'Open'}
+                    </a>
+                  ) : null}
+                </div>
+                {row.note ? (
+                  <p className="mt-0.5 text-[11px] leading-snug text-gray-500">
+                    {row.note}
+                  </p>
                 ) : null}
               </div>
             ))}

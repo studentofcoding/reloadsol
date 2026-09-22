@@ -21,6 +21,7 @@
     "ml:backfill-labels": "npx tsx scripts/backfill-ml-labels.ts",
     "ml:train-closed-loop": "npx tsx scripts/train-closed-loop-ml.ts",
     "ml:eval-scan": "npx tsx scripts/eval-engine-scan.ts",
+    "mcap:backfill-labels": "npx tsx scripts/backfill-mcap-labels.ts",
     "mcap:raptor-trade": "npx tsx scripts/mcap-raptor-trade.ts",
     "mcap:strategy-search": "npx tsx scripts/mcap-strategy-search.ts",
     "mcap:strategy-search:optuna": "cd ml && python3 mcap_strategy_search_optuna.py",

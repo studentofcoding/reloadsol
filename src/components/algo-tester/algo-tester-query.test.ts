@@ -219,6 +219,21 @@ describe("filterAlgoPositions", () => {
     const filtered = filterAlgoPositions(rows, { strategyId: "att" });
     expect(filtered.map((p) => p.id)).toEqual(["t1"]);
   });
+
+  it("hides other mints when tokenAddress is set", () => {
+    const minted = [
+      pos({ id: "a", domain: "mcap_tracker", tokenAddress: "MintA" }),
+      pos({ id: "b", domain: "mcap_tracker", tokenAddress: "MintB" }),
+      pos({ id: "c", domain: "signals", tokenAddress: "minta" }),
+    ];
+    const filtered = filterAlgoPositions(minted, { tokenAddress: "MintA" });
+    expect(filtered.map((p) => p.id)).toEqual(["a"]);
+  });
+
+  it("keeps every row when tokenAddress is empty", () => {
+    const filtered = filterAlgoPositions(rows, { tokenAddress: "  " });
+    expect(filtered).toHaveLength(rows.length);
+  });
 });
 
 describe("openPositionsEmptyCopy", () => {
@@ -226,6 +241,13 @@ describe("openPositionsEmptyCopy", () => {
     expect(openPositionsEmptyCopy({ domain: "mcap_tracker" })).toBe(
       "No open mcap_tracker positions",
     );
+  });
+
+  it("names the mint when domain and tokenAddress are set", () => {
+    const mint = "AVXPQqxd32ABAP5F7shHKNeWBpos9miktdH3uKqgXYJZ";
+    expect(
+      openPositionsEmptyCopy({ domain: "mcap_tracker", tokenAddress: mint }),
+    ).toBe(`No open mcap_tracker positions for ${mint}`);
   });
 });
 

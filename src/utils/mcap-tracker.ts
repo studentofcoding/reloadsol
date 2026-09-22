@@ -56,6 +56,13 @@ export interface McapTrackingResult {
 
 // Cache for MCap data to avoid frequent database calls
 const mcapCache = new Map<string, McapSnapshot>()
+
+/**
+ * Set only when applyAutoLabelsFromMilestones changes the label to
+ * potential or rugged. Consumed after that row is persisted.
+ * Keyed by object identity so a later copy does not recapture.
+ */
+const pendingAutoLabelOhlc = new WeakMap<McapSnapshot, 'potential' | 'rugged'>()
 const CACHE_TTL_MS = 2 * 60 * 1000 // 2 minutes cache
 
 // Update stuck detection defaults to 6 hours (env override still applies)
@@ -421,7 +428,66 @@ export function applyMcapSessionUpdates(
   const peakChanged = updatePeakMcap(record, currentMcap, growthPercent, nowIso)
   const thresholdsChanged = updateThresholdTimestamps(record, growthPercent, nowIso)
   const labelChanged = applyAutoLabelsFromMilestones(record)
+  if (
+    labelChanged &&
+    (record.label === 'potential' || record.label === 'rugged')
+  ) {
+    pendingAutoLabelOhlc.set(record, record.label)
+  }
   return peakChanged || thresholdsChanged || labelChanged
+}
+
+/**
+ * OHLC corpus card after a real auto-label transition. Fail-soft:
+ * empty bars or a fetch error do not change token_mcap_tracking.label.
+ */
+export async function capturePendingMcapAutoLabelOhlc(
+  record: McapSnapshot,
+): Promise<void> {
+  const pending = pendingAutoLabelOhlc.get(record)
+  if (pending !== 'potential' && pending !== 'rugged') return
+  if (record.label !== pending) return
+  pendingAutoLabelOhlc.delete(record)
+  try {
+    const { captureSignalOhlcLabel } = await import(
+      '@/strategies/signal-ohlc-labels'
+    )
+    await captureSignalOhlcLabel({
+      tokenAddress: record.token_address,
+      label: pending,
+      tokenSymbol: record.token_symbol,
+      source: 'mcap_auto_label',
+    })
+  } catch (error) {
+    log.warn('price_tracking', 'OHLC capture failed after auto-label', {
+      tokenAddress: record.token_address,
+      label: pending,
+      error: error instanceof Error ? error.message : String(error),
+    })
+  }
+}
+
+/** Manual PUT of potential. Rug already captures inside markTokenRug. */
+export async function captureManualMcapPotentialOhlc(
+  tokenAddress: string,
+  tokenSymbol?: string | null,
+): Promise<void> {
+  try {
+    const { captureSignalOhlcLabel } = await import(
+      '@/strategies/signal-ohlc-labels'
+    )
+    await captureSignalOhlcLabel({
+      tokenAddress,
+      label: 'potential',
+      tokenSymbol,
+      source: 'mcap_label_manual',
+    })
+  } catch (error) {
+    log.warn('price_tracking', 'OHLC capture failed after manual potential', {
+      tokenAddress,
+      error: error instanceof Error ? error.message : String(error),
+    })
+  }
 }
 
 // Function to send Discord notification for growth threshold
@@ -1175,9 +1241,11 @@ async function insertMcapRecord(record: McapSnapshot): Promise<InsertMcapResult>
 
 // Helper function to update MCap record
 async function updateMcapInDatabase(record: McapSnapshot, includeThresholds: boolean = true): Promise<void> {
+  let includeLabel = false
   try {
     await ensureMcapEntryMetaColumns()
     const repairedTimeline = normalizeTrackingTimeline(record)
+    includeLabel = (repairedTimeline || includeThresholds) && record.label != null
     const sets = [
       'current_mcap = $2',
       'last_updated_at = $3',
@@ -1215,7 +1283,7 @@ async function updateMcapInDatabase(record: McapSnapshot, includeThresholds: boo
       params.push(record.peak_growth_percent ?? null)
       sets.push(`peak_seen_at = $${paramIdx++}`)
       params.push(record.peak_seen_at ?? null)
-      if (record.label != null) {
+      if (includeLabel) {
         sets.push(`label = $${paramIdx++}`)
         params.push(record.label)
       }
@@ -1250,6 +1318,11 @@ async function updateMcapInDatabase(record: McapSnapshot, includeThresholds: boo
       tokenSymbol: record.token_symbol,
       includeThresholds
     })
+    return
+  }
+
+  if (includeLabel) {
+    void capturePendingMcapAutoLabelOhlc(record)
   }
 }
 

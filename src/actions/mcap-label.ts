@@ -4,7 +4,7 @@ import { updateTag } from 'next/cache';
 import { requireActionSession } from './auth';
 import { CACHE_TAGS } from '@/lib/cache-tags';
 import { query, queryOne } from '@/utils/db';
-import { TokenLabel } from '@/utils/mcap-tracker';
+import { captureManualMcapPotentialOhlc, TokenLabel } from '@/utils/mcap-tracker';
 import { log } from '@/utils/unified-logger';
 import { markTokenRug } from '@/utils/rug-list/service';
 import { removeRugEntry } from '@/utils/rug-list/db';
@@ -69,6 +69,10 @@ export async function setMcapTokenLabel(
     });
   } else if (existingToken.label === 'rugged') {
     await removeRugEntry(tokenAddress);
+  }
+
+  if (label === 'potential') {
+    await captureManualMcapPotentialOhlc(tokenAddress, existingToken.token_symbol);
   }
 
   log.info('api_request', 'Successfully updated token label', {
