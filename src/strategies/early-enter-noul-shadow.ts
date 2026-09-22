@@ -27,6 +27,87 @@ export type NoulShadowBand =
 export type NoulShadowDecision = 'keep' | 'suppress' | 'follow_spec'
 export type NoulSpecDecision = 'keep' | 'suppress'
 
+const NOUL_SHADOW_BANDS: ReadonlySet<string> = new Set([
+  'suppress',
+  'mid',
+  'keep',
+  'skipped_null',
+  'api_miss',
+])
+
+export function isNoulShadowBand(value: string): value is NoulShadowBand {
+  return NOUL_SHADOW_BANDS.has(value)
+}
+
+/** Operator-facing filter reason (band skipped_null → null_ml). */
+export type NoulFilterReason =
+  | 'null_ml'
+  | 'mid'
+  | 'suppress'
+  | 'keep'
+  | 'api_miss'
+
+export function filterReasonFromBand(band: NoulShadowBand): NoulFilterReason {
+  if (band === 'skipped_null') return 'null_ml'
+  return band
+}
+
+/** SPEC §7 / #54 flip bars (shadow → soft-active readiness). */
+export const FLIP_N_MIN = 500
+export const FLIP_AGREEMENT_MIN = 0.85
+export const FLIP_MID_MAX = 0.2
+
+export type FlipArmFamily = 'first_seen' | 'at_80'
+
+export function flipArmFamilyFromStrategyKey(
+  strategyKey: string,
+): FlipArmFamily | null {
+  if (strategyKey.includes('first_seen')) return 'first_seen'
+  if (strategyKey.includes('at_80')) return 'at_80'
+  return null
+}
+
+export const FIRST_SEEN_STRATEGY_KEYS = [
+  'mcap_enter_first_seen',
+  'mcap_enter_first_seen_rh',
+] as const
+
+export const AT_80_STRATEGY_KEYS = [
+  'mcap_enter_at_80',
+  'mcap_enter_at_80_rh',
+] as const
+
+export function strategyKeysForArmFamily(
+  arm: FlipArmFamily,
+): readonly string[] {
+  return arm === 'first_seen' ? FIRST_SEEN_STRATEGY_KEYS : AT_80_STRATEGY_KEYS
+}
+
+export type FlipBarCheck = {
+  nOk: boolean
+  agreementOk: boolean
+  midOk: boolean
+  /** All three bars met (shadow sample ready for #54 consider). */
+  ready: boolean
+}
+
+export function evaluateFlipBars(opts: {
+  total: number
+  agreementRate: number | null
+  midBandRate: number | null
+}): FlipBarCheck {
+  const nOk = opts.total >= FLIP_N_MIN
+  const agreementOk =
+    opts.agreementRate != null &&
+    Number.isFinite(opts.agreementRate) &&
+    opts.agreementRate >= FLIP_AGREEMENT_MIN
+  const midOk =
+    opts.midBandRate != null &&
+    Number.isFinite(opts.midBandRate) &&
+    opts.midBandRate <= FLIP_MID_MAX
+  return { nOk, agreementOk, midOk, ready: nOk && agreementOk && midOk }
+}
+
 export type EarlyEnterNoulStrategyKey =
   | 'mcap_enter_first_seen'
   | 'mcap_enter_at_80'
