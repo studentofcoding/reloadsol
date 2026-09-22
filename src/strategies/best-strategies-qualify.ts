@@ -84,3 +84,16 @@ export async function isQualifiedBestStrategy(
   const ids = await getQualifiedBestStrategyIds()
   return ids.has(strategyId)
 }
+
+/** Rank place (1-based) + row for a strategy in the current ranked board. */
+export async function getQualifiedBestStrategyRank(
+  strategyId: string,
+): Promise<{ place: number; row: BestStrategyRankRow } | null> {
+  const cached = await cacheGet<QualifiedBestStrategies>(CACHE_KEY)
+  const payload = cached?.rows?.length
+    ? cached
+    : await refreshQualifiedBestStrategies()
+  const idx = payload.rows.findIndex((r) => r.strategy_id === strategyId)
+  if (idx < 0) return null
+  return { place: idx + 1, row: payload.rows[idx]! }
+}

@@ -312,51 +312,36 @@ async function openSimPosition(params: {
     )
     const notify = await getStrategyNotifyFlags('mcap_tracker', manualStrategyId)
     const isBest = await isQualifiedBestStrategy(manualStrategyId)
-    const wantUi = notify.ui
-    const wantTg = Boolean(notify.telegram && isBest)
-    if (wantUi || wantTg) {
-      // Shared 24h mint+strategy slot for UI toast + best-share Telegram.
-      const fresh = claimSimOpenDedup(manualStrategyId, params.mintAddress)
-      if (fresh) {
-        if (wantUi) {
-          pushSimOpenAlertAfterClaim({
-            strategyId: manualStrategyId,
-            tokenAddress: params.mintAddress,
-            tokenSymbol: params.symbol,
-            entryMcap: params.entryMcap,
-            entryAt: params.entryAt,
-            entryTemplate: params.entryTemplate,
-          })
-        }
-        if (wantTg) {
-          const feats = scoredEntryFeatures ?? {}
-          const readNum = (...keys: string[]): number | null => {
-            for (const key of keys) {
-              const v = feats[key]
-              if (typeof v === 'number' && Number.isFinite(v)) return v
-            }
-            return null
-          }
-          try {
-            const { sendBestStrategyShareTelegram } = await import(
-              '@/strategies/best-strategies-share-notify'
-            )
-            await sendBestStrategyShareTelegram({
-              strategyId: manualStrategyId,
-              domain: 'mcap_tracker',
-              tokenSymbol: params.symbol,
-              tokenAddress: params.mintAddress,
-              entryMcap: params.entryMcap,
-              entryAt: params.entryAt,
-              organicScore: params.snapshot.organic_score,
-              topHoldersPct: params.snapshot.top_holders_pct,
-              sm: readNum('sm', 'sm_count', 'smart_money_count'),
-              kol: readNum('kol', 'kol_count'),
-            })
-          } catch (err) {
-            console.error('[mcap-sim-open] best-strategy telegram failed:', err)
-          }
-        }
+
+    // UI toast (Stage-2 sim open) — separate from follow-alert Telegram.
+    if (notify.ui) {
+      const freshUi = claimSimOpenDedup(manualStrategyId, params.mintAddress)
+      if (freshUi) {
+        pushSimOpenAlertAfterClaim({
+          strategyId: manualStrategyId,
+          tokenAddress: params.mintAddress,
+          tokenSymbol: params.symbol,
+          entryMcap: params.entryMcap,
+          entryAt: params.entryAt,
+          entryTemplate: params.entryTemplate,
+        })
+      }
+    }
+
+    // Follow alert only — not entry / soft-gate / Noul / paper.
+    if (notify.telegram && isBest) {
+      try {
+        const { sendBestStrategyFollowAlert } = await import(
+          '@/strategies/best-strategies-share-notify'
+        )
+        await sendBestStrategyFollowAlert({
+          strategyId: manualStrategyId,
+          tokenSymbol: params.symbol,
+          tokenAddress: params.mintAddress,
+          mcap: params.entryMcap,
+        })
+      } catch (err) {
+        console.error('[mcap-sim-open] follow alert failed:', err)
       }
     }
   } else {

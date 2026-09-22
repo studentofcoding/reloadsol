@@ -10,10 +10,10 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed — best-strategy Telegram is mint share + OHLC, not a ranking digest
 
-- When a strategy that currently qualifies as **best** (locked rank `avg pnl% × n + win%`; Researchy floors all-time n≥30 or 7d n≥10) opens a mint on the mcap Stage-2 path, Telegram gets a copy-trade alert with OHLC (`sendMcapSimManualTradeAlert` / `ohlc-telegram-paint`).
-- Below floor → hypothesis / low-n only (never ranked Telegram blast slots; e.g. Sell-over-100 tiny-n). **sum%** is footnote only, not a rank key.
-- Early Enter lists only best-qualified mcap arms beside signals. Dedup remains 24h per strategy+mint.
-- Qualified set is Redis-cached ~15m (`best-strategies-qualify.ts`). Uses existing `TELEGRAM_*` env.
+- **Follow alert only** (not auto-enter / paper / soft-gate / Noul): when a Researchy-qualified best arm (`first_seen` / `80%`) hits a mint on Stage-2 open, Telegram gets a follow blast with arm name, **avg×n+win%** rank context, and chart link.
+- Thin Sol OHLC → **GMGN chart URL** (no sparse OHLC image). Dense OHLC → photo via `ohlc-telegram-paint`.
+- Mint+arm cooldown (24h) blocks duplicate follow blasts. UI Stage-2 toast stays separate.
+- Below Researchy floor → hypothesis only (never ranked blast). sum% footnote only.
 
 ### Changed — low-RAM VPS deploys skip host `next build`
 
