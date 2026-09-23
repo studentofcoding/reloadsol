@@ -26,6 +26,7 @@ import {
   trackerHistoryHasVolume,
 } from './trade-window-chart-data'
 import { isOpenTrackerPosition, resolveTrackerStrategyId } from '@/utils/trading-simulation'
+import { coerceIsoTimestamp } from '@/utils/datetime'
 import {
   computeBestTradeWindows,
   DEFAULT_REPORT_TIMEZONE,
@@ -398,7 +399,11 @@ export async function loadMcapSimClosedOutcomeKeys(
   }
 }
 
+const REGIME_TAG_DATE = /^\d{4}-\d{2}-\d{2}$/
+
 export async function loadRegimeTagForDate(tagDate: string): Promise<string | null> {
+  // Date#toString().slice(0, 10) is "Wed Sep 02", which errors on a date column and spams logs.
+  if (!REGIME_TAG_DATE.test(tagDate)) return null
   try {
     const row = await queryOne<{ regime_tag: string | null }>(
       `SELECT regime_tag FROM market_regime_tags WHERE tag_date = $1 LIMIT 1`,
@@ -516,30 +521,34 @@ export async function insertStrategyOutcome(params: {
   status?: string | null
   is_simulated?: boolean
   features?: Record<string, unknown> | null
-}): Promise<void> {
+}): Promise<boolean> {
   const chain = params.chain ?? 'sol'
-  if (
-    params.domain === 'mcap_tracker' &&
-    params.token_address &&
-    params.entry_at
-  ) {
+  const entryAt = coerceIsoTimestamp(params.entry_at)
+  const exitProvided = params.exit_at != null && String(params.exit_at).trim() !== ''
+  const coercedExit = coerceIsoTimestamp(params.exit_at)
+  if (exitProvided && !coercedExit) {
+    console.warn('[strategies/db] outcome insert skipped: unparseable exit_at')
+    return false
+  }
+  const exitAt = coercedExit ?? new Date().toISOString()
+
+  if (params.domain === 'mcap_tracker' && params.token_address && entryAt) {
     const exists = await strategyOutcomeExists({
       strategy_id: params.strategy_id,
       domain: params.domain,
       chain,
       token_address: params.token_address,
-      entry_at: params.entry_at,
+      entry_at: entryAt,
     })
-    if (exists) return
+    if (exists) return true
   }
 
-  const exitAt = params.exit_at ?? new Date().toISOString()
   let features = params.features ?? {}
 
-  if (params.token_address && params.entry_at && params.domain !== 'dlmm') {
+  if (params.token_address && entryAt && params.domain !== 'dlmm') {
     features = await enrichOutcomeFeaturesWithTracker({
       tokenAddress: params.token_address,
-      entryAt: params.entry_at,
+      entryAt,
       exitAt,
       features,
     })
@@ -562,7 +571,7 @@ export async function insertStrategyOutcome(params: {
     poolAddress:
       poolFromFeatures ??
       (params.domain === 'dlmm' && !mintFromFeatures ? params.token_address : null),
-    entryAt: params.entry_at,
+    entryAt,
   })
 
   try {
@@ -577,7 +586,7 @@ export async function insertStrategyOutcome(params: {
         params.strategy_id,
         params.domain,
         params.token_address,
-        params.entry_at ?? null,
+        entryAt,
         exitAt,
         params.pnl_pct ?? null,
         params.status ?? null,
@@ -609,10 +618,12 @@ export async function insertStrategyOutcome(params: {
     }
   } catch (error) {
     if (isMissingSchemaError(error)) {
-      return
+      return false
     }
     console.warn('[strategies/db] outcome insert failed:', errorMessage(error))
+    return false
   }
+  return true
 }
 
 export async function listStrategyOutcomes(params: {

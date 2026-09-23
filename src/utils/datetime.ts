@@ -31,6 +31,32 @@ export function toUtcIso(date: Date = new Date()): string {
   return date.toISOString()
 }
 
+/**
+ * UTC ISO-8601 for Postgres timestamptz binds.
+ * Accepts Date, epoch ms, ISO strings, and Date#toString()
+ * (`Wed Sep 02 2026 14:23:45 GMT+0700 (Indochina Time)`).
+ * Returns null when the value cannot be parsed — never pass that through to SQL.
+ * A bare `Date#toString().slice(0, 10)` (`Wed Sep 02`) is rejected: `Date.parse`
+ * treats it as year 2001.
+ */
+export function coerceIsoTimestamp(value: unknown): string | null {
+  if (value == null || value === '') return null
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString()
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return null
+    const parsed = new Date(value)
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
+  }
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if (!trimmed || !/\b(?:19|20)\d{2}\b/.test(trimmed)) return null
+  const parsed = new Date(trimmed)
+  if (Number.isNaN(parsed.getTime())) return null
+  return parsed.toISOString()
+}
+
 export function parseInstant(value: string | number | Date): Date {
   if (value instanceof Date) {
     return value
