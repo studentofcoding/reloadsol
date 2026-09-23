@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildJupiterSwapQuoteUrl,
+  jupiterExecuteSignature,
+  JupiterSwapQuoteError,
   mapJupiterOrderToDisplay,
   mapJupiterSwapDisplayToSwapQuote,
 } from '@/utils/jupiter-swap-quote'
@@ -50,6 +52,24 @@ describe('buildJupiterSwapQuoteUrl', () => {
     })
     expect(url).toContain('priorityFeeLamports=3000000')
     expect(url).toContain('broadcastFeeType=maxCap')
+  })
+})
+
+describe('jupiterExecuteSignature', () => {
+  it('returns the signature on Success', () => {
+    expect(
+      jupiterExecuteSignature({ status: 'Success', signature: 'sig-1', code: 0 }),
+    ).toBe('sig-1')
+  })
+
+  it('throws when execute failed so the caller can fall back', () => {
+    expect(() =>
+      jupiterExecuteSignature({
+        status: 'Failed',
+        code: -1000,
+        error: 'Failed to land',
+      }),
+    ).toThrow(JupiterSwapQuoteError)
   })
 })
 

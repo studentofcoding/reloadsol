@@ -1,6 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { VersionedTransaction, type Connection } from "@solana/web3.js";
-import { RaptorAPIError } from "@/utils/solanatracker-raptor";
 
 vi.mock("@/utils/rpc-rate-limit", () => ({
   waitForRpcRateLimit: vi.fn().mockResolvedValue(undefined),
@@ -42,6 +41,8 @@ vi.mock("@/utils/jupiter-swap-quote", async (importOriginal) => {
     prepareJupiterSwapOrder: vi.fn(),
     fetchJupiterSwapQuoteDirect: vi.fn(),
     fetchJupiterSwapQuote: vi.fn(),
+    executeJupiterSwapDirect: vi.fn(),
+    executeJupiterSwap: vi.fn(),
   };
 });
 
@@ -66,7 +67,9 @@ import {
 import {
   prepareJupiterSwapOrder,
   fetchJupiterSwapQuoteDirect,
+  executeJupiterSwapDirect,
 } from "@/utils/jupiter-swap-quote";
+import { autoPriorityFeeLamports } from "@/utils/priority-fee";
 import { sendShyftTransactionDirect, sendShyftManyTransactionsDirect } from "@/utils/shyft-transaction";
 import {
   prepareSwapTransaction,
@@ -90,72 +93,73 @@ describe("swap-executor shyft provider", () => {
     vi.mocked(getTradeProvider).mockReturnValue("shyft");
   });
 
-  it("prepareSwapTransaction uses Raptor when Raptor quote wins the parallel pick", async () => {
-    vi.mocked(fetchRaptorQuoteDirect).mockResolvedValue({
-      inputMint: PREPARE_PARAMS.inputMint,
-      outputMint: PREPARE_PARAMS.outputMint,
-      amountIn: "1000000",
-      amountOut: "500",
-      minAmountOut: "490",
-      priceImpact: 0.001,
-      slippageBps: 50,
-    });
-    vi.mocked(fetchJupiterLiteQuoteDirect).mockRejectedValue(new Error("lite 429"));
-    vi.mocked(fetchJupiterSwapQuoteDirect).mockRejectedValue(new Error("swap 429"));
-    vi.mocked(fetchRaptorQuoteAndSwapDirect).mockResolvedValue({
-      quote: {
-        inputMint: PREPARE_PARAMS.inputMint,
-        outputMint: PREPARE_PARAMS.outputMint,
-        amountIn: "1000000",
-        amountOut: "500",
-        minAmountOut: "490",
-        priceImpact: 0,
-        slippageBps: 50,
-      },
-      swapTransaction: "dGVzdA==",
-      lastValidBlockHeight: 123,
+  it("desk prepare is one Jupiter V2 order and does not quote Raptor", async () => {
+    vi.mocked(prepareJupiterSwapOrder).mockResolvedValue({
+      swapTransaction: "c3dhcA==",
+      outAmount: "600",
+      lastValidBlockHeight: 789,
+      requestId: "req-1",
+      priceImpact: 0.002,
     });
 
-    const prepared = await prepareSwapTransaction(PREPARE_PARAMS);
+    const prepared = await prepareSwapTransaction({
+      ...PREPARE_PARAMS,
+      priorityFeeLamports: autoPriorityFeeLamports({
+        level: "high",
+        maxLamports: 3_000_000,
+      }),
+    });
 
-    expect(prepared.provider).toBe("raptor");
-    expect(prepareJupiterLiteSwap).not.toHaveBeenCalled();
-    expect(prepareJupiterSwapOrder).not.toHaveBeenCalled();
-    expect(fetchRaptorQuoteAndSwapDirect).toHaveBeenCalledWith(
+    expect(prepared.provider).toBe("jupiter_swap");
+    expect(prepared.requestId).toBe("req-1");
+    expect(prepared.swapTransaction).toBe("c3dhcA==");
+    expect(prepareJupiterSwapOrder).toHaveBeenCalledTimes(1);
+    expect(prepareJupiterSwapOrder).toHaveBeenCalledWith(
       expect.objectContaining({
-        feeBps: 25,
-        feeAccount: "3V3N5xh6vUUVU3CnbjMAXoyXendfXzXYKzTVEsFrLkgX",
+        userPublicKey: PREPARE_PARAMS.userPublicKey,
+        priorityFeeLamports: autoPriorityFeeLamports({
+          level: "high",
+          maxLamports: 3_000_000,
+        }),
       }),
     );
+    expect(fetchJupiterSwapQuoteDirect).not.toHaveBeenCalled();
+    expect(fetchRaptorQuoteDirect).not.toHaveBeenCalled();
+    expect(fetchRaptorQuoteAndSwapDirect).not.toHaveBeenCalled();
+    expect(prepareJupiterLiteSwap).not.toHaveBeenCalled();
   });
 
-  it("prepareSwapTransaction uses Jupiter Lite when Raptor quote fails", async () => {
-    vi.mocked(fetchRaptorQuoteDirect).mockRejectedValue(
-      new RaptorAPIError("Raptor down", 502),
+  it("desk prepare falls back to Lite only when V2 /order fails", async () => {
+    vi.mocked(prepareJupiterSwapOrder).mockRejectedValue(
+      new Error("Jupiter order HTTP 500"),
     );
-    vi.mocked(fetchJupiterLiteQuoteDirect).mockResolvedValue({
-      inputMint: PREPARE_PARAMS.inputMint,
-      outputMint: PREPARE_PARAMS.outputMint,
-      inAmount: "1000000",
-      outAmount: "500",
-      otherAmountThreshold: "490",
-      swapMode: "ExactIn",
-      slippageBps: 50,
-      priceImpactPct: "0.01",
-      routePlan: [],
-    });
-    vi.mocked(fetchJupiterSwapQuoteDirect).mockRejectedValue(new Error("no key"));
     vi.mocked(prepareJupiterLiteSwap).mockResolvedValue({
       swapTransaction: "bGl0ZQ==",
       outAmount: "500",
       lastValidBlockHeight: 456,
-      quoteResponse: {} as never,
+      quoteResponse: { priceImpactPct: "0.01" } as never,
     });
 
     const prepared = await prepareSwapTransaction(PREPARE_PARAMS);
 
     expect(prepared.provider).toBe("jupiter_lite");
-    expect(prepareJupiterLiteSwap).toHaveBeenCalled();
+    expect(prepareJupiterLiteSwap).toHaveBeenCalledTimes(1);
+    expect(fetchRaptorQuoteAndSwapDirect).not.toHaveBeenCalled();
+    expect(fetchRaptorQuoteDirect).not.toHaveBeenCalled();
+  });
+
+  it("desk prepare rejects a high-impact V2 order without calling Lite", async () => {
+    vi.mocked(prepareJupiterSwapOrder).mockResolvedValue({
+      swapTransaction: "c3dhcA==",
+      outAmount: "600",
+      priceImpact: 0.5,
+      requestId: "req-high",
+    });
+
+    await expect(prepareSwapTransaction(PREPARE_PARAMS)).rejects.toThrow(
+      /No swap route within/,
+    );
+    expect(prepareJupiterLiteSwap).not.toHaveBeenCalled();
     expect(fetchRaptorQuoteAndSwapDirect).not.toHaveBeenCalled();
   });
 
@@ -184,44 +188,70 @@ describe("swap-executor shyft provider", () => {
     expect(fetchJupiterLiteQuoteDirect).not.toHaveBeenCalled();
     expect(fetchJupiterSwapQuoteDirect).not.toHaveBeenCalled();
     expect(fetchRaptorQuoteAndSwapDirect).toHaveBeenCalled();
+    expect(prepareJupiterSwapOrder).not.toHaveBeenCalled();
+    expect(prepareJupiterLiteSwap).not.toHaveBeenCalled();
   });
 
-  it("prepareSwapTransaction uses Jupiter Swap when it wins the parallel pick", async () => {
-    vi.mocked(fetchRaptorQuoteDirect).mockRejectedValue(new Error("no route"));
-    vi.mocked(fetchJupiterLiteQuoteDirect).mockResolvedValue({
-      inputMint: PREPARE_PARAMS.inputMint,
-      outputMint: PREPARE_PARAMS.outputMint,
-      inAmount: "1000000",
-      outAmount: "400",
-      otherAmountThreshold: "390",
-      swapMode: "ExactIn",
-      slippageBps: 50,
-      priceImpactPct: "0.01",
-      routePlan: [],
+  it("submitSignedSwap prefers Jupiter /execute when requestId is present", async () => {
+    vi.mocked(executeJupiterSwapDirect).mockResolvedValue({
+      signature: "jup-sig",
     });
-    vi.mocked(fetchJupiterSwapQuoteDirect).mockResolvedValue({
-      inputMint: PREPARE_PARAMS.inputMint,
-      outputMint: PREPARE_PARAMS.outputMint,
-      amount: "1000000",
-      outAmount: "600",
-      minAmountOut: "590",
-      priceImpact: 0.002,
-      slippageBps: 50,
-      route: {},
+
+    const tx = {
+      serialize: () => new Uint8Array([1, 2, 3]),
+    } as unknown as VersionedTransaction;
+    const sendTransaction = vi.fn();
+    const connection = { sendTransaction } as unknown as Connection;
+
+    const result = await submitSignedSwap({
+      signedTx: tx,
+      prepared: {
+        provider: "jupiter_swap",
+        swapTransaction: "x",
+        requestId: "req-1",
+      },
+      connection,
+      direct: true,
     });
-    vi.mocked(prepareJupiterSwapOrder).mockResolvedValue({
-      swapTransaction: "c3dhcA==",
-      outAmount: "600",
-      lastValidBlockHeight: 789,
+
+    expect(result).toEqual({
+      signature: "jup-sig",
+      via: "jupiter",
+      checkViaRaptor: false,
+    });
+    expect(executeJupiterSwapDirect).toHaveBeenCalledWith({
+      signedTransaction: Buffer.from(new Uint8Array([1, 2, 3])).toString("base64"),
       requestId: "req-1",
     });
+    expect(sendShyftTransactionDirect).not.toHaveBeenCalled();
+    expect(sendTransaction).not.toHaveBeenCalled();
+  });
 
-    const prepared = await prepareSwapTransaction(PREPARE_PARAMS);
+  it("submitSignedSwap falls back to Shyft when Jupiter /execute fails", async () => {
+    vi.mocked(executeJupiterSwapDirect).mockRejectedValue(new Error("execute down"));
+    vi.mocked(sendShyftTransactionDirect).mockResolvedValue({
+      success: true,
+      signature: "shyft-sig",
+    });
 
-    expect(prepared.provider).toBe("jupiter_swap");
-    expect(prepared.requestId).toBe("req-1");
-    expect(prepareJupiterSwapOrder).toHaveBeenCalled();
-    expect(prepareJupiterLiteSwap).not.toHaveBeenCalled();
+    const tx = {
+      serialize: () => Buffer.from("signed-bytes"),
+    } as unknown as VersionedTransaction;
+    const connection = { sendTransaction: vi.fn() } as unknown as Connection;
+
+    const result = await submitSignedSwap({
+      signedTx: tx,
+      prepared: {
+        provider: "jupiter_swap",
+        swapTransaction: "x",
+        requestId: "req-1",
+      },
+      connection,
+      direct: true,
+    });
+
+    expect(result).toEqual({ signature: "shyft-sig", via: "shyft" });
+    expect(connection.sendTransaction).not.toHaveBeenCalled();
   });
 
   it("submitSignedSwap returns via shyft when Shyft send succeeds", async () => {
@@ -329,6 +359,35 @@ describe("swap-executor raptor provider", () => {
       skipPreflight: true,
       maxRetries: 2,
     });
+    expect(sendRaptorTransactionDirect).not.toHaveBeenCalled();
+  });
+
+  it("submitSignedSwap falls back to RPC when Jupiter /execute fails on the raptor stack", async () => {
+    vi.mocked(executeJupiterSwapDirect).mockRejectedValue(new Error("execute down"));
+
+    const tx = {
+      serialize: () => new Uint8Array([9, 9]),
+    } as unknown as VersionedTransaction;
+    const sendTransaction = vi.fn().mockResolvedValue("rpc-sig");
+    const connection = { sendTransaction } as unknown as Connection;
+
+    const result = await submitSignedSwap({
+      signedTx: tx,
+      prepared: {
+        provider: "jupiter_swap",
+        swapTransaction: "x",
+        requestId: "req-1",
+      },
+      connection,
+      direct: true,
+    });
+
+    expect(result).toEqual({
+      signature: "rpc-sig",
+      via: "rpc",
+      checkViaRaptor: false,
+    });
+    expect(sendTransaction).toHaveBeenCalled();
     expect(sendRaptorTransactionDirect).not.toHaveBeenCalled();
   });
 

@@ -57,7 +57,7 @@ const defaultDeps: TrackerMarketSwapDeps = {
 
 /**
  * Manual tracker buy and sell share this path:
- * parallel quote (Raptor + Jupiter Lite + Jupiter Swap) → impact gate →
+ * Jupiter V2 quote (Lite only if V2 fails) → impact gate →
  * auto-cap slippage → prepare/sign/send.
  *
  * Early Enter Noul and soft-active are not consulted. Signals rows and

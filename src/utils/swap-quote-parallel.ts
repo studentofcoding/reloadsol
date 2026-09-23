@@ -1,9 +1,3 @@
-import type { SwapQuote } from "@/types";
-import {
-  fetchRaptorQuote,
-  fetchRaptorQuoteDirect,
-  type RaptorQuoteResponse,
-} from "@/utils/solanatracker-raptor";
 import {
   fetchJupiterLiteQuote,
   fetchJupiterLiteQuoteDirect,
@@ -15,6 +9,7 @@ import {
   fetchJupiterSwapQuoteDirect,
   mapJupiterSwapDisplayToSwapQuote,
   type JupiterQuoteDisplay,
+  type JupiterSwapQuoteParams,
 } from "@/utils/jupiter-swap-quote";
 import {
   getSwapQuoteMaxImpactPct,
@@ -33,20 +28,6 @@ export type ParallelQuoteParams = {
   direct?: boolean;
 };
 
-function mapRaptorQuoteToSwapQuote(quote: RaptorQuoteResponse): SwapQuote {
-  return {
-    inputMint: quote.inputMint,
-    outputMint: quote.outputMint,
-    inAmount: quote.amountIn,
-    outAmount: quote.amountOut,
-    otherAmountThreshold: quote.minAmountOut,
-    swapMode: "ExactIn",
-    slippageBps: quote.slippageBps,
-    priceImpactPct: String(quote.priceImpact ?? 0),
-    routePlan: (quote.routePlan as unknown[]) ?? [],
-  };
-}
-
 async function settleProvider<T>(
   provider: SwapQuoteProvider,
   fn: () => Promise<T>,
@@ -58,16 +39,6 @@ async function settleProvider<T>(
     console.warn(`[swap-quote] ${provider} failed:`, message);
     return null;
   }
-}
-
-function candidateFromRaptor(quote: RaptorQuoteResponse): SwapQuoteCandidate {
-  const mapped = mapRaptorQuoteToSwapQuote(quote);
-  return {
-    provider: "raptor",
-    outAmount: mapped.outAmount,
-    impactPct: impactToAbsPct(quote.priceImpact),
-    quote: mapped,
-  };
 }
 
 function candidateFromLite(
@@ -92,66 +63,49 @@ function candidateFromSwap(display: JupiterQuoteDisplay): SwapQuoteCandidate {
   };
 }
 
-/** Quote Raptor + Jupiter Lite + Jupiter Swap in parallel; fail-soft per provider. */
+function jupiterOrderParams(params: ParallelQuoteParams, amount: string): JupiterSwapQuoteParams {
+  return {
+    inputMint: params.inputMint,
+    outputMint: params.outputMint,
+    amount,
+    slippageBps: params.slippageBps,
+  };
+}
+
+/**
+ * Desk quote: one Jupiter Swap V2 `/order` (no taker).
+ * Lite runs only after V2 fails. Raptor is not queried.
+ */
 export async function collectSwapQuoteCandidates(
   params: ParallelQuoteParams,
 ): Promise<SwapQuoteCandidate[]> {
   const useDirect = params.direct ?? typeof window === "undefined";
   const amount = String(params.amount);
+  const orderParams = jupiterOrderParams(params, amount);
 
-  const [raptor, lite, swap] = await Promise.all([
-    settleProvider("raptor", () =>
-      useDirect
-        ? fetchRaptorQuoteDirect(
-            params.inputMint,
-            params.outputMint,
-            amount,
-            params.slippageBps,
-          )
-        : fetchRaptorQuote(
-            params.inputMint,
-            params.outputMint,
-            amount,
-            params.slippageBps,
-          ),
-    ),
-    settleProvider("jupiter_lite", () =>
-      useDirect
-        ? fetchJupiterLiteQuoteDirect(
-            params.inputMint,
-            params.outputMint,
-            amount,
-            params.slippageBps,
-          )
-        : fetchJupiterLiteQuote(
-            params.inputMint,
-            params.outputMint,
-            amount,
-            params.slippageBps,
-          ),
-    ),
-    settleProvider("jupiter_swap", () =>
-      useDirect
-        ? fetchJupiterSwapQuoteDirect({
-            inputMint: params.inputMint,
-            outputMint: params.outputMint,
-            amount,
-            slippageBps: params.slippageBps,
-          })
-        : fetchJupiterSwapQuote({
-            inputMint: params.inputMint,
-            outputMint: params.outputMint,
-            amount,
-            slippageBps: params.slippageBps,
-          }),
-    ),
-  ]);
+  const swap = await settleProvider("jupiter_swap", () =>
+    useDirect
+      ? fetchJupiterSwapQuoteDirect(orderParams)
+      : fetchJupiterSwapQuote(orderParams),
+  );
+  if (swap) return [candidateFromSwap(swap)];
 
-  const candidates: SwapQuoteCandidate[] = [];
-  if (raptor) candidates.push(candidateFromRaptor(raptor));
-  if (lite) candidates.push(candidateFromLite(lite));
-  if (swap) candidates.push(candidateFromSwap(swap));
-  return candidates;
+  const lite = await settleProvider("jupiter_lite", () =>
+    useDirect
+      ? fetchJupiterLiteQuoteDirect(
+          params.inputMint,
+          params.outputMint,
+          amount,
+          params.slippageBps,
+        )
+      : fetchJupiterLiteQuote(
+          params.inputMint,
+          params.outputMint,
+          amount,
+          params.slippageBps,
+        ),
+  );
+  return lite ? [candidateFromLite(lite)] : [];
 }
 
 export async function pickParallelSwapQuote(
