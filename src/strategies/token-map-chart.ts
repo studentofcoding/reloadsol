@@ -17,6 +17,7 @@ import {
   type MarketBrainFetchOpts,
 } from '@/utils/market-brain'
 import { cacheGet, cacheSet } from '@/utils/redis-cache'
+import { acquireSolanaTrackerOhlcSlot } from '@/utils/solanatracker-ohlc-limit'
 
 /** ponytail: 90s collapses Telegram + Freeview + label capture bursts; upgrade = longer TTL + stampede lock */
 export const OHLC_24H_1M_CACHE_TTL_SEC = 90
@@ -100,8 +101,6 @@ function toUnixSec(iso: string): number | null {
   if (!Number.isFinite(ms)) return null
   return Math.floor(ms / 1000)
 }
-
-const ST_CHART_BASE = 'https://data.solanatracker.io/chart'
 
 export function ohlcIntervalForHours(hours: number): string {
   if (hours <= 6) return '1m'
@@ -287,6 +286,96 @@ export async function fetchTokenOhlc(params: {
 const ST_OHLC_MAX_ATTEMPTS = 3
 const ST_OHLC_RETRY_BASE_MS = 400
 
+/**
+ * Dedicated secure Data API origin. Auth is the subdomain itself.
+ * Docs: https://docs.solanatracker.io/data-api/chart/get-ohlcv-data-for-a-token
+ * Requests are `{origin}/chart/{token}` (`oclhv`).
+ */
+export const DEFAULT_SOLANATRACKER_DATA_API_BASE =
+  'https://ivory-badger-5278.secure.data.solanatracker.io'
+
+const SECURE_DATA_HOST_SUFFIX = '.secure.data.solanatracker.io'
+
+export type SolanaTrackerOhlcRequest = {
+  url: string
+  /** Empty on secure hosts. Public hosts get `x-api-key` only. */
+  headers: Record<string, string>
+}
+
+/**
+ * Data API origin (scheme + host, no path or query).
+ *
+ * Env shape is an origin, for example
+ * `https://ivory-badger-5278.secure.data.solanatracker.io`.
+ * A trailing `/chart` or `api_key` query is ignored — chart calls always
+ * use `{origin}/chart/{token}`.
+ *
+ * Precedence: `SOLANATRACKER_CHART_BASE`, then `SOLANATRACKER_DATA_API_BASE`,
+ * then the ivory-badger secure host. An invalid value skips the chart fetch.
+ */
+export function solanaTrackerDataApiOrigin(): string | null {
+  const raw =
+    process.env.SOLANATRACKER_CHART_BASE?.trim() ||
+    process.env.SOLANATRACKER_DATA_API_BASE?.trim() ||
+    ''
+  if (!raw) return DEFAULT_SOLANATRACKER_DATA_API_BASE
+  try {
+    return new URL(raw).origin
+  } catch {
+    console.warn(
+      '[token-map-chart] invalid SolanaTracker data API base; skipping chart fetch',
+    )
+    return null
+  }
+}
+
+/** `*.secure.data.solanatracker.io`, including the ivory-badger host. */
+export function isSecureSolanaTrackerDataHost(origin: string): boolean {
+  try {
+    const host = new URL(origin).hostname.toLowerCase()
+    return (
+      host.endsWith(SECURE_DATA_HOST_SUFFIX) ||
+      host === 'ivory-badger-5278.secure.data.solanatracker.io'
+    )
+  } catch {
+    return false
+  }
+}
+
+/**
+ * URL + headers for Solana Tracker OHLCV.
+ * Secure hosts never receive `x-api-key` or `api_key`.
+ * `data.solanatracker.io` (or any other non-secure origin) is used only when
+ * configured, and only with `SOLANATRACKER_DATA_API_KEY` as `x-api-key`.
+ * Returns null when the origin is invalid or a public host has no key.
+ */
+export function buildSolanaTrackerOhlcRequest(params: {
+  tokenAddress: string
+  type: string
+  timeFrom: number
+  timeTo: number
+}): SolanaTrackerOhlcRequest | null {
+  const origin = solanaTrackerDataApiOrigin()
+  if (!origin) return null
+
+  const url = new URL(
+    `${origin}/chart/${encodeURIComponent(params.tokenAddress)}`,
+  )
+  url.searchParams.set('type', params.type)
+  url.searchParams.set('time_from', String(params.timeFrom))
+  url.searchParams.set('time_to', String(params.timeTo))
+  url.searchParams.set('currency', 'usd')
+  url.searchParams.delete('api_key')
+
+  const secure = isSecureSolanaTrackerDataHost(url.origin)
+  const apiKey = process.env.SOLANATRACKER_DATA_API_KEY?.trim() || ''
+  if (!secure && !apiKey) return null
+
+  const headers: Record<string, string> = {}
+  if (!secure && apiKey) headers['x-api-key'] = apiKey
+  return { url: url.toString(), headers }
+}
+
 async function sleepMs(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -316,22 +405,24 @@ async function fetchTokenOhlcUpstream(params: {
     }
   }
 
-  const apiKey = process.env.SOLANATRACKER_DATA_API_KEY?.trim()
+  // Sol: secure host by default (no API key). Public data.solanatracker.io
+  // only when that origin is configured and SOLANATRACKER_DATA_API_KEY is set.
+  const request = buildSolanaTrackerOhlcRequest({
+    tokenAddress: params.tokenAddress,
+    type: params.type,
+    timeFrom: params.timeFrom,
+    timeTo: params.timeTo,
+  })
 
-  // Sol: prefer SolanaTracker candles when the data API key is configured.
-  if (apiKey) {
-    const url = new URL(
-      `${ST_CHART_BASE}/${encodeURIComponent(params.tokenAddress)}`,
-    )
-    url.searchParams.set('type', params.type)
-    url.searchParams.set('time_from', String(params.timeFrom))
-    url.searchParams.set('time_to', String(params.timeTo))
-    url.searchParams.set('currency', 'usd')
-
+  if (request) {
     for (let attempt = 0; attempt < ST_OHLC_MAX_ATTEMPTS; attempt++) {
       try {
-        const res = await fetch(url.toString(), {
-          headers: { 'x-api-key': apiKey },
+        // Shared queue with backfill workers: SOLANATRACKER_OHLC_RPS (default 3).
+        await acquireSolanaTrackerOhlcSlot()
+        const res = await fetch(request.url, {
+          ...(Object.keys(request.headers).length > 0
+            ? { headers: request.headers }
+            : {}),
           signal: AbortSignal.timeout(15_000),
         })
         if (res.ok) {
@@ -357,8 +448,8 @@ async function fetchTokenOhlcUpstream(params: {
   }
 
   // GMGN kline fallback — the same source robinhood uses; needs only the
-  // already-configured GMGN_API_KEY, so searched sol tokens get a real axis
-  // even without SOLANATRACKER_DATA_API_KEY.
+  // already-configured GMGN_API_KEY. Sol still lands here when Tracker
+  // returns no bars, or when the public host is set without a data API key.
   try {
     const raw = await tokenKline({
       chain: 'sol',

@@ -2,38 +2,62 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@/utils/gmgn-api', () => ({
   tokenKline: vi.fn(),
 }))
+vi.mock('@/utils/solanatracker-ohlc-limit', () => ({
+  acquireSolanaTrackerOhlcSlot: vi.fn(async () => undefined),
+}))
 
 import { tokenKline } from '@/utils/gmgn-api'
+import { acquireSolanaTrackerOhlcSlot } from '@/utils/solanatracker-ohlc-limit'
 import {
+  buildSolanaTrackerOhlcRequest,
   fetchTokenOhlc,
   getCachedTokenOhlc24h1m,
   mapGmgnKlineBars,
   tokenOhlcToRugBars,
 } from '@/strategies/token-map-chart'
 
+const SECURE_CHART =
+  'https://ivory-badger-5278.secure.data.solanatracker.io/chart/'
+
 const mint = 'So11111111111111111111111111111111111111112'
 
 function stubUpstreamOnly() {
   vi.stubEnv('MARKET_BRAIN_TOKEN', '')
   vi.stubEnv('MARKET_BRAIN_OHLC', '0')
+  vi.stubEnv('SOLANATRACKER_DATA_API_BASE', '')
+  vi.stubEnv('SOLANATRACKER_CHART_BASE', '')
 }
 
 describe('fetchTokenOhlc', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     vi.unstubAllEnvs()
+    vi.clearAllMocks()
     vi.restoreAllMocks()
   })
 
-  it('returns empty when SOLANATRACKER_DATA_API_KEY is unset', async () => {
+  it('fetches the secure host without an API key when the key is unset', async () => {
     stubUpstreamOnly()
     vi.stubEnv('SOLANATRACKER_DATA_API_KEY', '')
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        oclhv: [{ time: 1700000000, open: 1, high: 2, low: 0.5, close: 1.5 }],
+      }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
     const result = await fetchTokenOhlc({
-      tokenAddress: 'So11111111111111111111111111111111111111112',
+      tokenAddress: mint,
       hours: 24,
     })
-    expect(result.candles).toEqual([])
-    expect(result.source).toBe('none')
+
+    expect(result.source).toBe('solanatracker')
+    expect(String(fetchMock.mock.calls[0]![0])).toContain(SECURE_CHART)
+    expect(String(fetchMock.mock.calls[0]![0])).not.toContain('api_key')
+    const init = fetchMock.mock.calls[0]![1] as RequestInit
+    expect(init.headers).toBeUndefined()
+    expect(acquireSolanaTrackerOhlcSlot).toHaveBeenCalledOnce()
   })
 
   it('maps oclhv bars from Solana Tracker Data API', async () => {
@@ -74,12 +98,13 @@ describe('fetchTokenOhlc', () => {
     ])
     expect(fetchMock).toHaveBeenCalledOnce()
     const calledUrl = String(fetchMock.mock.calls[0]![0])
-    expect(calledUrl).toContain('data.solanatracker.io/chart/')
+    expect(calledUrl).toContain(SECURE_CHART)
     expect(calledUrl).toContain('type=5m')
     expect(calledUrl).toContain('currency=usd')
-    expect(fetchMock.mock.calls[0]![1]).toMatchObject({
-      headers: { 'x-api-key': 'test-key' },
-    })
+    expect(calledUrl).not.toContain('api_key')
+    const init = fetchMock.mock.calls[0]![1] as RequestInit
+    expect(init.headers).toBeUndefined()
+    expect(tokenKline).not.toHaveBeenCalled()
   })
 
   it('returns empty on non-OK response', async () => {
@@ -94,6 +119,7 @@ describe('fetchTokenOhlc', () => {
       hours: 6,
     })
     expect(result).toEqual({ candles: [], source: 'none' })
+    expect(tokenKline).toHaveBeenCalledOnce()
   })
 
   it('retries SolanaTracker on 429 then returns candles', async () => {
@@ -165,6 +191,7 @@ describe('fetchTokenOhlc', () => {
       },
     ])
     expect(tokenKline).toHaveBeenCalledOnce()
+    expect(acquireSolanaTrackerOhlcSlot).not.toHaveBeenCalled()
   })
 
   it('prefers brain GET /ohlc when token is set', async () => {
@@ -206,6 +233,8 @@ describe('fetchTokenOhlc', () => {
   it('falls back to SolanaTracker on brain 5xx', async () => {
     vi.stubEnv('MARKET_BRAIN_TOKEN', 'read-token')
     vi.stubEnv('SOLANATRACKER_DATA_API_KEY', 'test-key')
+    vi.stubEnv('SOLANATRACKER_DATA_API_BASE', '')
+    vi.stubEnv('SOLANATRACKER_CHART_BASE', '')
     const fetchMock = vi.fn(async (url: string | URL | Request) => {
       const href = String(url)
       if (href.includes('/ohlc?')) {
@@ -225,12 +254,16 @@ describe('fetchTokenOhlc', () => {
     expect(result.candles).toHaveLength(1)
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(String(fetchMock.mock.calls[0]![0])).toContain('/ohlc?')
-    expect(String(fetchMock.mock.calls[1]![0])).toContain('data.solanatracker.io/chart/')
+    expect(String(fetchMock.mock.calls[1]![0])).toContain(SECURE_CHART)
+    const init = fetchMock.mock.calls[1]![1] as RequestInit
+    expect(init.headers).toBeUndefined()
   })
 
   it('falls back to SolanaTracker on brain timeout', async () => {
     vi.stubEnv('MARKET_BRAIN_TOKEN', 'read-token')
     vi.stubEnv('SOLANATRACKER_DATA_API_KEY', 'test-key')
+    vi.stubEnv('SOLANATRACKER_DATA_API_BASE', '')
+    vi.stubEnv('SOLANATRACKER_CHART_BASE', '')
     const fetchMock = vi.fn(async (url: string | URL | Request) => {
       const href = String(url)
       if (href.includes('/ohlc?')) {
@@ -255,9 +288,11 @@ describe('fetchTokenOhlc', () => {
     vi.stubEnv('MARKET_BRAIN_TOKEN', 'read-token')
     vi.stubEnv('MARKET_BRAIN_OHLC', '0')
     vi.stubEnv('SOLANATRACKER_DATA_API_KEY', 'test-key')
+    vi.stubEnv('SOLANATRACKER_DATA_API_BASE', '')
+    vi.stubEnv('SOLANATRACKER_CHART_BASE', '')
     const fetchMock = vi.fn(async (url: string | URL | Request) => {
       const href = String(url)
-      expect(href).toContain('data.solanatracker.io/chart/')
+      expect(href).toContain(SECURE_CHART)
       return {
         ok: true,
         json: async () => ({
@@ -270,6 +305,119 @@ describe('fetchTokenOhlc', () => {
     const result = await fetchTokenOhlc({ tokenAddress: mint, hours: 24 })
     expect(result.source).toBe('solanatracker')
     expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('sends x-api-key only for an explicit public data host', async () => {
+    stubUpstreamOnly()
+    vi.stubEnv('SOLANATRACKER_DATA_API_BASE', 'https://data.solanatracker.io/chart')
+    vi.stubEnv('SOLANATRACKER_DATA_API_KEY', 'test-key')
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        oclhv: [{ time: 1, open: 1, high: 1, low: 1, close: 1 }],
+      }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await fetchTokenOhlc({ tokenAddress: mint, hours: 6 })
+    expect(result.source).toBe('solanatracker')
+    const calledUrl = String(fetchMock.mock.calls[0]![0])
+    expect(calledUrl).toContain('https://data.solanatracker.io/chart/')
+    expect(calledUrl).not.toContain('api_key')
+    expect(fetchMock.mock.calls[0]![1]).toMatchObject({
+      headers: { 'x-api-key': 'test-key' },
+    })
+  })
+
+  it('skips the public host without a key and uses GMGN', async () => {
+    stubUpstreamOnly()
+    vi.stubEnv('SOLANATRACKER_CHART_BASE', 'https://data.solanatracker.io?api_key=leak')
+    vi.stubEnv('SOLANATRACKER_DATA_API_KEY', '')
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    vi.mocked(tokenKline).mockResolvedValue({
+      list: [{ time: 1700000000, open: 1, high: 1, low: 1, close: 2 }],
+    })
+
+    const result = await fetchTokenOhlc({ tokenAddress: mint, hours: 24 })
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(acquireSolanaTrackerOhlcSlot).not.toHaveBeenCalled()
+    expect(result.source).toBe('gmgn')
+    expect(result.candles[0]?.close).toBe(2)
+  })
+
+  it('falls through to GMGN when the secure host returns no bars', async () => {
+    stubUpstreamOnly()
+    vi.stubEnv('SOLANATRACKER_DATA_API_KEY', 'should-not-be-sent')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ oclhv: [] }),
+      }),
+    )
+    vi.mocked(tokenKline).mockResolvedValue({
+      list: [{ time: 10, open: 1, high: 1, low: 1, close: 1 }],
+    })
+
+    const result = await fetchTokenOhlc({ tokenAddress: mint, hours: 24 })
+    expect(result.source).toBe('gmgn')
+    expect(tokenKline).toHaveBeenCalledOnce()
+  })
+})
+
+describe('buildSolanaTrackerOhlcRequest', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('prefers CHART_BASE and strips a trailing /chart plus api_key', () => {
+    vi.stubEnv(
+      'SOLANATRACKER_CHART_BASE',
+      'https://other.secure.data.solanatracker.io/chart?api_key=leak',
+    )
+    vi.stubEnv('SOLANATRACKER_DATA_API_BASE', 'https://data.solanatracker.io')
+    vi.stubEnv('SOLANATRACKER_DATA_API_KEY', 'test-key')
+
+    const req = buildSolanaTrackerOhlcRequest({
+      tokenAddress: mint,
+      type: '1m',
+      timeFrom: 10,
+      timeTo: 20,
+    })
+    expect(req?.url).toContain(
+      'https://other.secure.data.solanatracker.io/chart/',
+    )
+    expect(req?.url).not.toContain('api_key')
+    expect(req?.url).not.toContain('leak')
+    expect(req?.headers).toEqual({})
+  })
+
+  it('returns null for the public host when no key is set', () => {
+    vi.stubEnv('SOLANATRACKER_CHART_BASE', '')
+    vi.stubEnv('SOLANATRACKER_DATA_API_BASE', 'https://data.solanatracker.io')
+    vi.stubEnv('SOLANATRACKER_DATA_API_KEY', '')
+    expect(
+      buildSolanaTrackerOhlcRequest({
+        tokenAddress: mint,
+        type: '5m',
+        timeFrom: 1,
+        timeTo: 2,
+      }),
+    ).toBeNull()
+  })
+
+  it('returns null for an invalid base', () => {
+    vi.stubEnv('SOLANATRACKER_DATA_API_BASE', 'not a url')
+    vi.stubEnv('SOLANATRACKER_CHART_BASE', '')
+    expect(
+      buildSolanaTrackerOhlcRequest({
+        tokenAddress: mint,
+        type: '5m',
+        timeFrom: 1,
+        timeTo: 2,
+      }),
+    ).toBeNull()
   })
 })
 

@@ -216,6 +216,12 @@ Copy from [`.env.docker.example`](.env.docker.example). Key groups:
 | `RAPTOR_API_BASE` | Optional override for Solana Tracker Raptor swap API (default `https://raptor-beta.solanatracker.io`) |
 | `WALLET_SESSION_SECRET` | httpOnly wallet session cookie signing |
 
+### Solana Tracker OHLC
+
+Chart fetches (`GET {origin}/chart/{token}`, response `oclhv`) use `SOLANATRACKER_DATA_API_BASE`, or `SOLANATRACKER_CHART_BASE` when that is set. Both are an origin (a trailing `/chart` is ignored). Unset defaults to `https://ivory-badger-5278.secure.data.solanatracker.io`. Hosts under `*.secure.data.solanatracker.io` authenticate by subdomain — do not send `x-api-key` or `api_key`. The public host `https://data.solanatracker.io` is used only when configured, and then `SOLANATRACKER_DATA_API_KEY` is sent as `x-api-key`. Empty Solana Tracker responses still fall back to GMGN `tokenKline`.
+
+`SOLANATRACKER_OHLC_RPS` (default `3`) is a process-wide queue for those Solana Tracker chart starts. Live `fetchTokenOhlc` and the mcap refill share it, so `MCAP_OHLC_CONCURRENCY` (default `3`) cannot burst past the rate. `bash scripts/mcap-ohlc-refill-daemon.sh` refills Sol mints active in the last 7 days (`--since-days=7`) with `--sol-only` and does not start an EVM phase.
+
 ### Cron secrets
 
 | Variable | Default | Used by |

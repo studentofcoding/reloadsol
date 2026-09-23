@@ -10,10 +10,92 @@ import {
   type TokenLabel,
 } from '@/utils/mcap-tracker'
 
+/**
+ * Parallel OHLC workers. HTTP starts are still spaced by
+ * `SOLANATRACKER_OHLC_RPS` (default 3) inside `fetchTokenOhlcUpstream`.
+ * Override with `MCAP_OHLC_CONCURRENCY` (default 3).
+ */
 export const MCAP_LABEL_BACKFILL_OHLC_CONCURRENCY = Math.max(
   1,
-  Number.parseInt(process.env.MCAP_OHLC_CONCURRENCY ?? '2', 10) || 2,
+  Number.parseInt(process.env.MCAP_OHLC_CONCURRENCY ?? '3', 10) || 3,
 )
+
+/** Ops refill window. `0` means the full historical tracker table. */
+export const MCAP_OHLC_REFILL_SINCE_DAYS_DEFAULT = 7
+
+/** `--since-days`: integer 0..3650. `0` keeps every tracker row. */
+export function parseMcapSinceDays(raw: string): number {
+  const n = Number(raw)
+  if (!Number.isInteger(n) || n < 0 || n > 3650) {
+    throw new Error(
+      '--since-days must be an integer from 0 to 3650 (0 = all history)',
+    )
+  }
+  return n
+}
+
+/**
+ * Tracker rows for a Sol OHLC refill.
+ * `sinceDays > 0` keeps mints with tracker, peak, milestone, signal-label,
+ * strategy-outcome, or detect-snapshot activity inside the window.
+ * `solOnly` drops robinhood / 0x rows.
+ */
+export function buildMcapTrackingRefillQuery(opts: {
+  sinceDays: number
+  solOnly: boolean
+}): { sql: string; params: unknown[] } {
+  const params: unknown[] = []
+  const clauses: string[] = []
+
+  if (opts.sinceDays > 0) {
+    params.push(opts.sinceDays)
+    const window = `NOW() - ($${params.length} * INTERVAL '1 day')`
+    const trackerCols = [
+      't.first_seen_at',
+      't.last_updated_at',
+      't.peak_seen_at',
+      't.when_reach_80pct',
+      't.when_reach_120pct',
+      't.when_reach_200pct',
+      't.when_drop_40pct',
+      't.when_drop_80pct',
+    ]
+    clauses.push(`(
+      ${trackerCols.map((col) => `${col} >= ${window}`).join('\n      OR ')}
+      OR EXISTS (
+        SELECT 1 FROM signal_ohlc_labels s
+        WHERE s.token_address = t.token_address
+          AND s.created_at >= ${window}
+      )
+      OR EXISTS (
+        SELECT 1 FROM strategy_outcomes o
+        WHERE o.token_address = t.token_address
+          AND o.chain = COALESCE(t.chain, 'sol')
+          AND (
+            o.entry_at >= ${window}
+            OR o.exit_at >= ${window}
+            OR o.created_at >= ${window}
+          )
+      )
+      OR EXISTS (
+        SELECT 1 FROM token_detect_snapshots d
+        WHERE d.token_address = t.token_address
+          AND (d.detected_at >= ${window} OR d.updated_at >= ${window})
+      )
+    )`)
+  }
+
+  if (opts.solOnly) {
+    clauses.push(`COALESCE(t.chain, 'sol') <> 'robinhood'`)
+    clauses.push(`t.token_address !~* '^0x[a-f0-9]{40}$'`)
+  }
+
+  const where = clauses.length > 0 ? `WHERE ${clauses.join('\n  AND ')}` : ''
+  return {
+    sql: `SELECT * FROM token_mcap_tracking t\n${where}`.trim(),
+    params,
+  }
+}
 
 /**
  * Default `mcap:backfill-labels` OHLC decision.
