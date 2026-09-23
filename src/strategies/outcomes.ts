@@ -1,4 +1,5 @@
 import { insertStrategyOutcome } from './db'
+import { coerceIsoTimestamp } from './outcome-timestamps'
 import { query, queryOne } from '@/utils/db'
 import { isMissingSchemaError } from '@/utils/db-health'
 import { getAgentConfig } from '@/utils/dlmm/db'
@@ -80,7 +81,7 @@ export async function recordDlmmOutcome(params: {
   status?: string | null
   isSimulated?: boolean
   features?: Record<string, unknown> | null
-}): Promise<void> {
+}): Promise<boolean> {
   const mint = params.mintAddress?.trim() || null
   const features: Record<string, unknown> = {
     ...(params.features ?? {}),
@@ -103,7 +104,7 @@ export async function recordDlmmOutcome(params: {
     features.domain_features = domainBag
   }
 
-  await insertStrategyOutcome({
+  const wrote = await insertStrategyOutcome({
     strategy_id: params.strategyId ?? 'dlmm_default',
     domain: 'dlmm',
     // Prefer mint for token-centric spine; keep pool in features.pool_address
@@ -116,7 +117,7 @@ export async function recordDlmmOutcome(params: {
     features,
   })
 
-  if (params.pnlPct != null) {
+  if (wrote && params.pnlPct != null) {
     notifyStrategyClose({
       domain: 'dlmm',
       strategyId: params.strategyId ?? 'dlmm_default',
@@ -127,6 +128,7 @@ export async function recordDlmmOutcome(params: {
       features,
     })
   }
+  return wrote
 }
 
 export async function recordMcapTrackerOutcome(params: {
@@ -265,10 +267,29 @@ function mapDlmmPositionRow(row: Record<string, unknown>): DlmmPosition {
       : null,
     last_decision_at: row.last_decision_at ? String(row.last_decision_at) : null,
     tx_signature: row.tx_signature ? String(row.tx_signature) : null,
-    created_at: String(row.created_at),
+    created_at: coerceIsoTimestamp(row.created_at) ?? String(row.created_at ?? ''),
     updated_at: String(row.updated_at),
-    closed_at: row.closed_at ? String(row.closed_at) : null,
+    closed_at: coerceIsoTimestamp(row.closed_at),
   }
+}
+
+/**
+ * Positions whose outcome insert failed after a coerce attempt.
+ * Remembered for the process lifetime so the manage cron cannot retry the
+ * same rows every tick (that loop pegged the web process).
+ */
+const dlmmOutcomeBackfillSkipped = new Set<string>()
+
+export function clearDlmmOutcomeBackfillSkips(): void {
+  dlmmOutcomeBackfillSkipped.clear()
+}
+
+function skipDlmmOutcomeBackfill(positionId: string, reason: string): void {
+  if (dlmmOutcomeBackfillSkipped.has(positionId)) return
+  dlmmOutcomeBackfillSkipped.add(positionId)
+  console.warn(
+    `[strategies/outcomes] dlmm outcome backfill skipped ${positionId}: ${reason}`,
+  )
 }
 
 async function dlmmOutcomeExistsForPosition(positionId: string): Promise<boolean> {
@@ -276,7 +297,10 @@ async function dlmmOutcomeExistsForPosition(positionId: string): Promise<boolean
     const row = await queryOne<{ id: string }>(
       `SELECT id FROM strategy_outcomes
        WHERE domain = 'dlmm'
-         AND features->>'position_id' = $1
+         AND (
+           features->>'position_id' = $1
+           OR features->'domain_features'->>'position_id' = $1
+         )
        LIMIT 1`,
       [positionId],
     )
@@ -370,7 +394,15 @@ export async function syncMissingDlmmOutcomesFromPositions(
   const { resolveDlmmMintFromPoolTokens } = await import('./canonical-features')
 
   for (const position of positions) {
+    if (dlmmOutcomeBackfillSkipped.has(position.id)) continue
     if (await dlmmOutcomeExistsForPosition(position.id)) continue
+
+    const exitAt = coerceIsoTimestamp(position.closed_at)
+    if (!exitAt) {
+      skipDlmmOutcomeBackfill(position.id, 'unparseable closed_at')
+      continue
+    }
+    const entryAt = coerceIsoTimestamp(position.created_at)
 
     let mintAddress: string | null = null
     try {
@@ -380,30 +412,42 @@ export async function syncMissingDlmmOutcomesFromPositions(
       /* mint optional on backfill */
     }
 
-    await recordDlmmOutcome({
-      strategyId: 'dlmm_default',
-      poolAddress: position.pool_address,
-      mintAddress,
-      entryAt: position.created_at,
-      exitAt: position.closed_at ?? new Date().toISOString(),
-      pnlPct: position.pnl_pct,
-      status: closeOutcomeStatusFromPnl(position.pnl_pct ?? 0),
-      isSimulated: config.dry_run,
-      features: {
-        pool_name: position.pool_name,
-        position_id: position.id,
-        amount_sol: position.amount_sol,
-        close_reason: position.last_decision_reason ?? 'backfill_from_closed_position',
-        token_symbol:
-          position.pool_name ?? position.token_x_symbol ?? position.token_y_symbol,
-        initial_price_usd:
-          position.entry_value_usd > 0 ? position.entry_value_usd : null,
-        exit_price_usd:
-          position.current_value_usd > 0 ? position.current_value_usd : null,
-        backfilled: true,
-        ml_skipped: mintAddress ? undefined : 'incomplete_token_features',
-      },
-    })
+    try {
+      const wrote = await recordDlmmOutcome({
+        strategyId: 'dlmm_default',
+        poolAddress: position.pool_address,
+        mintAddress,
+        entryAt,
+        exitAt,
+        pnlPct: position.pnl_pct,
+        status: closeOutcomeStatusFromPnl(position.pnl_pct ?? 0),
+        isSimulated: config.dry_run,
+        features: {
+          pool_name: position.pool_name,
+          position_id: position.id,
+          amount_sol: position.amount_sol,
+          close_reason: position.last_decision_reason ?? 'backfill_from_closed_position',
+          token_symbol:
+            position.pool_name ?? position.token_x_symbol ?? position.token_y_symbol,
+          initial_price_usd:
+            position.entry_value_usd > 0 ? position.entry_value_usd : null,
+          exit_price_usd:
+            position.current_value_usd > 0 ? position.current_value_usd : null,
+          backfilled: true,
+          ml_skipped: mintAddress ? undefined : 'incomplete_token_features',
+        },
+      })
+      if (!wrote) {
+        skipDlmmOutcomeBackfill(position.id, 'outcome insert failed')
+        continue
+      }
+    } catch (error) {
+      skipDlmmOutcomeBackfill(
+        position.id,
+        error instanceof Error ? error.message : String(error),
+      )
+      continue
+    }
     synced++
   }
 

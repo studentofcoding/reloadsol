@@ -33,6 +33,7 @@ import {
 } from './best-trade-windows'
 import { parseStrategyChain } from './types'
 import { summarizeClosedPnls } from './close-outcome-status'
+import { coerceIsoTimestamp, isBlankTimestamp } from './outcome-timestamps'
 import type {
   StrategyChain,
   StrategyDefinitionRow,
@@ -399,6 +400,9 @@ export async function loadMcapSimClosedOutcomeKeys(
 }
 
 export async function loadRegimeTagForDate(tagDate: string): Promise<string | null> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(tagDate)) {
+    return null
+  }
   try {
     const row = await queryOne<{ regime_tag: string | null }>(
       `SELECT regime_tag FROM market_regime_tags WHERE tag_date = $1 LIMIT 1`,
@@ -516,30 +520,45 @@ export async function insertStrategyOutcome(params: {
   status?: string | null
   is_simulated?: boolean
   features?: Record<string, unknown> | null
-}): Promise<void> {
+}): Promise<boolean> {
   const chain = params.chain ?? 'sol'
+  const entryAt = isBlankTimestamp(params.entry_at)
+    ? null
+    : coerceIsoTimestamp(params.entry_at)
+  if (!isBlankTimestamp(params.entry_at) && !entryAt) {
+    console.warn('[strategies/db] outcome insert skipped: unparseable entry_at')
+    return false
+  }
+
+  const exitAt = isBlankTimestamp(params.exit_at)
+    ? new Date().toISOString()
+    : coerceIsoTimestamp(params.exit_at)
+  if (!exitAt) {
+    console.warn('[strategies/db] outcome insert skipped: unparseable exit_at')
+    return false
+  }
+
   if (
     params.domain === 'mcap_tracker' &&
     params.token_address &&
-    params.entry_at
+    entryAt
   ) {
     const exists = await strategyOutcomeExists({
       strategy_id: params.strategy_id,
       domain: params.domain,
       chain,
       token_address: params.token_address,
-      entry_at: params.entry_at,
+      entry_at: entryAt,
     })
-    if (exists) return
+    if (exists) return true
   }
 
-  const exitAt = params.exit_at ?? new Date().toISOString()
   let features = params.features ?? {}
 
-  if (params.token_address && params.entry_at && params.domain !== 'dlmm') {
+  if (params.token_address && entryAt && params.domain !== 'dlmm') {
     features = await enrichOutcomeFeaturesWithTracker({
       tokenAddress: params.token_address,
-      entryAt: params.entry_at,
+      entryAt,
       exitAt,
       features,
     })
@@ -556,14 +575,24 @@ export async function insertStrategyOutcome(params: {
     typeof features.mint_address === 'string' ? features.mint_address : null
   const poolFromFeatures =
     typeof features.pool_address === 'string' ? features.pool_address : null
+  const dlmmPositionId =
+    params.domain === 'dlmm' &&
+    typeof params.features?.position_id === 'string'
+      ? params.features.position_id.trim()
+      : ''
   features = toCanonicalEntryFeatures(features, params.domain, {
     mintAddress:
       params.domain === 'dlmm' ? mintFromFeatures : params.token_address,
     poolAddress:
       poolFromFeatures ??
       (params.domain === 'dlmm' && !mintFromFeatures ? params.token_address : null),
-    entryAt: params.entry_at,
+    entryAt,
   })
+  // Canonicalization drops position_id (it is a core key, not copied through).
+  // The DLMM backfill idempotency check reads features->>'position_id'.
+  if (dlmmPositionId) {
+    features = { ...features, position_id: dlmmPositionId }
+  }
 
   try {
     await ensureStrategyChainColumns()
@@ -577,7 +606,7 @@ export async function insertStrategyOutcome(params: {
         params.strategy_id,
         params.domain,
         params.token_address,
-        params.entry_at ?? null,
+        entryAt,
         exitAt,
         params.pnl_pct ?? null,
         params.status ?? null,
@@ -607,11 +636,13 @@ export async function insertStrategyOutcome(params: {
         )
       }
     }
+    return true
   } catch (error) {
     if (isMissingSchemaError(error)) {
-      return
+      return false
     }
     console.warn('[strategies/db] outcome insert failed:', errorMessage(error))
+    return false
   }
 }
 
