@@ -16,6 +16,7 @@ export const PUBLIC_API_PREFIXES = [
 /** Any connected wallet session (buy/sell/swap analytics). Checked before dev prefixes. */
 export const WALLET_API_PREFIXES = [
   '/api/buy',
+  '/api/trade/server-sign',
   '/api/operations',
   '/api/trading/records',
   '/api/trade/compare',

@@ -334,7 +334,7 @@ export default function SignalsTab() {
     setFloatingBuyStates((prev) => ({ ...prev, [tokenAddress]: patch }));
   };
 
-  /** Floating-chart Buy: toolbar SOL amount, one Jupiter Wallet Kit sign, no amount modal. */
+  /** Floating-chart Buy: toolbar SOL amount, no amount modal. Matching trading key signs on the server; any other wallet still confirms once. */
   const handleFloatingChartBuy = async (tokenAddress: string) => {
     if (isRhNetwork) return;
     if (!connected || !publicKey || !signTransaction) {

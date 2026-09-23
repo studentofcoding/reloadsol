@@ -39,6 +39,10 @@ import {
 import { confirmSignaturesViaWs } from "@/utils/ws-confirm";
 import { isWalletUserRejection } from "@/utils/wallet-rejection";
 import {
+  resolveSolSignerMode,
+  signPreparedSwapTransactions,
+} from "@/utils/sol-desk-signer";
+import {
   priorityFeeCacheToken,
   type JupiterPrioritizationFeeLamports,
 } from "@/utils/priority-fee";
@@ -923,14 +927,13 @@ export type ExecuteClientSwapResult = {
 const WALLET_SIGN_TIMEOUT_MS = 60_000; // a stale wallet popup must not hang the swap forever
 
 /** Bound a wallet sign (popup) so a stale/ignored request settles with an error. */
-function withWalletSignTimeout<T>(promise: Promise<T>): Promise<T> {
+function withWalletSignTimeout<T>(
+  promise: Promise<T>,
+  timeoutMessage = "Timed out waiting for wallet signature — approve the transaction in your wallet and try again",
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
-      reject(
-        new Error(
-          "Timed out waiting for wallet signature — approve the transaction in your wallet and try again",
-        ),
-      );
+      reject(new Error(timeoutMessage));
     }, WALLET_SIGN_TIMEOUT_MS);
     promise.then(
       (value) => {
@@ -949,11 +952,31 @@ function withWalletSignTimeout<T>(promise: Promise<T>): Promise<T> {
 export async function executeClientSwap(
   params: ExecuteClientSwapParams,
 ): Promise<ExecuteClientSwapResult> {
+  const signerModePromise = resolveSolSignerMode(params.userPublicKey);
   const prepared = await prepareSwapTransaction(params);
   const tx = VersionedTransaction.deserialize(
     Buffer.from(prepared.swapTransaction, "base64"),
   );
-  const signedTx = await withWalletSignTimeout(params.signTransaction(tx));
+  const signerMode = await signerModePromise;
+  const { signed } = await withWalletSignTimeout(
+    signPreparedSwapTransactions({
+      userPublicKey: params.userPublicKey,
+      transactions: [tx],
+      mode: signerMode,
+      walletSign: async (txs) => {
+        const next = txs[0];
+        if (!next) throw new Error("Swap signing returned no transaction");
+        return [await params.signTransaction(next)];
+      },
+    }),
+    signerMode === "server"
+      ? "Timed out waiting for server signature — try the trade again"
+      : undefined,
+  );
+  const signedTx = signed[0];
+  if (!signedTx) {
+    throw new Error("Swap signing returned no transaction");
+  }
   const sendResult = await submitSignedSwap({
     signedTx,
     prepared,

@@ -19,6 +19,7 @@ import {
   autoPriorityFeeLamports,
   resolveTrackerPriorityFee,
 } from '@/utils/priority-fee'
+import { resolveSolSignerMode } from '@/utils/sol-desk-signer'
 
 /** Signals + tracker default: Jupiter/Raptor high, capped at 0.003 SOL. */
 export const TRACKER_AUTO_PRIORITY_FEE = autoPriorityFeeLamports({
@@ -94,10 +95,13 @@ export async function runTrackerMarketSwap(
   const impactPct = impactToAbsPct(quote.priceImpactPct)
   const slippageBps = resolveTradeSlippageBps(AUTO_SLIPPAGE_BPS, impactPct)
   const volatile = quoteIsVolatile([impactPct])
+  const signerMode = await resolveSolSignerMode(params.userPublicKey)
+  const confirmLine =
+    signerMode === 'server' ? 'Signing on server.' : 'Confirm in your wallet.'
   onStatus?.(
     volatile
-      ? `High price impact (${impactPct.toFixed(2)}%). Auto slippage capped at ${AUTO_SLIPPAGE_CAP_BPS / 100}%. Confirm in your wallet.`
-      : `Impact ${impactPct.toFixed(2)}% · auto slippage ${(slippageBps / 100).toFixed(2)}%. Confirm in your wallet.`,
+      ? `High price impact (${impactPct.toFixed(2)}%). Auto slippage capped at ${AUTO_SLIPPAGE_CAP_BPS / 100}%. ${confirmLine}`
+      : `Impact ${impactPct.toFixed(2)}% · auto slippage ${(slippageBps / 100).toFixed(2)}%. ${confirmLine}`,
   )
 
   const sent = await deps.execute({
