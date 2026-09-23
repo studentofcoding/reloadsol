@@ -46,9 +46,10 @@ const defaultDeps: TrackerMarketSwapDeps = {
  * parallel quote (Raptor + Jupiter Lite + Jupiter Swap) → impact gate →
  * auto-cap slippage → prepare/sign/send.
  *
- * Early Enter Noul and soft-active are not consulted. Callers pass the
- * already-chosen input and output mints (SOL, USDC, or USDT → token, or the
- * reverse on sell).
+ * Early Enter Noul and soft-active are not consulted. Signals rows and
+ * mcap-tracker rows both call this (signals via `rowMarketSwap`). Callers
+ * pass the already-chosen input and output mints (SOL, USDC, or USDT → token,
+ * or the reverse on sell).
  */
 export async function runTrackerMarketSwap(
   params: TrackerMarketSwapParams,
