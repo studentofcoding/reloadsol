@@ -17,6 +17,7 @@ import {
   isDbConnectivityError,
 } from '@/utils/db-health';
 import { clearDlmmDbStatusCache } from '@/utils/dlmm/db-status';
+import { coerceIsoTimestamp } from '@/utils/datetime';
 
 const CONFIG_ID_CACHE = 'singleton';
 
@@ -343,17 +344,17 @@ function mapPosition(row: Record<string, unknown>): DlmmPosition {
     pnl_pct: Number(row.pnl_pct),
     status: row.status as DlmmPosition['status'],
     is_muted: Boolean(row.is_muted),
-    oor_since: row.oor_since ? String(row.oor_since) : null,
+    oor_since: coerceIsoTimestamp(row.oor_since),
     take_profit_pct: Number(row.take_profit_pct),
     stop_loss_pct: Number(row.stop_loss_pct),
     oor_timeout_min: Number(row.oor_timeout_min),
     last_decision: row.last_decision as DlmmPosition['last_decision'],
     last_decision_reason: row.last_decision_reason ? String(row.last_decision_reason) : null,
-    last_decision_at: row.last_decision_at ? String(row.last_decision_at) : null,
+    last_decision_at: coerceIsoTimestamp(row.last_decision_at),
     tx_signature: row.tx_signature ? String(row.tx_signature) : null,
-    created_at: String(row.created_at),
-    updated_at: String(row.updated_at),
-    closed_at: row.closed_at ? String(row.closed_at) : null,
+    created_at: coerceIsoTimestamp(row.created_at) ?? '',
+    updated_at: coerceIsoTimestamp(row.updated_at) ?? '',
+    closed_at: coerceIsoTimestamp(row.closed_at),
     chain: String(row.chain ?? 'sol'),
     entry_price: row.entry_price != null ? Number(row.entry_price) : null,
     range_pct: row.range_pct != null ? Number(row.range_pct) : null,

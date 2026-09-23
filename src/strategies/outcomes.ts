@@ -2,6 +2,7 @@ import { insertStrategyOutcome } from './db'
 import { query, queryOne } from '@/utils/db'
 import { isMissingSchemaError } from '@/utils/db-health'
 import { getAgentConfig } from '@/utils/dlmm/db'
+import { coerceIsoTimestamp } from '@/utils/datetime'
 import type { DlmmPosition } from '@/types/dlmm'
 import { notifyStrategyClose } from './strategy-telegram-notify'
 import { closeOutcomeStatusFromPnl } from './close-outcome-status'
@@ -80,7 +81,7 @@ export async function recordDlmmOutcome(params: {
   status?: string | null
   isSimulated?: boolean
   features?: Record<string, unknown> | null
-}): Promise<void> {
+}): Promise<boolean> {
   const mint = params.mintAddress?.trim() || null
   const features: Record<string, unknown> = {
     ...(params.features ?? {}),
@@ -103,7 +104,7 @@ export async function recordDlmmOutcome(params: {
     features.domain_features = domainBag
   }
 
-  await insertStrategyOutcome({
+  const inserted = await insertStrategyOutcome({
     strategy_id: params.strategyId ?? 'dlmm_default',
     domain: 'dlmm',
     // Prefer mint for token-centric spine; keep pool in features.pool_address
@@ -116,7 +117,7 @@ export async function recordDlmmOutcome(params: {
     features,
   })
 
-  if (params.pnlPct != null) {
+  if (inserted && params.pnlPct != null) {
     notifyStrategyClose({
       domain: 'dlmm',
       strategyId: params.strategyId ?? 'dlmm_default',
@@ -127,6 +128,7 @@ export async function recordDlmmOutcome(params: {
       features,
     })
   }
+  return inserted
 }
 
 export async function recordMcapTrackerOutcome(params: {
@@ -255,7 +257,7 @@ function mapDlmmPositionRow(row: Record<string, unknown>): DlmmPosition {
     pnl_pct: Number(row.pnl_pct ?? 0),
     status: row.status as DlmmPosition['status'],
     is_muted: Boolean(row.is_muted),
-    oor_since: row.oor_since ? String(row.oor_since) : null,
+    oor_since: coerceIsoTimestamp(row.oor_since),
     take_profit_pct: Number(row.take_profit_pct ?? 0),
     stop_loss_pct: Number(row.stop_loss_pct ?? 0),
     oor_timeout_min: Number(row.oor_timeout_min ?? 0),
@@ -263,11 +265,11 @@ function mapDlmmPositionRow(row: Record<string, unknown>): DlmmPosition {
     last_decision_reason: row.last_decision_reason
       ? String(row.last_decision_reason)
       : null,
-    last_decision_at: row.last_decision_at ? String(row.last_decision_at) : null,
+    last_decision_at: coerceIsoTimestamp(row.last_decision_at),
     tx_signature: row.tx_signature ? String(row.tx_signature) : null,
-    created_at: String(row.created_at),
-    updated_at: String(row.updated_at),
-    closed_at: row.closed_at ? String(row.closed_at) : null,
+    created_at: coerceIsoTimestamp(row.created_at) ?? '',
+    updated_at: coerceIsoTimestamp(row.updated_at) ?? '',
+    closed_at: coerceIsoTimestamp(row.closed_at),
   }
 }
 
@@ -335,19 +337,46 @@ export async function loadRecentlyClosedDlmmOutcomes(
     return []
   }
 }
+
+/** Closed positions whose outcome insert failed after timestamp coerce. Skip until process restart. */
+const dlmmOutcomeSyncSkipIds = new Set<string>()
+
+export function resetDlmmOutcomeSyncSkips(): void {
+  dlmmOutcomeSyncSkipIds.clear()
+}
+
+function markDlmmOutcomeSyncSkipped(positionId: string, reason: string): void {
+  if (dlmmOutcomeSyncSkipIds.has(positionId)) return
+  dlmmOutcomeSyncSkipIds.add(positionId)
+  console.warn(
+    `[strategies/outcomes] skip dlmm outcome sync ${positionId}: ${reason}`,
+  )
+}
+
 export async function syncMissingDlmmOutcomesFromPositions(
   limit = 20,
 ): Promise<number> {
   let rows: Record<string, unknown>[]
+  const skipIds = [...dlmmOutcomeSyncSkipIds]
   try {
-    const result = await query<Record<string, unknown>>(
-      `SELECT * FROM dlmm_positions
-       WHERE status = 'closed'
-         AND closed_at IS NOT NULL
-       ORDER BY closed_at DESC
-       LIMIT $1`,
-      [limit],
-    )
+    const result = skipIds.length
+      ? await query<Record<string, unknown>>(
+          `SELECT * FROM dlmm_positions
+           WHERE status = 'closed'
+             AND closed_at IS NOT NULL
+             AND NOT (id = ANY($2::uuid[]))
+           ORDER BY closed_at DESC
+           LIMIT $1`,
+          [limit, skipIds],
+        )
+      : await query<Record<string, unknown>>(
+          `SELECT * FROM dlmm_positions
+           WHERE status = 'closed'
+             AND closed_at IS NOT NULL
+           ORDER BY closed_at DESC
+           LIMIT $1`,
+          [limit],
+        )
     rows = result.rows
   } catch (error) {
     if (isMissingSchemaError(error)) {
@@ -370,7 +399,15 @@ export async function syncMissingDlmmOutcomesFromPositions(
   const { resolveDlmmMintFromPoolTokens } = await import('./canonical-features')
 
   for (const position of positions) {
+    if (dlmmOutcomeSyncSkipIds.has(position.id)) continue
     if (await dlmmOutcomeExistsForPosition(position.id)) continue
+
+    const entryAt = coerceIsoTimestamp(position.created_at)
+    const exitAt = coerceIsoTimestamp(position.closed_at)
+    if (!exitAt) {
+      markDlmmOutcomeSyncSkipped(position.id, 'unparseable closed_at')
+      continue
+    }
 
     let mintAddress: string | null = null
     try {
@@ -380,12 +417,12 @@ export async function syncMissingDlmmOutcomesFromPositions(
       /* mint optional on backfill */
     }
 
-    await recordDlmmOutcome({
+    const inserted = await recordDlmmOutcome({
       strategyId: 'dlmm_default',
       poolAddress: position.pool_address,
       mintAddress,
-      entryAt: position.created_at,
-      exitAt: position.closed_at ?? new Date().toISOString(),
+      entryAt,
+      exitAt,
       pnlPct: position.pnl_pct,
       status: closeOutcomeStatusFromPnl(position.pnl_pct ?? 0),
       isSimulated: config.dry_run,
@@ -404,6 +441,10 @@ export async function syncMissingDlmmOutcomesFromPositions(
         ml_skipped: mintAddress ? undefined : 'incomplete_token_features',
       },
     })
+    if (!inserted) {
+      markDlmmOutcomeSyncSkipped(position.id, 'insert failed after timestamp coerce')
+      continue
+    }
     synced++
   }
 
