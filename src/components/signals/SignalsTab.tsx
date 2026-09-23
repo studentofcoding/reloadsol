@@ -22,8 +22,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useTradingSignals, SignalItem } from "@/hooks/useTradingSignals";
 import { formatAppDateTime } from "@/utils/datetime";
 import {
-  readSignalsStrategyTemplate,
-  writeSignalsStrategyTemplate,
+  formatSignalsListOptionLabel,
+  formatSignalsListOptionTitle,
+  readSignalsListStrategyId,
+  writeSignalsListStrategyId,
+  type SignalsListPickerOption,
 } from "@/utils/signals-strategy-id";
 import { useAppNetwork } from "@/contexts/AppNetworkContext";
 
@@ -228,13 +231,14 @@ export default function SignalsTab() {
   const [minGrowth, setMinGrowth] = useState(0);
   const [includeStuck, setIncludeStuck] = useState(false);
   const [maxAgeMinutes, setMaxAgeMinutes] = useState(48 * 60);
-  const [strategy, setStrategy] = useState<"default" | "sell_over_100">(
-    readSignalsStrategyTemplate,
+  const [strategyId, setStrategyId] = useState(() =>
+    readSignalsListStrategyId(network),
   );
-
-  useEffect(() => {
-    writeSignalsStrategyTemplate(strategy);
-  }, [strategy]);
+  const [strategyNetwork, setStrategyNetwork] = useState(network);
+  if (strategyNetwork !== network) {
+    setStrategyNetwork(network);
+    setStrategyId(readSignalsListStrategyId(network));
+  }
 
   const {
     data: apiResponse,
@@ -247,13 +251,40 @@ export default function SignalsTab() {
     minGrowth,
     includeStuck,
     maxAgeMinutes,
-    strategy,
+    strategy: strategyId,
     chain: network,
   });
 
   const error = queryError ? queryError.message : "";
   const signals = apiResponse?.signals || [];
   const stats = apiResponse?.stats || {};
+  const strategyOptions: SignalsListPickerOption[] =
+    apiResponse?.strategies ?? [];
+  const pickerOptions =
+    strategyOptions.length === 0
+      ? [
+          {
+            strategyId,
+            name: strategyId,
+            domain: "signals" as const,
+            avgPnlPct: null,
+            totalPnlPct: null,
+            n: 0,
+          },
+        ]
+      : strategyOptions.some((option) => option.strategyId === strategyId)
+        ? strategyOptions
+        : [
+            {
+              strategyId,
+              name: strategyId,
+              domain: "signals" as const,
+              avgPnlPct: null,
+              totalPnlPct: null,
+              n: 0,
+            },
+            ...strategyOptions,
+          ];
 
   // Multiple floating charts state
   const [floatingCharts, setFloatingCharts] = useState<FloatingChart[]>(
@@ -674,14 +705,24 @@ export default function SignalsTab() {
             <div>
               <label className="block text-sm font-medium">Strategy</label>
               <select
-                value={strategy}
-                onChange={(e) =>
-                  setStrategy(e.target.value as "default" | "sell_over_100")
-                }
-                className="mt-1 w-40 rounded border px-2 py-1 bg-black text-white"
+                value={strategyId}
+                data-testid="signals-strategy-select"
+                onChange={(e) => {
+                  const next = e.target.value;
+                  writeSignalsListStrategyId(next);
+                  setStrategyId(next);
+                }}
+                className="mt-1 w-[36rem] max-w-full rounded border px-2 py-1 bg-black text-white"
               >
-                <option value="default">Default</option>
-                <option value="sell_over_100">Sell Over 100%</option>
+                {pickerOptions.map((option) => (
+                  <option
+                    key={option.strategyId}
+                    value={option.strategyId}
+                    title={formatSignalsListOptionTitle(option)}
+                  >
+                    {formatSignalsListOptionLabel(option)}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -998,6 +1039,15 @@ export default function SignalsTab() {
                             >
                               {s.token_symbol || "UNKNOWN"}
                             </button>
+                            {(s.alsoMatches ?? []).map((match) => (
+                              <span
+                                key={match.strategyId}
+                                data-testid="signal-also-match"
+                                className="px-1.5 py-0.5 rounded text-xs font-medium bg-indigo-100 text-indigo-800"
+                              >
+                                {match.name}
+                              </span>
+                            ))}
                             <TokenSearchLink address={s.token_address} />
                             {labelBadge(s.label)}
                             <button

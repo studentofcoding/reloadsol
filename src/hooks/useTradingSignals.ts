@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import type { AppNetwork } from '@/utils/app-network';
+import type { SignalsListPickerOption } from '@/utils/signals-strategy-id';
 
 export interface TradingSignalsParams {
   limit: number;
@@ -7,8 +8,14 @@ export interface TradingSignalsParams {
   minGrowth: number;
   includeStuck: boolean;
   maxAgeMinutes: number;
-  strategy: "default" | "sell_over_100";
+  /** Strategy id (`signals_default`, `mcap_enter_at_80`, …). */
+  strategy: string;
   chain?: AppNetwork;
+}
+
+export interface SignalAlsoMatch {
+  strategyId: string;
+  name: string;
 }
 
 export interface SignalItem {
@@ -35,12 +42,16 @@ export interface SignalItem {
   /** Pattern ML shadow (Stage-1 display) */
   ml_pattern_p_winner?: number | null;
   ml_pattern_predicted?: "winner" | "loser" | null;
+  /** Other universe strategies this mint matches. Never includes the selected id. */
+  alsoMatches?: SignalAlsoMatch[];
 }
 
 export interface SignalsResponse {
   success: boolean;
   params?: Record<string, any>;
   stats?: Record<string, any>;
+  /** Picker options, already ordered by raw sim avg then sum. */
+  strategies?: SignalsListPickerOption[];
   signals?: SignalItem[];
 }
 
