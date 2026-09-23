@@ -3,6 +3,10 @@ import {
   jupiterApiHeaders,
   throttleJupiterRps,
 } from '@/utils/jupiter-rps'
+import {
+  jupiterV2PriorityFeeQuery,
+  type JupiterPrioritizationFeeLamports,
+} from '@/utils/priority-fee'
 
 export const JUPITER_SWAP_ORDER_BASE = 'https://api.jup.ag/swap/v2/order'
 
@@ -16,6 +20,8 @@ export class JupiterSwapQuoteError extends Error {
   }
 }
 
+export type JupiterBroadcastFeeType = 'maxCap' | 'exactFee'
+
 export type JupiterSwapQuoteParams = {
   inputMint: string
   outputMint: string
@@ -23,6 +29,12 @@ export type JupiterSwapQuoteParams = {
   slippageBps: number
   /** When set, `/order` also returns an unsigned swap transaction. */
   taker?: string
+  /**
+   * Swap V2 fee lamports. Together with `broadcastFeeType=maxCap` this is the
+   * cap (Metis v1 `priorityLevelWithMaxLamports` is not on `/order`).
+   */
+  priorityFeeLamports?: number
+  broadcastFeeType?: JupiterBroadcastFeeType
 }
 
 export type JupiterQuoteDisplay = {
@@ -39,7 +51,9 @@ export type JupiterQuoteDisplay = {
   requestId?: string
 }
 
-export function buildJupiterSwapQuoteUrl(params: JupiterSwapQuoteParams): string {
+export function jupiterSwapOrderSearchParams(
+  params: JupiterSwapQuoteParams,
+): URLSearchParams {
   const query = new URLSearchParams({
     inputMint: params.inputMint,
     outputMint: params.outputMint,
@@ -47,7 +61,19 @@ export function buildJupiterSwapQuoteUrl(params: JupiterSwapQuoteParams): string
     slippageBps: String(params.slippageBps),
   })
   if (params.taker) query.set('taker', params.taker)
-  return `${JUPITER_SWAP_ORDER_BASE}?${query.toString()}`
+  if (
+    params.priorityFeeLamports != null &&
+    Number.isFinite(params.priorityFeeLamports) &&
+    params.priorityFeeLamports > 0
+  ) {
+    query.set('priorityFeeLamports', String(Math.round(params.priorityFeeLamports)))
+  }
+  if (params.broadcastFeeType) query.set('broadcastFeeType', params.broadcastFeeType)
+  return query
+}
+
+export function buildJupiterSwapQuoteUrl(params: JupiterSwapQuoteParams): string {
+  return `${JUPITER_SWAP_ORDER_BASE}?${jupiterSwapOrderSearchParams(params).toString()}`
 }
 
 function impactAsFraction(raw: unknown): number {
@@ -151,13 +177,7 @@ function getClientBaseUrl(): string {
 export async function fetchJupiterSwapQuote(
   params: JupiterSwapQuoteParams,
 ): Promise<JupiterQuoteDisplay> {
-  const query = new URLSearchParams({
-    inputMint: params.inputMint,
-    outputMint: params.outputMint,
-    amount: params.amount,
-    slippageBps: String(params.slippageBps),
-  })
-  if (params.taker) query.set('taker', params.taker)
+  const query = jupiterSwapOrderSearchParams(params)
 
   const response = await fetch(`${getClientBaseUrl()}/api/jupiter/quote?${query.toString()}`)
   const text = await response.text()
@@ -244,14 +264,18 @@ export async function prepareJupiterSwapOrder(params: {
   outputMint: string
   amount: string | number
   slippageBps: number
+  priorityFeeLamports?: JupiterPrioritizationFeeLamports
   direct?: boolean
 }): Promise<JupiterSwapPrepared> {
+  const v2Fee = jupiterV2PriorityFeeQuery(params.priorityFeeLamports)
   const orderParams: JupiterSwapQuoteParams = {
     inputMint: params.inputMint,
     outputMint: params.outputMint,
     amount: String(params.amount),
     slippageBps: params.slippageBps,
     taker: params.userPublicKey,
+    priorityFeeLamports: v2Fee.priorityFeeLamports,
+    broadcastFeeType: v2Fee.broadcastFeeType,
   }
   const useDirect = params.direct ?? typeof window === 'undefined'
   const order = useDirect

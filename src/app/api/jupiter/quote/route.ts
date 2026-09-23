@@ -17,6 +17,15 @@ export async function GET(request: NextRequest) {
       10,
     )
     const taker = searchParams.get('taker') ?? undefined
+    const priorityFeeRaw = searchParams.get('priorityFeeLamports')
+    const priorityFeeLamports = priorityFeeRaw
+      ? Number.parseInt(priorityFeeRaw, 10)
+      : undefined
+    const broadcastRaw = searchParams.get('broadcastFeeType')
+    const broadcastFeeType =
+      broadcastRaw === 'maxCap' || broadcastRaw === 'exactFee'
+        ? broadcastRaw
+        : undefined
 
     if (!inputMint || !outputMint || !amount) {
       return NextResponse.json(
@@ -50,6 +59,13 @@ export async function GET(request: NextRequest) {
       amount,
       slippageBps: Number.isFinite(slippageBps) ? slippageBps : 200,
       taker,
+      priorityFeeLamports:
+        priorityFeeLamports != null &&
+        Number.isFinite(priorityFeeLamports) &&
+        priorityFeeLamports > 0
+          ? priorityFeeLamports
+          : undefined,
+      broadcastFeeType,
     })
 
     return NextResponse.json(

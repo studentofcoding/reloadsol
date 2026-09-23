@@ -5,6 +5,7 @@ import {
   JupiterLiteError,
   type JupiterLiteQuoteResponse,
 } from "@/utils/jupiter-lite-swap";
+import { coercePrioritizationFee } from "@/utils/priority-fee";
 
 
 export async function POST(request: NextRequest) {
@@ -12,7 +13,9 @@ export async function POST(request: NextRequest) {
     const body = (await request.json()) as {
       quoteResponse?: JupiterLiteQuoteResponse;
       userPublicKey?: string;
-      priorityFeeLamports?: number;
+      priorityFeeLamports?: unknown;
+      /** Client posts the Jupiter body field; accept it so the proxy does not drop auto fees. */
+      prioritizationFeeLamports?: unknown;
     };
 
     if (!body.quoteResponse || !body.userPublicKey) {
@@ -35,7 +38,9 @@ export async function POST(request: NextRequest) {
     const result = await fetchJupiterLiteSwapDirect({
       quoteResponse: body.quoteResponse,
       userPublicKey: body.userPublicKey,
-      priorityFeeLamports: body.priorityFeeLamports,
+      priorityFeeLamports: coercePrioritizationFee(
+        body.priorityFeeLamports ?? body.prioritizationFeeLamports,
+      ),
     });
 
     return NextResponse.json(

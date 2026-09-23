@@ -1,5 +1,9 @@
 import type { SwapQuote } from "@/types";
 import { throttleJupiterRps } from "@/utils/jupiter-rps";
+import {
+  jupiterLitePrioritizationFee,
+  type JupiterPrioritizationFeeLamports,
+} from "@/utils/priority-fee";
 
 export const JUPITER_LITE_SWAP_BASE = "https://lite-api.jup.ag/swap/v1";
 export const JUPITER_LITE_FETCH_TIMEOUT_MS = 20_000;
@@ -155,8 +159,25 @@ export async function fetchJupiterLiteQuote(
 export type JupiterLiteSwapParams = {
   quoteResponse: JupiterLiteQuoteResponse;
   userPublicKey: string;
-  priorityFeeLamports?: number;
+  priorityFeeLamports?: JupiterPrioritizationFeeLamports;
 };
+
+/** POST `/swap` body. Auto fee is the priorityLevel object, not a fixed integer. */
+export function buildJupiterLiteSwapRequestBody(
+  params: JupiterLiteSwapParams,
+): Record<string, unknown> {
+  const prioritizationFeeLamports = jupiterLitePrioritizationFee(
+    params.priorityFeeLamports,
+  );
+  return {
+    quoteResponse: params.quoteResponse,
+    userPublicKey: params.userPublicKey,
+    dynamicComputeUnitLimit: true,
+    ...(prioritizationFeeLamports != null
+      ? { prioritizationFeeLamports }
+      : {}),
+  };
+}
 
 /** Server-side: POST /swap */
 export async function fetchJupiterLiteSwapDirect(
@@ -165,16 +186,7 @@ export async function fetchJupiterLiteSwapDirect(
   return liteFetch<JupiterLiteSwapResponse>("/swap", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      quoteResponse: params.quoteResponse,
-      userPublicKey: params.userPublicKey,
-      dynamicComputeUnitLimit: true,
-      ...(params.priorityFeeLamports && params.priorityFeeLamports > 0
-        ? {
-            prioritizationFeeLamports: params.priorityFeeLamports,
-          }
-        : {}),
-    }),
+    body: JSON.stringify(buildJupiterLiteSwapRequestBody(params)),
   });
 }
 
@@ -200,7 +212,7 @@ export async function prepareJupiterLiteSwap(
     outputMint: string;
     amount: string | number;
     slippageBps: number;
-    priorityFeeLamports?: number;
+    priorityFeeLamports?: JupiterPrioritizationFeeLamports;
     direct?: boolean;
   },
 ): Promise<JupiterLitePreparedSwap> {

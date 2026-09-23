@@ -5,6 +5,11 @@ import {
   resolveBuybulkFeeBps,
   resolveBuybulkSolFeeAccount,
 } from "@/utils/buybulk-fee";
+import {
+  AUTO_PRIORITY_FEE_MAX_LAMPORTS,
+  isAutoPriorityFee,
+  type JupiterPrioritizationFeeLamports,
+} from "@/utils/priority-fee";
 
 export const RAPTOR_DEFAULT_BASE = "https://raptor-beta.solanatracker.io";
 export const RAPTOR_FETCH_TIMEOUT_MS = 20_000;
@@ -108,18 +113,38 @@ export function mapRaptorQuoteToDisplay(
   };
 }
 
-export function getRaptorPriorityFeeParams(priorityFeeLamports: number): {
+export function getRaptorPriorityFeeParams(
+  priorityFeeLamports: number | JupiterPrioritizationFeeLamports = 0,
+): {
   priorityFee: string;
   maxPriorityFee: number;
 } {
-  if (priorityFeeLamports >= 150_000) {
-    return { priorityFee: "veryHigh", maxPriorityFee: priorityFeeLamports };
+  // Auto object skips the numeric ladder. 3e6 would otherwise classify as
+  // veryHigh (>= 150_000), and a small "high" max would under-cap the estimate.
+  if (isAutoPriorityFee(priorityFeeLamports)) {
+    const spec = priorityFeeLamports.priorityLevelWithMaxLamports;
+    const requested = Number.isFinite(spec.maxLamports)
+      ? Math.round(spec.maxLamports)
+      : 0;
+    const maxPriorityFee =
+      spec.priorityLevel === "high" || spec.priorityLevel === "veryHigh"
+        ? AUTO_PRIORITY_FEE_MAX_LAMPORTS
+        : Math.min(Math.max(requested, 0), AUTO_PRIORITY_FEE_MAX_LAMPORTS);
+    return { priorityFee: spec.priorityLevel, maxPriorityFee };
   }
-  if (priorityFeeLamports >= 30_000) {
-    return { priorityFee: "high", maxPriorityFee: priorityFeeLamports };
+
+  const lamports =
+    typeof priorityFeeLamports === "number" && Number.isFinite(priorityFeeLamports)
+      ? priorityFeeLamports
+      : 0;
+  if (lamports >= 150_000) {
+    return { priorityFee: "veryHigh", maxPriorityFee: lamports };
   }
-  if (priorityFeeLamports > 0) {
-    return { priorityFee: "medium", maxPriorityFee: priorityFeeLamports };
+  if (lamports >= 30_000) {
+    return { priorityFee: "high", maxPriorityFee: lamports };
+  }
+  if (lamports > 0) {
+    return { priorityFee: "medium", maxPriorityFee: lamports };
   }
   return { priorityFee: "medium", maxPriorityFee: 1_000_000 };
 }
@@ -130,7 +155,7 @@ export type RaptorQuoteAndSwapParams = {
   outputMint: string;
   amount: string | number;
   slippageBps: number;
-  priorityFeeLamports?: number;
+  priorityFeeLamports?: number | JupiterPrioritizationFeeLamports;
   feeAccount?: string;
   feeBps?: number;
   /** Override global hops (arb uses getRaptorMaxHopsArbitrage). */

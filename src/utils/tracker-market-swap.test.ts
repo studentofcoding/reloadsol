@@ -8,7 +8,10 @@ vi.mock('@/utils/swap-executor', () => ({
 }))
 
 import { executeClientSwap, fetchSwapQuote } from '@/utils/swap-executor'
-import { runTrackerMarketSwap } from '@/utils/tracker-market-swap'
+import {
+  TRACKER_AUTO_PRIORITY_FEE,
+  runTrackerMarketSwap,
+} from '@/utils/tracker-market-swap'
 
 const fetchQuote = vi.mocked(fetchSwapQuote)
 const execute = vi.mocked(executeClientSwap)
@@ -17,7 +20,7 @@ const BASE = {
   connection: {} as never,
   userPublicKey: 'Wallet111',
   signTransaction: async (tx: VersionedTransaction) => tx,
-  priorityFeeLamports: 30_000,
+  priorityFeeLamports: TRACKER_AUTO_PRIORITY_FEE,
 }
 
 describe('runTrackerMarketSwap', () => {
@@ -63,7 +66,48 @@ describe('runTrackerMarketSwap', () => {
     expect(execute).toHaveBeenCalledTimes(2)
     expect(execute.mock.calls[0][0].slippageBps).toBe(140)
     expect(execute.mock.calls[1][0].slippageBps).toBe(140)
+    expect(execute.mock.calls[0][0].priorityFeeLamports).toEqual(
+      TRACKER_AUTO_PRIORITY_FEE,
+    )
+    expect(execute.mock.calls[1][0].priorityFeeLamports).toEqual(
+      TRACKER_AUTO_PRIORITY_FEE,
+    )
     expect(fetchQuote.mock.calls[0][3]).toBe(20)
+  })
+
+  it('defaults an omitted fee to auto high and clamps a manual tip to 0.003 SOL', async () => {
+    fetchQuote.mockResolvedValue({
+      inputMint: 'in',
+      outputMint: 'out',
+      inAmount: '1',
+      outAmount: '2',
+      otherAmountThreshold: '1',
+      swapMode: 'ExactIn',
+      slippageBps: 20,
+      priceImpactPct: '0.1',
+      routePlan: [],
+    })
+
+    await runTrackerMarketSwap({
+      connection: BASE.connection,
+      userPublicKey: BASE.userPublicKey,
+      signTransaction: BASE.signTransaction,
+      inputMint: 'SOL',
+      outputMint: 'TOKEN',
+      amount: 1_000,
+    })
+    await runTrackerMarketSwap({
+      ...BASE,
+      inputMint: 'SOL',
+      outputMint: 'TOKEN',
+      amount: 1_000,
+      priorityFeeLamports: 9_000_000,
+    })
+
+    expect(execute.mock.calls[0][0].priorityFeeLamports).toEqual(
+      TRACKER_AUTO_PRIORITY_FEE,
+    )
+    expect(execute.mock.calls[1][0].priorityFeeLamports).toBe(3_000_000)
   })
 
   it('caps auto slippage at 8% and still sends', async () => {

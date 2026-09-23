@@ -19,7 +19,10 @@ import {
   type TrackerBaseAsset,
   type TrackerTradeSide,
 } from "@/utils/tracker-base-asset";
-import { TRACKER_PRIORITY_FEE_LAMPORTS } from "@/utils/tracker-market-swap";
+import {
+  TRACKER_AUTO_PRIORITY_FEE,
+  TRACKER_PRIORITY_FEE_LAMPORTS,
+} from "@/utils/tracker-market-swap";
 import { rowMarketSwap } from "@/utils/row-market-swap";
 
 type HoldingLeg = {
@@ -204,7 +207,7 @@ export default function RowTradePanel({
           inputMint: leg.inputMint,
           outputMint: leg.outputMint,
           amount: leg.amountRaw,
-          priorityFeeLamports: TRACKER_PRIORITY_FEE_LAMPORTS,
+          priorityFeeLamports: TRACKER_AUTO_PRIORITY_FEE,
         },
         setStatus,
       );
