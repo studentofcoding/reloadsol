@@ -19,10 +19,8 @@ import {
   type TrackerBaseAsset,
   type TrackerTradeSide,
 } from "@/utils/tracker-base-asset";
-import {
-  TRACKER_PRIORITY_FEE_LAMPORTS,
-  runTrackerMarketSwap,
-} from "@/utils/tracker-market-swap";
+import { TRACKER_PRIORITY_FEE_LAMPORTS } from "@/utils/tracker-market-swap";
+import { rowMarketSwap } from "@/utils/row-market-swap";
 
 type HoldingLeg = {
   balanceRaw: number;
@@ -30,14 +28,15 @@ type HoldingLeg = {
   decimals: number;
 };
 
-export function TrackerTokenChart({
+/** Lazy GMGN kline used by signals and mcap-tracker rows. One open row mounts one iframe. */
+export function RowGmgnChart({
   tokenAddress,
 }: {
   tokenAddress: string;
 }) {
   return (
     <div
-      data-testid="tracker-gmgn-chart"
+      data-testid="row-gmgn-chart"
       className="mt-4 overflow-hidden rounded-lg border border-gray-700 bg-gray-900"
     >
       <div className="px-3 py-1.5 text-xs text-gray-400">Price chart (GMGN)</div>
@@ -65,7 +64,12 @@ function baseBalanceUi(
   return usdtUi;
 }
 
-export default function TrackerRowTrade({
+/**
+ * Manual row buy/sell for signals and mcap tracker.
+ * Confirm quotes and sends through `rowMarketSwap` (the tracker auto-cap stack).
+ * Early Enter Noul / soft-active does not gate this.
+ */
+export default function RowTradePanel({
   tokenAddress,
   tokenSymbol,
   side,
@@ -192,7 +196,7 @@ export default function TrackerRowTrade({
         );
       }
 
-      const result = await runTrackerMarketSwap(
+      const result = await rowMarketSwap(
         {
           connection,
           userPublicKey: publicKey.toBase58(),
@@ -229,7 +233,7 @@ export default function TrackerRowTrade({
 
   return (
     <div
-      data-testid={side === "buy" ? "tracker-buy-panel" : "tracker-sell-panel"}
+      data-testid={side === "buy" ? "row-buy-panel" : "row-sell-panel"}
       className="mt-4 rounded-lg border border-gray-700 bg-gray-900/80 p-4 space-y-3"
     >
       <div className="flex items-center justify-between gap-3">
@@ -238,7 +242,7 @@ export default function TrackerRowTrade({
             {side === "buy" ? "Buy" : "Sell"} {tokenSymbol}
           </div>
           <div
-            data-testid="tracker-base-route"
+            data-testid="row-base-route"
             className="text-xs text-gray-400"
           >
             {connected
@@ -266,10 +270,10 @@ export default function TrackerRowTrade({
       ) : (
         <>
           {side === "buy" ? (
-            <div data-testid="tracker-buy-amount">
+            <div data-testid="row-buy-amount">
               <BalanceSliderField
                 mode="amount"
-                inputId={`tracker-buy-${tokenAddress}`}
+                inputId={`row-buy-${tokenAddress}`}
                 label={`Amount (${asset})`}
                 value={amount}
                 onChange={(next) => {
@@ -298,7 +302,7 @@ export default function TrackerRowTrade({
           ) : (
             <BalanceSliderField
               mode="percent"
-              inputId={`tracker-sell-${tokenAddress}`}
+              inputId={`row-sell-${tokenAddress}`}
               label="Sell %"
               value={sellPercent}
               onChange={setSellPercent}
@@ -316,7 +320,7 @@ export default function TrackerRowTrade({
 
           <button
             type="button"
-            data-testid="tracker-confirm-trade"
+            data-testid="row-confirm-trade"
             onClick={() => void confirm()}
             disabled={busy}
             className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm rounded"

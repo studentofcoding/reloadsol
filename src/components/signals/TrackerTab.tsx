@@ -4,7 +4,6 @@ import React, { useState, useMemo } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
 import { formatAppDateTime } from "@/utils/datetime";
-import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import ChartBuyModal from "@/components/ChartBuyModal";
 import DlmmChartActions from "@/components/dlmm/DlmmChartActions";
 import TokenSearchLink from "@/components/signals/shared/TokenSearchLink";
@@ -45,9 +44,9 @@ import {
 import { TrackerSocialLinks } from "@/components/signals/TrackerSocialLinks";
 import { TrackerCatchTrainStrip } from "@/components/signals/TrackerCatchTrainStrip";
 import { TrackerHoldingChip } from "@/components/signals/TrackerHoldingChip";
-import TrackerRowTrade, {
-  TrackerTokenChart,
-} from "@/components/signals/TrackerRowTrade";
+import RowTradePanel, {
+  RowGmgnChart,
+} from "@/components/signals/shared/RowTradePanel";
 import {
   formatHoldingUsd,
   lookupHolding,
@@ -55,9 +54,7 @@ import {
   sumHeldCatchUsd,
 } from "@/components/signals/tracker-holdings";
 import { useTrackerScoreBadges } from "@/hooks/useTrackerScoreBadges";
-import { useWalletTokens } from "@/hooks/useWalletTokens";
-import type { UserToken } from "@/utils/jupiter";
-import { TOKENS } from "@/utils/solana";
+import { useSolRowHoldings } from "@/hooks/useSolRowHoldings";
 import { useRhWalletTokens } from "@/hooks/useRhWalletTokens";
 import {
   isTrackerCatchTrainEnabled,
@@ -185,9 +182,6 @@ export default function TrackerTab() {
   const urlLabel = normalizeTrackerListLabel(searchParams.get("label"));
   const queryClient = useQueryClient();
   const { network } = useAppNetwork();
-  const { connection } = useConnection();
-  const { publicKey, connected } = useWallet();
-  const walletAddress = connected && publicKey ? publicKey.toString() : null;
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(100);
   const [refetchingTokens, setRefetchingTokens] = useState<Set<string>>(
@@ -326,44 +320,18 @@ export default function TrackerTab() {
   const scoreBadges = scoreQuery.data ?? {};
 
   const isRhNetwork = network === "robinhood";
-  const solHoldings = useWalletTokens({
-    connection,
-    publicKey,
-    walletAddress,
-    enabled: !isRhNetwork && connected && !!publicKey,
-    includeZeroBalance: false,
-  });
+  const rowHoldings = useSolRowHoldings(!isRhNetwork);
   const rhHoldings = useRhWalletTokens();
-  const heldTokenByMint = useMemo(() => {
-    const map = new Map<string, UserToken>();
-    for (const token of solHoldings.allTokens) {
-      const mint = token.mintAddress?.trim().toLowerCase();
-      if (!mint) continue;
-      const prev = map.get(mint);
-      if (!prev) {
-        map.set(mint, token);
-        continue;
-      }
-      map.set(mint, {
-        ...prev,
-        balance: prev.balance + token.balance,
-        uiAmount: prev.uiAmount + token.uiAmount,
-        usdValue: prev.usdValue + token.usdValue,
-      });
-    }
-    return map;
-  }, [solHoldings.allTokens]);
-  const usdtUi = heldTokenByMint.get(TOKENS.USDT.toLowerCase())?.uiAmount ?? 0;
-  const usdtReady = !walletAddress || solHoldings.isFetched;
+  const { heldTokenByMint, usdtUi, usdtReady } = rowHoldings;
 
   const holdingsByMint = useMemo(() => {
     try {
-      const list = isRhNetwork ? rhHoldings.tokens : solHoldings.allTokens;
+      const list = isRhNetwork ? rhHoldings.tokens : rowHoldings.allTokens;
       return mapUserTokensToHoldings(list);
     } catch {
       return {};
     }
-  }, [isRhNetwork, rhHoldings.tokens, solHoldings.allTokens]);
+  }, [isRhNetwork, rhHoldings.tokens, rowHoldings.allTokens]);
 
   const tokenRows = useMemo(() => {
     const cohort = pageCohortAnomalies(tokens);
@@ -2711,10 +2679,10 @@ export default function TrackerTab() {
             </div>
 
             {chartOpen && !isRhNetwork && (
-              <TrackerTokenChart tokenAddress={token.token_address} />
+              <RowGmgnChart tokenAddress={token.token_address} />
             )}
             {tradeOpen && !isRhNetwork && tradePanel && (
-              <TrackerRowTrade
+              <RowTradePanel
                 tokenAddress={token.token_address}
                 tokenSymbol={token.token_symbol}
                 side={tradePanel.side}
@@ -2731,7 +2699,7 @@ export default function TrackerTab() {
                 }
                 onClose={() => setTradePanel(null)}
                 onSettled={() => {
-                  void solHoldings.refetchFresh();
+                  void rowHoldings.refetchFresh();
                 }}
               />
             )}

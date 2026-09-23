@@ -1,15 +1,13 @@
 "use client";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useWallet, useConnection } from "@/components/WalletProvider";
+import React, { useEffect, useRef, useState } from "react";
 import { useIsClient } from "@/hooks/useIsClient";
-import { useWalletBalances } from "@/hooks/useWalletBalances";
-import { LAMPORTS_PER_SOL } from "@solana/web3.js";
-import { executeBulkBuy } from "@/utils/jupiter";
-import { trackBuy } from "@/utils/operations-api";
-import type { BulkBuyRequest } from "@/types";
 import { TokenLabel } from "@/utils/mcap-tracker";
 import ChartBuyModal from "@/components/ChartBuyModal";
 import GmgnChartEmbed from "@/components/signals/shared/GmgnChartEmbed";
+import RowTradePanel, {
+  RowGmgnChart,
+} from "@/components/signals/shared/RowTradePanel";
+import { useSolRowHoldings } from "@/hooks/useSolRowHoldings";
 import TokenSearchLink from "@/components/signals/shared/TokenSearchLink";
 import DlmmChartActions from "@/components/dlmm/DlmmChartActions";
 import GlobalWatchlistButton from "@/components/GlobalWatchlistButton";
@@ -207,10 +205,9 @@ function getInitialChartsState(): {
 export default function SignalsTab() {
   const queryClient = useQueryClient();
   const { network } = useAppNetwork();
-  const { connected, publicKey, signAllTransactions } = useWallet();
-  const { connection } = useConnection();
+  const isRhNetwork = network === "robinhood";
+  const rowHoldings = useSolRowHoldings(!isRhNetwork);
   const isClient = useIsClient();
-  const walletAddress = connected && publicKey ? publicKey.toString() : null;
   const initialCharts = getInitialChartsState();
   const [limit, setLimit] = useState(50);
   const [recencyMinutes, setRecencyMinutes] = useState(240);
@@ -250,34 +247,25 @@ export default function SignalsTab() {
   );
   const [nextZIndex, setNextZIndex] = useState(initialCharts.nextZIndex);
 
-  // Buy configuration state
-  const [buyConfig, setBuyConfig] = useState({
-    solAmount: 0,
-    fees: 0.001,
-  });
-  const [hasAutoSetSolAmount, setHasAutoSetSolAmount] =
-    useState<boolean>(false);
   const [chartModalTokenAddress, setChartModalTokenAddress] = useState<
     string | null
   >(null);
-  const [buyStates, setBuyStates] = useState<
-    Record<string, { loading?: boolean; error?: string; status?: string }>
-  >({});
+  const [chartMint, setChartMint] = useState<string | null>(null);
+  const [tradePanel, setTradePanel] = useState<{
+    mint: string;
+    side: "buy" | "sell";
+  } | null>(null);
 
-  const { walletBalance: walletBalanceSol } = useWalletBalances({
-    connection,
-    publicKey,
-    walletAddress,
-    enabled: connected && !!publicKey,
-  });
-
-  if (connected && walletBalanceSol && walletBalanceSol > 0 && !hasAutoSetSolAmount) {
-    const threePercent = Number((walletBalanceSol * 0.03).toFixed(4));
-    setBuyConfig((prev) =>
-      prev.solAmount === threePercent ? prev : { ...prev, solAmount: threePercent },
+  const openRowTrade = (mint: string, side: "buy" | "sell") => {
+    if (isRhNetwork) {
+      setChartModalTokenAddress(mint);
+      return;
+    }
+    setChartMint(mint);
+    setTradePanel((prev) =>
+      prev?.mint === mint && prev.side === side ? null : { mint, side },
     );
-    setHasAutoSetSolAmount(true);
-  }
+  };
 
   // localStorage helpers for chart persistence
   const saveChartsToStorage = (charts: FloatingChart[]) => {
@@ -309,10 +297,6 @@ export default function SignalsTab() {
     }
   }, [floatingCharts, isClient]);
 
-  // Default Buy Amount handled during render via walletBalanceSol
-
-  // Fetch signals handled by React Query hook
-
   const decisionBadge = (d?: SignalItem["decision"]) => {
     const base = "px-2 py-0.5 rounded text-xs font-medium";
     switch (d) {
@@ -334,110 +318,6 @@ export default function SignalsTab() {
         return <span className={`${base} bg-gray-100 text-gray-700`}>n/a</span>;
     }
   };
-
-  // Chart popup handlers
-  const handleFastBuy = useCallback(
-    async (tokenAddress: string, tokenSymbol?: string) => {
-      if (network === "robinhood") {
-        setChartModalTokenAddress(tokenAddress);
-        return;
-      }
-      if (!connected || !publicKey || !signAllTransactions) {
-        setBuyStates((prev) => ({
-          ...prev,
-          [tokenAddress]: { loading: false, error: "Connect wallet" },
-        }));
-        return;
-      }
-      if (!connection) {
-        setBuyStates((prev) => ({
-          ...prev,
-          [tokenAddress]: { loading: false, error: "RPC not ready" },
-        }));
-        return;
-      }
-      const solAmount = buyConfig.solAmount;
-      if (!solAmount || solAmount <= 0) {
-        setBuyStates((prev) => ({
-          ...prev,
-          [tokenAddress]: { loading: false, error: "Set buy amount" },
-        }));
-        return;
-      }
-
-      setBuyStates((prev) => ({
-        ...prev,
-        [tokenAddress]: { loading: true, status: "Buying…" },
-      }));
-
-      try {
-        const priorityFee = Math.round(buyConfig.fees * LAMPORTS_PER_SOL);
-        const balanceBeforeOp = await connection.getBalance(publicKey);
-        const balanceBeforeSOL = balanceBeforeOp / LAMPORTS_PER_SOL;
-        const requiredAmount = solAmount + priorityFee / LAMPORTS_PER_SOL;
-        if (balanceBeforeSOL < requiredAmount) {
-          throw new Error(
-            `Need ${requiredAmount.toFixed(4)} SOL, have ${balanceBeforeSOL.toFixed(4)}`,
-          );
-        }
-
-        const request: BulkBuyRequest = {
-          solAmount,
-          tokenMints: [tokenAddress],
-          slippage: 200,
-          priorityFee,
-        };
-
-        const buyResult = await executeBulkBuy(
-          request,
-          publicKey.toString(),
-          connection,
-          signAllTransactions,
-        );
-
-        if (!buyResult.success || buyResult.successfulPurchases.length === 0) {
-          throw new Error(
-            buyResult.failedPurchases[0]?.error || "Buy failed",
-          );
-        }
-
-        setBuyStates((prev) => ({
-          ...prev,
-          [tokenAddress]: { loading: false, status: "Done" },
-        }));
-        setTimeout(() => {
-          setBuyStates((prev) => {
-            const next = { ...prev };
-            delete next[tokenAddress];
-            return next;
-          });
-        }, 2500);
-
-        trackBuy(publicKey.toString(), buyResult.successfulPurchases.length, {
-          failureCount: buyResult.failedPurchases.length,
-          solAmount,
-          tokenMints: [tokenAddress],
-          signatures: buyResult.signatures,
-        }).catch(console.error);
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        setBuyStates((prev) => ({
-          ...prev,
-          [tokenAddress]: { loading: false, error: msg },
-        }));
-        console.error(`Fast buy failed for ${tokenSymbol ?? tokenAddress}:`, e);
-      }
-    },
-    [
-      buyConfig.fees,
-      buyConfig.solAmount,
-      connected,
-      connection,
-      network,
-      publicKey,
-      signAllTransactions,
-    ],
-  );
 
   const handleOpenChart = (tokenAddress: string, tokenSymbol?: string) => {
     // Check if chart is already open
@@ -660,87 +540,6 @@ export default function SignalsTab() {
               </select>
             </div>
 
-            {/* Buy Configuration */}
-            <div>
-              <label className="block text-sm font-medium">
-                Buy Amount (SOL)
-              </label>
-              <input
-                type="number"
-                min={0.01}
-                max={10}
-                step={0.01}
-                value={buyConfig.solAmount}
-                onChange={(e) =>
-                  setBuyConfig((prev) => ({
-                    ...prev,
-                    solAmount: Number(e.target.value),
-                  }))
-                }
-                className="mt-1 w-32 rounded border px-2 py-1 bg-black text-white"
-              />
-              {/* Templates based on wallet SOL amount */}
-              <div className="mt-1 flex gap-2 text-xs">
-                <button
-                  type="button"
-                  onClick={() =>
-                    setBuyConfig((prev) => ({
-                      ...prev,
-                      solAmount: Number(((walletBalanceSol ?? 0) * 0.05).toFixed(4)),
-                    }))
-                  }
-                  className="px-2 py-1 rounded border border-gray-600 text-gray-200 hover:bg-gray-700"
-                >
-                  5%
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setBuyConfig((prev) => ({
-                      ...prev,
-                      solAmount: Number(((walletBalanceSol ?? 0) * 0.25).toFixed(4)),
-                    }))
-                  }
-                  className="px-2 py-1 rounded border border-gray-600 text-gray-200 hover:bg-gray-700"
-                >
-                  25%
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setBuyConfig((prev) => ({
-                      ...prev,
-                      solAmount: Number(((walletBalanceSol ?? 0) * 0.9).toFixed(4)),
-                    }))
-                  }
-                  className="px-2 py-1 rounded border border-gray-600 text-gray-200 hover:bg-gray-700"
-                >
-                  90%
-                </button>
-              </div>
-              {connected && (
-                <div className="mt-1 text-xs text-gray-400">
-                  Wallet: {(walletBalanceSol ?? 0).toFixed(4)} SOL
-                </div>
-              )}
-            </div>
-            <div>
-              <label className="block text-sm font-medium">Fees (SOL)</label>
-              <input
-                type="number"
-                min={0.001}
-                max={1}
-                step={0.001}
-                value={buyConfig.fees}
-                onChange={(e) =>
-                  setBuyConfig((prev) => ({
-                    ...prev,
-                    fees: Number(e.target.value),
-                  }))
-                }
-                className="mt-1 w-28 rounded border px-2 py-1 bg-black text-white"
-              />
-            </div>
             <div>
               <label className="block text-sm font-medium">Limit</label>
               <input
@@ -858,20 +657,14 @@ export default function SignalsTab() {
                             {chart.tokenSymbol || "UNKNOWN"}
                           </span>
                           <div className="flex items-center gap-2">
-                            <span className="text-sm text-gray-600">
-                              {buyConfig.solAmount} SOL
-                            </span>
                             <button
                               onClick={() =>
-                                void handleFastBuy(chart.tokenAddress, chart.tokenSymbol)
+                                openRowTrade(chart.tokenAddress, "buy")
                               }
-                              disabled={buyStates[chart.tokenAddress]?.loading}
-                              className="px-3 py-1 rounded text-sm font-medium bg-green-500 hover:bg-green-600 disabled:opacity-50 text-white cursor-pointer"
-                              title={buyStates[chart.tokenAddress]?.error || "Fast buy"}
+                              className="px-3 py-1 rounded text-sm font-medium bg-green-500 hover:bg-green-600 text-white cursor-pointer"
+                              title="Buy with the shared row trade"
                             >
-                              {buyStates[chart.tokenAddress]?.loading
-                                ? "Buying…"
-                                : buyStates[chart.tokenAddress]?.status || "Buy"}
+                              Buy
                             </button>
                             <GlobalWatchlistButton
                               tokenAddress={chart.tokenAddress}
@@ -908,6 +701,37 @@ export default function SignalsTab() {
             </div>
 
             {/* Table Area - Full width */}
+            {tradePanel &&
+              !isRhNetwork &&
+              !signals.some((s) => s.token_address === tradePanel.mint) && (
+                <RowTradePanel
+                  tokenAddress={tradePanel.mint}
+                  tokenSymbol={
+                    floatingCharts.find(
+                      (chart) => chart.tokenAddress === tradePanel.mint,
+                    )?.tokenSymbol || "Token"
+                  }
+                  side={tradePanel.side}
+                  usdtUi={rowHoldings.usdtUi}
+                  usdtReady={rowHoldings.usdtReady}
+                  holding={(() => {
+                    const held = rowHoldings.heldTokenByMint.get(
+                      tradePanel.mint.toLowerCase(),
+                    );
+                    return held
+                      ? {
+                          balanceRaw: held.balance,
+                          uiAmount: held.uiAmount,
+                          decimals: held.decimals,
+                        }
+                      : null;
+                  })()}
+                  onClose={() => setTradePanel(null)}
+                  onSettled={() => {
+                    void rowHoldings.refetchFresh();
+                  }}
+                />
+              )}
             <div className="w-full overflow-x-auto z-[100] relative">
               <table className="min-w-full border-collapse">
                 <thead>
@@ -939,19 +763,33 @@ export default function SignalsTab() {
                       </td>
                     </tr>
                   ) : (
-                    signals.map((s) => (
-                      <tr
+                    signals.map((s) => {
+                      const held = rowHoldings.heldTokenByMint.get(
+                        s.token_address.toLowerCase(),
+                      );
+                      const chartOpen = chartMint === s.token_address;
+                      const tradeOpen = tradePanel?.mint === s.token_address;
+                      return (
+                      <React.Fragment
                         key={`${s.token_address}-${s.last_updated_at || s.first_seen_at || "0"}`}
-                        className="text-sm"
                       >
+                      <tr className="text-sm">
                         <td className="border-b p-2 relative">
                           <div className="flex items-center gap-2">
                             <button
                               type="button"
                               className="font-medium text-blue-700 hover:underline"
-                              onClick={() =>
-                                setChartModalTokenAddress(s.token_address)
-                              }
+                              onClick={() => {
+                                if (isRhNetwork) {
+                                  setChartModalTokenAddress(s.token_address);
+                                  return;
+                                }
+                                setChartMint((prev) =>
+                                  prev === s.token_address
+                                    ? null
+                                    : s.token_address,
+                                );
+                              }}
                             >
                               {s.token_symbol || "UNKNOWN"}
                             </button>
@@ -1030,29 +868,52 @@ export default function SignalsTab() {
                         </td>
                         <td className="border-b p-2 flex gap-2 flex-wrap items-center">
                           <button
-                            onClick={() =>
-                              setChartModalTokenAddress(s.token_address)
-                            }
-                            className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded font-medium transition-colors"
-                            title="Open Chart & Buy"
+                            onClick={() => {
+                              if (isRhNetwork) {
+                                setChartModalTokenAddress(s.token_address);
+                                return;
+                              }
+                              setChartMint((prev) =>
+                                prev === s.token_address
+                                  ? null
+                                  : s.token_address,
+                              );
+                            }}
+                            className={`px-3 py-1 text-white text-xs rounded font-medium transition-colors ${
+                              chartOpen && !isRhNetwork
+                                ? "bg-green-700"
+                                : "bg-green-600 hover:bg-green-700"
+                            }`}
+                            title="Show GMGN chart"
                           >
-                            Chart/Buy
+                            {chartOpen && !isRhNetwork ? "Hide chart" : "Chart"}
                           </button>
                           <button
-                            onClick={() =>
-                              void handleFastBuy(s.token_address, s.token_symbol)
-                            }
-                            disabled={buyStates[s.token_address]?.loading}
-                            className="px-3 py-1 rounded text-xs font-medium bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
-                            title={
-                              buyStates[s.token_address]?.error ||
-                              `Fast buy ${buyConfig.solAmount} SOL`
-                            }
+                            onClick={() => openRowTrade(s.token_address, "buy")}
+                            className={`px-3 py-1 text-white text-xs rounded font-medium ${
+                              tradeOpen && tradePanel?.side === "buy"
+                                ? "bg-blue-700"
+                                : "bg-blue-600 hover:bg-blue-700"
+                            }`}
+                            title="Buy with amount slider"
                           >
-                            {buyStates[s.token_address]?.loading
-                              ? "Buying…"
-                              : buyStates[s.token_address]?.status || "Buy"}
+                            Buy
                           </button>
+                          {!isRhNetwork && held && held.balance > 0 && (
+                            <button
+                              onClick={() =>
+                                openRowTrade(s.token_address, "sell")
+                              }
+                              className={`px-3 py-1 text-white text-xs rounded font-medium ${
+                                tradeOpen && tradePanel?.side === "sell"
+                                  ? "bg-amber-700"
+                                  : "bg-amber-600 hover:bg-amber-700"
+                              }`}
+                              title="Sell with percent slider"
+                            >
+                              Sell
+                            </button>
+                          )}
                           <DlmmChartActions
                             tokenAddress={s.token_address}
                             tokenSymbol={s.token_symbol}
@@ -1060,7 +921,40 @@ export default function SignalsTab() {
                           />
                         </td>
                       </tr>
-                    ))
+                      {(chartOpen || tradeOpen) && !isRhNetwork && (
+                        <tr>
+                          <td colSpan={17} className="border-b p-2 bg-gray-950">
+                            {chartOpen && (
+                              <RowGmgnChart tokenAddress={s.token_address} />
+                            )}
+                            {tradeOpen && tradePanel && (
+                              <RowTradePanel
+                                tokenAddress={s.token_address}
+                                tokenSymbol={s.token_symbol || "UNKNOWN"}
+                                side={tradePanel.side}
+                                usdtUi={rowHoldings.usdtUi}
+                                usdtReady={rowHoldings.usdtReady}
+                                holding={
+                                  held
+                                    ? {
+                                        balanceRaw: held.balance,
+                                        uiAmount: held.uiAmount,
+                                        decimals: held.decimals,
+                                      }
+                                    : null
+                                }
+                                onClose={() => setTradePanel(null)}
+                                onSettled={() => {
+                                  void rowHoldings.refetchFresh();
+                                }}
+                              />
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                      </React.Fragment>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -1116,20 +1010,12 @@ export default function SignalsTab() {
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <span className="text-sm text-gray-600">
-                      {buyConfig.solAmount} SOL
-                    </span>
                     <button
-                      onClick={() =>
-                        void handleFastBuy(chart.tokenAddress, chart.tokenSymbol)
-                      }
-                      disabled={buyStates[chart.tokenAddress]?.loading}
-                      className="px-3 py-1 rounded text-sm font-medium bg-green-500 hover:bg-green-600 disabled:opacity-50 text-white cursor-pointer"
-                      title={buyStates[chart.tokenAddress]?.error || "Fast buy"}
+                      onClick={() => openRowTrade(chart.tokenAddress, "buy")}
+                      className="px-3 py-1 rounded text-sm font-medium bg-green-500 hover:bg-green-600 text-white cursor-pointer"
+                      title="Buy with the shared row trade"
                     >
-                      {buyStates[chart.tokenAddress]?.loading
-                        ? "Buying…"
-                        : buyStates[chart.tokenAddress]?.status || "Buy"}
+                      Buy
                     </button>
                     <GlobalWatchlistButton
                       tokenAddress={chart.tokenAddress}
