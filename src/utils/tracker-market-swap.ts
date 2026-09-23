@@ -14,9 +14,23 @@ import {
   fetchSwapQuote,
   type ExecuteClientSwapParams,
 } from '@/utils/swap-executor'
+import {
+  AUTO_PRIORITY_FEE_MAX_LAMPORTS,
+  autoPriorityFeeLamports,
+  resolveTrackerPriorityFee,
+} from '@/utils/priority-fee'
 
-/** Same priority fee the chart desk used for a single tracker buy. */
-export const TRACKER_PRIORITY_FEE_LAMPORTS = 30_000
+/** Signals + tracker default: Jupiter/Raptor high, capped at 0.003 SOL. */
+export const TRACKER_AUTO_PRIORITY_FEE = autoPriorityFeeLamports({
+  level: 'high',
+  maxLamports: AUTO_PRIORITY_FEE_MAX_LAMPORTS,
+})
+
+/**
+ * Balance-check reserve for a tracker swap (0.003 SOL).
+ * This is the auto cap, not a static tip.
+ */
+export const TRACKER_PRIORITY_FEE_LAMPORTS = AUTO_PRIORITY_FEE_MAX_LAMPORTS
 
 export type TrackerMarketSwapParams = Omit<
   ExecuteClientSwapParams,
@@ -90,6 +104,7 @@ export async function runTrackerMarketSwap(
     ...params,
     amount,
     slippageBps,
+    priorityFeeLamports: resolveTrackerPriorityFee(params.priorityFeeLamports),
   })
 
   return {

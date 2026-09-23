@@ -13,6 +13,10 @@ import { useSolRowHoldings } from "@/hooks/useSolRowHoldings";
 import { useWalletBalances } from "@/hooks/useWalletBalances";
 import { isWalletUserRejection } from "@/utils/wallet-rejection";
 import { rowMarketSwap } from "@/utils/row-market-swap";
+import {
+  priorityFeeFromSolInput,
+  priorityFeeReserveLamports,
+} from "@/utils/priority-fee";
 import { floatingChartSolBuyLeg } from "@/utils/tracker-base-asset";
 import TokenSearchLink from "@/components/signals/shared/TokenSearchLink";
 import DlmmChartActions from "@/components/dlmm/DlmmChartActions";
@@ -300,7 +304,8 @@ export default function SignalsTab() {
     mint: string;
     side: "buy" | "sell";
   } | null>(null);
-  const [buyFeesSol, setBuyFeesSol] = useState(0.001);
+  /** Empty string = auto high, capped at 0.003 SOL. A number is an exact tip. */
+  const [buyFeesSol, setBuyFeesSol] = useState("");
   const [buySolOverride, setBuySolOverride] = useState<number | null>(null);
   const [floatingBuyStates, setFloatingBuyStates] = useState<
     Record<string, { loading?: boolean; error?: string; status?: string }>
@@ -356,8 +361,11 @@ export default function SignalsTab() {
 
     patchFloatingBuy(tokenAddress, { loading: true, status: "Quoting…" });
     try {
-      const priorityFeeLamports = Math.round(buyFeesSol * LAMPORTS_PER_SOL);
-      const feeSol = priorityFeeLamports / LAMPORTS_PER_SOL;
+      const priorityFeeLamports = priorityFeeFromSolInput(
+        buyFeesSol.trim() === "" ? "" : Number(buyFeesSol),
+      );
+      const feeSol =
+        priorityFeeReserveLamports(priorityFeeLamports) / LAMPORTS_PER_SOL;
       if ((walletBalanceSol ?? 0) < buySolAmount + feeSol) {
         throw new Error(
           `Not enough SOL. Need ${(buySolAmount + feeSol).toFixed(4)} including fees, have ${(walletBalanceSol ?? 0).toFixed(4)}.`,
@@ -785,14 +793,31 @@ export default function SignalsTab() {
               <label className="block text-sm font-medium">Fees (SOL)</label>
               <input
                 type="number"
-                min={0.001}
-                max={1}
-                step={0.001}
+                min={0}
+                max={0.003}
+                step={0.0001}
                 value={buyFeesSol}
-                onChange={(e) => setBuyFeesSol(Number(e.target.value))}
+                placeholder="auto"
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  if (raw === "") {
+                    setBuyFeesSol("");
+                    return;
+                  }
+                  const n = Number(raw);
+                  if (!Number.isFinite(n)) return;
+                  if (n < 0) {
+                    setBuyFeesSol("");
+                    return;
+                  }
+                  setBuyFeesSol(n > 0.003 ? "0.003" : raw);
+                }}
                 data-testid="signals-buy-fees"
                 className="mt-1 w-28 rounded border px-2 py-1 bg-black text-white"
               />
+              <div className="mt-1 text-xs text-gray-400">
+                auto high · max 0.003
+              </div>
             </div>
             <div>
               <label className="block text-sm font-medium">Limit</label>

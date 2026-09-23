@@ -37,6 +37,20 @@ describe('buildJupiterSwapQuoteUrl', () => {
     })
     expect(url).toContain('taker=BQ72nSv9f3PRyRKCBnHLVrerrv37CYTHm5h3s9VSGQDV')
   })
+
+  it('caps auto priority on V2 with maxCap at 0.003 SOL', () => {
+    const url = buildJupiterSwapQuoteUrl({
+      inputMint: USDC,
+      outputMint: SOL,
+      amount: '2000221',
+      slippageBps: 200,
+      taker: 'BQ72nSv9f3PRyRKCBnHLVrerrv37CYTHm5h3s9VSGQDV',
+      priorityFeeLamports: 3_000_000,
+      broadcastFeeType: 'maxCap',
+    })
+    expect(url).toContain('priorityFeeLamports=3000000')
+    expect(url).toContain('broadcastFeeType=maxCap')
+  })
 })
 
 describe('mapJupiterOrderToDisplay', () => {

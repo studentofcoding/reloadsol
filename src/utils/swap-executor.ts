@@ -32,6 +32,10 @@ import {
 } from "@/utils/confirm-transport";
 import { confirmSignaturesViaWs } from "@/utils/ws-confirm";
 import { isWalletUserRejection } from "@/utils/wallet-rejection";
+import {
+  priorityFeeCacheToken,
+  type JupiterPrioritizationFeeLamports,
+} from "@/utils/priority-fee";
 import type { SwapQuote, SwapTransaction } from "@/types";
 
 export type SwapProvider = SwapQuoteProvider;
@@ -53,7 +57,7 @@ export type PrepareSwapParams = {
   outputMint: string;
   amount: string | number;
   slippageBps: number;
-  priorityFeeLamports?: number;
+  priorityFeeLamports?: JupiterPrioritizationFeeLamports;
   feeAccount?: string;
   feeBps?: number;
   /** Server-side routes set true to call Raptor directly */
@@ -73,7 +77,7 @@ function swapPrepareCacheKey(params: PrepareSwapParams): string {
     params.outputMint,
     String(params.amount),
     params.slippageBps,
-    params.priorityFeeLamports ?? 0,
+    priorityFeeCacheToken(params.priorityFeeLamports),
     params.feeAccount ?? "",
     params.feeBps ?? 0,
   ].join("|");
@@ -178,6 +182,7 @@ async function prepareJupiterSwapPrepared(
     outputMint: params.outputMint,
     amount: params.amount,
     slippageBps: params.slippageBps,
+    priorityFeeLamports: params.priorityFeeLamports,
     direct: params.direct,
   });
 
@@ -298,7 +303,7 @@ export async function buildPreparedSwap(
 export async function buildSwapTransaction(
   quote: SwapQuote,
   userPublicKey: string,
-  priorityFeeLamports = 0,
+  priorityFeeLamports: JupiterPrioritizationFeeLamports = 0,
   options?: {
     direct?: boolean;
     feeAccount?: string;
