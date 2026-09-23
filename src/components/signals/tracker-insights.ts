@@ -313,6 +313,8 @@ export function sortCatchTrainRows<
 
 export type TrackerZPreset =
   | 'any'
+  | 'gt_0_5'
+  | 'gt_1'
   | 'abs_2_5'
   | 'abs_1_5'
   | 'pos_2_5'
@@ -424,6 +426,8 @@ export function matchesTrackerAnalyticsFilters(
   } else if (filters.zPreset !== 'any') {
     if (!zAvailable) return false
     const z = insights.zScore as number
+    if (filters.zPreset === 'gt_0_5' && !(z > 0.5)) return false
+    if (filters.zPreset === 'gt_1' && !(z > 1)) return false
     if (filters.zPreset === 'abs_2_5' && Math.abs(z) < 2.5) return false
     if (filters.zPreset === 'abs_1_5' && Math.abs(z) < 1.5) return false
     if (filters.zPreset === 'pos_2_5' && z < 2.5) return false
