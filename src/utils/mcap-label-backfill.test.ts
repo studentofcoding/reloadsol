@@ -15,6 +15,9 @@ vi.mock('@/utils/unified-logger', () => ({
 }))
 
 import {
+  MCAP_OHLC_REFILL_SINCE_DAYS_DEFAULT,
+  buildMcapTrackingRefillQuery,
+  parseMcapSinceDays,
   planMcapLabelBackfill,
   planMcapOhlcCapture,
   runMcapLabelBackfill,
@@ -115,6 +118,42 @@ describe('planMcapLabelBackfill', () => {
     expect(record.label).toBe('rugged')
     expect(plan.capture).toBe(true)
     expect(plan.labelChanged).toBe(false)
+  })
+})
+
+describe('buildMcapTrackingRefillQuery', () => {
+  it('defaults the ops window to 7 days of recent sol activity', () => {
+    expect(MCAP_OHLC_REFILL_SINCE_DAYS_DEFAULT).toBe(7)
+    const { sql, params } = buildMcapTrackingRefillQuery({
+      sinceDays: 7,
+      solOnly: true,
+    })
+    expect(params).toEqual([7])
+    expect(sql).toContain('t.first_seen_at >=')
+    expect(sql).toContain('t.last_updated_at >=')
+    expect(sql).toContain('t.peak_seen_at >=')
+    expect(sql).toContain('t.when_drop_40pct >=')
+    expect(sql).toContain('signal_ohlc_labels')
+    expect(sql).toContain('strategy_outcomes')
+    expect(sql).toContain('token_detect_snapshots')
+    expect(sql).toContain("COALESCE(t.chain, 'sol') <> 'robinhood'")
+    expect(sql).toContain(`t.token_address !~* '^0x[a-f0-9]{40}$'`)
+  })
+
+  it('sinceDays 0 with both chains has no filter', () => {
+    const { sql, params } = buildMcapTrackingRefillQuery({
+      sinceDays: 0,
+      solOnly: false,
+    })
+    expect(params).toEqual([])
+    expect(sql).toBe('SELECT * FROM token_mcap_tracking t')
+  })
+
+  it('parses --since-days', () => {
+    expect(parseMcapSinceDays('7')).toBe(7)
+    expect(parseMcapSinceDays('0')).toBe(0)
+    expect(() => parseMcapSinceDays('-1')).toThrow(/since-days/)
+    expect(() => parseMcapSinceDays('1.5')).toThrow(/since-days/)
   })
 })
 

@@ -23,6 +23,7 @@ import { isEvmTokenAddress } from '@/utils/gmgn-cli'
  * replace these rows when real bars arrive.
  */
 export const BACKFILL_EMPTY_SOURCE = 'backfill_empty'
+/** Gallery empty-row fills. Solana Tracker HTTP starts stay on SOLANATRACKER_OHLC_RPS. */
 const BACKFILL_CONCURRENCY = 3
 
 const ENSURE_SQL = `

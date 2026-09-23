@@ -5,20 +5,27 @@
  * Host CLI needs Postgres via DATABASE_URL or DATABASE_URL_DIRECT
  * (same notes as scripts/backfill-ml-labels.ts).
  *
- *   npx tsx scripts/backfill-mcap-labels.ts [--dry-run] [--sol-only]
- *   npm run mcap:backfill-labels
- *   npm run mcap:backfill-labels -- --dry-run
+ *   npx tsx scripts/backfill-mcap-labels.ts [--dry-run] [--sol-only] [--since-days=7]
+ *   npm run mcap:backfill-labels -- --sol-only --since-days=7
+ *   bash scripts/mcap-ohlc-refill-daemon.sh
  *
  * A plain re-run soft-overwrites empty OHLC rows (bars=[], including
  * ohlc_source none and backfill_empty) and captures missing rows.
  * Non-empty gmgn / solanatracker / last10_fallback cards are left alone.
  * Empty fetch does not INSERT (no UNIQUE lock); it counts as ohlc_failed.
  *
- * OHLC concurrency default is 2 (override with MCAP_OHLC_CONCURRENCY).
+ * Ops default is the last 7 days (--since-days=7), Sol only when --sol-only
+ * / --no-evm is set. --since-days=0 scans the full tracker table.
+ * Recent means first_seen, last_updated, peak, milestone, signal_ohlc_labels,
+ * strategy_outcomes, or token_detect_snapshots inside the window.
+ *
+ * OHLC worker concurrency defaults to 3 (MCAP_OHLC_CONCURRENCY). Solana
+ * Tracker HTTP starts are spaced by SOLANATRACKER_OHLC_RPS (default 3)
+ * inside fetchTokenOhlcUpstream — concurrency alone does not burst.
  * Does not write dlmm_potential_list or token_rug_list.
  * --dry-run: no UPDATE and no OHLC network.
  * --refill-empty: accepted alias; plain run already refills empties.
- * --sol-only: skip 0x / EVM mints (GMGN robinhood path).
+ * --sol-only / --no-evm: skip 0x / EVM mints (GMGN robinhood path).
  */
 
 import { config as loadEnv } from 'dotenv'
@@ -58,19 +65,45 @@ type CliArgs = {
   dryRun: boolean
   refillEmpty: boolean
   solOnly: boolean
+  sinceDays: number
 }
 
-function parseArgs(argv: string[]): CliArgs {
+function parseArgs(
+  argv: string[],
+  parseSinceDays: (raw: string) => number,
+  defaultSinceDays: number,
+): CliArgs {
   const args: CliArgs = {
     dryRun: false,
     refillEmpty: false,
     solOnly: false,
+    sinceDays: defaultSinceDays,
   }
-  for (const arg of argv) {
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!
     if (arg === '--dry-run') args.dryRun = true
     else if (arg === '--refill-empty') args.refillEmpty = true
-    else if (arg === '--sol-only') args.solOnly = true
-    else if (arg === '--help' || arg === '-h') {
+    else if (arg === '--sol-only' || arg === '--no-evm') args.solOnly = true
+    else if (arg === '--since-days') {
+      const next = argv[++i]
+      if (!next) {
+        console.error('--since-days requires a number')
+        process.exit(1)
+      }
+      try {
+        args.sinceDays = parseSinceDays(next)
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err))
+        process.exit(1)
+      }
+    } else if (arg.startsWith('--since-days=')) {
+      try {
+        args.sinceDays = parseSinceDays(arg.slice('--since-days='.length))
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err))
+        process.exit(1)
+      }
+    } else if (arg === '--help' || arg === '-h') {
       console.log(`Usage: npx tsx scripts/backfill-mcap-labels.ts [options]
 
 Soft-overwrites token_mcap_tracking labels with live auto-label rules and
@@ -80,13 +113,19 @@ A plain run retries OHLC when the corpus row is missing or bars=[].
 backfill_empty / none are refillable. Non-empty cards are skipped.
 Failed fetch does not insert an empty row (ohlc_failed).
 
+Default window is the last ${defaultSinceDays} days of mints that were
+first seen, updated, peaked, or had signal / outcome / detect activity.
+--since-days=0 scans the full historical table.
+
 Options:
-  --dry-run        Print counts only. No UPDATE and no OHLC fetch.
-  --refill-empty   Explicit alias for the empty/missing OHLC retry.
-  --sol-only       Skip 0x EVM mints.
+  --dry-run           Print counts only. No UPDATE and no OHLC fetch.
+  --refill-empty      Explicit alias for the empty/missing OHLC retry.
+  --sol-only, --no-evm  Skip 0x EVM mints.
+  --since-days=N      Activity window in days (default ${defaultSinceDays}, 0 = all).
 
 Env:
-  MCAP_OHLC_CONCURRENCY   Parallel OHLC fetches (default 2).
+  MCAP_OHLC_CONCURRENCY    Parallel OHLC workers (default 3).
+  SOLANATRACKER_OHLC_RPS   Solana Tracker OHLC starts/second (default 3).
 `)
       process.exit(0)
     } else {
@@ -112,13 +151,23 @@ function printHostDbConnectionHint(err: unknown): void {
 }
 
 async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2))
-  resolveHostDatabaseUrl()
   const {
     MCAP_LABEL_BACKFILL_OHLC_CONCURRENCY,
+    MCAP_OHLC_REFILL_SINCE_DAYS_DEFAULT,
+    buildMcapTrackingRefillQuery,
+    parseMcapSinceDays,
     planMcapOhlcCapture,
     runMcapLabelBackfill,
   } = await import('../src/utils/mcap-label-backfill')
+  const { solanaTrackerOhlcRps } = await import(
+    '../src/utils/solanatracker-ohlc-limit'
+  )
+  const args = parseArgs(
+    process.argv.slice(2),
+    parseMcapSinceDays,
+    MCAP_OHLC_REFILL_SINCE_DAYS_DEFAULT,
+  )
+  resolveHostDatabaseUrl()
   const { query, queryOne } = await import('../src/utils/db')
   const { captureSignalOhlcLabel } = await import(
     '../src/strategies/signal-ohlc-labels'
@@ -131,12 +180,18 @@ async function main(): Promise<void> {
   console.log(`  mode: ${args.dryRun ? 'dry-run (no writes)' : 'persist'}`)
   console.log(`  refill-empty: ${args.refillEmpty}`)
   console.log(`  sol-only: ${args.solOnly}`)
+  console.log(
+    `  since-days: ${args.sinceDays === 0 ? 'all' : args.sinceDays}`,
+  )
   console.log(`  ohlc concurrency: ${MCAP_LABEL_BACKFILL_OHLC_CONCURRENCY}`)
+  console.log(`  solanatracker ohlc rps: ${solanaTrackerOhlcRps()}`)
   console.log('')
 
-  const { rows } = await query<Snap>(
-    `SELECT * FROM token_mcap_tracking`,
-  )
+  const refillQuery = buildMcapTrackingRefillQuery({
+    sinceDays: args.sinceDays,
+    solOnly: args.solOnly,
+  })
+  const { rows } = await query<Snap>(refillQuery.sql, refillQuery.params)
 
   const counts = await runMcapLabelBackfill({
     rows,
