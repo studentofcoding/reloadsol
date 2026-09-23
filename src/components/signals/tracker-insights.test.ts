@@ -238,6 +238,41 @@ describe('Tracker analytics filters', () => {
     )
   })
 
+  it('Z > 0.5 and Z > 1 are strict and ignore missing Z', () => {
+    const token = baseToken()
+    const row = (z: number) => ({
+      token,
+      insights: deriveTrackerTokenInsights(token, {
+        z_score: z,
+        z_score_available: true,
+        anomaly_type: 'positive',
+        current_price_usd: 0.01,
+      } as EnrichedTokenData),
+    })
+    const aboveHalf = {
+      ...DEFAULT_TRACKER_ANALYTICS_FILTERS,
+      zPreset: 'gt_0_5' as const,
+    }
+    const aboveOne = {
+      ...DEFAULT_TRACKER_ANALYTICS_FILTERS,
+      zPreset: 'gt_1' as const,
+    }
+    expect(matchesTrackerAnalyticsFilters(row(0.5), aboveHalf)).toBe(false)
+    expect(matchesTrackerAnalyticsFilters(row(0.51), aboveHalf)).toBe(true)
+    expect(matchesTrackerAnalyticsFilters(row(1), aboveHalf)).toBe(true)
+    expect(matchesTrackerAnalyticsFilters(row(-2), aboveHalf)).toBe(false)
+    expect(matchesTrackerAnalyticsFilters(row(1), aboveOne)).toBe(false)
+    expect(matchesTrackerAnalyticsFilters(row(1.01), aboveOne)).toBe(true)
+    expect(matchesTrackerAnalyticsFilters(row(0.8), aboveOne)).toBe(false)
+    const missing = deriveTrackerTokenInsights(token)
+    expect(
+      matchesTrackerAnalyticsFilters({ token, insights: missing }, aboveHalf),
+    ).toBe(false)
+    expect(
+      matchesTrackerAnalyticsFilters({ token, insights: missing }, aboveOne),
+    ).toBe(false)
+  })
+
   it('Risk Unknown keeps thin-data rows', () => {
     const token = baseToken()
     const insights = deriveTrackerTokenInsights(token)

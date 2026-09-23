@@ -45,6 +45,9 @@ import {
 import { TrackerSocialLinks } from "@/components/signals/TrackerSocialLinks";
 import { TrackerCatchTrainStrip } from "@/components/signals/TrackerCatchTrainStrip";
 import { TrackerHoldingChip } from "@/components/signals/TrackerHoldingChip";
+import TrackerRowTrade, {
+  TrackerTokenChart,
+} from "@/components/signals/TrackerRowTrade";
 import {
   formatHoldingUsd,
   lookupHolding,
@@ -53,6 +56,8 @@ import {
 } from "@/components/signals/tracker-holdings";
 import { useTrackerScoreBadges } from "@/hooks/useTrackerScoreBadges";
 import { useWalletTokens } from "@/hooks/useWalletTokens";
+import type { UserToken } from "@/utils/jupiter";
+import { TOKENS } from "@/utils/solana";
 import { useRhWalletTokens } from "@/hooks/useRhWalletTokens";
 import {
   isTrackerCatchTrainEnabled,
@@ -203,10 +208,15 @@ export default function TrackerTab() {
     Record<string, boolean>
   >({});
 
-  // Modal state
+  // Modal state (Robinhood desk). Solana rows expand an inline chart + trade panel.
   const [modalTokenAddress, setModalTokenAddress] = useState<string | null>(
     null,
   );
+  const [chartMint, setChartMint] = useState<string | null>(null);
+  const [tradePanel, setTradePanel] = useState<{
+    mint: string;
+    side: "buy" | "sell";
+  } | null>(null);
 
   const toggleBucketDetails = (key: string) => {
     setExpandedBuckets((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -324,6 +334,28 @@ export default function TrackerTab() {
     includeZeroBalance: false,
   });
   const rhHoldings = useRhWalletTokens();
+  const heldTokenByMint = useMemo(() => {
+    const map = new Map<string, UserToken>();
+    for (const token of solHoldings.allTokens) {
+      const mint = token.mintAddress?.trim().toLowerCase();
+      if (!mint) continue;
+      const prev = map.get(mint);
+      if (!prev) {
+        map.set(mint, token);
+        continue;
+      }
+      map.set(mint, {
+        ...prev,
+        balance: prev.balance + token.balance,
+        uiAmount: prev.uiAmount + token.uiAmount,
+        usdValue: prev.usdValue + token.usdValue,
+      });
+    }
+    return map;
+  }, [solHoldings.allTokens]);
+  const usdtUi = heldTokenByMint.get(TOKENS.USDT.toLowerCase())?.uiAmount ?? 0;
+  const usdtReady = !walletAddress || solHoldings.isFetched;
+
   const holdingsByMint = useMemo(() => {
     try {
       const list = isRhNetwork ? rhHoldings.tokens : solHoldings.allTokens;
@@ -2255,6 +2287,7 @@ export default function TrackerTab() {
           <div>
             <label className="block text-sm font-medium mb-2">Z-Score</label>
             <select
+              data-testid="tracker-z-score"
               value={analyticsFilters.zPreset}
               onChange={(e) =>
                 setAnalyticsFilters((prev) => ({
@@ -2265,6 +2298,8 @@ export default function TrackerTab() {
               className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="any">Any</option>
+              <option value="gt_0_5">z &gt; 0.5</option>
+              <option value="gt_1">z &gt; 1</option>
               <option value="abs_2_5">|z| ≥ 2.5</option>
               <option value="abs_1_5">|z| ≥ 1.5</option>
               <option value="pos_2_5">z ≥ 2.5</option>
@@ -2450,7 +2485,12 @@ export default function TrackerTab() {
 
         {displayedRows.map(({ token, analytics, insights, scores, missing }) => {
           const holding = lookupHolding(holdingsByMint, token.token_address);
+          const heldToken = heldTokenByMint.get(
+            token.token_address.toLowerCase(),
+          );
           const labelChip = trackerLabelDisplay(token.label);
+          const chartOpen = chartMint === token.token_address;
+          const tradeOpen = tradePanel?.mint === token.token_address;
           return (
           <div
             key={token.token_address}
@@ -2493,23 +2533,76 @@ export default function TrackerTab() {
                     </span>
                     <button
                       onClick={() => {
-                        handleOpenChart(token.token_address);
+                        if (isRhNetwork) {
+                          handleOpenChart(token.token_address);
+                        } else {
+                          setChartMint((prev) =>
+                            prev === token.token_address
+                              ? null
+                              : token.token_address,
+                          );
+                        }
                         if (!token.is_finished) {
                           void refetchTokenMcap(token.token_address);
                         }
                       }}
-                      className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white text-xs rounded transition-colors"
-                      title="Open chart (refreshes mcap when tracking active)"
+                      className={`px-2 py-1 text-white text-xs rounded transition-colors ${
+                        chartOpen
+                          ? "bg-green-700 ring-1 ring-green-300"
+                          : "bg-green-600 hover:bg-green-700"
+                      }`}
+                      title={
+                        isRhNetwork
+                          ? "Open chart (refreshes mcap when tracking active)"
+                          : "Show GMGN chart (refreshes mcap when tracking active)"
+                      }
                     >
-                      Chart
+                      {chartOpen && !isRhNetwork ? "Hide chart" : "Chart"}
                     </button>
                     <button
-                      onClick={() => handleOpenChart(token.token_address)}
-                      className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors"
-                      title="Open Chart & Buy"
+                      onClick={() => {
+                        if (isRhNetwork) {
+                          handleOpenChart(token.token_address);
+                          return;
+                        }
+                        setChartMint(token.token_address);
+                        setTradePanel((prev) =>
+                          prev?.mint === token.token_address &&
+                          prev.side === "buy"
+                            ? null
+                            : { mint: token.token_address, side: "buy" },
+                        );
+                      }}
+                      className={`px-2 py-1 text-white text-xs rounded transition-colors ${
+                        tradeOpen && tradePanel?.side === "buy"
+                          ? "bg-blue-700 ring-1 ring-blue-300"
+                          : "bg-blue-600 hover:bg-blue-700"
+                      }`}
+                      title="Buy with amount slider"
                     >
                       Buy
                     </button>
+                    {!isRhNetwork && holding && holding.amount > 0 && (
+                      <button
+                        onClick={() => {
+                          setChartMint(token.token_address);
+                          setTradePanel((prev) =>
+                            prev?.mint === token.token_address &&
+                            prev.side === "sell"
+                              ? null
+                              : { mint: token.token_address, side: "sell" },
+                          );
+                        }}
+                        className={`px-2 py-1 text-white text-xs rounded transition-colors ${
+                          tradeOpen && tradePanel?.side === "sell"
+                            ? "bg-amber-700 ring-1 ring-amber-300"
+                            : "bg-amber-600 hover:bg-amber-700"
+                        }`}
+                        title="Sell with percent slider"
+                      >
+                        Sell
+                      </button>
+                    )}
                     {!token.is_finished && (
                       <button
                         onClick={() => refetchTokenMcap(token.token_address)}
@@ -2616,6 +2709,32 @@ export default function TrackerTab() {
                 </div>
               </div>
             </div>
+
+            {chartOpen && !isRhNetwork && (
+              <TrackerTokenChart tokenAddress={token.token_address} />
+            )}
+            {tradeOpen && !isRhNetwork && tradePanel && (
+              <TrackerRowTrade
+                tokenAddress={token.token_address}
+                tokenSymbol={token.token_symbol}
+                side={tradePanel.side}
+                usdtUi={usdtUi}
+                usdtReady={usdtReady}
+                holding={
+                  heldToken
+                    ? {
+                        balanceRaw: heldToken.balance,
+                        uiAmount: heldToken.uiAmount,
+                        decimals: heldToken.decimals,
+                      }
+                    : null
+                }
+                onClose={() => setTradePanel(null)}
+                onSettled={() => {
+                  void solHoldings.refetchFresh();
+                }}
+              />
+            )}
 
             <div className="mt-3 flex flex-wrap gap-2 text-xs">
               <TrackerHoldingChip holding={holding} />
