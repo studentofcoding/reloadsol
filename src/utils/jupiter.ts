@@ -21,6 +21,7 @@ import {
   signTransactionsWithFallback,
   type PreparedSwapMeta,
 } from './swap-executor'
+import { signPreparedSwapTransactions } from './sol-desk-signer'
 import { waitForRpcRateLimit } from './rpc-rate-limit'
 import {
   craftReclaimTransaction,
@@ -1552,11 +1553,19 @@ function buildManualCloseInstructions(
 
 async function sendSignedCloseTransaction(
   transaction: VersionedTransaction,
+  userPublicKey: string,
   connection: Connection,
   signAllTransactions: (transactions: VersionedTransaction[]) => Promise<VersionedTransaction[]>
 ): Promise<string> {
-  const signedTransactions = await signAllTransactions([transaction])
-  const signedTx = signedTransactions[0]
+  const { signed } = await signPreparedSwapTransactions({
+    userPublicKey,
+    transactions: [transaction],
+    walletSign: (txs) => signAllTransactions(txs),
+  })
+  const signedTx = signed[0]
+  if (!signedTx) {
+    throw new Error('Close signing returned no transaction')
+  }
   const signature = await retryWithBackoff(async () => {
     return await connection.sendTransaction(signedTx, {
       skipPreflight: false,
@@ -1606,6 +1615,7 @@ async function executeManualCloseTransaction(
 
   return sendSignedCloseTransaction(
     new VersionedTransaction(messageV0),
+    userPublicKey,
     connection,
     signAllTransactions,
   )
@@ -1701,6 +1711,7 @@ async function executeCloseForTokens(
   if (resolveCloseExecutionPlan(reclaimTx !== null) === 'sign-reclaim' && reclaimTx) {
     const signature = await sendSignedCloseTransaction(
       reclaimTx,
+      userPublicKey,
       connection,
       signAllTransactions
     )
@@ -1916,14 +1927,19 @@ export async function executeBulkBuy(
     console.log(`Signing ${transactions.length} transactions...`)
 
     const signedTransactions = await withTimeout(
-      signTransactionsWithFallback(
+      signPreparedSwapTransactions({
+        userPublicKey,
         transactions,
-        signAllTransactions,
-        async (tx) => {
-          const [signed] = await signAllTransactions([tx])
-          return signed
-        },
-      ),
+        walletSign: (txs) =>
+          signTransactionsWithFallback(
+            txs,
+            signAllTransactions,
+            async (tx) => {
+              const [signed] = await signAllTransactions([tx])
+              return signed
+            },
+          ),
+      }).then((result) => result.signed),
       WALLET_SIGN_TIMEOUT_MS,
       'Wallet signature',
     )
@@ -2681,14 +2697,21 @@ export async function executeBulkSellAlt(
 
         if (transactions.length > 0) {
           console.log(`Signing ${transactions.length} sell transactions...`);
-          const signedTransactions = await signTransactionsWithFallback(
-            transactions,
-            signAllTransactions,
-            async (tx) => {
-              const [signed] = await signAllTransactions([tx]);
-              return signed;
-            },
-          );
+          const signedTransactions = (
+            await signPreparedSwapTransactions({
+              userPublicKey,
+              transactions,
+              walletSign: (txs) =>
+                signTransactionsWithFallback(
+                  txs,
+                  signAllTransactions,
+                  async (tx) => {
+                    const [signed] = await signAllTransactions([tx]);
+                    return signed;
+                  },
+                ),
+            })
+          ).signed;
           const swapSignatures: string[] = [];
 
           const SEND_BATCH_SIZE = getTradeSendConcurrency();

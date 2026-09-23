@@ -29,6 +29,17 @@ describe('isServiceAuthorizedRequest', () => {
     expect(isServiceAuthorizedRequest(req)).toBe(true)
   })
 
+  it('rejects /api/trade/server-sign without a wallet session', () => {
+    delete process.env.TRENDING_TRACKER_SECRET
+    delete process.env.PNL_UPDATE_SECRET
+    delete process.env.DLMM_API_PASSWORD
+    const req = new NextRequest('http://localhost/api/trade/server-sign', {
+      method: 'POST',
+    })
+    const res = enforceApiAccess(req)
+    expect(res?.status).toBe(401)
+  })
+
   it('rejects /api/trade/test without a wallet session', () => {
     delete process.env.TRENDING_TRACKER_SECRET
     delete process.env.PNL_UPDATE_SECRET
