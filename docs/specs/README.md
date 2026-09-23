@@ -10,3 +10,4 @@ Implementable handoffs. Code PRs should follow these rather than re-litigating p
 | [SPEC-strategies-algo-tester-unify-v1.md](./SPEC-strategies-algo-tester-unify-v1.md) | Implementing. Unify Algo Tester: all six domains, Config + Open + Closed; `/dev/strategies` redirect |
 | [SPEC-potential-rug-labels-tracker-honesty-v1.md](./SPEC-potential-rug-labels-tracker-honesty-v1.md) | To-spec (docs only). MCap auto-rule potential/rugged labels, OHLC corpus, Tracker tabs, token-map honesty |
 | [SPEC-jev-soft-gate-shadow-v1.md](./SPEC-jev-soft-gate-shadow-v1.md) | Implementing. Jev Noul shadow beside Early Enter soft gate (`early_enter_noul_shadow`); paper untouched |
+| [SPEC-signals-strategy-list-v1.md](./SPEC-signals-strategy-list-v1.md) | To-spec (docs only). Signals-tab strategy picker ranked by raw unfloored PnL; unique mint + cross-strategy badge |
