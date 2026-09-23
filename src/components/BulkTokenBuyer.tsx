@@ -105,7 +105,12 @@ import {
   minBuySliderPercent,
   maxTradeTokens,
 } from "@/utils/trade-ui-limits";
-import { prefetchSwapTransaction, fetchSwapQuote } from "@/utils/swap-executor";
+import {
+  fetchSwapQuote,
+  peekFreshPreparedSwap,
+  warmResolvedPreparedSwap,
+} from "@/utils/swap-executor";
+import { impactToAbsPct } from "@/utils/swap-quote-pick";
 import {
   AUTO_SLIPPAGE_BPS,
   AUTO_SLIPPAGE_CAP_BPS,
@@ -537,23 +542,34 @@ export default function BulkTokenBuyer() {
     const timer = window.setTimeout(() => {
       void Promise.all(
         validMints.map(async (mint) => {
-          const params = {
-            userPublicKey: pk,
-            inputMint,
-            outputMint: mint,
-            amount: amountPerToken,
-            slippageBps: prefetchSlippageBps(slippage),
-            priorityFeeLamports: priorityFee,
-            feeAccount: RAPTOR_DEV_FEE_ACCOUNT,
-            feeBps: RAPTOR_DEV_FEE_BPS,
-            connection,
-          };
           try {
-            const prepared = await prefetchSwapTransaction(params);
-            if (prepared.outAmount) {
+            const { slippageBps: resolvedBps } = await warmResolvedPreparedSwap(
+              {
+                userPublicKey: pk,
+                inputMint,
+                outputMint: mint,
+                amount: amountPerToken,
+                priorityFeeLamports: priorityFee,
+                feeAccount: RAPTOR_DEV_FEE_ACCOUNT,
+                feeBps: RAPTOR_DEV_FEE_BPS,
+                connection,
+              },
+              slippage,
+            );
+            const warmed = peekFreshPreparedSwap({
+              userPublicKey: pk,
+              inputMint,
+              outputMint: mint,
+              amount: amountPerToken,
+              slippageBps: resolvedBps,
+              priorityFeeLamports: priorityFee,
+              feeAccount: RAPTOR_DEV_FEE_ACCOUNT,
+              feeBps: RAPTOR_DEV_FEE_BPS,
+            });
+            if (warmed?.outAmount) {
               setSolPrefetchOut((prev) => ({
                 ...prev,
-                [mint]: prepared.outAmount!,
+                [mint]: warmed.outAmount!,
               }));
             }
           } catch {
@@ -850,6 +866,32 @@ export default function BulkTokenBuyer() {
     );
     const inputMint =
       selectedCurrency === "USDC" ? TOKENS.USDC : TOKENS.SOL;
+    if (publicKey && validMints.length > 0) {
+      const pk = publicKey.toBase58();
+      const seedBps = prefetchSlippageBps(slippage);
+      const cachedImpacts: number[] = [];
+      let complete = true;
+      for (const mint of validMints) {
+        const cached = peekFreshPreparedSwap({
+          userPublicKey: pk,
+          inputMint,
+          outputMint: mint,
+          amount: amountPerToken,
+          slippageBps: seedBps,
+          priorityFeeLamports: priorityFee,
+          feeAccount: RAPTOR_DEV_FEE_ACCOUNT,
+          feeBps: RAPTOR_DEV_FEE_BPS,
+        });
+        if (cached?.priceImpact == null) {
+          complete = false;
+          break;
+        }
+        cachedImpacts.push(impactToAbsPct(cached.priceImpact));
+      }
+      if (complete) {
+        return resolveTradeSlippageBps(slippage, worstImpactPct(cachedImpacts));
+      }
+    }
     const impacts = await Promise.all(
       validMints.map(async (mint) => {
         const q = await fetchSwapQuote(
@@ -872,6 +914,8 @@ export default function BulkTokenBuyer() {
     rhQuote,
     selectedCurrency,
     slippage,
+    publicKey,
+    priorityFee,
   ]);
 
   const runConfirmedRhBuy = useCallback(async () => {

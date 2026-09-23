@@ -15,7 +15,6 @@ import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import { useWallet, useConnection } from "@/components/WalletProvider";
 import {
   executeBulkBuy,
-  getSwapQuote,
 } from "@/utils/jupiter";
 import { executeClientSwap } from "@/utils/swap-executor";
 import { TOKENS } from "@/utils/solana";
@@ -919,8 +918,6 @@ function ChartsContent() {
         tokenAccount.account.data.parsed.info.tokenAmount.uiAmount;
       const balanceRaw =
         tokenAccount.account.data.parsed.info.tokenAmount.amount;
-      const decimals =
-        tokenAccount.account.data.parsed.info.tokenAmount.decimals;
 
       if (!balance || balance <= 0) {
         setStatus("Balance is 0");
@@ -929,24 +926,12 @@ function ChartsContent() {
 
       console.log(`Selling ${balance} tokens (${balanceRaw} raw)`);
 
-      // 2. Get Swap Quote (Token -> SOL)
-      const quote = await getSwapQuote(
-        tokenAddress,
-        TOKENS.SOL,
-        parseInt(balanceRaw), // Input amount in smallest unit (lamports/raw)
-        200, // 2% slippage
-      );
-
-      if (!quote) {
-        throw new Error("Failed to get swap quote");
-      }
-
       const swapResult = await executeClientSwap({
         userPublicKey: publicKey.toString(),
-        inputMint: quote.inputMint,
-        outputMint: quote.outputMint,
-        amount: quote.inAmount,
-        slippageBps: quote.slippageBps ?? 200,
+        inputMint: tokenAddress,
+        outputMint: TOKENS.SOL,
+        amount: balanceRaw,
+        slippageBps: 200,
         priorityFeeLamports: 30000,
         connection,
         signTransaction: async (tx) => {
@@ -956,33 +941,9 @@ function ChartsContent() {
       });
       const signature = swapResult.signature;
 
-      // 5. Track Operation
-      const solReceived = quote.outAmount
-        ? parseInt(quote.outAmount) / LAMPORTS_PER_SOL
+      const solReceived = swapResult.outAmount
+        ? parseInt(swapResult.outAmount, 10) / LAMPORTS_PER_SOL
         : 0;
-      const currentSolPrice = await getSolPriceUSD();
-
-      await trackOperation({
-        walletAddress: publicKey.toString(),
-        operationType: "sell",
-        tokens: [
-          {
-            mintAddress: tokenAddress,
-            symbol: symbols[tokenAddress] || "Unknown",
-            tokenAmount: balance,
-            solAmount: solReceived,
-            solPrice: currentSolPrice,
-          },
-        ],
-        successCount: 1,
-        failureCount: 0,
-        totalTokens: 1,
-        solAmount: solReceived,
-        feesPaid: 0.000005, // Estimate
-        solPriceUsd: currentSolPrice,
-        totalUsdValue: solReceived * currentSolPrice,
-        signatures: [signature],
-      });
 
       showOutcome({
         success: true,
@@ -993,6 +954,31 @@ function ChartsContent() {
         solAmount: solReceived,
       });
       setStatus("");
+
+      void (async () => {
+        const currentSolPrice = await getSolPriceUSD();
+        await trackOperation({
+          walletAddress: publicKey.toString(),
+          operationType: "sell",
+          tokens: [
+            {
+              mintAddress: tokenAddress,
+              symbol: symbols[tokenAddress] || "Unknown",
+              tokenAmount: balance,
+              solAmount: solReceived,
+              solPrice: currentSolPrice,
+            },
+          ],
+          successCount: 1,
+          failureCount: 0,
+          totalTokens: 1,
+          solAmount: solReceived,
+          feesPaid: 0.000005, // Estimate
+          solPriceUsd: currentSolPrice,
+          totalUsdValue: solReceived * currentSolPrice,
+          signatures: [signature],
+        });
+      })().catch((error) => console.error("Sell tracking failed", error));
     } catch (e) {
       console.error("Sell failed", e);
       showOutcome({

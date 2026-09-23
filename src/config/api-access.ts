@@ -17,6 +17,7 @@ export const PUBLIC_API_PREFIXES = [
 export const WALLET_API_PREFIXES = [
   '/api/buy',
   '/api/trade/server-sign',
+  '/api/trade/server-execute',
   '/api/operations',
   '/api/trading/records',
   '/api/trade/compare',

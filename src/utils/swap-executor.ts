@@ -22,6 +22,10 @@ import {
   passesImpactGate,
   type SwapQuoteProvider,
 } from "@/utils/swap-quote-pick";
+import {
+  prefetchSlippageBps,
+  resolveTradeSlippageBps,
+} from "@/utils/auto-slippage";
 import { pickParallelSwapQuote } from "@/utils/swap-quote-parallel";
 import {
   sendShyftTransaction,
@@ -40,8 +44,10 @@ import { confirmSignaturesViaWs } from "@/utils/ws-confirm";
 import { isWalletUserRejection } from "@/utils/wallet-rejection";
 import {
   resolveSolSignerMode,
+  serverLandSwaps,
   signPreparedSwapTransactions,
 } from "@/utils/sol-desk-signer";
+import { beginTradeInFlight } from "@/utils/trade-inflight";
 import {
   priorityFeeCacheToken,
   type JupiterPrioritizationFeeLamports,
@@ -59,6 +65,8 @@ export type PreparedSwap = {
   lastValidBlockHeight?: number;
   /** Jupiter Swap V2 `/order` requestId. Present → prefer `POST /swap/v2/execute`. */
   requestId?: string;
+  /** Raw order impact (fraction or percent). */
+  priceImpact?: number;
 };
 
 export type PrepareSwapParams = {
@@ -159,6 +167,7 @@ async function prepareRaptorSwap(
     swapTransaction: swapResult.swapTransaction,
     outAmount: swapResult.quote.amountOut,
     lastValidBlockHeight: swapResult.lastValidBlockHeight,
+    priceImpact: swapResult.quote.priceImpact,
   };
 }
 
@@ -175,11 +184,13 @@ async function prepareJupiterLiteSwapPrepared(
     direct: params.direct,
   });
 
+  const liteImpact = Number(lite.quoteResponse.priceImpactPct);
   return {
     provider: "jupiter_lite",
     swapTransaction: lite.swapTransaction,
     outAmount: lite.outAmount,
     lastValidBlockHeight: lite.lastValidBlockHeight,
+    priceImpact: Number.isFinite(liteImpact) ? liteImpact : undefined,
   };
 }
 
@@ -217,6 +228,7 @@ async function prepareJupiterSwapPrepared(
     outAmount: order.outAmount,
     lastValidBlockHeight: order.lastValidBlockHeight,
     requestId: order.requestId,
+    priceImpact: order.priceImpact,
   };
 }
 
@@ -240,11 +252,13 @@ async function prepareDeskSwap(params: PrepareSwapParams): Promise<PreparedSwap>
     direct: params.direct,
   });
   assertSwapImpact(lite.quoteResponse.priceImpactPct);
+  const liteImpact = Number(lite.quoteResponse.priceImpactPct);
   return {
     provider: "jupiter_lite",
     swapTransaction: lite.swapTransaction,
     outAmount: lite.outAmount,
     lastValidBlockHeight: lite.lastValidBlockHeight,
+    priceImpact: Number.isFinite(liteImpact) ? liteImpact : undefined,
   };
 }
 
@@ -290,6 +304,32 @@ export async function prefetchSwapTransaction(
   const prepared = await prepareSwapTransaction(params);
   putPreparedSwapCache(params, prepared);
   return prepared;
+}
+
+/**
+ * Build the seed order, then a second order only when auto slippage
+ * comes out tighter or wider than that seed. Click-time prepare can reuse
+ * whichever of those is still inside the prefetch TTL.
+ */
+export async function warmResolvedPreparedSwap(
+  base: Omit<PrepareSwapParams, "slippageBps">,
+  selectedSlippageBps: number,
+): Promise<{ slippageBps: number; impactPct: number | null }> {
+  const seedBps = prefetchSlippageBps(selectedSlippageBps);
+  const seedParams: PrepareSwapParams = { ...base, slippageBps: seedBps };
+  const seeded =
+    peekFreshPreparedSwap(seedParams) ??
+    (await prefetchSwapTransaction(seedParams));
+  const impactPct =
+    seeded.priceImpact == null ? null : impactToAbsPct(seeded.priceImpact);
+  const slippageBps = resolveTradeSlippageBps(selectedSlippageBps, impactPct);
+  if (slippageBps !== seedBps) {
+    const resolved: PrepareSwapParams = { ...base, slippageBps };
+    if (!peekFreshPreparedSwap(resolved)) {
+      await prefetchSwapTransaction(resolved);
+    }
+  }
+  return { slippageBps, impactPct };
 }
 
 /** UI quote — Jupiter V2 `/order` without taker. Lite only if V2 fails. */
@@ -370,6 +410,9 @@ export type SubmitSignedSwapResult = {
   via: SwapSendVia;
   /** Poll Raptor status API even when send went via RPC. */
   checkViaRaptor?: boolean;
+  /** Jupiter `/execute` Success (code 0) already confirmed the landing. */
+  landed?: boolean;
+  outputAmount?: string;
 };
 
 function prefersJupiterExecute(prepared: PreparedSwap): boolean {
@@ -407,6 +450,10 @@ async function tryJupiterExecute(
       signature: executed.signature,
       via: "jupiter",
       checkViaRaptor: false,
+      landed: true,
+      ...(executed.outputAmountResult
+        ? { outputAmount: executed.outputAmountResult }
+        : {}),
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -473,6 +520,8 @@ export type SubmitSignedSwapBatchResult =
       signature: string;
       via: SwapSendVia;
       checkViaRaptor?: boolean;
+      landed?: boolean;
+      outputAmount?: string;
     }
   | { index: number; success: false; error: unknown };
 
@@ -565,6 +614,8 @@ async function submitOneSignedSwap(
       signature: sendResult.signature,
       via: sendResult.via,
       checkViaRaptor: sendResult.checkViaRaptor,
+      landed: sendResult.landed,
+      outputAmount: sendResult.outputAmount,
     };
   } catch (error) {
     return { index: item.index, success: false, error };
@@ -601,7 +652,13 @@ export async function submitSignedSwapBatch(
   return [...managedResults, ...restResults].sort((a, b) => a.index - b.index);
 }
 
-const CONFIRM_POLL_INTERVAL_MS = 3000;
+/**
+ * A missed status check used to sleep 3000ms. That sleep alone measured
+ * 3003ms, which is the click-to-success gap after Jupiter has already
+ * returned Success. Fresh landings are visible well inside a second.
+ */
+export const CONFIRM_POLL_INTERVAL_MS = 400;
+const CONFIRM_HISTORY_AFTER_MS = 8_000;
 const CONFIRM_DEADLINE_MS = 45_000;
 const RAPTOR_CONFIRM_CONCURRENCY = 2;
 const MAX_CONSECUTIVE_RPC_FAILURES = 3;
@@ -749,6 +806,7 @@ export async function confirmSwapSignaturesBatch(
   }
 
   let consecutiveRpcFailures = 0;
+  const confirmStartedAt = Date.now();
 
   while (pending.size > 0) {
     // Phase A: Raptor tracks its own sends; poll it first, no RPC budget spent.
@@ -790,7 +848,8 @@ export async function confirmSwapSignaturesBatch(
     try {
       await waitForRpcRateLimit();
       const response = await connection.getSignatureStatuses(pendingSigs, {
-        searchTransactionHistory: true,
+        searchTransactionHistory:
+          Date.now() - confirmStartedAt >= CONFIRM_HISTORY_AFTER_MS,
       });
       consecutiveRpcFailures = 0;
 
@@ -827,6 +886,64 @@ export async function confirmSwapSignaturesBatch(
     results.set(signature, `Transaction confirmation timeout for ${signature}`);
   }
   return results;
+}
+
+/** Jupiter Success rows are already confirmed. Poll only the rest. */
+export async function confirmUnlandedSwaps(
+  items: Array<BatchConfirmItem & { landed?: boolean }>,
+  connection: Connection,
+  options?: ConfirmBatchOptions,
+): Promise<Map<string, string | null>> {
+  const results = new Map<string, string | null>();
+  const pending: BatchConfirmItem[] = [];
+  for (const item of items) {
+    if (item.landed) results.set(item.signature, null);
+    else pending.push(item);
+  }
+  if (pending.length === 0) return results;
+  const polled = await confirmSwapSignaturesBatch(pending, connection, options);
+  for (const [signature, error] of polled) results.set(signature, error);
+  return results;
+}
+
+/**
+ * Server-sign + Jupiter /execute in one hop when every leg has a requestId.
+ * Null means the caller should sign and submit itself. A partial land returns
+ * null on purpose: resubmitting the same bytes is the same signature, and
+ * Jupiter will not execute it twice.
+ */
+export async function tryLandPreparedOnServer(
+  userPublicKey: string,
+  metas: PreparedSwap[],
+): Promise<SubmitSignedSwapBatchResult[] | null> {
+  if (typeof window === "undefined" || metas.length === 0) return null;
+  if (!metas.every((meta) => prefersJupiterExecute(meta))) return null;
+  try {
+    const mode = await resolveSolSignerMode(userPublicKey);
+    if (mode !== "server") return null;
+    const rows = await serverLandSwaps(
+      metas.map((meta) => ({
+        swapTransaction: meta.swapTransaction,
+        requestId: meta.requestId as string,
+      })),
+    );
+    if (rows.some((row) => !("signature" in row))) return null;
+    return rows.map((row, index) => {
+      const landed = row as { signature: string; outputAmount?: string };
+      return {
+        index,
+        success: true as const,
+        signature: landed.signature,
+        via: "jupiter" as const,
+        landed: true,
+        outputAmount: landed.outputAmount,
+      };
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn("[swap] server land unavailable:", message);
+    return null;
+  }
 }
 
 export type WaitForSwapConfirmationParams = ConfirmSwapSignatureParams & {
@@ -948,57 +1065,133 @@ function withWalletSignTimeout<T>(
   });
 }
 
+function logSwapTiming(fields: Record<string, string | number | boolean>): void {
+  const parts = Object.entries(fields).map(([key, value]) => `${key}=${value}`);
+  console.info(`[swap-timing] ${parts.join(" ")}`);
+}
+
+function flightError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /** Single client-side swap: Jupiter V2 prepare → sign → execute (or RPC/Shyft) → confirm. */
 export async function executeClientSwap(
   params: ExecuteClientSwapParams,
 ): Promise<ExecuteClientSwapResult> {
-  const signerModePromise = resolveSolSignerMode(params.userPublicKey);
-  const prepared = await prepareSwapTransaction(params);
-  const tx = VersionedTransaction.deserialize(
-    Buffer.from(prepared.swapTransaction, "base64"),
-  );
-  const signerMode = await signerModePromise;
-  const { signed } = await withWalletSignTimeout(
-    signPreparedSwapTransactions({
-      userPublicKey: params.userPublicKey,
-      transactions: [tx],
-      mode: signerMode,
-      walletSign: async (txs) => {
-        const next = txs[0];
-        if (!next) throw new Error("Swap signing returned no transaction");
-        return [await params.signTransaction(next)];
-      },
-    }),
-    signerMode === "server"
-      ? "Timed out waiting for server signature — try the trade again"
-      : undefined,
-  );
-  const signedTx = signed[0];
-  if (!signedTx) {
-    throw new Error("Swap signing returned no transaction");
-  }
-  const sendResult = await submitSignedSwap({
-    signedTx,
-    prepared,
-    connection: params.connection,
-    direct: params.direct,
-  });
+  const flight = beginTradeInFlight();
+  const started = Date.now();
+  let prepareMs = 0;
+  let signMs = 0;
+  let submitMs = 0;
+  let confirmMs = 0;
+  try {
+    const signerModePromise = resolveSolSignerMode(params.userPublicKey);
+    const prepareStarted = Date.now();
+    const prepared =
+      takeFreshPreparedSwap(params) ?? (await prepareSwapTransaction(params));
+    prepareMs = Date.now() - prepareStarted;
+    const signerMode = await signerModePromise;
 
-  if (params.pollRaptor !== false) {
-    await confirmSwapSignature({
-      signature: sendResult.signature,
-      via: sendResult.via,
-      checkViaRaptor: sendResult.checkViaRaptor,
+    if (signerMode === "server") {
+      const landStarted = Date.now();
+      const landed = await tryLandPreparedOnServer(params.userPublicKey, [
+        prepared,
+      ]);
+      const landedRow = landed?.[0];
+      if (landedRow?.success) {
+        submitMs = Date.now() - landStarted;
+        logSwapTiming({
+          prepareMs,
+          signMs: 0,
+          submitMs,
+          confirmMs: 0,
+          totalMs: Date.now() - started,
+          via: "jupiter",
+          landed: true,
+          server: true,
+        });
+        flight.succeed();
+        return {
+          signature: landedRow.signature,
+          via: "jupiter",
+          outAmount: landedRow.outputAmount ?? prepared.outAmount,
+        };
+      }
+    }
+
+    const tx = VersionedTransaction.deserialize(
+      Buffer.from(prepared.swapTransaction, "base64"),
+    );
+    const signStarted = Date.now();
+    const { signed } = await withWalletSignTimeout(
+      signPreparedSwapTransactions({
+        userPublicKey: params.userPublicKey,
+        transactions: [tx],
+        mode: signerMode,
+        walletSign: async (txs) => {
+          const next = txs[0];
+          if (!next) throw new Error("Swap signing returned no transaction");
+          return [await params.signTransaction(next)];
+        },
+      }),
+      signerMode === "server"
+        ? "Timed out waiting for server signature — try the trade again"
+        : undefined,
+    );
+    signMs = Date.now() - signStarted;
+    const signedTx = signed[0];
+    if (!signedTx) {
+      throw new Error("Swap signing returned no transaction");
+    }
+    const submitStarted = Date.now();
+    const sendResult = await submitSignedSwap({
+      signedTx,
+      prepared,
       connection: params.connection,
-      lastValidBlockHeight: prepared.lastValidBlockHeight,
-      blockhash: signedTx.message.recentBlockhash,
       direct: params.direct,
     });
-  }
+    submitMs = Date.now() - submitStarted;
 
-  return {
-    signature: sendResult.signature,
-    via: sendResult.via,
-    outAmount: prepared.outAmount,
-  };
+    if (!sendResult.landed && params.pollRaptor !== false) {
+      const confirmStarted = Date.now();
+      await confirmSwapSignature({
+        signature: sendResult.signature,
+        via: sendResult.via,
+        checkViaRaptor: sendResult.checkViaRaptor,
+        connection: params.connection,
+        lastValidBlockHeight: prepared.lastValidBlockHeight,
+        blockhash: signedTx.message.recentBlockhash,
+        direct: params.direct,
+      });
+      confirmMs = Date.now() - confirmStarted;
+    }
+
+    logSwapTiming({
+      prepareMs,
+      signMs,
+      submitMs,
+      confirmMs,
+      totalMs: Date.now() - started,
+      via: sendResult.via,
+      landed: Boolean(sendResult.landed),
+      server: signerMode === "server",
+    });
+    flight.succeed();
+    return {
+      signature: sendResult.signature,
+      via: sendResult.via,
+      outAmount: sendResult.outputAmount ?? prepared.outAmount,
+    };
+  } catch (error) {
+    logSwapTiming({
+      prepareMs,
+      signMs,
+      submitMs,
+      confirmMs,
+      totalMs: Date.now() - started,
+      error: true,
+    });
+    flight.fail(flightError(error));
+    throw error;
+  }
 }

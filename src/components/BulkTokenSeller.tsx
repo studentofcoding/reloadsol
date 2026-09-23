@@ -54,7 +54,11 @@ import type { RhSwapQuote } from "@/utils/dlmm/rh-univ2-swap";
 import { executeRhParentKyberSell } from "@/utils/dlmm/rh-kyber-swap";
 import { RH_PLATFORM_FEE_LABEL } from "@/utils/dlmm/rh-batch-executor";
 import { capTradeTokens, maxTradeTokens } from "@/utils/trade-ui-limits";
-import { prefetchSwapTransaction } from "@/utils/swap-executor";
+import {
+  peekFreshPreparedSwap,
+  warmResolvedPreparedSwap,
+} from "@/utils/swap-executor";
+import { impactToAbsPct } from "@/utils/swap-quote-pick";
 import {
   AUTO_SLIPPAGE_BPS,
   AUTO_SLIPPAGE_CAP_BPS,
@@ -644,17 +648,19 @@ export default function BulkTokenSeller({
     const timer = window.setTimeout(() => {
       void Promise.all(
         legs.map((token) =>
-          prefetchSwapTransaction({
-            userPublicKey: pk,
-            inputMint: token.mintAddress,
-            outputMint: sellOut.outputMint,
-            amount: token.sellAmount,
-            slippageBps: prefetchSlippageBps(slippage),
-            priorityFeeLamports: priorityFee,
-            feeAccount: RAPTOR_DEV_FEE_ACCOUNT,
-            feeBps: RAPTOR_DEV_FEE_BPS,
-            connection,
-          }).catch(() => undefined),
+          warmResolvedPreparedSwap(
+            {
+              userPublicKey: pk,
+              inputMint: token.mintAddress,
+              outputMint: sellOut.outputMint,
+              amount: token.sellAmount,
+              priorityFeeLamports: priorityFee,
+              feeAccount: RAPTOR_DEV_FEE_ACCOUNT,
+              feeBps: RAPTOR_DEV_FEE_BPS,
+              connection,
+            },
+            slippage,
+          ).catch(() => undefined),
         ),
       );
     }, 400);
@@ -1051,6 +1057,33 @@ export default function BulkTokenSeller({
       );
       return resolveTradeSlippageBps(slippage, worstImpactPct(impacts));
     }
+    if (publicKey) {
+      const pk = publicKey.toBase58();
+      const seedBps = prefetchSlippageBps(slippage);
+      const cachedImpacts: number[] = [];
+      let complete = selectedTokens.some((t) => t.sellAmount > 0);
+      for (const token of selectedTokens) {
+        if (token.sellAmount <= 0) continue;
+        const cached = peekFreshPreparedSwap({
+          userPublicKey: pk,
+          inputMint: token.mintAddress,
+          outputMint: sellOut.outputMint,
+          amount: token.sellAmount,
+          slippageBps: seedBps,
+          priorityFeeLamports: priorityFee,
+          feeAccount: RAPTOR_DEV_FEE_ACCOUNT,
+          feeBps: RAPTOR_DEV_FEE_BPS,
+        });
+        if (cached?.priceImpact == null) {
+          complete = false;
+          break;
+        }
+        cachedImpacts.push(impactToAbsPct(cached.priceImpact));
+      }
+      if (complete && cachedImpacts.length > 0) {
+        return resolveTradeSlippageBps(slippage, worstImpactPct(cachedImpacts));
+      }
+    }
     const fromQuotes = selectedTokens.map((t) => {
       const q = quotes[t.mintAddress];
       return q && isQuoteValid(q) ? q.priceImpact : null;
@@ -1078,6 +1111,8 @@ export default function BulkTokenSeller({
     quotes,
     isQuoteValid,
     fetchQuoteForToken,
+    publicKey,
+    priorityFee,
   ]);
 
   const runConfirmedRhSell = useCallback(async () => {

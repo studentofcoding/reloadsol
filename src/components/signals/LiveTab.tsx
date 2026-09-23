@@ -824,7 +824,16 @@ export default function LiveTab() {
           ? parseInt(swapResult.outAmount, 10) / Math.pow(10, 6)
           : parseInt(quote.outAmount, 10) / Math.pow(10, 6);
 
-      await trackRealBuy(trackOperation, {
+      showOutcome({
+        success: true,
+        operation: "buy",
+        isSimulation: false,
+        tokenSymbol: token.token_symbol,
+        mintAddress: token.token_address,
+        solAmount: buyAmount,
+      });
+
+      void trackRealBuy(trackOperation, {
         walletAddress: publicKey.toString(),
         tokens: [
           {
@@ -842,20 +851,11 @@ export default function LiveTab() {
         slippage: 300,
         priorityFee: 30000,
         bot_strategy: strategyId,
-      });
+      }).catch((error) => console.error(error));
 
-      showOutcome({
-        success: true,
-        operation: "buy",
-        isSimulation: false,
-        tokenSymbol: token.token_symbol,
-        mintAddress: token.token_address,
-        solAmount: buyAmount,
-      });
-
-      // Refresh wallet tokens and quotes
-      await refetchTokens();
-      await fetchSellQuotes();
+      void refetchTokens()
+        .then(() => fetchSellQuotes())
+        .catch((error) => console.error(error));
     } catch (err) {
       console.error("Error buying token:", err);
       showOutcome({
@@ -1027,7 +1027,16 @@ export default function LiveTab() {
 
       const tokenSold = ownedInfo.balance || 0;
 
-      await trackRealSell(trackOperation, {
+      showOutcome({
+        success: true,
+        operation: "sell",
+        isSimulation: false,
+        tokenSymbol: token.token_symbol,
+        mintAddress: token.token_address,
+        solAmount: expectedSol,
+      });
+
+      void trackRealSell(trackOperation, {
         walletAddress: publicKey.toString(),
         tokens: [
           {
@@ -1044,30 +1053,18 @@ export default function LiveTab() {
         feesPaid: 0,
         slippage: 300,
         priorityFee: 30000,
-      });
+      }).catch((error) => console.error(error));
 
-      // After successful sell, notify other devices
-      if (publicKey) {
-        await notifyTradingUpdate(publicKey.toString(), "trade_update", {
-          operationType: "sell",
-          tokenAddress: token.token_address,
-          tokenSymbol: token.token_symbol,
-          amount: 100, // 100% sell
-        });
-      }
-
-      showOutcome({
-        success: true,
-        operation: "sell",
-        isSimulation: false,
+      void notifyTradingUpdate(publicKey.toString(), "trade_update", {
+        operationType: "sell",
+        tokenAddress: token.token_address,
         tokenSymbol: token.token_symbol,
-        mintAddress: token.token_address,
-        solAmount: expectedSol,
-      });
+        amount: 100,
+      }).catch((error) => console.error(error));
 
-      // Refresh wallet tokens and quotes
-      await refetchTokens();
-      await fetchSellQuotes();
+      void refetchTokens()
+        .then(() => fetchSellQuotes())
+        .catch((error) => console.error(error));
     } catch (err) {
       console.error("Error selling token:", err);
       showOutcome({
@@ -1264,8 +1261,9 @@ export default function LiveTab() {
       });
       const signature = swapResult.signature;
       alert(`Successfully sold ${token.symbol}! Transaction: ${signature}`);
-      await refetchTokens();
-      await fetchSellQuotes();
+      void refetchTokens()
+        .then(() => fetchSellQuotes())
+        .catch((error) => console.error(error));
     } catch (err) {
       alert(`Failed to sell ${token.symbol}`);
     } finally {

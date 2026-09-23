@@ -11,7 +11,7 @@ import jupiterApiUtils from './jupiter-api'
 import {
   prepareBulkSwapTransaction,
   confirmSwapSignature,
-  confirmSwapSignaturesBatch,
+  confirmUnlandedSwaps,
   getTradeSendConcurrency,
   runWithConcurrency,
   submitSignedSwap,
@@ -19,8 +19,11 @@ import {
   fetchSwapQuote,
   buildSwapTransaction,
   signTransactionsWithFallback,
+  tryLandPreparedOnServer,
   type PreparedSwapMeta,
+  type SubmitSignedSwapBatchResult,
 } from './swap-executor'
+import { beginTradeInFlight } from './trade-inflight'
 import { signPreparedSwapTransactions } from './sol-desk-signer'
 import { waitForRpcRateLimit } from './rpc-rate-limit'
 import {
@@ -1815,6 +1818,7 @@ export async function executeBulkBuy(
     }
   }
 
+  const flight = beginTradeInFlight()
   try {
     // Track start time for performance measurement
     const start = Date.now()
@@ -1924,46 +1928,11 @@ export async function executeBulkBuy(
       throw new Error('No valid transactions could be created')
     }
 
-    console.log(`Signing ${transactions.length} transactions...`)
-
-    const signedTransactions = await withTimeout(
-      signPreparedSwapTransactions({
-        userPublicKey,
-        transactions,
-        walletSign: (txs) =>
-          signTransactionsWithFallback(
-            txs,
-            signAllTransactions,
-            async (tx) => {
-              const [signed] = await signAllTransactions([tx])
-              return signed
-            },
-          ),
-      }).then((result) => result.signed),
-      WALLET_SIGN_TIMEOUT_MS,
-      'Wallet signature',
-    )
-
-    // Send and confirm transactions using rate-limited batches
-    const SEND_BATCH_SIZE = getTradeSendConcurrency()
     const signatures: string[] = []
-
-    for (let i = 0; i < signedTransactions.length; i += SEND_BATCH_SIZE) {
-      const batch = signedTransactions.slice(i, i + SEND_BATCH_SIZE)
-
-      const batchEntries = batch.map((tx, idx) => ({
-        tx,
-        globalIdx: i + idx,
-      }))
-
-      const batchItems = batchEntries.map((entry) => ({
-        signedTx: entry.tx,
-        prepared: transactionMetas[entry.globalIdx],
-        index: entry.globalIdx,
-      }))
-
-      const sendResults = await submitSignedSwapBatch(batchItems, connection)
-
+    const accountBuySends = async (
+      sendResults: SubmitSignedSwapBatchResult[],
+      blockhashAt: (index: number) => string,
+    ) => {
       for (const sendResult of sendResults) {
         if (!sendResult.success) {
           console.error(
@@ -1986,11 +1955,12 @@ export async function executeBulkBuy(
           signature: r.signature,
           via: r.via,
           checkViaRaptor: r.checkViaRaptor,
+          landed: r.landed,
           lastValidBlockHeight: transactionMetas[r.index].lastValidBlockHeight,
-          blockhash: signedTransactions[r.index].message.recentBlockhash,
+          blockhash: blockhashAt(r.index),
         }))
 
-      const confirmResults = await confirmSwapSignaturesBatch(confirmItems, connection)
+      const confirmResults = await confirmUnlandedSwaps(confirmItems, connection)
 
       for (const sendResult of sendResults) {
         if (!sendResult.success) continue
@@ -2018,13 +1988,60 @@ export async function executeBulkBuy(
           `✅ Successfully bought ${transactionMints[sendResult.index]} via ${sendResult.via}`,
         )
       }
+    }
 
-      console.log(`Processed batch ${i / SEND_BATCH_SIZE + 1}/${Math.ceil(signedTransactions.length / SEND_BATCH_SIZE)}`)
+    const serverLanded = await tryLandPreparedOnServer(
+      userPublicKey,
+      transactionMetas,
+    )
+    if (serverLanded) {
+      await accountBuySends(
+        serverLanded,
+        (index) => transactions[index].message.recentBlockhash,
+      )
+    } else {
+      console.log(`Signing ${transactions.length} transactions...`)
+
+      const signedTransactions = await withTimeout(
+        signPreparedSwapTransactions({
+          userPublicKey,
+          transactions,
+          walletSign: (txs) =>
+            signTransactionsWithFallback(
+              txs,
+              signAllTransactions,
+              async (tx) => {
+                const [signed] = await signAllTransactions([tx])
+                return signed
+              },
+            ),
+        }).then((signResult) => signResult.signed),
+        WALLET_SIGN_TIMEOUT_MS,
+        'Wallet signature',
+      )
+
+      const SEND_BATCH_SIZE = getTradeSendConcurrency()
+      for (let i = 0; i < signedTransactions.length; i += SEND_BATCH_SIZE) {
+        const batch = signedTransactions.slice(i, i + SEND_BATCH_SIZE)
+        const batchItems = batch.map((tx, idx) => ({
+          signedTx: tx,
+          prepared: transactionMetas[i + idx],
+          index: i + idx,
+        }))
+        const sendResults = await submitSignedSwapBatch(batchItems, connection)
+        await accountBuySends(
+          sendResults,
+          (index) => signedTransactions[index].message.recentBlockhash,
+        )
+        console.log(`Processed batch ${i / SEND_BATCH_SIZE + 1}/${Math.ceil(signedTransactions.length / SEND_BATCH_SIZE)}`)
+      }
     }
 
     result.signatures = signatures
     result.totalSpent = (amountPerToken * result.successfulPurchases.length) / LAMPORTS_PER_SOL
     result.success = result.successfulPurchases.length > 0
+    if (result.success) flight.succeed()
+    else flight.fail(result.failedPurchases[0]?.error || 'Trade failed')
 
     // Calculate fee information (fees are included in Solana Tracker API)
     if (result.successfulPurchases.length > 0) {
@@ -2048,6 +2065,7 @@ export async function executeBulkBuy(
     return result
   } catch (error) {
     console.error('Bulk buy execution error:', error)
+    flight.fail(error instanceof Error ? error.message : 'Trade failed')
     result.failedPurchases = request.tokenMints.map(mint => ({
       mintAddress: mint,
       error: error instanceof Error ? error.message : 'Unknown error'
@@ -2604,6 +2622,7 @@ export async function executeBulkSellAlt(
     }
   };
 
+  const flight = beginTradeInFlight()
   try {
     const start = Date.now();
     const successfulSwaps: TokenToSell[] = [];
@@ -2696,41 +2715,8 @@ export async function executeBulkSellAlt(
         }
 
         if (transactions.length > 0) {
-          console.log(`Signing ${transactions.length} sell transactions...`);
-          const signedTransactions = (
-            await signPreparedSwapTransactions({
-              userPublicKey,
-              transactions,
-              walletSign: (txs) =>
-                signTransactionsWithFallback(
-                  txs,
-                  signAllTransactions,
-                  async (tx) => {
-                    const [signed] = await signAllTransactions([tx]);
-                    return signed;
-                  },
-                ),
-            })
-          ).signed;
           const swapSignatures: string[] = [];
-
-          const SEND_BATCH_SIZE = getTradeSendConcurrency();
-          for (let i = 0; i < signedTransactions.length; i += SEND_BATCH_SIZE) {
-            const batch = signedTransactions.slice(i, i + SEND_BATCH_SIZE);
-
-            const batchEntries = batch.map((tx, idx) => ({
-              tx,
-              globalIdx: i + idx,
-            }));
-
-            const batchItems = batchEntries.map((entry) => ({
-              signedTx: entry.tx,
-              prepared: transactionMetas[entry.globalIdx],
-              index: entry.globalIdx,
-            }));
-
-            const sendResults = await submitSignedSwapBatch(batchItems, connection);
-
+          const accountSellSends = async (sendResults: SubmitSignedSwapBatchResult[]) => {
             for (const sendResult of sendResults) {
               if (!sendResult.success) {
                 result.failedSwaps.push({
@@ -2746,12 +2732,11 @@ export async function executeBulkSellAlt(
                 signature: r.signature,
                 via: r.via,
                 checkViaRaptor: r.checkViaRaptor,
-                connection,
+                landed: r.landed,
                 lastValidBlockHeight: transactionMetas[r.index].lastValidBlockHeight,
-                blockhash: signedTransactions[r.index].message.recentBlockhash,
               }));
 
-            const confirmResults = await confirmSwapSignaturesBatch(confirmItems, connection);
+            const confirmResults = await confirmUnlandedSwaps(confirmItems, connection);
 
             for (const sendResult of sendResults) {
               if (!sendResult.success) continue;
@@ -2766,14 +2751,14 @@ export async function executeBulkSellAlt(
               }
 
               let solReceived = 0;
-              if (sendResult.via === 'raptor') {
-                const amountOutRaw = Number.parseInt(
-                  transactionAmountOut[sendResult.index] ?? '0',
-                  10,
-                );
-                solReceived = Number.isFinite(amountOutRaw)
-                  ? amountOutRaw / outDivisor
-                  : 0;
+              const quotedOut = sendResult.outputAmount ?? transactionAmountOut[sendResult.index] ?? '0';
+              if (
+                sendResult.landed ||
+                sendResult.via === 'jupiter' ||
+                sendResult.via === 'raptor'
+              ) {
+                const amountOutRaw = Number.parseInt(quotedOut, 10);
+                solReceived = Number.isFinite(amountOutRaw) ? amountOutRaw / outDivisor : 0;
               } else {
                 await waitForRpcRateLimit();
                 const txInfo = await connection.getTransaction(sendResult.signature, {
@@ -2805,6 +2790,43 @@ export async function executeBulkSellAlt(
               console.log(
                 `✅ Successfully sold ${transactionTokens[sendResult.index].mintAddress} via ${sendResult.via}`,
               );
+            }
+          };
+
+          const serverLanded = await tryLandPreparedOnServer(
+            userPublicKey,
+            transactionMetas,
+          );
+          if (serverLanded) {
+            await accountSellSends(serverLanded);
+          } else {
+            console.log(`Signing ${transactions.length} sell transactions...`);
+            const signedTransactions = (
+              await signPreparedSwapTransactions({
+                userPublicKey,
+                transactions,
+                walletSign: (txs) =>
+                  signTransactionsWithFallback(
+                    txs,
+                    signAllTransactions,
+                    async (tx) => {
+                      const [signed] = await signAllTransactions([tx]);
+                      return signed;
+                    },
+                  ),
+              })
+            ).signed;
+
+            const SEND_BATCH_SIZE = getTradeSendConcurrency();
+            for (let i = 0; i < signedTransactions.length; i += SEND_BATCH_SIZE) {
+              const batch = signedTransactions.slice(i, i + SEND_BATCH_SIZE);
+              const batchItems = batch.map((tx, idx) => ({
+                signedTx: tx,
+                prepared: transactionMetas[i + idx],
+                index: i + idx,
+              }));
+              const sendResults = await submitSignedSwapBatch(batchItems, connection);
+              await accountSellSends(sendResults);
             }
           }
           result.signatures.push(...swapSignatures);
@@ -2849,10 +2871,13 @@ export async function executeBulkSellAlt(
     }
 
     result.success = result.successfulSwaps.length > 0 || result.successfulCloses.length > 0;
+    if (result.success) flight.succeed()
+    else flight.fail(result.failedSwaps[0]?.error || result.failedCloses[0]?.error || 'Trade failed')
     return result;
 
   } catch (error) {
     console.error('Bulk sell execution error (ALT):', error);
+    flight.fail(error instanceof Error ? error.message : 'Trade failed')
     if (request.tokens && request.tokens.length > 0) {
       result.failedSwaps = request.tokens.map(token => ({
         mintAddress: token.mintAddress,

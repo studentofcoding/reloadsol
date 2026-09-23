@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildJupiterSwapQuoteUrl,
+  jupiterExecuteOutcome,
   jupiterExecuteSignature,
   JupiterSwapQuoteError,
   mapJupiterOrderToDisplay,
@@ -60,6 +61,17 @@ describe('jupiterExecuteSignature', () => {
     expect(
       jupiterExecuteSignature({ status: 'Success', signature: 'sig-1', code: 0 }),
     ).toBe('sig-1')
+  })
+
+  it('keeps the filled output amount from a confirmed execute', () => {
+    expect(
+      jupiterExecuteOutcome({
+        status: 'Success',
+        signature: 'sig-1',
+        code: 0,
+        outputAmountResult: '42',
+      }),
+    ).toEqual({ signature: 'sig-1', outputAmountResult: '42' })
   })
 
   it('throws when execute failed so the caller can fall back', () => {

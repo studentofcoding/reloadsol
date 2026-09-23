@@ -20,7 +20,7 @@ export function chooseSolSignerMode(
   }
 }
 
-const SERVER_PUBKEY_CACHE_MS = 5_000
+const SERVER_PUBKEY_CACHE_MS = 60_000
 let cachedServerPublicKey: { value: string; at: number } | null = null
 
 async function fetchServerTradingPublicKey(): Promise<string | null> {
@@ -124,4 +124,63 @@ export async function signPreparedSwapTransactions(input: {
     return { mode, signed: await serverSign(input.transactions) }
   }
   return { mode: 'wallet', signed: await input.walletSign(input.transactions) }
+}
+
+export type ServerLandSwap = {
+  swapTransaction: string
+  requestId: string
+}
+
+export type ServerLandRow =
+  | { signature: string; outputAmount?: string }
+  | { error: string }
+
+/**
+ * One browser hop: the server signs the prepared Jupiter order and
+ * POSTs /execute. Success from Jupiter is already an on-chain confirm.
+ */
+export async function serverLandSwaps(
+  swaps: ServerLandSwap[],
+): Promise<ServerLandRow[]> {
+  const res = await fetch('/api/trade/server-execute', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ swaps }),
+  })
+  let data: { success?: boolean; error?: string; results?: unknown } = {}
+  try {
+    data = (await res.json()) as typeof data
+  } catch {
+    data = {}
+  }
+  if (!res.ok || !data.success || !Array.isArray(data.results)) {
+    throw new Error(
+      typeof data.error === 'string' && data.error
+        ? data.error
+        : 'Server landing failed',
+    )
+  }
+  if (data.results.length !== swaps.length) {
+    throw new Error('Server landing returned an unexpected result count')
+  }
+  return data.results.map((row) => {
+    if (!row || typeof row !== 'object') {
+      return { error: 'Server landing returned an invalid result' }
+    }
+    const record = row as { signature?: unknown; outputAmount?: unknown; error?: unknown }
+    if (typeof record.signature === 'string' && record.signature.length > 0) {
+      return {
+        signature: record.signature,
+        outputAmount:
+          typeof record.outputAmount === 'string' ? record.outputAmount : undefined,
+      }
+    }
+    return {
+      error:
+        typeof record.error === 'string' && record.error
+          ? record.error
+          : 'Server landing failed',
+    }
+  })
 }
