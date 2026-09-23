@@ -9,6 +9,8 @@ import {
 } from '@/utils/priority-fee'
 
 export const JUPITER_SWAP_ORDER_BASE = 'https://api.jup.ag/swap/v2/order'
+export const JUPITER_SWAP_EXECUTE_URL = 'https://api.jup.ag/swap/v2/execute'
+const JUPITER_SWAP_EXECUTE_TIMEOUT_MS = 30_000
 
 export class JupiterSwapQuoteError extends Error {
   constructor(
@@ -255,9 +257,130 @@ export type JupiterSwapPrepared = {
   outAmount: string
   lastValidBlockHeight?: number
   requestId?: string
+  /** Raw impact from `/order` (fraction or percent). Gate with `impactToAbsPct`. */
+  priceImpact?: number
 }
 
-/** `/order` with `taker` — unsigned v0 tx (send via existing RPC/Shyft path). */
+export type JupiterSwapExecuteParams = {
+  signedTransaction: string
+  requestId: string
+}
+
+/** Signature from a successful `/execute` body, or throws so the caller can fall back. */
+export function jupiterExecuteSignature(body: unknown): string {
+  if (!body || typeof body !== 'object') {
+    throw new JupiterSwapQuoteError('Jupiter execute returned an empty body', 502)
+  }
+  const o = body as Record<string, unknown>
+  const status = typeof o.status === 'string' ? o.status : ''
+  const signature = typeof o.signature === 'string' ? o.signature : ''
+  const code = typeof o.code === 'number' ? o.code : undefined
+  const errorText =
+    typeof o.error === 'string'
+      ? o.error
+      : typeof o.errorMessage === 'string'
+        ? o.errorMessage
+        : ''
+  if (status === 'Success' && signature.length > 0 && (code == null || code === 0)) {
+    return signature
+  }
+  throw new JupiterSwapQuoteError(
+    errorText || `Jupiter execute ${status || 'failed'}`,
+    502,
+  )
+}
+
+async function readResponseBody(response: Response): Promise<unknown> {
+  const text = await response.text()
+  try {
+    return text ? JSON.parse(text) : null
+  } catch {
+    return { error: text.slice(0, 180) }
+  }
+}
+
+function errorMessage(body: unknown, fallback: string): string {
+  if (!body || typeof body !== 'object') return fallback
+  const err = body as { error?: string; errorMessage?: string }
+  return err.errorMessage || err.error || fallback
+}
+
+async function postJupiterExecute(
+  url: string,
+  params: JupiterSwapExecuteParams,
+  headers: Record<string, string>,
+): Promise<string> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), JUPITER_SWAP_EXECUTE_TIMEOUT_MS)
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        signedTransaction: params.signedTransaction,
+        requestId: params.requestId,
+      }),
+      signal: controller.signal,
+    })
+    const body = await readResponseBody(response)
+    if (response.status === 429) {
+      throw new JupiterSwapQuoteError('Jupiter execute rate limited', 429)
+    }
+    if (!response.ok) {
+      throw new JupiterSwapQuoteError(
+        errorMessage(body, `Jupiter execute HTTP ${response.status}`),
+        response.status,
+      )
+    }
+    return jupiterExecuteSignature(body)
+  } catch (error) {
+    if (error instanceof JupiterSwapQuoteError) throw error
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new JupiterSwapQuoteError(
+        `Jupiter execute timed out after ${JUPITER_SWAP_EXECUTE_TIMEOUT_MS}ms`,
+        504,
+      )
+    }
+    throw new JupiterSwapQuoteError(
+      error instanceof Error ? error.message : 'Unknown Jupiter execute error',
+    )
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** Server-side managed landing. Key stays in `jupiterApiHeaders`. */
+export async function executeJupiterSwapDirect(
+  params: JupiterSwapExecuteParams,
+): Promise<{ signature: string }> {
+  const key = process.env.JUPITER_API_KEY?.trim()
+  if (!key) {
+    throw new JupiterSwapQuoteError('JUPITER_API_KEY is not set', 503)
+  }
+  await throttleJupiterRps()
+  const signature = await postJupiterExecute(JUPITER_SWAP_EXECUTE_URL, params, {
+    ...jupiterApiHeaders(),
+    'Content-Type': 'application/json',
+  })
+  return { signature }
+}
+
+/** Client-side: proxied POST `/api/jupiter/execute`. */
+export async function executeJupiterSwap(
+  params: JupiterSwapExecuteParams,
+): Promise<{ signature: string }> {
+  const signature = await postJupiterExecute(
+    `${getClientBaseUrl()}/api/jupiter/execute`,
+    params,
+    {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+  )
+  return { signature }
+}
+
+/** `/order` with `taker` — one round trip for quote, unsigned tx, and requestId. */
 export async function prepareJupiterSwapOrder(params: {
   userPublicKey: string
   inputMint: string
@@ -292,5 +415,6 @@ export async function prepareJupiterSwapOrder(params: {
     outAmount: order.outAmount,
     lastValidBlockHeight: order.lastValidBlockHeight,
     requestId: order.requestId,
+    priceImpact: order.priceImpact,
   }
 }

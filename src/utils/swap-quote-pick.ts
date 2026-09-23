@@ -1,7 +1,7 @@
 import { rawImpactToPct } from "@/utils/auto-slippage";
 import type { SwapQuote } from "@/types";
 
-/** Directional quote providers raced in `fetchSwapQuote` / prepare. */
+/** Quote providers. Desk uses Jupiter V2, then Lite; arb prepare stays on Raptor. */
 export type SwapQuoteProvider = "raptor" | "jupiter_lite" | "jupiter_swap";
 
 /** Default absolute price-impact ceiling (percent). Override with `SWAP_QUOTE_MAX_IMPACT_PCT`. */

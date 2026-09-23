@@ -11,9 +11,15 @@ import {
   resolveBuybulkSolFeeAccount,
 } from "@/utils/buybulk-fee";
 import { prepareJupiterLiteSwap } from "@/utils/jupiter-lite-swap";
-import { prepareJupiterSwapOrder } from "@/utils/jupiter-swap-quote";
+import {
+  executeJupiterSwap,
+  executeJupiterSwapDirect,
+  prepareJupiterSwapOrder,
+} from "@/utils/jupiter-swap-quote";
 import {
   getSwapQuoteMaxImpactPct,
+  impactToAbsPct,
+  passesImpactGate,
   type SwapQuoteProvider,
 } from "@/utils/swap-quote-pick";
 import { pickParallelSwapQuote } from "@/utils/swap-quote-parallel";
@@ -40,14 +46,14 @@ import type { SwapQuote, SwapTransaction } from "@/types";
 
 export type SwapProvider = SwapQuoteProvider;
 
-export type SwapSendVia = "raptor" | "shyft" | "rpc";
+export type SwapSendVia = "raptor" | "shyft" | "rpc" | "jupiter";
 
 export type PreparedSwap = {
   provider: SwapProvider;
   swapTransaction: string;
   outAmount?: string;
   lastValidBlockHeight?: number;
-  /** Jupiter Swap `/order` requestId (optional; send still uses RPC/Shyft). */
+  /** Jupiter Swap V2 `/order` requestId. Present → prefer `POST /swap/v2/execute`. */
   requestId?: string;
 };
 
@@ -173,6 +179,20 @@ async function prepareJupiterLiteSwapPrepared(
   };
 }
 
+class SwapImpactGateError extends Error {
+  constructor(maxImpactPct: number) {
+    super(`No swap route within ${maxImpactPct}% price impact`);
+    this.name = "SwapImpactGateError";
+  }
+}
+
+function assertSwapImpact(rawImpact: unknown): void {
+  const maxImpactPct = getSwapQuoteMaxImpactPct();
+  if (!passesImpactGate(impactToAbsPct(rawImpact), maxImpactPct)) {
+    throw new SwapImpactGateError(maxImpactPct);
+  }
+}
+
 async function prepareJupiterSwapPrepared(
   params: PrepareSwapParams,
 ): Promise<PreparedSwap> {
@@ -185,6 +205,7 @@ async function prepareJupiterSwapPrepared(
     priorityFeeLamports: params.priorityFeeLamports,
     direct: params.direct,
   });
+  assertSwapImpact(order.priceImpact);
 
   return {
     provider: "jupiter_swap",
@@ -195,34 +216,32 @@ async function prepareJupiterSwapPrepared(
   };
 }
 
-async function prepareWinningProviderSwap(
-  params: PrepareSwapParams,
-): Promise<PreparedSwap> {
-  const picked = await pickParallelSwapQuote({
-    inputMint: params.inputMint,
-    outputMint: params.outputMint,
-    amount: String(params.amount),
-    slippageBps: params.slippageBps,
-    direct: params.direct,
-  });
-  if (!picked) {
-    throw new Error(
-      `No swap route within ${getSwapQuoteMaxImpactPct()}% price impact`,
-    );
+/** Desk (no maxHops): one V2 `/order` with taker. Lite only if that order fails. */
+async function prepareDeskSwap(params: PrepareSwapParams): Promise<PreparedSwap> {
+  try {
+    return await prepareJupiterSwapPrepared(params);
+  } catch (error) {
+    if (error instanceof SwapImpactGateError) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn("[swap] Jupiter V2 /order failed, falling back to Lite:", message);
   }
 
-  switch (picked.provider) {
-    case "raptor":
-      return prepareRaptorSwap(params);
-    case "jupiter_lite":
-      return prepareJupiterLiteSwapPrepared(params);
-    case "jupiter_swap":
-      return prepareJupiterSwapPrepared(params);
-    default: {
-      const unexpected: never = picked.provider;
-      throw new Error(`Unknown swap quote provider: ${String(unexpected)}`);
-    }
-  }
+  const lite = await prepareJupiterLiteSwap({
+    userPublicKey: params.userPublicKey,
+    inputMint: params.inputMint,
+    outputMint: params.outputMint,
+    amount: params.amount,
+    slippageBps: params.slippageBps,
+    priorityFeeLamports: params.priorityFeeLamports,
+    direct: params.direct,
+  });
+  assertSwapImpact(lite.quoteResponse.priceImpactPct);
+  return {
+    provider: "jupiter_lite",
+    swapTransaction: lite.swapTransaction,
+    outAmount: lite.outAmount,
+    lastValidBlockHeight: lite.lastValidBlockHeight,
+  };
 }
 
 /** Arb (`maxHops` set): Raptor with hops override; Lite only if Raptor cannot build. */
@@ -250,15 +269,15 @@ async function prepareShyftStackSwap(
   }
 }
 
-/** Quote-and-swap — builds unsigned swap transaction from the gated winner. */
+/** Quote-and-swap. Desk is Jupiter V2; arb (`maxHops`) stays on Raptor. */
 export async function prepareSwapTransaction(
   params: PrepareSwapParams,
 ): Promise<PreparedSwap> {
-  // Live arb passes maxHops and must keep Raptor hops, not the directional pick.
+  // Live arb passes maxHops and must keep Raptor hops, not the desk Jupiter path.
   if (params.maxHops != null) {
     return prepareArbSwap(params);
   }
-  return prepareWinningProviderSwap(params);
+  return prepareDeskSwap(params);
 }
 
 export async function prefetchSwapTransaction(
@@ -269,7 +288,7 @@ export async function prefetchSwapTransaction(
   return prepared;
 }
 
-/** Quote for UI — parallel Raptor / Jupiter Lite / Jupiter Swap + impact gate. */
+/** UI quote — Jupiter V2 `/order` without taker. Lite only if V2 fails. */
 export async function fetchSwapQuote(
   inputMint: string,
   outputMint: string,
@@ -349,14 +368,60 @@ export type SubmitSignedSwapResult = {
   checkViaRaptor?: boolean;
 };
 
-/** Submit signed swap — Shyft API (with RPC fallback) or RPC-only for Raptor. */
+function prefersJupiterExecute(prepared: PreparedSwap): boolean {
+  return (
+    prepared.provider === "jupiter_swap" &&
+    typeof prepared.requestId === "string" &&
+    prepared.requestId.length > 0
+  );
+}
+
+function signedTxBase64(signedTx: VersionedTransaction): string {
+  // This web3.js VersionedTransaction.serialize() keeps unsigned slots as
+  // zeroed signatures, which JupiterZ needs until /execute adds the MM sig.
+  return Buffer.from(signedTx.serialize()).toString("base64");
+}
+
+/** Jupiter managed landing. Returns null so the caller can use RPC/Shyft. */
+async function tryJupiterExecute(
+  params: SubmitSignedSwapParams,
+  useDirect: boolean,
+): Promise<SubmitSignedSwapResult | null> {
+  const requestId = params.prepared.requestId;
+  if (!prefersJupiterExecute(params.prepared) || !requestId) return null;
+  try {
+    const executed = useDirect
+      ? await executeJupiterSwapDirect({
+          signedTransaction: signedTxBase64(params.signedTx),
+          requestId,
+        })
+      : await executeJupiterSwap({
+          signedTransaction: signedTxBase64(params.signedTx),
+          requestId,
+        });
+    return {
+      signature: executed.signature,
+      via: "jupiter",
+      checkViaRaptor: false,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn("[swap] Jupiter /execute failed, falling back to RPC/Shyft:", message);
+    return null;
+  }
+}
+
+/** Submit signed swap. Jupiter V2 `/execute` first when `requestId` is set. */
 export async function submitSignedSwap(
   params: SubmitSignedSwapParams,
 ): Promise<SubmitSignedSwapResult> {
   const useDirect = params.direct ?? typeof window === "undefined";
 
+  const executed = await tryJupiterExecute(params, useDirect);
+  if (executed) return executed;
+
   if (getTradeProvider() === "shyft") {
-    const signedBase64 = Buffer.from(params.signedTx.serialize()).toString("base64");
+    const signedBase64 = signedTxBase64(params.signedTx);
     try {
       const sendResult = useDirect
         ? await sendShyftTransactionDirect(signedBase64)
@@ -478,7 +543,31 @@ async function submitShyftManyBatch(
   }
 }
 
-/** Batch submit — send_many_txns when count > 1; single tx stays provider-aware (Tracker RPC on raptor). */
+async function submitOneSignedSwap(
+  item: SubmitSignedSwapBatchItem,
+  connection: Connection,
+  direct?: boolean,
+): Promise<SubmitSignedSwapBatchResult> {
+  try {
+    const sendResult = await submitSignedSwap({
+      signedTx: item.signedTx,
+      prepared: item.prepared,
+      connection,
+      direct,
+    });
+    return {
+      index: item.index,
+      success: true,
+      signature: sendResult.signature,
+      via: sendResult.via,
+      checkViaRaptor: sendResult.checkViaRaptor,
+    };
+  } catch (error) {
+    return { index: item.index, success: false, error };
+  }
+}
+
+/** Batch submit. Jupiter `requestId` swaps use `/execute`; the rest stay on send_many. */
 export async function submitSignedSwapBatch(
   items: SubmitSignedSwapBatchItem[],
   connection: Connection,
@@ -489,30 +578,23 @@ export async function submitSignedSwapBatch(
   const useDirect = direct ?? typeof window === "undefined";
 
   if (items.length === 1) {
-    try {
-      const sendResult = await submitSignedSwap({
-        signedTx: items[0].signedTx,
-        prepared: items[0].prepared,
-        connection,
-        direct,
-      });
-      return [
-        {
-          index: items[0].index,
-          success: true,
-          signature: sendResult.signature,
-          via: sendResult.via,
-          checkViaRaptor: sendResult.checkViaRaptor,
-        },
-      ];
-    } catch (error) {
-      return [{ index: items[0].index, success: false, error }];
-    }
+    return [await submitOneSignedSwap(items[0], connection, direct)];
   }
 
-  // Multi-tx: one Shyft send_many_txns call, then per-tx RPC fallback.
-  // Quotes/swap build stay on Tracker; only the signed broadcast is batched.
-  return submitShyftManyBatch(items, connection, useDirect);
+  const managed = items.filter((item) => prefersJupiterExecute(item.prepared));
+  const rest = items.filter((item) => !prefersJupiterExecute(item.prepared));
+  const managedResults = await Promise.all(
+    managed.map((item) => submitOneSignedSwap(item, connection, direct)),
+  );
+
+  let restResults: SubmitSignedSwapBatchResult[] = [];
+  if (rest.length === 1) {
+    restResults = [await submitOneSignedSwap(rest[0], connection, direct)];
+  } else if (rest.length > 1) {
+    restResults = await submitShyftManyBatch(rest, connection, useDirect);
+  }
+
+  return [...managedResults, ...restResults].sort((a, b) => a.index - b.index);
 }
 
 const CONFIRM_POLL_INTERVAL_MS = 3000;
@@ -863,7 +945,7 @@ function withWalletSignTimeout<T>(promise: Promise<T>): Promise<T> {
   });
 }
 
-/** Single client-side swap: parallel quote pick → prepare → sign → submit → confirm. */
+/** Single client-side swap: Jupiter V2 prepare → sign → execute (or RPC/Shyft) → confirm. */
 export async function executeClientSwap(
   params: ExecuteClientSwapParams,
 ): Promise<ExecuteClientSwapResult> {
