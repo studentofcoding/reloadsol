@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse, connection } from 'next/server'
 import { log } from '@/utils/unified-logger'
+import { aggregateStrategyReports } from '@/strategies/db'
+import { getMergedMcapTrackerRegistry } from '@/strategies/load-mcap-tracker'
+import { getMergedSignalsRegistry } from '@/strategies/load-signals'
 import { fetchAndScoreSignals, type ScoredSignal } from '@/strategies/signals-pipeline'
 import {
   attachPatternShadowToAlert,
@@ -13,7 +16,12 @@ import {
   getCachedStage1PatternScore,
   scoreStage1PatternBatch,
 } from '@/strategies/signals-early-pattern-cache'
-import type { SignalsStrategyConfig } from '@/strategies/types'
+import {
+  buildSignalsListStrategyConfig,
+  projectSignalsStrategyList,
+  resolveSignalsListQueryStrategy,
+  signalsListTemplate,
+} from '@/strategies/signals-strategy-list'
 import { parseDbChain } from '@/utils/app-network-db'
 
 async function enrichSignalsWithPatternShadow(
@@ -46,39 +54,36 @@ export async function GET(request: NextRequest) {
     const minGrowth = parseFloat(searchParams.get('minGrowth') || '0')
     const includeStuck = searchParams.get('includeStuck') === 'true'
     const maxAgeMinutes = Math.max(parseInt(searchParams.get('maxAgeMinutes') || '60', 10), 1)
-    const strategyTemplate = (searchParams.get('strategy') || 'default') as
-      | 'default'
-      | 'sell_over_100'
     const chain = parseDbChain(searchParams.get('chain'))
-
-    const strategyConfig: SignalsStrategyConfig = {
-      template: strategyTemplate,
-      enterScoreFloor: 50,
-      query: {
-        limit,
-        recencyMinutes,
-        minGrowth,
-        holdGrowthFloor: 10,
-        includeStuck,
-        maxAgeMinutes,
-      },
-      scoring: {
-        recencyBoostMax: 20,
-        milestone80: 15,
-        milestone120: 20,
-        milestone200: 25,
-        speedTo80Fast: 15,
-        speedTo80Medium: 10,
-        speedTo80Slow: 5,
-        inTrackingRange: 10,
-        stuckPenalty: 50,
-        stopLossPenalty: 100,
-        sellOver100LatePenalty: 40,
-      },
-      execution: { simBuySol: 0.01, maxOpenPositions: 10 },
+    const resolved = resolveSignalsListQueryStrategy(searchParams.get('strategy'), chain)
+    if (!resolved.ok) {
+      return NextResponse.json({ success: false, error: resolved.error }, { status: 400 })
     }
+    const selectedId = resolved.strategyId
+    const selectedTemplate = signalsListTemplate(selectedId)
 
-    const rawSignals = await fetchAndScoreSignals(strategyConfig, { chain })
+    const strategyConfig = buildSignalsListStrategyConfig(selectedTemplate ?? 'default', {
+      limit,
+      recencyMinutes,
+      minGrowth,
+      holdGrowthFloor: 10,
+      includeStuck,
+      maxAgeMinutes,
+    })
+
+    const [rawSignals, mcapRegistry, signalsRegistry, reports] = await Promise.all([
+      fetchAndScoreSignals(strategyConfig, { chain, keepCandidatePool: true }),
+      getMergedMcapTrackerRegistry(chain),
+      getMergedSignalsRegistry(chain),
+      aggregateStrategyReports({ chain }),
+    ])
+    const nameOverrides: Record<string, string> = {}
+    for (const strategy of [
+      ...Object.values(signalsRegistry),
+      ...Object.values(mcapRegistry),
+    ]) {
+      if (strategy?.id && strategy.name) nameOverrides[strategy.id] = strategy.name
+    }
 
     // Pattern ML shadow on Stage-1 candidates (display only; never gates enter)
     const withPattern = await enrichSignalsWithPatternShadow(rawSignals)
@@ -89,30 +94,25 @@ export async function GET(request: NextRequest) {
       ? await attachClosedLoopScoresToSignals(withPattern, { chain })
       : withPattern
 
-    // Active locked mcap arms for Noul scope (first_seen / at_80 / _rh twins).
-    let activeNoulStrategyKeys: string[] = []
-    if (isEarlyEnterNoulShadowEnabled()) {
-      try {
-        const { getMergedMcapTrackerRegistry } = await import(
-          '@/strategies/load-mcap-tracker'
-        )
-        const registry = await getMergedMcapTrackerRegistry(chain)
+    // Membership filters the JSON list only. Early Enter stays on the pre-filter
+    // scored slice, and only when the selected id is a signals strategy.
+    // Mcap selections do not attribute a new alert. Soft gate / Noul are not
+    // inputs to membership (emit still owns its own gate).
+    let earlyAlerts: Awaited<ReturnType<typeof emitSignalsEarlyAlertsFromScoredAsync>> = []
+    if (selectedTemplate) {
+      let activeNoulStrategyKeys: string[] = []
+      if (isEarlyEnterNoulShadowEnabled()) {
         const mcapIds =
           chain === 'robinhood'
             ? (['mcap_enter_first_seen_rh', 'mcap_enter_at_80_rh'] as const)
             : (['mcap_enter_first_seen', 'mcap_enter_at_80'] as const)
-        activeNoulStrategyKeys = mcapIds.filter((id) => registry[id]?.is_active)
-      } catch (err) {
-        console.error('[signals] noul arm registry load failed:', err)
+        activeNoulStrategyKeys = mcapIds.filter((id) => mcapRegistry[id]?.is_active)
       }
+      const emitList = signals.slice(0, limit)
+      earlyAlerts = await emitSignalsEarlyAlertsFromScoredAsync(emitList, chain, {
+        activeNoulStrategyKeys,
+      })
     }
-
-    // Stage-1 copy-trade alerts: enter + growth < 100% (24h dedup; safe on UI + worker polls)
-    // Soft gate (closed-loop mlScore ≥ 0.55) runs inside emit, before record.
-    // Noul shadow sits beside soft gate (log-only until EARLY_ENTER_NOUL_SOFT_ACTIVE).
-    const earlyAlerts = await emitSignalsEarlyAlertsFromScoredAsync(signals, chain, {
-      activeNoulStrategyKeys,
-    })
     if (earlyAlerts.length > 0) {
       const { sendSignalsEarlyEnterAlert } = await import('@/utils/telegram')
       const { insertSocialEvents } = await import('@/strategies/social/db')
@@ -150,21 +150,12 @@ export async function GET(request: NextRequest) {
             '@/strategies/gmgn-radar-accumulate'
           )
           const { fetchMcapTrackingRow } = await import('@/utils/mcap-tracker')
-          const { getMergedMcapTrackerRegistry } = await import(
-            '@/strategies/load-mcap-tracker'
-          )
           const { getSignalsStrategy } = await import('@/strategies/load-signals')
           const { readNotifyFlags } = await import('@/strategies/strategy-notify')
           const { resolveStrategyDisplayName } = await import(
             '@/strategies/strategy-telegram-notify'
           )
-          // RH has signals_default_rh only (no sell_over_100 twin).
-          const signalsId =
-            chain === 'robinhood'
-              ? 'signals_default_rh'
-              : strategyTemplate === 'sell_over_100'
-                ? 'signals_sell_over_100'
-                : 'signals_default'
+          const signalsId = selectedId
           const mcapIds =
             chain === 'robinhood'
               ? (['mcap_enter_first_seen_rh', 'mcap_enter_at_80_rh'] as const)
@@ -180,9 +171,8 @@ export async function GET(request: NextRequest) {
             fetchMcapTrackingRow(alert.tokenAddress),
           ])
           if (tracked) {
-            const registry = await getMergedMcapTrackerRegistry(chain)
             for (const id of mcapIds) {
-              if (registry[id]?.is_active) strategyIds.push(id)
+              if (mcapRegistry[id]?.is_active) strategyIds.push(id)
             }
           }
           if (notify.telegram) {
@@ -213,8 +203,19 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    const projected = projectSignalsStrategyList({
+      chain,
+      selectedId,
+      pool: signals,
+      limit,
+      scoreConfig: strategyConfig,
+      mcapById: mcapRegistry,
+      nameOverrides,
+      breakdown: reports.breakdown,
+    })
+
     log.info('mcap_tracker', 'Generated trading signals', {
-      count: signals.length,
+      count: projected.signals.length,
       earlyAlerts: earlyAlerts.length,
       params: {
         limit,
@@ -222,7 +223,7 @@ export async function GET(request: NextRequest) {
         minGrowth,
         includeStuck,
         maxAgeMinutes,
-        strategy: strategyTemplate,
+        strategy: selectedId,
         chain,
       },
     })
@@ -235,11 +236,15 @@ export async function GET(request: NextRequest) {
         minGrowth,
         includeStuck,
         maxAgeMinutes,
-        strategy: strategyTemplate,
+        strategy: selectedId,
         chain,
       },
-      stats: { returnedSignals: signals.length, earlyAlerts: earlyAlerts.length },
-      signals,
+      stats: {
+        returnedSignals: projected.signals.length,
+        earlyAlerts: earlyAlerts.length,
+      },
+      strategies: projected.strategies,
+      signals: projected.signals,
     })
   } catch (error) {
     log.error('error_handling', 'Failed to generate trading signals', error as Error)

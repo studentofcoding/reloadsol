@@ -27,6 +27,9 @@ export type ScoredSignal = SignalScoringItem & {
   /** Closed-loop mlScore (cl-*); Early Enter soft gate only — not Pattern */
   ml_closed_loop_score?: number | null
   ml_closed_loop_version?: string | null
+  /** Mcap entry filters. Not a signals score input. */
+  organic_score?: number | null
+  top_holders_pct?: number | null
 }
 
 type McapTrackingRow = {
@@ -47,6 +50,14 @@ type McapTrackingRow = {
   peak_seen_at?: string | null
   label?: string | null
   is_tracking_stuck?: boolean
+  organic_score?: number | string | null
+  top_holders_pct?: number | string | null
+}
+
+function finiteOrNull(value: unknown): number | null {
+  if (value == null || value === '') return null
+  const n = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(n) ? n : null
 }
 
 function rowToScoredSignal(
@@ -74,7 +85,12 @@ function rowToScoredSignal(
     is_tracking_stuck: row.is_tracking_stuck,
     in_tracking_range: isInTrackingRange(row.current_mcap),
   })
-  return applyScoreToItem(base, strategyConfig, socialSnapshot) as ScoredSignal
+  const scored = applyScoreToItem(base, strategyConfig, socialSnapshot) as ScoredSignal
+  return {
+    ...scored,
+    organic_score: finiteOrNull(row.organic_score),
+    top_holders_pct: finiteOrNull(row.top_holders_pct),
+  }
 }
 
 export function rescoreScoredSignal(
@@ -102,7 +118,12 @@ export function rescoreScoredSignal(
     is_tracking_stuck: signal.is_tracking_stuck,
     in_tracking_range: isInTrackingRange(signal.current_mcap),
   })
-  return applyScoreToItem(base, strategyConfig, socialSnapshot) as ScoredSignal
+  const scored = applyScoreToItem(base, strategyConfig, socialSnapshot) as ScoredSignal
+  return {
+    ...scored,
+    organic_score: signal.organic_score ?? null,
+    top_holders_pct: signal.top_holders_pct ?? null,
+  }
 }
 
 function sortScoredSignals(signals: ScoredSignal[]): ScoredSignal[] {
@@ -187,7 +208,15 @@ async function validateTokensAgainstRugPulls(
 
 export async function fetchAndScoreSignals(
   strategyConfig: SignalsStrategyConfig,
-  options?: { skipRugValidation?: boolean; chain?: StrategyChain },
+  options?: {
+    skipRugValidation?: boolean
+    chain?: StrategyChain
+    /**
+     * Return the SQL candidate pool (LIMIT limit*5) without the final
+     * slice(0, limit). Signals list membership applies `limit` to members.
+     */
+    keepCandidatePool?: boolean
+  },
 ): Promise<ScoredSignal[]> {
   const chain = options?.chain ?? 'sol'
   const { query: queryConfig } = strategyConfig
@@ -229,7 +258,8 @@ export async function fetchAndScoreSignals(
     `SELECT token_address, token_symbol, first_mcap, current_mcap, mcap_growth_percent,
             first_seen_at, last_updated_at, when_reach_80pct, when_reach_120pct,
             when_reach_200pct, when_drop_40pct, when_drop_80pct,
-            peak_mcap, peak_growth_percent, peak_seen_at, label, is_tracking_stuck
+            peak_mcap, peak_growth_percent, peak_seen_at, label, is_tracking_stuck,
+            organic_score, top_holders_pct
      FROM token_mcap_tracking
      WHERE ${conditions.join(' AND ')}
      ORDER BY mcap_growth_percent DESC
@@ -266,7 +296,10 @@ export async function fetchAndScoreSignals(
   const manualRugSet = await getRugAddressSet()
   signals = signals.filter((s) => !manualRugSet.has(s.token_address))
 
-  return sortScoredSignals(signals).slice(0, limit)
+  const sorted = sortScoredSignals(signals)
+  // Membership callers keep the limit*5 pool and slice members themselves.
+  if (options?.keepCandidatePool) return sorted
+  return sorted.slice(0, limit)
 }
 
 export async function scoreSignalsForStrategy(
