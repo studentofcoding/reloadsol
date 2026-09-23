@@ -3,6 +3,7 @@ import { TOKENS } from '@/utils/solana'
 import {
   TRACKER_BUY_DEFAULT_USD,
   defaultBuyAmountHuman,
+  floatingChartSolBuyLeg,
   humanToRawAmount,
   percentOfRaw,
   pickTrackerBaseAsset,
@@ -118,5 +119,12 @@ describe('trackerTradeLeg', () => {
     expect(sell.amountRaw).toBe(1_000)
     expect(percentOfRaw(999, 50)).toBe(499)
     expect(humanToRawAmount(0.1, 9)).toBe(100_000_000)
+  })
+
+  it('floating-chart buy spends toolbar SOL, not the auto base', () => {
+    const leg = floatingChartSolBuyLeg(TOKEN, 0.0004)
+    expect(leg.inputMint).toBe(TOKENS.SOL)
+    expect(leg.outputMint).toBe(TOKEN)
+    expect(leg.amountRaw).toBe(400_000)
   })
 })

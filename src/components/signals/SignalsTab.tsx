@@ -1,13 +1,19 @@
 "use client";
 import React, { useEffect, useRef, useState } from "react";
+import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { useIsClient } from "@/hooks/useIsClient";
 import { TokenLabel } from "@/utils/mcap-tracker";
 import ChartBuyModal from "@/components/ChartBuyModal";
+import { useConnection, useWallet } from "@/components/WalletProvider";
 import GmgnChartEmbed from "@/components/signals/shared/GmgnChartEmbed";
 import RowTradePanel, {
   RowGmgnChart,
 } from "@/components/signals/shared/RowTradePanel";
 import { useSolRowHoldings } from "@/hooks/useSolRowHoldings";
+import { useWalletBalances } from "@/hooks/useWalletBalances";
+import { isWalletUserRejection } from "@/utils/wallet-rejection";
+import { rowMarketSwap } from "@/utils/row-market-swap";
+import { floatingChartSolBuyLeg } from "@/utils/tracker-base-asset";
 import TokenSearchLink from "@/components/signals/shared/TokenSearchLink";
 import DlmmChartActions from "@/components/dlmm/DlmmChartActions";
 import GlobalWatchlistButton from "@/components/GlobalWatchlistButton";
@@ -50,6 +56,7 @@ function FreeDrag({
     const onDown = (e: PointerEvent) => {
       const target = e.target as Element
       if (!target.closest(handle)) return
+      if (target.closest('button, a, input, select, textarea, label')) return
       e.preventDefault()
       onStartRef.current?.()
       const p = posRef.current
@@ -207,6 +214,13 @@ export default function SignalsTab() {
   const { network } = useAppNetwork();
   const isRhNetwork = network === "robinhood";
   const rowHoldings = useSolRowHoldings(!isRhNetwork);
+  const { publicKey, connected, signTransaction } = useWallet();
+  const { connection } = useConnection();
+  const walletAddress = connected && publicKey ? publicKey.toBase58() : null;
+  const { walletBalance: walletBalanceSol, refreshBalances } = useWalletBalances({
+    walletAddress,
+    enabled: Boolean(walletAddress) && !isRhNetwork,
+  });
   const isClient = useIsClient();
   const initialCharts = getInitialChartsState();
   const [limit, setLimit] = useState(50);
@@ -255,6 +269,16 @@ export default function SignalsTab() {
     mint: string;
     side: "buy" | "sell";
   } | null>(null);
+  const [buyFeesSol, setBuyFeesSol] = useState(0.001);
+  const [buySolOverride, setBuySolOverride] = useState<number | null>(null);
+  const [floatingBuyStates, setFloatingBuyStates] = useState<
+    Record<string, { loading?: boolean; error?: string; status?: string }>
+  >({});
+  const autoBuySol =
+    connected && walletBalanceSol && walletBalanceSol > 0
+      ? Number((walletBalanceSol * 0.03).toFixed(4))
+      : 0;
+  const buySolAmount = buySolOverride ?? autoBuySol;
 
   const openRowTrade = (mint: string, side: "buy" | "sell") => {
     if (isRhNetwork) {
@@ -265,6 +289,92 @@ export default function SignalsTab() {
     setTradePanel((prev) =>
       prev?.mint === mint && prev.side === side ? null : { mint, side },
     );
+  };
+
+  const patchFloatingBuy = (
+    tokenAddress: string,
+    patch: { loading?: boolean; error?: string; status?: string },
+  ) => {
+    setFloatingBuyStates((prev) => ({ ...prev, [tokenAddress]: patch }));
+  };
+
+  /** Floating-chart Buy: toolbar SOL amount, one Jupiter Wallet Kit sign, no amount modal. */
+  const handleFloatingChartBuy = async (tokenAddress: string) => {
+    if (isRhNetwork) return;
+    if (!connected || !publicKey || !signTransaction) {
+      patchFloatingBuy(tokenAddress, {
+        loading: false,
+        error: "Connect a Solana wallet first",
+      });
+      return;
+    }
+    if (!connection) {
+      patchFloatingBuy(tokenAddress, {
+        loading: false,
+        error: "RPC connection is not ready",
+      });
+      return;
+    }
+    if (!Number.isFinite(buySolAmount) || buySolAmount <= 0) {
+      patchFloatingBuy(tokenAddress, {
+        loading: false,
+        error: "Set buy amount",
+      });
+      return;
+    }
+
+    patchFloatingBuy(tokenAddress, { loading: true, status: "Quoting…" });
+    try {
+      const priorityFeeLamports = Math.round(buyFeesSol * LAMPORTS_PER_SOL);
+      const feeSol = priorityFeeLamports / LAMPORTS_PER_SOL;
+      if ((walletBalanceSol ?? 0) < buySolAmount + feeSol) {
+        throw new Error(
+          `Not enough SOL. Need ${(buySolAmount + feeSol).toFixed(4)} including fees, have ${(walletBalanceSol ?? 0).toFixed(4)}.`,
+        );
+      }
+      const leg = floatingChartSolBuyLeg(tokenAddress, buySolAmount);
+      if (leg.amountRaw <= 0) {
+        throw new Error("Amount is too small");
+      }
+      const result = await rowMarketSwap(
+        {
+          connection,
+          userPublicKey: publicKey.toBase58(),
+          signTransaction: (tx) => signTransaction(tx),
+          inputMint: leg.inputMint,
+          outputMint: leg.outputMint,
+          amount: leg.amountRaw,
+          priorityFeeLamports,
+        },
+        (message) =>
+          patchFloatingBuy(tokenAddress, { loading: true, status: message }),
+      );
+      patchFloatingBuy(tokenAddress, {
+        loading: false,
+        status: `Sent · impact ${result.impactPct.toFixed(2)}%`,
+      });
+      await refreshBalances(true);
+      void rowHoldings.refetchFresh();
+      window.setTimeout(() => {
+        setFloatingBuyStates((prev) => {
+          const next = { ...prev };
+          delete next[tokenAddress];
+          return next;
+        });
+      }, 2500);
+    } catch (err) {
+      if (isWalletUserRejection(err)) {
+        patchFloatingBuy(tokenAddress, {
+          loading: false,
+          status: "Wallet cancelled",
+        });
+        return;
+      }
+      patchFloatingBuy(tokenAddress, {
+        loading: false,
+        error: err instanceof Error ? err.message : "Buy failed",
+      });
+    }
   };
 
   // localStorage helpers for chart persistence
@@ -514,7 +624,42 @@ export default function SignalsTab() {
     );
   };
 
-  // Buy functionality removed (moved to ChartBuyModal)
+  const floatingBuyControl = (tokenAddress: string) => {
+    const state = floatingBuyStates[tokenAddress];
+    return (
+      <div
+        className="flex items-center gap-2"
+        onPointerDown={(e) => e.stopPropagation()}
+      >
+        <span
+          className="text-sm text-gray-600"
+          data-testid="floating-chart-buy-amount"
+        >
+          {buySolAmount} SOL
+        </span>
+        <button
+          type="button"
+          data-testid="floating-chart-buy"
+          disabled={isRhNetwork || Boolean(state?.loading)}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            void handleFloatingChartBuy(tokenAddress);
+          }}
+          className="px-3 py-1 rounded text-sm font-medium bg-green-500 hover:bg-green-600 disabled:opacity-50 text-white cursor-pointer"
+          title={
+            isRhNetwork
+              ? "Solana wallet only"
+              : state?.error ||
+                state?.status ||
+                `${buySolAmount} SOL · one wallet confirm`
+          }
+        >
+          {state?.loading ? "Buying…" : "Buy"}
+        </button>
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -540,6 +685,74 @@ export default function SignalsTab() {
               </select>
             </div>
 
+            <div>
+              <label className="block text-sm font-medium">
+                Buy Amount (SOL)
+              </label>
+              <input
+                type="number"
+                min={0}
+                max={10}
+                step={0.0001}
+                value={buySolAmount}
+                onChange={(e) => setBuySolOverride(Number(e.target.value))}
+                data-testid="signals-buy-amount"
+                className="mt-1 w-32 rounded border px-2 py-1 bg-black text-white"
+              />
+              <div className="mt-1 flex gap-2 text-xs">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setBuySolOverride(
+                      Number(((walletBalanceSol ?? 0) * 0.05).toFixed(4)),
+                    )
+                  }
+                  className="px-2 py-1 rounded border border-gray-600 text-gray-200 hover:bg-gray-700"
+                >
+                  5%
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setBuySolOverride(
+                      Number(((walletBalanceSol ?? 0) * 0.25).toFixed(4)),
+                    )
+                  }
+                  className="px-2 py-1 rounded border border-gray-600 text-gray-200 hover:bg-gray-700"
+                >
+                  25%
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setBuySolOverride(
+                      Number(((walletBalanceSol ?? 0) * 0.9).toFixed(4)),
+                    )
+                  }
+                  className="px-2 py-1 rounded border border-gray-600 text-gray-200 hover:bg-gray-700"
+                >
+                  90%
+                </button>
+              </div>
+              {connected && !isRhNetwork && (
+                <div className="mt-1 text-xs text-gray-400">
+                  Wallet: {(walletBalanceSol ?? 0).toFixed(4)} SOL
+                </div>
+              )}
+            </div>
+            <div>
+              <label className="block text-sm font-medium">Fees (SOL)</label>
+              <input
+                type="number"
+                min={0.001}
+                max={1}
+                step={0.001}
+                value={buyFeesSol}
+                onChange={(e) => setBuyFeesSol(Number(e.target.value))}
+                data-testid="signals-buy-fees"
+                className="mt-1 w-28 rounded border px-2 py-1 bg-black text-white"
+              />
+            </div>
             <div>
               <label className="block text-sm font-medium">Limit</label>
               <input
@@ -657,15 +870,7 @@ export default function SignalsTab() {
                             {chart.tokenSymbol || "UNKNOWN"}
                           </span>
                           <div className="flex items-center gap-2">
-                            <button
-                              onClick={() =>
-                                openRowTrade(chart.tokenAddress, "buy")
-                              }
-                              className="px-3 py-1 rounded text-sm font-medium bg-green-500 hover:bg-green-600 text-white cursor-pointer"
-                              title="Buy with the shared row trade"
-                            >
-                              Buy
-                            </button>
+                            {floatingBuyControl(chart.tokenAddress)}
                             <GlobalWatchlistButton
                               tokenAddress={chart.tokenAddress}
                               tokenSymbol={chart.tokenSymbol}
@@ -1010,13 +1215,7 @@ export default function SignalsTab() {
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => openRowTrade(chart.tokenAddress, "buy")}
-                      className="px-3 py-1 rounded text-sm font-medium bg-green-500 hover:bg-green-600 text-white cursor-pointer"
-                      title="Buy with the shared row trade"
-                    >
-                      Buy
-                    </button>
+                    {floatingBuyControl(chart.tokenAddress)}
                     <GlobalWatchlistButton
                       tokenAddress={chart.tokenAddress}
                       tokenSymbol={chart.tokenSymbol}

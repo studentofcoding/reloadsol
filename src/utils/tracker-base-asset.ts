@@ -85,6 +85,22 @@ export function percentOfRaw(balanceRaw: number, percent: number): number {
   return Math.floor((balanceRaw * pct) / 100)
 }
 
+/**
+ * Signals floating-chart Buy spends the toolbar SOL amount.
+ * It does not use the auto base picker (that stays on the row panel).
+ */
+export function floatingChartSolBuyLeg(
+  tokenMint: string,
+  solAmount: number,
+): { inputMint: string; outputMint: string; amountRaw: number } {
+  return trackerTradeLeg({
+    side: 'buy',
+    asset: 'SOL',
+    tokenMint,
+    buyHuman: solAmount,
+  })
+}
+
 export function trackerTradeLeg(params: {
   side: TrackerTradeSide
   asset: TrackerBaseAsset
