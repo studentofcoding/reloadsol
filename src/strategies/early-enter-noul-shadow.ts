@@ -170,6 +170,54 @@ export function flipBarsWithMissKill(
 }
 
 /**
+ * Population variance at or under this is a constant closed-loop score.
+ * The live shadow sample’s 0.3146–0.3207 cluster is ~1e-6.
+ */
+export const VACUOUS_CL_SCORE_VARIANCE_MAX = 1e-6
+
+export function closedLoopPopulationVariance(
+  n: number,
+  sum: number,
+  sumSq: number,
+): number | null {
+  if (!Number.isFinite(n) || n < 2) return null
+  if (!Number.isFinite(sum) || !Number.isFinite(sumSq)) return null
+  const mean = sum / n
+  const variance = sumSq / n - mean * mean
+  if (!Number.isFinite(variance)) return null
+  return Math.max(0, variance)
+}
+
+/**
+ * 100% SPEC/Noul agreement is vacuous when every called row is suppress
+ * (keep band count is 0) or closed-loop scores do not vary.
+ * An empty sample is not vacuous.
+ */
+export function isVacuousFlipAgreement(opts: {
+  keepCount: number
+  clScoreN: number
+  clScoreVariance: number | null
+}): boolean {
+  if (opts.clScoreN <= 0 && opts.keepCount <= 0) return false
+  const noKeep = opts.keepCount <= 0
+  const flatScores =
+    opts.clScoreN >= 2 &&
+    opts.clScoreVariance != null &&
+    Number.isFinite(opts.clScoreVariance) &&
+    opts.clScoreVariance <= VACUOUS_CL_SCORE_VARIANCE_MAX
+  return noKeep || flatScores
+}
+
+/** Vacuous agreement holds flip-ready off. It does not turn soft-active on. */
+export function applyVacuousFlipAgreement(
+  bars: FlipBarCheck,
+  vacuous: boolean,
+): FlipBarCheck {
+  if (!vacuous) return bars
+  return { ...bars, ready: false }
+}
+
+/**
  * #54 kill switches. SPEC left the exact spike formula as ops fog; these
  * defaults are the tracked thresholds (env-tunable). A spike holds soft-active
  * off. It never turns soft-active on. Paper is untouched.

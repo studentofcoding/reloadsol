@@ -289,6 +289,45 @@ export function collectClosedLoopTrainRows(
   return { rows: out, skipped_unlabeled, skipped_not_principal }
 }
 
+/**
+ * Logit movement below this is sigmoid(bias), not a per-mint prediction.
+ * Production Early Enter rows sat in a 0.006 band around ~0.32, i.e. a
+ * feature dot product of about ±0.03 on top of logit(0.32).
+ */
+export const CLOSED_LOOP_INTERCEPT_LOGIT_EPS = 0.05
+
+/** w·x only. Heuristic models have no separate intercept. */
+export function closedLoopFeatureDot(
+  record: Record<string, number>,
+  model: ClosedLoopModelArtifact,
+): number {
+  if (model.model_type !== 'logistic') return 0
+  const vector = featureRecordToVector(record, model.feature_columns)
+  let dot = 0
+  const n = Math.min(vector.length, model.weights.length)
+  for (let i = 0; i < n; i++) {
+    const x = vector[i]
+    const w = model.weights[i]
+    if (typeof x === 'number' && Number.isFinite(x) && typeof w === 'number' && Number.isFinite(w)) {
+      dot += x * w
+    }
+  }
+  return dot
+}
+
+/**
+ * True when a logistic artifact would emit sigmoid(bias) for this vector.
+ * That value is the training base rate (≈0.32 on the live sample), shared by
+ * every mint whose features do not move the logit.
+ */
+export function isInterceptOnlyClosedLoopScore(
+  record: Record<string, number>,
+  model: ClosedLoopModelArtifact,
+): boolean {
+  if (model.model_type !== 'logistic') return false
+  return Math.abs(closedLoopFeatureDot(record, model)) < CLOSED_LOOP_INTERCEPT_LOGIT_EPS
+}
+
 export function inferClosedLoopScore(
   record: Record<string, number>,
   model: ClosedLoopModelArtifact,

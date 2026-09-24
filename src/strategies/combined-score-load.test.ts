@@ -1,7 +1,15 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { TokenLocateResult } from '@/strategies/token-locate'
 import type { TokenMapChartPayload } from '@/strategies/token-map-chart'
-import { loadCombinedScore } from '@/strategies/combined-score-load'
+import {
+  CLOSED_LOOP_FEATURE_COLUMNS,
+  inferClosedLoopScore,
+  type ClosedLoopModelArtifact,
+} from '@/strategies/closed-loop-ml'
+import {
+  loadCombinedScore,
+  scoreClosedLoopFromCombined,
+} from '@/strategies/combined-score-load'
 
 const MINT = 'So11111111111111111111111111111111111111112'
 const NOW = Date.parse('2026-09-20T12:00:00.000Z')
@@ -235,5 +243,158 @@ describe('loadCombinedScore', () => {
     expect(payload.combined).toBeCloseTo(
       0.55 * 0.3 + 0.2 * 0 + 0.15 * 0 + 0.1 * 0.5,
     )
+  })
+
+  it('forwards locate current mcap into the closed-loop scorer', async () => {
+    process.env.ML_CLOSED_LOOP = '1'
+    const scoreClosedLoop = vi.fn(async () => ({ mlScore: 0.7, modelVersion: 'cl-1' }))
+    const locate = locateWithMcap()
+    locate.locations.mcap = {
+      present: true,
+      currentMcap: 180_000,
+      firstMcap: 90_000,
+    }
+    try {
+      await loadCombinedScore({
+        address: MINT,
+        chain: 'sol',
+        hours: 24,
+        deps: {
+          nowMs: NOW,
+          locateTokenByAddress: vi.fn(async () => locate),
+          loadTokenMapChart: vi.fn(async () => emptyChart()),
+          fetchBrainOhlcPatterns: vi.fn(async () => ({
+            ok: false as const,
+            error: 'down',
+            path: '/ohlc/patterns',
+          })),
+          fetchBrainOhlc: vi.fn(async () => ({
+            ok: false as const,
+            error: 'down',
+            path: '/ohlc',
+          })),
+          loadCombinedScoreWeights: weightsDep(),
+          scoreClosedLoop,
+        },
+      })
+      expect(scoreClosedLoop).toHaveBeenCalledWith(
+        expect.objectContaining({ entryMcap: 180_000 }),
+      )
+    } finally {
+      delete process.env.ML_CLOSED_LOOP
+    }
+  })
+})
+
+const BIAS_032 = Math.log(0.3201 / (1 - 0.3201))
+
+function logisticModel(
+  weightByColumn: Record<string, number>,
+  bias = BIAS_032,
+): ClosedLoopModelArtifact {
+  return {
+    version: 'cl-test-bias',
+    model_type: 'logistic',
+    trainedAt: '2026-09-24T00:00:00.000Z',
+    feature_columns: [...CLOSED_LOOP_FEATURE_COLUMNS],
+    weights: CLOSED_LOOP_FEATURE_COLUMNS.map((col) => weightByColumn[col] ?? 0),
+    bias,
+    principals_only: true,
+    label: 'ml_win',
+    metrics: { n: 100, positives: 32, negatives: 68 },
+  }
+}
+
+/** Early-enter defaults: presence-only principal, brain fail-soft OHLC, no band. */
+function earlyEnterPayload(entryMcap?: number) {
+  return {
+    payload: {
+      parts: {
+        principalScore: 0.3,
+        adjusterPresenceScore: 0,
+        jaccardScore: null as number | null,
+        ohlcPatternScore: 0.5,
+      },
+      adjusters: [
+        { domain: 'signals', present: false },
+        { domain: 'gmgn', present: false },
+        { domain: 'social', present: false },
+        { domain: 'trending_bot', present: false },
+      ],
+      principals: [
+        { strategyId: 'mcap_enter_first_seen', present: true },
+        { strategyId: 'mcap_enter_at_80', present: false },
+      ],
+      combined: 0.55 * 0.3 + 0.1 * 0.5,
+    },
+    entryMcap,
+  }
+}
+
+describe('scoreClosedLoopFromCombined', () => {
+  it('a zero-weight logistic is sigmoid(bias) ≈ 0.32 and is not logged', () => {
+    const model = logisticModel({})
+    const { payload } = earlyEnterPayload()
+    const raw = inferClosedLoopScore(
+      {
+        band_under50k: 0,
+        'band_51-100k': 0,
+        'band_101-200k': 0,
+        'band_201-500k': 0,
+        'band_501k-1M': 0,
+        band_over1M: 0,
+        adjuster_presence: 0,
+        jaccard: 0,
+        ohlc_pattern: 0.5,
+        combined: payload.combined,
+        rug_trip: 0,
+        principal_score: 0.3,
+        entry_template_milestone_80: 0,
+      },
+      model,
+    )
+    expect(raw).toBeCloseTo(0.3201, 4)
+
+    const missingBand = scoreClosedLoopFromCombined(payload, { model })
+    expect(missingBand.mlScore).toBeNull()
+    expect(missingBand.modelVersion).toBe('cl-test-bias')
+
+    const low = scoreClosedLoopFromCombined(payload, { model, entryMcap: 40_000 })
+    const high = scoreClosedLoopFromCombined(payload, { model, entryMcap: 2_000_000 })
+    expect(low.mlScore).toBeNull()
+    expect(high.mlScore).toBeNull()
+  })
+
+  it('keeps per-band scores when the model actually uses entry mcap', () => {
+    const model = logisticModel({
+      band_under50k: 1.4,
+      band_over1M: -1.6,
+      entry_template_milestone_80: 0.8,
+    })
+    const { payload } = earlyEnterPayload()
+    const small = scoreClosedLoopFromCombined(payload, {
+      model,
+      entryMcap: 40_000,
+      milestone80: false,
+    })
+    const large = scoreClosedLoopFromCombined(payload, {
+      model,
+      entryMcap: 2_000_000,
+      milestone80: true,
+    })
+    expect(small.mlScore).not.toBeNull()
+    expect(large.mlScore).not.toBeNull()
+    expect(small.mlScore!).toBeGreaterThan(0.55)
+    expect(large.mlScore!).toBeLessThan(0.2)
+    expect(Math.abs(small.mlScore! - large.mlScore!)).toBeGreaterThan(0.02)
+  })
+
+  it('still nulls a tiny residual around 0.32 when band weights are ~0', () => {
+    const model = logisticModel({ ohlc_pattern: 0.02, combined: 0.01 })
+    const { payload } = earlyEnterPayload()
+    const a = scoreClosedLoopFromCombined(payload, { model, entryMcap: 40_000 })
+    const b = scoreClosedLoopFromCombined(payload, { model, entryMcap: 800_000 })
+    expect(a.mlScore).toBeNull()
+    expect(b.mlScore).toBeNull()
   })
 })

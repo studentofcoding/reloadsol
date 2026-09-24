@@ -19,8 +19,11 @@ import { loadCombinedScoreWeights } from '@/strategies/combined-score-weights'
 import {
   extractClosedLoopFeaturesFromSnapshot,
   inferClosedLoopScore,
+  isInterceptOnlyClosedLoopScore,
   isMlClosedLoopEnabled,
+  type ClosedLoopModelArtifact,
 } from '@/strategies/closed-loop-ml'
+import { computeEntryMcapBand } from '@/strategies/outcome-features'
 import { loadClosedLoopModel } from '@/strategies/closed-loop-ml-cache'
 import {
   fetchBrainOhlc,
@@ -41,6 +44,8 @@ export type CombinedScoreLoadDeps = {
     principals: CombinedScoreResponse['principals']
     combined: number
     rugTrip?: boolean
+    entryMcap?: number | null
+    milestone80?: boolean
   }) => Promise<{ mlScore: number | null; modelVersion: string | null }>
   nowMs?: number
 }
@@ -101,10 +106,32 @@ async function loadOhlcPatterns(
   return { patterns: null, failed: true }
 }
 
+/** Live mcap for the closed-loop band. Current fill wins over first-seen. */
+export function readLocateEntryMcap(
+  locate: CombinedScoreLocateInput | null,
+): number | null {
+  const mcap = locate?.locations.mcap
+  if (!mcap) return null
+  const current = mcap.currentMcap
+  if (typeof current === 'number' && Number.isFinite(current) && current > 0) return current
+  const first = mcap.firstMcap
+  if (typeof first === 'number' && Number.isFinite(first) && first > 0) return first
+  return null
+}
+
+function finitePositive(value: number | null | undefined): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value
+  return null
+}
+
 export async function loadCombinedScore(params: {
   address: string
   chain: CombinedScoreChain
   hours: number
+  /** Early Enter entry mcap. Overrides the locate row when set. */
+  entryMcap?: number | null
+  /** Early Enter arm: growth ≥ 80. Omit to infer from an open at_80 principal. */
+  milestone80?: boolean
   deps?: CombinedScoreLoadDeps
   brain?: MarketBrainFetchOpts
 }): Promise<CombinedScoreResponse> {
@@ -163,6 +190,8 @@ export async function loadCombinedScore(params: {
     weights,
   })
 
+  const entryMcap = finitePositive(params.entryMcap) ?? readLocateEntryMcap(locate)
+
   if (!isMlClosedLoopEnabled()) {
     return { ...base, mlScore: null, modelVersion: null }
   }
@@ -177,8 +206,13 @@ export async function loadCombinedScore(params: {
           principals: base.principals,
           combined: base.combined,
           rugTrip: base.rugTrip,
+          entryMcap,
+          milestone80: params.milestone80,
         })
-      : scoreClosedLoopFromCombined(base)
+      : scoreClosedLoopFromCombined(base, {
+          entryMcap,
+          milestone80: params.milestone80,
+        })
     mlScore = scored.mlScore
     modelVersion = scored.modelVersion
   } catch {
@@ -203,24 +237,46 @@ export async function loadCombinedScore(params: {
   })
 }
 
+export type ClosedLoopScoreContext = {
+  /** Entry mcap at the decision. Missing → band one-hots stay 0. */
+  entryMcap?: number | null
+  /** When set, overrides “at_80 principal already open”. */
+  milestone80?: boolean
+  /**
+   * Pass a model in tests. `undefined` loads the artifact.
+   * Explicit `null` means the model is unavailable.
+   */
+  model?: ClosedLoopModelArtifact | null
+}
+
 export function scoreClosedLoopFromCombined(
   payload: Pick<
     CombinedScoreResponse,
     'parts' | 'adjusters' | 'principals' | 'combined' | 'rugTrip'
   >,
+  ctx?: ClosedLoopScoreContext,
 ): { mlScore: number | null; modelVersion: string | null } {
-  const model = loadClosedLoopModel()
+  const model = ctx?.model !== undefined ? ctx.model : loadClosedLoopModel()
   if (!model) return { mlScore: null, modelVersion: null }
-  const milestone80 = payload.principals.some(
-    (row) => row.strategyId === 'mcap_enter_at_80' && row.present,
-  )
+  const milestone80 =
+    ctx?.milestone80 ??
+    payload.principals.some(
+      (row) => row.strategyId === 'mcap_enter_at_80' && row.present,
+    )
+  const entryMcap = finitePositive(ctx?.entryMcap)
   const features = extractClosedLoopFeaturesFromSnapshot({
     parts: payload.parts,
     combinedBase: payload.combined,
     rugTrip: payload.rugTrip,
     adjusters: payload.adjusters,
+    entryMcapBand: entryMcap != null ? computeEntryMcapBand(entryMcap) : null,
     milestone80,
   })
+  // A near-zero feature dot is sigmoid(bias) for every mint (~0.32 on the
+  // live sample). That constant always fails the 0.55 gate. Log null.
+  if (isInterceptOnlyClosedLoopScore(features, model)) {
+    return { mlScore: null, modelVersion: model.version }
+  }
   return {
     mlScore: inferClosedLoopScore(features, model),
     modelVersion: model.version,
