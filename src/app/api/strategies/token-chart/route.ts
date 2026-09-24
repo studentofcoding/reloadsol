@@ -12,6 +12,8 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const address = searchParams.get('address')?.trim() ?? ''
     const hours = Number(searchParams.get('hours') ?? 24)
+    const windowMode =
+      searchParams.get('window')?.trim() === 'auto' ? 'auto' : 'fixed'
     const chainRaw = searchParams.get('chain')?.trim() || (
       /^0x/i.test(address) ? 'robinhood' : 'sol'
     )
@@ -33,6 +35,7 @@ export async function GET(request: NextRequest) {
       tokenAddress: address,
       hours: Number.isFinite(hours) ? hours : 24,
       chain: chainRaw,
+      window: windowMode,
     })
 
     return NextResponse.json(

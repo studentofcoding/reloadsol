@@ -128,6 +128,8 @@ export async function loadCombinedScore(params: {
   address: string
   chain: CombinedScoreChain
   hours: number
+  /** Freeview: match Strategy correlation OHLC window. */
+  window?: 'auto' | 'fixed'
   /** Early Enter entry mcap. Overrides the locate row when set. */
   entryMcap?: number | null
   /** Early Enter arm: growth ≥ 80. Omit to infer from an open at_80 principal. */
@@ -150,13 +152,18 @@ export async function loadCombinedScore(params: {
   }
 
   let outcomes: TokenChartOutcomeSegment[] = []
+  let chartHours = params.hours
   try {
     const chart = await chartFn({
       tokenAddress: params.address,
       hours: params.hours,
       chain: params.chain,
+      ...(params.window === 'auto' ? { window: 'auto' as const } : {}),
     })
     outcomes = chart.outcomes
+    if (params.window === 'auto' && Number.isFinite(chart.hours)) {
+      chartHours = Math.max(1, Math.ceil(chart.hours))
+    }
   } catch {
     outcomes = []
   }
@@ -164,7 +171,7 @@ export async function loadCombinedScore(params: {
   const ohlc = await loadOhlcPatterns(
     params.address,
     params.chain,
-    params.hours,
+    chartHours,
     deps,
     params.brain,
   )

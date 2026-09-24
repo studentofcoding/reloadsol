@@ -157,7 +157,7 @@ export default function TokenMapBoard({
             <TokenMapStrategyChart
               tokenAddress={result.tokenAddress}
               activities={activities}
-              hours={24}
+              chartWindow="auto"
               chain={chartChain}
             />
           </div>

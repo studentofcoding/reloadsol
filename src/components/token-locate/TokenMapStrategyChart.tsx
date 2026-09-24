@@ -53,6 +53,12 @@ type ChartPayload = {
   detectAt?: string | null
   priceSource: 'tracker' | 'empty'
   ohlcSource: string
+  hours?: number
+  chartWindow?: {
+    mode: 'new' | 'old'
+    timeFrom: number
+    timeTo: number
+  }
 }
 
 const TOGGLE_DOMAINS = (
@@ -162,11 +168,14 @@ export default function TokenMapStrategyChart({
   tokenAddress,
   activities,
   hours = 24,
+  chartWindow,
   chain,
 }: {
   tokenAddress: string
   activities: TokenMapActivityItem[]
   hours?: number
+  /** Freeview: adaptive OHLC from first activity/outcome. */
+  chartWindow?: 'auto' | 'fixed'
   chain?: 'sol' | 'robinhood'
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -271,6 +280,7 @@ export default function TokenMapStrategyChart({
           hours: String(hours),
         })
         if (chain) qs.set('chain', chain)
+        if (chartWindow === 'auto') qs.set('window', 'auto')
         const res = await fetch(`/api/strategies/token-chart?${qs}`)
         const json = (await res.json()) as ChartPayload & {
           success?: boolean
@@ -425,14 +435,22 @@ export default function TokenMapStrategyChart({
 
       chart.timeScale().fitContent()
       if (useCandles && payload.candles.length > 0) {
-        const spanSec =
-          payload.candles[payload.candles.length - 1]!.time -
-          payload.candles[0]!.time
-        const wantSec = hours * 3600
-        if (spanSec < wantSec * 0.9) {
-          const to = Math.floor(Date.now() / 1000) as UTCTimestamp
-          const from = (to - wantSec) as UTCTimestamp
-          chart.timeScale().setVisibleRange({ from, to })
+        const win = payload.chartWindow
+        if (win && win.timeTo > win.timeFrom) {
+          chart.timeScale().setVisibleRange({
+            from: win.timeFrom as UTCTimestamp,
+            to: win.timeTo as UTCTimestamp,
+          })
+        } else {
+          const spanSec =
+            payload.candles[payload.candles.length - 1]!.time -
+            payload.candles[0]!.time
+          const wantSec = hours * 3600
+          if (spanSec < wantSec * 0.9) {
+            const to = Math.floor(Date.now() / 1000) as UTCTimestamp
+            const from = (to - wantSec) as UTCTimestamp
+            chart.timeScale().setVisibleRange({ from, to })
+          }
         }
       }
       setLoading(false)
@@ -461,7 +479,7 @@ export default function TokenMapStrategyChart({
     }
     // enabledDomains applied in separate effect after mount; initial paint uses current set
     // eslint-disable-next-line react-hooks/exhaustive-deps -- refetch on token/hours/activities/refresh
-  }, [tokenAddress, hours, chain, activityKey, activities, applyDomainPaint, refreshKey])
+  }, [tokenAddress, hours, chartWindow, chain, activityKey, activities, applyDomainPaint, refreshKey])
 
   // Re-paint candles/markers when domain toggles change (no refetch)
   useEffect(() => {
@@ -478,6 +496,7 @@ export default function TokenMapStrategyChart({
       hours: String(hours),
     })
     if (chain) qs.set('chain', chain)
+    if (chartWindow === 'auto') qs.set('window', 'auto')
     const ac = new AbortController()
     setMlScore(null)
     void fetch(`/api/strategies/combined-score?${qs}`, { signal: ac.signal })
@@ -507,7 +526,7 @@ export default function TokenMapStrategyChart({
     return () => {
       ac.abort()
     }
-  }, [tokenAddress, hours, chain, refreshKey])
+  }, [tokenAddress, hours, chain, chartWindow, refreshKey])
 
   return (
     <div className="rounded-xl border border-gray-700 bg-gray-900/60 overflow-hidden">

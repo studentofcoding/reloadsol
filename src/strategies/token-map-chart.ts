@@ -6,6 +6,12 @@ import {
 import { parsePriceHistory } from '@/strategies/trade-window-chart-data'
 import type { TokenMapDomain } from '@/strategies/token-map-types'
 import type { OhlcRugBar } from '@/strategies/ohlc-rug-rules'
+import { fetchTokenMapActivity } from '@/strategies/token-map-activity'
+import {
+  SHORT_OHLC_FETCH_MAX_SPAN_SEC,
+  chartWindowHours,
+  resolveFreeviewChartWindow,
+} from '@/strategies/token-map-chart-window'
 import { tokenKline } from '@/utils/gmgn-api'
 import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
 import {
@@ -211,6 +217,12 @@ export type TokenMapChartPayload = {
   detectAt: string | null
   priceSource: 'tracker' | 'empty'
   ohlcSource: 'none' | string
+  /** Set when load used window=auto (Freeview). */
+  chartWindow?: {
+    mode: 'new' | 'old'
+    timeFrom: number
+    timeTo: number
+  }
 }
 
 const DOMAIN_OK = new Set<TokenMapDomain>([
@@ -817,26 +829,127 @@ export async function loadTokenMapChart(params: {
   tokenAddress: string
   hours?: number
   chain?: GmgnTradeChain
+  /** Freeview: resolve OHLC span from first activity/outcome entry. */
+  window?: 'auto' | 'fixed'
 }): Promise<TokenMapChartPayload> {
-  const hours = Math.min(Math.max(params.hours ?? 24, 1), 168)
-  const sinceMs = Date.now() - hours * 60 * 60 * 1000
-  const sinceSec = Math.floor(sinceMs / 1000)
-  const sinceIso = new Date(sinceMs).toISOString()
   const chain =
     params.chain ??
     (/^0x[a-fA-F0-9]{40}$/i.test(params.tokenAddress) ? 'robinhood' : 'sol')
+  const useAuto = params.window === 'auto'
+  const nowSec = Math.floor(Date.now() / 1000)
 
-  const ohlcPromise =
-    hours <= 24
-      ? getCachedTokenOhlc24h1m(params.tokenAddress).then((r) => ({
-          candles: sliceCandlesSince(r.candles, sinceSec),
-          source: r.source,
-        }))
-      : fetchTokenOhlc({
+  const outcomesResult = await listStrategyOutcomes({
+    tokenAddress: params.tokenAddress,
+    chain,
+    limit: 100,
+    offset: 0,
+  })
+
+  let chartWindow: ReturnType<typeof resolveFreeviewChartWindow> | null = null
+  let hours: number
+  let sinceSec: number
+  let sinceMs: number
+  let sinceIso: string
+  let timeFrom: number
+  let timeTo: number
+
+  if (useAuto) {
+    let activityAnchors: number[] = []
+    try {
+      const activities = await fetchTokenMapActivity({
+        tokenAddress: params.tokenAddress,
+        chain,
+        hours: 24,
+        limit: 80,
+      })
+      for (const a of activities) {
+        const t = toUnixSec(a.occurredAt)
+        if (t != null) activityAnchors.push(t)
+      }
+    } catch {
+      activityAnchors = []
+    }
+    const entryAnchors: number[] = []
+    for (const row of outcomesResult.rows) {
+      if (!row.entry_at) continue
+      const t = toUnixSec(row.entry_at)
+      if (t != null) entryAnchors.push(t)
+    }
+    chartWindow = resolveFreeviewChartWindow({
+      nowSec,
+      anchorsSec: [...activityAnchors, ...entryAnchors],
+    })
+    timeFrom = chartWindow.timeFrom
+    timeTo = chartWindow.timeTo
+    hours = chartWindowHours(chartWindow)
+    sinceSec = timeFrom
+    sinceMs = timeFrom * 1000
+    sinceIso = new Date(sinceMs).toISOString()
+  } else {
+    hours = Math.min(Math.max(params.hours ?? 24, 1), 168)
+    sinceMs = Date.now() - hours * 60 * 60 * 1000
+    sinceSec = Math.floor(sinceMs / 1000)
+    sinceIso = new Date(sinceMs).toISOString()
+    timeFrom = sinceSec
+    timeTo = nowSec
+  }
+
+  const spanSec = timeTo - timeFrom
+  const useShortFetch = useAuto && spanSec <= SHORT_OHLC_FETCH_MAX_SPAN_SEC
+
+  const ohlcPromise = (async (): Promise<{
+    candles: TokenOhlcBar[]
+    source: string
+  }> => {
+    if (useShortFetch) {
+      return fetchTokenOhlc({
+        tokenAddress: params.tokenAddress,
+        interval: '1m',
+        chain,
+        timeFrom,
+        timeTo,
+      })
+    }
+    if (hours <= 24 || useAuto) {
+      const cached = await getCachedTokenOhlc24h1m(params.tokenAddress)
+      let candles = sliceCandlesSince(cached.candles, sinceSec).filter(
+        (c) => c.time <= timeTo,
+      )
+      const spanHave =
+        candles.length >= 2
+          ? candles[candles.length - 1]!.time - candles[0]!.time
+          : 0
+      // Cache miss / too short for an old auto window — fetch the exact span.
+      if (
+        useAuto &&
+        !useShortFetch &&
+        spanSec > SHORT_OHLC_FETCH_MAX_SPAN_SEC &&
+        spanHave < spanSec * 0.5
+      ) {
+        const live = await fetchTokenOhlc({
           tokenAddress: params.tokenAddress,
-          hours,
+          interval: '1m',
           chain,
+          timeFrom,
+          timeTo,
         })
+        if (live.candles.length > 0) {
+          return {
+            candles: live.candles.filter(
+              (c) => c.time >= sinceSec && c.time <= timeTo,
+            ),
+            source: live.source,
+          }
+        }
+      }
+      return { candles, source: cached.source }
+    }
+    return fetchTokenOhlc({
+      tokenAddress: params.tokenAddress,
+      hours,
+      chain,
+    })
+  })()
 
   const detectPromise = (async (): Promise<{
     candles: TokenOhlcBar[]
@@ -849,7 +962,9 @@ export async function loadTokenMapChart(params: {
       const snap = await getLatestDetectSnapshot(params.tokenAddress)
       if (!snap?.bars?.length) return { candles: [], detectAt: null }
       return {
-        candles: sliceCandlesSince(rugBarsToTokenOhlc(snap.bars), sinceSec),
+        candles: sliceCandlesSince(rugBarsToTokenOhlc(snap.bars), sinceSec).filter(
+          (c) => c.time <= timeTo,
+        ),
         detectAt: snap.detected_at ?? null,
       }
     } catch {
@@ -857,14 +972,8 @@ export async function loadTokenMapChart(params: {
     }
   })()
 
-  const [history, outcomesResult, ohlcLive, detect] = await Promise.all([
+  const [history, ohlcLive, detect] = await Promise.all([
     loadTrackerHistory(params.tokenAddress, chain),
-    listStrategyOutcomes({
-      tokenAddress: params.tokenAddress,
-      chain,
-      limit: 100,
-      offset: 0,
-    }),
     ohlcPromise,
     detectPromise,
   ])
@@ -874,7 +983,9 @@ export async function loadTokenMapChart(params: {
   if (candles.length === 0) {
     const persisted = await loadPersistedOhlcFallback(params.tokenAddress)
     if (persisted) {
-      candles = sliceCandlesSince(persisted.candles, sinceSec)
+      candles = sliceCandlesSince(persisted.candles, sinceSec).filter(
+        (c) => c.time <= timeTo,
+      )
       ohlcSource = persisted.source
     }
   }
@@ -884,6 +995,7 @@ export async function loadTokenMapChart(params: {
     const t = toUnixSec(p.timestamp)
     if (t == null) continue
     if (t * 1000 < sinceMs) continue
+    if (t > timeTo) continue
     points.push({
       t,
       priceUsd: p.price_usd,
@@ -936,5 +1048,14 @@ export async function loadTokenMapChart(params: {
     detectAt: detect.detectAt,
     priceSource: deduped.length > 0 ? 'tracker' : 'empty',
     ohlcSource: candles.length > 0 ? ohlcSource : 'none',
+    ...(chartWindow
+      ? {
+          chartWindow: {
+            mode: chartWindow.mode,
+            timeFrom: chartWindow.timeFrom,
+            timeTo: chartWindow.timeTo,
+          },
+        }
+      : {}),
   }
 }
