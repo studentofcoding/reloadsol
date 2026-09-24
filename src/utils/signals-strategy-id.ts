@@ -65,6 +65,31 @@ export function signalsListStrategyIds(chain: SignalsListChain): readonly string
     : SOL_SIGNALS_LIST_STRATEGY_IDS
 }
 
+/** Fallback display names when stats have not loaded (matches registry defaults). */
+const SIGNALS_LIST_SEED_NAMES: Record<string, string> = {
+  signals_default: 'Default momentum',
+  signals_sell_over_100: 'Sell over 100%',
+  mcap_enter_first_seen: 'Enter at first seen',
+  mcap_enter_at_80: 'Enter at 80% milestone',
+  signals_default_rh: 'Default momentum (Robinhood)',
+  mcap_enter_first_seen_rh: 'Enter at first seen (Robinhood)',
+  mcap_enter_at_80_rh: 'Enter at 80% milestone (Robinhood)',
+}
+
+/** Instant picker rows: names only, n=0. Stats route patches real PnL. */
+export function seedSignalsListPickerOptions(
+  chain: SignalsListChain,
+): SignalsListPickerOption[] {
+  return signalsListStrategyIds(chain).map((strategyId) => ({
+    strategyId,
+    name: SIGNALS_LIST_SEED_NAMES[strategyId] ?? strategyId,
+    domain: strategyId.startsWith('mcap_') ? 'mcap_tracker' : 'signals',
+    avgPnlPct: null,
+    totalPnlPct: null,
+    n: 0,
+  }))
+}
+
 /** Empty storage. Not the highest-avg strategy. */
 export function signalsListStrategyFallback(chain: SignalsListChain): string {
   return chain === 'robinhood' ? 'signals_default_rh' : 'signals_sell_over_100'

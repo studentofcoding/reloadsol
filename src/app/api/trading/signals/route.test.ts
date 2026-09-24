@@ -13,10 +13,6 @@ vi.mock('@/strategies/signals-pipeline', () => ({
   fetchAndScoreSignals: vi.fn(),
 }))
 
-vi.mock('@/strategies/db', () => ({
-  aggregateStrategyReports: vi.fn(),
-}))
-
 vi.mock('@/strategies/load-mcap-tracker', () => ({
   getMergedMcapTrackerRegistry: vi.fn(),
 }))
@@ -53,7 +49,6 @@ vi.mock('@/strategies/signals-early-alerts', () => ({
 
 import { NextRequest } from 'next/server'
 import { GET } from '@/app/api/trading/signals/route'
-import { aggregateStrategyReports } from '@/strategies/db'
 import { getMergedMcapTrackerRegistry } from '@/strategies/load-mcap-tracker'
 import { getMergedSignalsRegistry } from '@/strategies/load-signals'
 import { emitSignalsEarlyAlertsFromScoredAsync } from '@/strategies/signals-early-alerts'
@@ -112,50 +107,6 @@ beforeEach(() => {
   vi.mocked(getMergedSignalsRegistry).mockImplementation(async (chain = 'sol') =>
     chainRegistry(SIGNALS_STRATEGIES, chain) as Record<string, SignalsStrategy>,
   )
-  vi.mocked(aggregateStrategyReports).mockResolvedValue({
-    breakdown: [
-      {
-        strategy_id: 'signals_sell_over_100',
-        domain: 'signals',
-        is_simulated: true,
-        trade_count: 38,
-        win_count: 20,
-        loss_count: 18,
-        win_rate: 20 / 38,
-        avg_pnl_pct: 359,
-        median_pnl_pct: 10,
-        total_pnl_pct: 13642,
-        last_exit_at: null,
-      },
-      {
-        strategy_id: 'mcap_enter_at_80',
-        domain: 'mcap_tracker',
-        is_simulated: true,
-        trade_count: 40,
-        win_count: 20,
-        loss_count: 20,
-        win_rate: 0.5,
-        avg_pnl_pct: 18,
-        median_pnl_pct: 4,
-        total_pnl_pct: 720,
-        last_exit_at: null,
-      },
-    ],
-    abPairs: [],
-    topTrades: [],
-    worstTrades: [],
-    coverage: [],
-    mlStats: { total: 0, unlabeled: 0, by_label: {}, by_condition: {} },
-    mcapTrackerStats: {
-      strategies: [],
-      milestone_buckets: [],
-      timeline_inconsistent_count: 0,
-      total_tracked_tokens: 0,
-      open_sim_positions: [],
-    },
-    bestTradeWindows: [],
-    timezone: 'UTC',
-  })
 })
 
 function request(query: string) {
@@ -176,9 +127,14 @@ describe('GET /api/trading/signals strategy list', () => {
     expect(response.status).toBe(200)
     const body = await response.json()
     expect(body.params.strategy).toBe('signals_default')
-    expect(body.strategies.map((row: { strategyId: string }) => row.strategyId)[0]).toBe(
+    // Stub picker: all n=0 → strategy_id asc (PnL stats live on /strategies).
+    expect(body.strategies.map((row: { strategyId: string }) => row.strategyId)).toEqual([
+      'mcap_enter_at_80',
+      'mcap_enter_first_seen',
+      'signals_default',
       'signals_sell_over_100',
-    )
+    ])
+    expect(body.strategies.every((row: { n: number }) => row.n === 0)).toBe(true)
     expect(fetchAndScoreSignals).toHaveBeenCalledWith(
       expect.objectContaining({ template: 'default', enterScoreFloor: 50 }),
       expect.objectContaining({ chain: 'sol', keepCandidatePool: true }),
@@ -241,6 +197,6 @@ describe('GET /api/trading/signals strategy list', () => {
     const body = await response.json()
     expect(body.signals).toHaveLength(1)
     expect(emitSignalsEarlyAlertsFromScoredAsync).not.toHaveBeenCalled()
-    expect(body.strategies[0].strategyId).toBe('signals_sell_over_100')
+    expect(body.strategies[0].strategyId).toBe('mcap_enter_at_80')
   })
 })

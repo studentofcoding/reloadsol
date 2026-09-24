@@ -23,12 +23,13 @@ import DlmmChartActions from "@/components/dlmm/DlmmChartActions";
 import GlobalWatchlistButton from "@/components/GlobalWatchlistButton";
 import { RUG_LIST_QUERY_KEY } from "@/hooks/useRugList";
 import { useQueryClient } from "@tanstack/react-query";
-import { useTradingSignals, SignalItem } from "@/hooks/useTradingSignals";
+import { useTradingSignals, useTradingSignalsStrategies, SignalItem } from "@/hooks/useTradingSignals";
 import { formatAppDateTime } from "@/utils/datetime";
 import {
   formatSignalsListOptionLabel,
   formatSignalsListOptionTitle,
   readSignalsListStrategyId,
+  seedSignalsListPickerOptions,
   writeSignalsListStrategyId,
   type SignalsListPickerOption,
 } from "@/utils/signals-strategy-id";
@@ -259,14 +260,20 @@ export default function SignalsTab() {
     chain: network,
   });
 
+  const { data: strategiesResponse } = useTradingSignalsStrategies(network);
+
   const error = queryError ? queryError.message : "";
   const signals = apiResponse?.signals || [];
   const stats = apiResponse?.stats || {};
+  const seeded = seedSignalsListPickerOptions(network);
   const strategyOptions: SignalsListPickerOption[] =
-    apiResponse?.strategies ?? [];
+    strategiesResponse?.strategies?.length
+      ? strategiesResponse.strategies
+      : seeded;
   const pickerOptions =
-    strategyOptions.length === 0
-      ? [
+    strategyOptions.some((option) => option.strategyId === strategyId)
+      ? strategyOptions
+      : [
           {
             strategyId,
             name: strategyId,
@@ -275,20 +282,8 @@ export default function SignalsTab() {
             totalPnlPct: null,
             n: 0,
           },
-        ]
-      : strategyOptions.some((option) => option.strategyId === strategyId)
-        ? strategyOptions
-        : [
-            {
-              strategyId,
-              name: strategyId,
-              domain: "signals" as const,
-              avgPnlPct: null,
-              totalPnlPct: null,
-              n: 0,
-            },
-            ...strategyOptions,
-          ];
+          ...strategyOptions,
+        ];
 
   // Multiple floating charts state
   const [floatingCharts, setFloatingCharts] = useState<FloatingChart[]>(

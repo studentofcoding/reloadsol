@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse, connection } from 'next/server'
 import { log } from '@/utils/unified-logger'
-import { aggregateStrategyReports } from '@/strategies/db'
 import { getMergedMcapTrackerRegistry } from '@/strategies/load-mcap-tracker'
 import { getMergedSignalsRegistry } from '@/strategies/load-signals'
 import { fetchAndScoreSignals, type ScoredSignal } from '@/strategies/signals-pipeline'
@@ -71,11 +70,11 @@ export async function GET(request: NextRequest) {
       maxAgeMinutes,
     })
 
-    const [rawSignals, mcapRegistry, signalsRegistry, reports] = await Promise.all([
+    // Mint membership only — picker n=/avg comes from /api/trading/signals/strategies.
+    const [rawSignals, mcapRegistry, signalsRegistry] = await Promise.all([
       fetchAndScoreSignals(strategyConfig, { chain, keepCandidatePool: true }),
       getMergedMcapTrackerRegistry(chain),
       getMergedSignalsRegistry(chain),
-      aggregateStrategyReports({ chain }),
     ])
     const nameOverrides: Record<string, string> = {}
     for (const strategy of [
@@ -211,7 +210,7 @@ export async function GET(request: NextRequest) {
       scoreConfig: strategyConfig,
       mcapById: mcapRegistry,
       nameOverrides,
-      breakdown: reports.breakdown,
+      breakdown: [],
     })
 
     log.info('mcap_tracker', 'Generated trading signals', {

@@ -156,6 +156,14 @@ function simBreakdown(
  * then total_pnl_pct desc, then strategy_id asc.
  * No min-n floor. No avg × n. No win%. Tiny-n outranks a lower mean.
  */
+/** Instant picker seed: universe names with n=0 (no DB). */
+export function seedSignalsListStrategies(
+  chain: StrategyChain,
+  nameOverrides?: Record<string, string>,
+): SignalsListPickerOption[] {
+  return rankSignalsListStrategies(chain, [], nameOverrides)
+}
+
 export function rankSignalsListStrategies(
   chain: StrategyChain,
   breakdown: readonly SignalsListPnlRow[],

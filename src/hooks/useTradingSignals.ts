@@ -50,7 +50,7 @@ export interface SignalsResponse {
   success: boolean;
   params?: Record<string, any>;
   stats?: Record<string, any>;
-  /** Picker options, already ordered by raw sim avg then sum. */
+  /** Stub picker (n=0). Real PnL comes from useTradingSignalsStrategies. */
   strategies?: SignalsListPickerOption[];
   signals?: SignalItem[];
 }
@@ -77,5 +77,26 @@ export function useTradingSignals(params: TradingSignalsParams) {
     },
     refetchInterval: 30000, // Auto refresh every 30s
     staleTime: 10000,
+  });
+}
+
+/** Picker n=/avg only — does not gate the mint table. */
+export function useTradingSignalsStrategies(chain: AppNetwork) {
+  return useQuery({
+    queryKey: ['trading-signals-strategies', chain],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/trading/signals/strategies?chain=${encodeURIComponent(chain)}`,
+      );
+      if (!res.ok) {
+        throw new Error(`Failed to fetch strategy stats (${res.status})`);
+      }
+      return res.json() as Promise<{
+        success: boolean;
+        strategies?: SignalsListPickerOption[];
+      }>;
+    },
+    refetchInterval: 30000,
+    staleTime: 15000,
   });
 }
