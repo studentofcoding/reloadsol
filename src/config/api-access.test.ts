@@ -5,6 +5,7 @@ describe('getApiAccessTier', () => {
   it('requires a wallet session to server-sign Solana swaps', () => {
     expect(getApiAccessTier('/api/trade/server-sign', 'GET')).toBe('wallet')
     expect(getApiAccessTier('/api/trade/server-sign', 'POST')).toBe('wallet')
+    expect(getApiAccessTier('/api/trade/server-execute', 'POST')).toBe('wallet')
   })
 
   it('keeps /api/trade/test behind a dev session', () => {

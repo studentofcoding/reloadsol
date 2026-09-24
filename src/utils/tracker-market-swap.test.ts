@@ -3,17 +3,24 @@ import { VersionedTransaction } from '@solana/web3.js'
 import { AUTO_SLIPPAGE_CAP_BPS } from '@/utils/auto-slippage'
 
 vi.mock('@/utils/swap-executor', () => ({
-  fetchSwapQuote: vi.fn(),
+  prepareSwapTransaction: vi.fn(),
+  peekFreshPreparedSwap: vi.fn(() => null),
+  putPreparedSwapCache: vi.fn(),
   executeClientSwap: vi.fn(),
 }))
 
-import { executeClientSwap, fetchSwapQuote } from '@/utils/swap-executor'
+import {
+  executeClientSwap,
+  peekFreshPreparedSwap,
+  prepareSwapTransaction,
+} from '@/utils/swap-executor'
 import {
   TRACKER_AUTO_PRIORITY_FEE,
   runTrackerMarketSwap,
 } from '@/utils/tracker-market-swap'
 
-const fetchQuote = vi.mocked(fetchSwapQuote)
+const prepare = vi.mocked(prepareSwapTransaction)
+const peek = vi.mocked(peekFreshPreparedSwap)
 const execute = vi.mocked(executeClientSwap)
 
 const BASE = {
@@ -23,30 +30,29 @@ const BASE = {
   priorityFeeLamports: TRACKER_AUTO_PRIORITY_FEE,
 }
 
+const prepared = {
+  provider: 'jupiter_swap' as const,
+  swapTransaction: 'AQID',
+  outAmount: '2',
+  requestId: 'req-1',
+  priceImpact: 0.012,
+}
+
 describe('runTrackerMarketSwap', () => {
   beforeEach(() => {
-    fetchQuote.mockReset()
+    prepare.mockReset()
+    peek.mockReset()
     execute.mockReset()
+    peek.mockReturnValue(null)
+    prepare.mockResolvedValue(prepared)
     execute.mockResolvedValue({
       signature: 'sig',
-      via: 'rpc',
+      via: 'jupiter',
       outAmount: '99',
     })
   })
 
-  it('caps slippage from quote impact the same way on buy and sell', async () => {
-    fetchQuote.mockResolvedValue({
-      inputMint: 'in',
-      outputMint: 'out',
-      inAmount: '1',
-      outAmount: '2',
-      otherAmountThreshold: '1',
-      swapMode: 'ExactIn',
-      slippageBps: 20,
-      priceImpactPct: '1.2',
-      routePlan: [],
-    })
-
+  it('caps slippage from the prepared order the same way on buy and sell', async () => {
     const buy = await runTrackerMarketSwap({
       ...BASE,
       inputMint: 'SOL',
@@ -62,32 +68,33 @@ describe('runTrackerMarketSwap', () => {
 
     expect(buy.slippageBps).toBe(140)
     expect(sell.slippageBps).toBe(buy.slippageBps)
-    expect(buy.impactPct).toBe(1.2)
+    expect(buy.impactPct).toBeCloseTo(1.2)
     expect(execute).toHaveBeenCalledTimes(2)
     expect(execute.mock.calls[0][0].slippageBps).toBe(140)
     expect(execute.mock.calls[1][0].slippageBps).toBe(140)
+    expect(prepare.mock.calls[0][0].slippageBps).toBe(20)
+    expect(prepare.mock.calls[1][0].slippageBps).toBe(140)
     expect(execute.mock.calls[0][0].priorityFeeLamports).toEqual(
       TRACKER_AUTO_PRIORITY_FEE,
     )
     expect(execute.mock.calls[1][0].priorityFeeLamports).toEqual(
       TRACKER_AUTO_PRIORITY_FEE,
     )
-    expect(fetchQuote.mock.calls[0][3]).toBe(20)
+  })
+
+  it('reuses the seed order when auto slippage stays at the floor', async () => {
+    prepare.mockResolvedValue({ ...prepared, priceImpact: 0 })
+    const result = await runTrackerMarketSwap({
+      ...BASE,
+      inputMint: 'SOL',
+      outputMint: 'TOKEN',
+      amount: 1_000,
+    })
+    expect(result.slippageBps).toBe(20)
+    expect(prepare).toHaveBeenCalledTimes(1)
   })
 
   it('defaults an omitted fee to auto high and clamps a manual tip to 0.003 SOL', async () => {
-    fetchQuote.mockResolvedValue({
-      inputMint: 'in',
-      outputMint: 'out',
-      inAmount: '1',
-      outAmount: '2',
-      otherAmountThreshold: '1',
-      swapMode: 'ExactIn',
-      slippageBps: 20,
-      priceImpactPct: '0.1',
-      routePlan: [],
-    })
-
     await runTrackerMarketSwap({
       connection: BASE.connection,
       userPublicKey: BASE.userPublicKey,
@@ -111,18 +118,7 @@ describe('runTrackerMarketSwap', () => {
   })
 
   it('caps auto slippage at 8% and still sends', async () => {
-    fetchQuote.mockResolvedValue({
-      inputMint: 'in',
-      outputMint: 'out',
-      inAmount: '1',
-      outAmount: '2',
-      otherAmountThreshold: '1',
-      swapMode: 'ExactIn',
-      slippageBps: 20,
-      priceImpactPct: '9',
-      routePlan: [],
-    })
-
+    prepare.mockResolvedValue({ ...prepared, priceImpact: 9 })
     const result = await runTrackerMarketSwap({
       ...BASE,
       inputMint: 'USDC',
@@ -134,8 +130,8 @@ describe('runTrackerMarketSwap', () => {
     expect(execute).toHaveBeenCalledTimes(1)
   })
 
-  it('does not send when the impact gate rejects every quote', async () => {
-    fetchQuote.mockResolvedValue(null)
+  it('does not send when the impact gate rejects the order', async () => {
+    prepare.mockResolvedValue({ ...prepared, priceImpact: 50 })
     await expect(
       runTrackerMarketSwap({
         ...BASE,

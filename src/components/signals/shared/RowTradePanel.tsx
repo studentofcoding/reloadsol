@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import BalanceSliderField from "@/components/BalanceSliderField";
@@ -22,6 +22,7 @@ import {
 import {
   TRACKER_AUTO_PRIORITY_FEE,
   TRACKER_PRIORITY_FEE_LAMPORTS,
+  warmTrackerMarketSwap,
 } from "@/utils/tracker-market-swap";
 import { rowMarketSwap } from "@/utils/row-market-swap";
 
@@ -148,6 +149,46 @@ export default function RowTradePanel({
           : null
         : humanAmount
       : null;
+
+  useEffect(() => {
+    if (!connected || !publicKey || !connection || !signTransaction) return;
+    const timer = window.setTimeout(() => {
+      try {
+        const leg = trackerTradeLeg({
+          side,
+          asset,
+          tokenMint: tokenAddress,
+          buyHuman: humanAmount,
+          sellBalanceRaw: holding?.balanceRaw,
+          sellPercent: Number.parseFloat(sellPercent),
+        });
+        if (leg.amountRaw <= 0) return;
+        void warmTrackerMarketSwap({
+          connection,
+          userPublicKey: publicKey.toBase58(),
+          signTransaction: (tx) => signTransaction(tx),
+          inputMint: leg.inputMint,
+          outputMint: leg.outputMint,
+          amount: leg.amountRaw,
+          priorityFeeLamports: TRACKER_AUTO_PRIORITY_FEE,
+        }).catch(() => undefined);
+      } catch {
+        /* amount not ready to warm */
+      }
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [
+    asset,
+    connected,
+    connection,
+    holding?.balanceRaw,
+    humanAmount,
+    publicKey,
+    sellPercent,
+    side,
+    signTransaction,
+    tokenAddress,
+  ]);
 
   const confirm = async () => {
     if (!connected || !publicKey || !signTransaction) {

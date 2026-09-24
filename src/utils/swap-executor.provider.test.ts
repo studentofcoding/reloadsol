@@ -218,6 +218,7 @@ describe("swap-executor shyft provider", () => {
       signature: "jup-sig",
       via: "jupiter",
       checkViaRaptor: false,
+      landed: true,
     });
     expect(executeJupiterSwapDirect).toHaveBeenCalledWith({
       signedTransaction: Buffer.from(new Uint8Array([1, 2, 3])).toString("base64"),

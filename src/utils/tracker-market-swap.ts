@@ -8,11 +8,16 @@ import {
 import {
   getSwapQuoteMaxImpactPct,
   impactToAbsPct,
+  passesImpactGate,
 } from '@/utils/swap-quote-pick'
 import {
   executeClientSwap,
-  fetchSwapQuote,
+  peekFreshPreparedSwap,
+  prepareSwapTransaction,
+  putPreparedSwapCache,
   type ExecuteClientSwapParams,
+  type PrepareSwapParams,
+  type PreparedSwap,
 } from '@/utils/swap-executor'
 import {
   AUTO_PRIORITY_FEE_MAX_LAMPORTS,
@@ -20,6 +25,7 @@ import {
   resolveTrackerPriorityFee,
 } from '@/utils/priority-fee'
 import { resolveSolSignerMode } from '@/utils/sol-desk-signer'
+import { beginTradeInFlight } from '@/utils/trade-inflight'
 
 /** Signals + tracker default: Jupiter/Raptor high, capped at 0.003 SOL. */
 export const TRACKER_AUTO_PRIORITY_FEE = autoPriorityFeeLamports({
@@ -47,13 +53,76 @@ export type TrackerMarketSwapResult = {
 }
 
 type TrackerMarketSwapDeps = {
-  fetchQuote: typeof fetchSwapQuote
+  prepare: typeof prepareSwapTransaction
+  peek: typeof peekFreshPreparedSwap
+  put: typeof putPreparedSwapCache
   execute: typeof executeClientSwap
 }
 
 const defaultDeps: TrackerMarketSwapDeps = {
-  fetchQuote: fetchSwapQuote,
+  prepare: prepareSwapTransaction,
+  peek: peekFreshPreparedSwap,
+  put: putPreparedSwapCache,
   execute: executeClientSwap,
+}
+
+function trackerPrepareBase(
+  params: TrackerMarketSwapParams,
+): Omit<PrepareSwapParams, 'slippageBps'> & TrackerMarketSwapParams {
+  return {
+    ...params,
+    amount: Number(params.amount),
+    priorityFeeLamports: resolveTrackerPriorityFee(params.priorityFeeLamports),
+  }
+}
+
+async function buildTrackerSwap(
+  params: TrackerMarketSwapParams,
+  deps: TrackerMarketSwapDeps,
+): Promise<{
+  execParams: TrackerMarketSwapParams & { slippageBps: number }
+  impactPct: number
+  slippageBps: number
+  volatile: boolean
+}> {
+  const base = trackerPrepareBase(params)
+  const seedBps = prefetchSlippageBps(AUTO_SLIPPAGE_BPS)
+  const seedParams = { ...base, slippageBps: seedBps }
+  let seeded = deps.peek(seedParams)
+  if (!seeded) {
+    seeded = await deps.prepare(seedParams)
+    deps.put(seedParams, seeded)
+  }
+  const impactPct = impactToAbsPct(seeded.priceImpact)
+  if (!passesImpactGate(impactPct)) {
+    throw new Error(
+      `No swap route within ${getSwapQuoteMaxImpactPct()}% price impact`,
+    )
+  }
+  const slippageBps = resolveTradeSlippageBps(AUTO_SLIPPAGE_BPS, impactPct)
+  const execParams = { ...base, slippageBps }
+  if (slippageBps !== seedBps && !deps.peek(execParams)) {
+    const built = await deps.prepare(execParams)
+    const cached: PreparedSwap = {
+      ...built,
+      priceImpact: built.priceImpact ?? seeded.priceImpact,
+    }
+    deps.put(execParams, cached)
+  }
+  return {
+    execParams,
+    impactPct,
+    slippageBps,
+    volatile: quoteIsVolatile([impactPct]),
+  }
+}
+
+/** Fill the prepare cache before the click so confirm does not quote twice. */
+export async function warmTrackerMarketSwap(
+  params: TrackerMarketSwapParams,
+  deps: TrackerMarketSwapDeps = defaultDeps,
+): Promise<void> {
+  await buildTrackerSwap(params, deps)
 }
 
 /**
@@ -79,43 +148,31 @@ export async function runTrackerMarketSwap(
     throw new Error('Input and output are the same asset')
   }
 
-  const quote = await deps.fetchQuote(
-    params.inputMint,
-    params.outputMint,
-    amount,
-    prefetchSlippageBps(AUTO_SLIPPAGE_BPS),
-    params.direct,
-  )
-  if (!quote) {
-    throw new Error(
-      `No swap route within ${getSwapQuoteMaxImpactPct()}% price impact`,
+  const flight = beginTradeInFlight()
+  try {
+    const signerModePromise = resolveSolSignerMode(params.userPublicKey)
+    const built = await buildTrackerSwap({ ...params, amount }, deps)
+    const signerMode = await signerModePromise
+    const confirmLine =
+      signerMode === 'server' ? 'Signing on server.' : 'Confirm in your wallet.'
+    onStatus?.(
+      built.volatile
+        ? `High price impact (${built.impactPct.toFixed(2)}%). Auto slippage capped at ${AUTO_SLIPPAGE_CAP_BPS / 100}%. ${confirmLine}`
+        : `Impact ${built.impactPct.toFixed(2)}% · auto slippage ${(built.slippageBps / 100).toFixed(2)}%. ${confirmLine}`,
     )
-  }
 
-  const impactPct = impactToAbsPct(quote.priceImpactPct)
-  const slippageBps = resolveTradeSlippageBps(AUTO_SLIPPAGE_BPS, impactPct)
-  const volatile = quoteIsVolatile([impactPct])
-  const signerMode = await resolveSolSignerMode(params.userPublicKey)
-  const confirmLine =
-    signerMode === 'server' ? 'Signing on server.' : 'Confirm in your wallet.'
-  onStatus?.(
-    volatile
-      ? `High price impact (${impactPct.toFixed(2)}%). Auto slippage capped at ${AUTO_SLIPPAGE_CAP_BPS / 100}%. ${confirmLine}`
-      : `Impact ${impactPct.toFixed(2)}% · auto slippage ${(slippageBps / 100).toFixed(2)}%. ${confirmLine}`,
-  )
+    const sent = await deps.execute(built.execParams)
 
-  const sent = await deps.execute({
-    ...params,
-    amount,
-    slippageBps,
-    priorityFeeLamports: resolveTrackerPriorityFee(params.priorityFeeLamports),
-  })
-
-  return {
-    signature: sent.signature,
-    slippageBps,
-    impactPct,
-    volatile,
-    outAmount: sent.outAmount,
+    flight.succeed()
+    return {
+      signature: sent.signature,
+      slippageBps: built.slippageBps,
+      impactPct: built.impactPct,
+      volatile: built.volatile,
+      outAmount: sent.outAmount,
+    }
+  } catch (error) {
+    flight.fail(error instanceof Error ? error.message : 'Trade failed')
+    throw error
   }
 }

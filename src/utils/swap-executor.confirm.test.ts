@@ -158,6 +158,20 @@ describe('waitForSwapConfirmation', () => {
     expect(connection.getSignatureStatuses).toHaveBeenCalledTimes(3)
   })
 
+  it('waits out the poll interval when the first status is empty', async () => {
+    const connection = mockConnection([[null], [{ confirmationStatus: 'confirmed' }]])
+    const start = Date.now()
+    await waitForSwapConfirmation({
+      signature: SIG,
+      via: 'rpc',
+      connection,
+      intervalMs: 80,
+      maxAttempts: 5,
+    })
+    expect(Date.now() - start).toBeGreaterThanOrEqual(70)
+    expect(connection.getSignatureStatuses).toHaveBeenCalledTimes(2)
+  })
+
   it('via rpc skips Raptor status calls', async () => {
     const connection = mockConnection([[{ confirmationStatus: 'confirmed' }]])
 
