@@ -53,6 +53,13 @@ type FlipArmStats = {
   agreementEligible: number
   agreementMatches: number
   agreementRate: number | null
+  keepCount?: number
+  clScoreN?: number
+  clScoreMin?: number | null
+  clScoreMax?: number | null
+  clScoreVariance?: number | null
+  clScoreGeGate?: number
+  vacuousAgreement?: boolean
   bars: FlipBarCheck
   kill: KillSwitchCheck
 }
@@ -134,6 +141,13 @@ const PAGE_SIZE = 100
 function pct(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return '—'
   return `${(n * 100).toFixed(1)}%`
+}
+
+function compactVar(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return '—'
+  if (n === 0) return '0'
+  if (n < 0.0001) return n.toExponential(1)
+  return n.toFixed(4)
 }
 
 function score(n: number | null | undefined): string {
@@ -254,6 +268,7 @@ function FlipArmCard({
   bars,
   thresholds,
   apiMissMax,
+  vacuousAgreement,
 }: {
   title: string
   subtitle?: string
@@ -272,6 +287,7 @@ function FlipArmCard({
   bars: FlipBarCheck
   thresholds: { nMin: number; agreementMin: number; midMax: number }
   apiMissMax?: number
+  vacuousAgreement?: boolean
 }) {
   const { nMin, agreementMin: aMin, midMax: mMax } = thresholds
   const missMax = apiMissMax ?? 0.1
@@ -293,18 +309,22 @@ function FlipArmCard({
         </div>
         <Chip
           label={
-            !bars.missOk
-              ? 'miss kill'
-              : bars.ready
-                ? 'flip-ready'
-                : 'shadow sample'
+            vacuousAgreement
+              ? 'vacuous agreement'
+              : !bars.missOk
+                ? 'miss kill'
+                : bars.ready
+                  ? 'flip-ready'
+                  : 'shadow sample'
           }
           className={
-            !bars.missOk
-              ? 'bg-orange-900/70 text-orange-200'
-              : bars.ready
-                ? 'bg-emerald-900/70 text-emerald-200'
-                : 'bg-sky-900/50 text-sky-200'
+            vacuousAgreement
+              ? 'bg-amber-900/70 text-amber-200'
+              : !bars.missOk
+                ? 'bg-orange-900/70 text-orange-200'
+                : bars.ready
+                  ? 'bg-emerald-900/70 text-emerald-200'
+                  : 'bg-sky-900/50 text-sky-200'
           }
         />
       </div>
@@ -492,6 +512,26 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
           </p>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
+          {flip?.overall.vacuousAgreement ? (
+            <p className="md:col-span-2 text-xs text-amber-200/90 bg-amber-950/40 border border-amber-900/60 rounded-md px-3 py-2">
+              Agreement is vacuous
+              {flip.overall.keepCount === 0 ? ': keep band is 0' : ''}
+              {(flip.overall.clScoreN ?? 0) >= 2 &&
+              (flip.overall.clScoreVariance ?? 1) <= 1e-6
+                ? `${flip.overall.keepCount === 0 ? ' and' : ':'} cl score variance ≈ 0`
+                : ''}
+              .
+              {flip.overall.keepCount === 0
+                ? ' SPEC and Noul both suppressed every called row.'
+                : ''}{' '}
+              Soft-active stays off.
+              cl n={flip.overall.clScoreN ?? 0}
+              {' · '}var {compactVar(flip.overall.clScoreVariance)}
+              {' · '}≥0.55 {flip.overall.clScoreGeGate ?? 0}
+              {' · '}range {score(flip.overall.clScoreMin)}–{score(flip.overall.clScoreMax)}
+              . Rows already stored stay in this sample until new emits accumulate.
+            </p>
+          ) : null}
           {firstSeen ? (
             <FlipArmCard
               title="first_seen"
@@ -500,6 +540,7 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
               bars={firstSeen.bars}
               thresholds={flipThresholds}
               apiMissMax={flip?.kill?.apiMissMax}
+              vacuousAgreement={firstSeen.vacuousAgreement}
             />
           ) : null}
           {at80 ? (
@@ -510,6 +551,7 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
               bars={at80.bars}
               thresholds={flipThresholds}
               apiMissMax={flip?.kill?.apiMissMax}
+              vacuousAgreement={at80.vacuousAgreement}
             />
           ) : null}
         </div>

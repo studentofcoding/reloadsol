@@ -14,10 +14,13 @@ import type {
   NoulSpecDecision,
 } from './early-enter-noul-shadow'
 import {
+  applyVacuousFlipAgreement,
+  closedLoopPopulationVariance,
   evaluateFlipBars,
   evaluateKillSwitchWindow,
   filterReasonFromBand,
   flipBarsWithMissKill,
+  isVacuousFlipAgreement,
   noulFlipSampleRates,
   flipArmFamilyFromStrategyKey,
   getApiMissKillRate,
@@ -397,12 +400,23 @@ export type NoulFlipWindowCounts = {
   apiMiss24h: number
   agreementEligible24h: number
   agreementMatches24h: number
+  /** band = keep. Zero keeps makes 100% agreement vacuous. */
+  keepCount: number
+  clScoreN: number
+  clScoreSum: number
+  clScoreSumSq: number
+  clScoreMin: number | null
+  clScoreMax: number | null
+  /** Closed-loop scores ≥ EARLY_ENTER_ML_MIN (0.55). */
+  clScoreGeGate: number
 }
 
 export type EarlyEnterNoulFlipStrategyStats = EarlyEnterNoulCompareStats &
   NoulFlipWindowCounts & {
     apiMissRate24h: number | null
     arm: FlipArmFamily | null
+    clScoreVariance: number | null
+    vacuousAgreement: boolean
     bars: FlipBarCheck
     kill: KillSwitchCheck
   }
@@ -413,6 +427,8 @@ export type EarlyEnterNoulFlipArmStats = NoulFlipWindowCounts & {
   apiMissRate: number | null
   apiMissRate24h: number | null
   agreementRate: number | null
+  clScoreVariance: number | null
+  vacuousAgreement: boolean
   bars: FlipBarCheck
   kill: KillSwitchCheck
 }
@@ -445,6 +461,16 @@ function ratesFromCounts(slice: NoulFlipWindowCounts) {
   })
 }
 
+function mergeBound(
+  a: number | null,
+  b: number | null,
+  pick: (x: number, y: number) => number,
+): number | null {
+  if (a == null) return b
+  if (b == null) return a
+  return pick(a, b)
+}
+
 function emptyFlipCounts(): NoulFlipWindowCounts {
   return {
     total: 0,
@@ -456,6 +482,13 @@ function emptyFlipCounts(): NoulFlipWindowCounts {
     apiMiss24h: 0,
     agreementEligible24h: 0,
     agreementMatches24h: 0,
+    keepCount: 0,
+    clScoreN: 0,
+    clScoreSum: 0,
+    clScoreSumSq: 0,
+    clScoreMin: null,
+    clScoreMax: null,
+    clScoreGeGate: 0,
   }
 }
 
@@ -473,6 +506,13 @@ function addFlipCounts(
     apiMiss24h: a.apiMiss24h + b.apiMiss24h,
     agreementEligible24h: a.agreementEligible24h + b.agreementEligible24h,
     agreementMatches24h: a.agreementMatches24h + b.agreementMatches24h,
+    keepCount: a.keepCount + b.keepCount,
+    clScoreN: a.clScoreN + b.clScoreN,
+    clScoreSum: a.clScoreSum + b.clScoreSum,
+    clScoreSumSq: a.clScoreSumSq + b.clScoreSumSq,
+    clScoreMin: mergeBound(a.clScoreMin, b.clScoreMin, Math.min),
+    clScoreMax: mergeBound(a.clScoreMax, b.clScoreMax, Math.max),
+    clScoreGeGate: a.clScoreGeGate + b.clScoreGeGate,
   }
 }
 
@@ -504,26 +544,43 @@ function flipMetrics(slice: NoulFlipWindowCounts): {
   apiMissRate: number | null
   apiMissRate24h: number | null
   agreementRate: number | null
+  clScoreVariance: number | null
+  vacuousAgreement: boolean
   bars: FlipBarCheck
   kill: KillSwitchCheck
 } {
   const rates = ratesFromCounts(slice)
   const kill = killForCounts(slice)
-  const bars = flipBarsWithMissKill(
-    evaluateFlipBars({
-      total: slice.total,
-      agreementRate: rates.agreementRate,
-      midBandRate: rates.midBandRate,
-      apiMissRate: rates.apiMissRate,
-      apiMissMax: getApiMissKillRate(),
-    }),
-    kill.apiMissSpike,
+  const clScoreVariance = closedLoopPopulationVariance(
+    slice.clScoreN,
+    slice.clScoreSum,
+    slice.clScoreSumSq,
+  )
+  const vacuousAgreement = isVacuousFlipAgreement({
+    keepCount: slice.keepCount,
+    clScoreN: slice.clScoreN,
+    clScoreVariance,
+  })
+  const bars = applyVacuousFlipAgreement(
+    flipBarsWithMissKill(
+      evaluateFlipBars({
+        total: slice.total,
+        agreementRate: rates.agreementRate,
+        midBandRate: rates.midBandRate,
+        apiMissRate: rates.apiMissRate,
+        apiMissMax: getApiMissKillRate(),
+      }),
+      kill.apiMissSpike,
+    ),
+    vacuousAgreement,
   )
   return {
     midBandRate: rates.midBandRate,
     apiMissRate: rates.apiMissRate,
     apiMissRate24h: slice.total24h > 0 ? slice.apiMiss24h / slice.total24h : null,
     agreementRate: rates.agreementRate,
+    clScoreVariance,
+    vacuousAgreement,
     bars,
     kill,
   }
@@ -559,7 +616,14 @@ const FLIP_COUNT_SQL = `
       AND band <> 'api_miss'
       AND decision_shadow = decision_spec
       AND predicted_at >= NOW() - INTERVAL '24 hours'
-  )::int AS agreement_matches_24h
+  )::int AS agreement_matches_24h,
+  COUNT(*) FILTER (WHERE band = 'keep')::int AS keep_count,
+  COUNT(cl_ml_score)::int AS cl_score_n,
+  COALESCE(SUM(cl_ml_score), 0)::float8 AS cl_score_sum,
+  COALESCE(SUM(cl_ml_score * cl_ml_score), 0)::float8 AS cl_score_sumsq,
+  MIN(cl_ml_score) AS cl_score_min,
+  MAX(cl_ml_score) AS cl_score_max,
+  COUNT(*) FILTER (WHERE cl_ml_score >= 0.55)::int AS cl_score_ge_gate
 `
 
 type FlipCountRow = {
@@ -572,6 +636,19 @@ type FlipCountRow = {
   api_miss_24h: string | number
   agreement_eligible_24h: string | number
   agreement_matches_24h: string | number
+  keep_count: string | number
+  cl_score_n: string | number
+  cl_score_sum: string | number
+  cl_score_sumsq: string | number
+  cl_score_min: string | number | null
+  cl_score_max: string | number | null
+  cl_score_ge_gate: string | number
+}
+
+function numOrNull(value: string | number | null | undefined): number | null {
+  if (value == null || value === '') return null
+  const n = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(n) ? n : null
 }
 
 function countsFromRow(r: FlipCountRow): NoulFlipWindowCounts {
@@ -585,6 +662,13 @@ function countsFromRow(r: FlipCountRow): NoulFlipWindowCounts {
     apiMiss24h: Number(r.api_miss_24h) || 0,
     agreementEligible24h: Number(r.agreement_eligible_24h) || 0,
     agreementMatches24h: Number(r.agreement_matches_24h) || 0,
+    keepCount: Number(r.keep_count) || 0,
+    clScoreN: Number(r.cl_score_n) || 0,
+    clScoreSum: Number(r.cl_score_sum) || 0,
+    clScoreSumSq: Number(r.cl_score_sumsq) || 0,
+    clScoreMin: numOrNull(r.cl_score_min),
+    clScoreMax: numOrNull(r.cl_score_max),
+    clScoreGeGate: Number(r.cl_score_ge_gate) || 0,
   }
 }
 

@@ -105,7 +105,11 @@ export type CombinedScoreLocateInput = {
   strategyPresence: StrategyPresence[]
   locations: {
     trending: { present: boolean; status?: string } | null
-    mcap: { present: boolean } | null
+    mcap: {
+      present: boolean
+      currentMcap?: number | null
+      firstMcap?: number | null
+    } | null
     signals: { present: boolean } | null
     social: { present: boolean } | null
   }

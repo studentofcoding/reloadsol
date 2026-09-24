@@ -4,7 +4,9 @@ import {
   decisionShadowFromBand,
   evaluateFlipBars,
   evaluateKillSwitchWindow,
+  applyVacuousFlipAgreement,
   flipBarsWithMissKill,
+  isVacuousFlipAgreement,
   mergeKillSwitches,
   noulFlipSampleRates,
   filterReasonFromBand,
@@ -337,5 +339,36 @@ describe('evaluateFlipBars (#54)', () => {
     expect(held.missOk).toBe(false)
     expect(held.ready).toBe(false)
     expect(held.agreementOk).toBe(true)
+  })
+})
+
+describe('vacuous flip agreement', () => {
+  it('flags an all-suppress sample and a flat closed-loop score', () => {
+    expect(
+      isVacuousFlipAgreement({ keepCount: 0, clScoreN: 2532, clScoreVariance: 1e-7 }),
+    ).toBe(true)
+    expect(
+      isVacuousFlipAgreement({ keepCount: 12, clScoreN: 400, clScoreVariance: 1e-8 }),
+    ).toBe(true)
+    expect(
+      isVacuousFlipAgreement({ keepCount: 40, clScoreN: 400, clScoreVariance: 0.02 }),
+    ).toBe(false)
+    expect(
+      isVacuousFlipAgreement({ keepCount: 0, clScoreN: 0, clScoreVariance: null }),
+    ).toBe(false)
+  })
+
+  it('holds flip-ready off without clearing the other bars', () => {
+    const ready = evaluateFlipBars({
+      total: 2664,
+      agreementRate: 1,
+      midBandRate: 0,
+      apiMissRate: 0.05,
+    })
+    expect(ready.ready).toBe(true)
+    const held = applyVacuousFlipAgreement(ready, true)
+    expect(held.ready).toBe(false)
+    expect(held.agreementOk).toBe(true)
+    expect(held.nOk).toBe(true)
   })
 })
