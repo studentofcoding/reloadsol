@@ -59,6 +59,8 @@ function emptyChart(): TokenMapChartPayload {
     points: [],
     outcomes: [],
     candles: [],
+    detectCandles: [],
+    detectAt: null,
     priceSource: 'empty',
     ohlcSource: 'none',
   }

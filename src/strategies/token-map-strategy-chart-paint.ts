@@ -23,6 +23,9 @@ export const DOMAIN_PAINT_PRIORITY: TokenMapDomain[] = [
 
 export const GRAY_CANDLE = '#6b7280'
 export const GRAY_WICK = '#4b5563'
+/** Frozen detect-snapshot overlay on Strategy correlation. */
+export const DETECT_CANDLE = '#f59e0b'
+export const DETECT_WICK = '#d97706'
 export const CHART_TZ = 'Asia/Bangkok'
 
 export type DomainWindow = {

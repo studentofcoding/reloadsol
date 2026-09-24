@@ -140,12 +140,75 @@ export type TokenOhlcBar = {
   volume?: number
 }
 
+/** 24h window for Redis chart extend / trim (1m bars). */
+export const OHLC_24H_SPAN_SEC = 24 * 60 * 60
+/** Allow a couple of missing minutes before treating span as full. */
+const OHLC_24H_FULL_EPSILON_SEC = 120
+
+export function seriesSpanSec(candles: TokenOhlcBar[]): number {
+  if (candles.length < 2) return 0
+  let minT = candles[0]!.time
+  let maxT = candles[0]!.time
+  for (const c of candles) {
+    if (c.time < minT) minT = c.time
+    if (c.time > maxT) maxT = c.time
+  }
+  return Math.max(0, maxT - minT)
+}
+
+/** True when Redis series already covers ~24h — skip further GMGN fetches. */
+export function isFull24h1m(
+  candles: TokenOhlcBar[],
+  nowSec = Math.floor(Date.now() / 1000),
+): boolean {
+  if (candles.length === 0) return false
+  const span = seriesSpanSec(candles)
+  if (span < OHLC_24H_SPAN_SEC - OHLC_24H_FULL_EPSILON_SEC) return false
+  let maxT = candles[0]!.time
+  for (const c of candles) {
+    if (c.time > maxT) maxT = c.time
+  }
+  // Newest bar should still be inside the trailing 24h window.
+  return maxT >= nowSec - OHLC_24H_SPAN_SEC
+}
+
+/** Union by time (incoming wins); drop bars older than now−24h; sort ascending. */
+export function mergeOhlcCandles(
+  existing: TokenOhlcBar[],
+  incoming: TokenOhlcBar[],
+  nowSec = Math.floor(Date.now() / 1000),
+): TokenOhlcBar[] {
+  const cutoff = nowSec - OHLC_24H_SPAN_SEC
+  const byTime = new Map<number, TokenOhlcBar>()
+  for (const c of existing) {
+    if (c.time >= cutoff) byTime.set(c.time, c)
+  }
+  for (const c of incoming) {
+    if (c.time >= cutoff) byTime.set(c.time, c)
+  }
+  return [...byTime.values()].sort((a, b) => a.time - b.time)
+}
+
+/** Union by time without 24h trim (for multi-page GMGN fetch). */
+export function unionOhlcCandles(
+  existing: TokenOhlcBar[],
+  incoming: TokenOhlcBar[],
+): TokenOhlcBar[] {
+  const byTime = new Map<number, TokenOhlcBar>()
+  for (const c of existing) byTime.set(c.time, c)
+  for (const c of incoming) byTime.set(c.time, c)
+  return [...byTime.values()].sort((a, b) => a.time - b.time)
+}
+
 export type TokenMapChartPayload = {
   tokenAddress: string
   hours: number
   points: TokenChartPoint[]
   outcomes: TokenChartOutcomeSegment[]
   candles: TokenOhlcBar[]
+  /** Frozen Postgres detect-snapshot bars (paint layer separate from Redis). */
+  detectCandles: TokenOhlcBar[]
+  detectAt: string | null
   priceSource: 'tracker' | 'empty'
   ohlcSource: 'none' | string
 }
@@ -314,6 +377,8 @@ export async function fetchTokenOhlc(params: {
   timeTo?: number
   /** Test / override hook for the brain client. */
   brain?: MarketBrainFetchOpts
+  /** When Redis already holds a full 24h series, skip GMGN kline. */
+  skipGmgn?: boolean
 }): Promise<{ candles: TokenOhlcBar[]; source: string }> {
   const { timeFrom, timeTo, type } = ohlcWindow(params)
   const gmgnChain: GmgnTradeChain =
@@ -350,6 +415,7 @@ export async function fetchTokenOhlc(params: {
     timeTo,
     type,
     gmgnChain,
+    skipGmgn: params.skipGmgn === true,
   })
 }
 
@@ -450,24 +516,89 @@ async function sleepMs(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+/** GMGN token_kline returns at most ~100 bars per request. */
+export const GMGN_KLINE_PAGE_BARS = 100
+
+export function gmgnResolutionSec(resolution: string): number {
+  const r = resolution.trim().toLowerCase()
+  if (r === '30s') return 30
+  if (r.endsWith('m')) {
+    const n = Number(r.slice(0, -1))
+    return Number.isFinite(n) && n > 0 ? n * 60 : 60
+  }
+  if (r.endsWith('h')) {
+    const n = Number(r.slice(0, -1))
+    return Number.isFinite(n) && n > 0 ? n * 3600 : 3600
+  }
+  if (r.endsWith('d')) {
+    const n = Number(r.slice(0, -1))
+    return Number.isFinite(n) && n > 0 ? n * 86400 : 86400
+  }
+  return 60
+}
+
+/**
+ * Page GMGN kline across [timeFrom, timeTo] so 24h×1m is not truncated at ~100 bars.
+ */
+export async function fetchGmgnKlinePaged(params: {
+  chain: string
+  address: string
+  resolution: string
+  timeFrom: number
+  timeTo: number
+}): Promise<TokenOhlcBar[]> {
+  const resSec = gmgnResolutionSec(params.resolution)
+  const pageSpanSec = GMGN_KLINE_PAGE_BARS * resSec
+  let cursor = params.timeFrom
+  let merged: TokenOhlcBar[] = []
+  let pages = 0
+  const maxPages = Math.ceil(
+    Math.max(1, params.timeTo - params.timeFrom) / pageSpanSec,
+  ) + 1
+
+  while (cursor < params.timeTo && pages < maxPages) {
+    const pageEnd = Math.min(params.timeTo, cursor + pageSpanSec)
+    const raw = await tokenKline({
+      chain: params.chain,
+      address: params.address,
+      resolution: params.resolution,
+      from: cursor * 1000,
+      to: pageEnd * 1000,
+    })
+    const page = mapGmgnKlineBars(raw)
+    pages++
+    if (page.length === 0) {
+      cursor = pageEnd
+      continue
+    }
+    merged = unionOhlcCandles(merged, page)
+    const lastT = page[page.length - 1]!.time
+    // Advance past last bar; avoid infinite loop on sticky timestamps.
+    cursor = Math.max(pageEnd, lastT + resSec)
+  }
+  return merged.filter(
+    (c) => c.time >= params.timeFrom && c.time <= params.timeTo,
+  )
+}
+
 async function fetchTokenOhlcUpstream(params: {
   tokenAddress: string
   timeFrom: number
   timeTo: number
   type: string
   gmgnChain: GmgnTradeChain
+  skipGmgn?: boolean
 }): Promise<{ candles: TokenOhlcBar[]; source: string }> {
   if (wantsGmgnOhlc(params.gmgnChain, params.tokenAddress)) {
+    if (params.skipGmgn) return { candles: [], source: 'none' }
     try {
-      // GMGN token_kline expects from/to in milliseconds (candle `time` is ms).
-      const raw = await tokenKline({
+      const candles = await fetchGmgnKlinePaged({
         chain: params.gmgnChain,
         address: params.tokenAddress,
         resolution: params.type,
-        from: params.timeFrom * 1000,
-        to: params.timeTo * 1000,
+        timeFrom: params.timeFrom,
+        timeTo: params.timeTo,
       })
-      const candles = mapGmgnKlineBars(raw)
       if (candles.length === 0) return { candles: [], source: 'none' }
       return { candles, source: 'gmgn' }
     } catch {
@@ -517,18 +648,16 @@ async function fetchTokenOhlcUpstream(params: {
     }
   }
 
-  // GMGN kline fallback — the same source robinhood uses; needs only the
-  // already-configured GMGN_API_KEY. Sol still lands here when Tracker
-  // returns no bars, or when the public host is set without a data API key.
+  // GMGN kline fallback — skipped when Redis already holds a full 24h series.
+  if (params.skipGmgn) return { candles: [], source: 'none' }
   try {
-    const raw = await tokenKline({
+    const candles = await fetchGmgnKlinePaged({
       chain: 'sol',
       address: params.tokenAddress,
       resolution: params.type,
-      from: params.timeFrom * 1000,
-      to: params.timeTo * 1000,
+      timeFrom: params.timeFrom,
+      timeTo: params.timeTo,
     })
-    const candles = mapGmgnKlineBars(raw)
     if (candles.length === 0) return { candles: [], source: 'none' }
     return { candles, source: 'gmgn' }
   } catch {
@@ -550,6 +679,8 @@ export function tokenOhlcToRugBars(candles: TokenOhlcBar[]): OhlcRugBar[] {
 /**
  * Canonical last-24h × 1m series (cached). Telegram / rug-10 / signal_ohlc_labels
  * derive from this. Goes through fetchTokenOhlc (brain first when flag on).
+ * GMGN results merge into Redis (extend); brain/ST full-replace.
+ * Skip GMGN when Redis already holds a full 24h series.
  * On upstream empty/fail, serves last-good with `*-stale` source.
  */
 export async function getCachedTokenOhlc24h1m(
@@ -558,23 +689,35 @@ export async function getCachedTokenOhlc24h1m(
   const primary = await readOhlcCache(ohlc24h1mCacheKey(tokenAddress))
   if (primary) return primary
 
+  const lastGood = await readOhlcCache(ohlc24h1mLastGoodKey(tokenAddress))
+  const skipGmgn = lastGood != null && isFull24h1m(lastGood.candles)
+
   let result: OhlcCachePayload = { candles: [], source: 'none' }
   try {
     result = await fetchTokenOhlc({
       tokenAddress,
       hours: 24,
       interval: '1m',
+      skipGmgn,
     })
   } catch {
     result = { candles: [], source: 'none' }
   }
 
   if (result.candles.length > 0) {
+    const isGmgn =
+      result.source === 'gmgn' || result.source.startsWith('gmgn')
+    if (isGmgn) {
+      const prior = lastGood?.candles ?? []
+      result = {
+        candles: mergeOhlcCandles(prior, result.candles),
+        source: 'gmgn',
+      }
+    }
     await writeOhlcCaches(tokenAddress, result)
     return result
   }
 
-  const lastGood = await readOhlcCache(ohlc24h1mLastGoodKey(tokenAddress))
   if (lastGood) {
     return {
       candles: lastGood.candles,
@@ -657,7 +800,26 @@ export async function loadTokenMapChart(params: {
           chain,
         })
 
-  const [history, outcomesResult, ohlcLive] = await Promise.all([
+  const detectPromise = (async (): Promise<{
+    candles: TokenOhlcBar[]
+    detectAt: string | null
+  }> => {
+    try {
+      const { getLatestDetectSnapshot } = await import(
+        '@/strategies/detect-snapshots'
+      )
+      const snap = await getLatestDetectSnapshot(params.tokenAddress)
+      if (!snap?.bars?.length) return { candles: [], detectAt: null }
+      return {
+        candles: sliceCandlesSince(rugBarsToTokenOhlc(snap.bars), sinceSec),
+        detectAt: snap.detected_at ?? null,
+      }
+    } catch {
+      return { candles: [], detectAt: null }
+    }
+  })()
+
+  const [history, outcomesResult, ohlcLive, detect] = await Promise.all([
     loadTrackerHistory(params.tokenAddress, chain),
     listStrategyOutcomes({
       tokenAddress: params.tokenAddress,
@@ -666,6 +828,7 @@ export async function loadTokenMapChart(params: {
       offset: 0,
     }),
     ohlcPromise,
+    detectPromise,
   ])
 
   let candles = ohlcLive.candles
@@ -731,6 +894,8 @@ export async function loadTokenMapChart(params: {
     points: deduped,
     outcomes,
     candles,
+    detectCandles: detect.candles,
+    detectAt: detect.detectAt,
     priceSource: deduped.length > 0 ? 'tracker' : 'empty',
     ohlcSource: candles.length > 0 ? ohlcSource : 'none',
   }

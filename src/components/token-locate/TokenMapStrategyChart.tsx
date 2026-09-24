@@ -28,6 +28,8 @@ import {
 } from '@/strategies/token-map-chart-markers'
 import {
   CHART_TZ,
+  DETECT_CANDLE,
+  DETECT_WICK,
   DOMAIN_COLORS,
   GRAY_CANDLE,
   GRAY_WICK,
@@ -47,6 +49,8 @@ type ChartPayload = {
   points: TokenChartPoint[]
   outcomes: TokenChartOutcomeSegment[]
   candles: TokenOhlcBar[]
+  detectCandles?: TokenOhlcBar[]
+  detectAt?: string | null
   priceSource: 'tracker' | 'empty'
   ohlcSource: string
 }
@@ -256,6 +260,8 @@ export default function TokenMapStrategyChart({
         points: [],
         outcomes: [],
         candles: [],
+        detectCandles: [],
+        detectAt: null,
         priceSource: 'empty',
         ohlcSource: 'none',
       }
@@ -339,6 +345,27 @@ export default function TokenMapStrategyChart({
         candleSeriesRef.current = candleSeries
         mainSeries = candleSeries
 
+        const detectBars = payload.detectCandles ?? []
+        if (detectBars.length > 0) {
+          const detectSeries = chart.addSeries(CandlestickSeries, {
+            upColor: DETECT_CANDLE,
+            downColor: DETECT_CANDLE,
+            borderVisible: false,
+            wickUpColor: DETECT_WICK,
+            wickDownColor: DETECT_WICK,
+            priceFormat: pf,
+          })
+          detectSeries.setData(
+            detectBars.map((c) => ({
+              time: toUtc(c.time),
+              open: c.open,
+              high: c.high,
+              low: c.low,
+              close: c.close,
+            })),
+          )
+        }
+
         const vol = chart.addSeries(HistogramSeries, {
           priceFormat: { type: 'volume' },
           priceScaleId: 'vol',
@@ -355,10 +382,16 @@ export default function TokenMapStrategyChart({
               color: '#4b556355',
             })),
         )
-        setNote(
+        const srcNote =
           payload.ohlcSource && payload.ohlcSource !== 'none'
-            ? `OHLC: ${payload.ohlcSource} · ${CHART_TZ}`
-            : null,
+            ? `OHLC: ${payload.ohlcSource}`
+            : null
+        const detectNote =
+          detectBars.length > 0
+            ? `detect: frozen${payload.detectAt ? ` @ ${payload.detectAt.slice(0, 16)}` : ''}`
+            : null
+        setNote(
+          [srcNote, detectNote, CHART_TZ].filter(Boolean).join(' · ') || null,
         )
       } else {
         if (linePoints.length === 0) {
@@ -391,6 +424,17 @@ export default function TokenMapStrategyChart({
       applyDomainPaint(payload, enabledDomains)
 
       chart.timeScale().fitContent()
+      if (useCandles && payload.candles.length > 0) {
+        const spanSec =
+          payload.candles[payload.candles.length - 1]!.time -
+          payload.candles[0]!.time
+        const wantSec = hours * 3600
+        if (spanSec < wantSec * 0.9) {
+          const to = Math.floor(Date.now() / 1000) as UTCTimestamp
+          const from = (to - wantSec) as UTCTimestamp
+          chart.timeScale().setVisibleRange({ from, to })
+        }
+      }
       setLoading(false)
     }
 
@@ -526,6 +570,21 @@ export default function TokenMapStrategyChart({
         </p>
       ) : null}
       <div className="flex flex-wrap gap-x-3 gap-y-1 px-3 py-2 border-t border-gray-800 text-xs text-gray-400">
+        <span className="inline-flex items-center gap-1">
+          <span
+            className="inline-block h-2 w-2 rounded-sm"
+            style={{ background: GRAY_CANDLE }}
+          />
+          extended
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span
+            className="inline-block h-2 w-2 rounded-sm"
+            style={{ background: DETECT_CANDLE }}
+          />
+          detect
+        </span>
+        <span className="text-gray-600">|</span>
         {KIND_LEGEND.map((row) => (
           <span key={row.kind} className="inline-flex items-center gap-1">
             <span style={row.color ? { color: row.color } : undefined}>
