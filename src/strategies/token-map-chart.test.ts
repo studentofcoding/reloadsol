@@ -265,6 +265,40 @@ describe('fetchTokenOhlc', () => {
     expect(result.candles.length).toBeGreaterThan(GMGN_KLINE_PAGE_BARS)
   })
 
+  it('keeps bars already paged when a later page RATE_LIMITs', async () => {
+    stubUpstreamOnly()
+    vi.stubEnv('SOLANATRACKER_DATA_API_KEY', '')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, json: async () => ({ oclhv: [] }) }),
+    )
+    let calls = 0
+    vi.mocked(tokenKline).mockImplementation(async (params) => {
+      calls++
+      if (calls > 1) {
+        const { GmgnApiError } = await import('@/utils/gmgn-api')
+        throw new GmgnApiError('GMGN rate limit exceeded', 'RATE_LIMIT')
+      }
+      const fromSec = Math.floor(Number(params.from) / 1000)
+      const list = Array.from({ length: 50 }, (_, i) => ({
+        time: (fromSec + i * 60) * 1000,
+        open: 1,
+        high: 1,
+        low: 1,
+        close: 1,
+        volume: 1,
+      }))
+      return { list }
+    })
+    const result = await fetchTokenOhlc({
+      tokenAddress: mint,
+      hours: 24,
+      interval: '1m',
+    })
+    expect(result.source).toBe('gmgn')
+    expect(result.candles.length).toBe(50)
+  })
+
   it('skipGmgn prevents tokenKline on Sol fallback', async () => {
     stubUpstreamOnly()
     vi.stubEnv('SOLANATRACKER_DATA_API_KEY', '')

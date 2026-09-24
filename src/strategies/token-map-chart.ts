@@ -539,6 +539,7 @@ export function gmgnResolutionSec(resolution: string): number {
 
 /**
  * Page GMGN kline across [timeFrom, timeTo] so 24h×1m is not truncated at ~100 bars.
+ * Mid-walk RATE_LIMIT / errors keep bars already fetched (don't wipe the merge).
  */
 export async function fetchGmgnKlinePaged(params: {
   chain: string
@@ -558,23 +559,28 @@ export async function fetchGmgnKlinePaged(params: {
 
   while (cursor < params.timeTo && pages < maxPages) {
     const pageEnd = Math.min(params.timeTo, cursor + pageSpanSec)
-    const raw = await tokenKline({
-      chain: params.chain,
-      address: params.address,
-      resolution: params.resolution,
-      from: cursor * 1000,
-      to: pageEnd * 1000,
-    })
-    const page = mapGmgnKlineBars(raw)
-    pages++
-    if (page.length === 0) {
-      cursor = pageEnd
-      continue
+    try {
+      const raw = await tokenKline({
+        chain: params.chain,
+        address: params.address,
+        resolution: params.resolution,
+        from: cursor * 1000,
+        to: pageEnd * 1000,
+      })
+      const page = mapGmgnKlineBars(raw)
+      pages++
+      if (page.length === 0) {
+        cursor = pageEnd
+        continue
+      }
+      merged = unionOhlcCandles(merged, page)
+      const lastT = page[page.length - 1]!.time
+      // Advance past last bar; avoid infinite loop on sticky timestamps.
+      cursor = Math.max(pageEnd, lastT + resSec)
+    } catch {
+      // ponytail: RATE_LIMIT / network mid-walk — keep what we have; next cache miss extends
+      break
     }
-    merged = unionOhlcCandles(merged, page)
-    const lastT = page[page.length - 1]!.time
-    // Advance past last bar; avoid infinite loop on sticky timestamps.
-    cursor = Math.max(pageEnd, lastT + resSec)
   }
   return merged.filter(
     (c) => c.time >= params.timeFrom && c.time <= params.timeTo,
@@ -681,6 +687,7 @@ export function tokenOhlcToRugBars(candles: TokenOhlcBar[]): OhlcRugBar[] {
  * derive from this. Goes through fetchTokenOhlc (brain first when flag on).
  * GMGN results merge into Redis (extend); brain/ST full-replace.
  * Skip GMGN when Redis already holds a full 24h series.
+ * When last-good is partial, only fetch the forward gap (not the whole 24h again).
  * On upstream empty/fail, serves last-good with `*-stale` source.
  */
 export async function getCachedTokenOhlc24h1m(
@@ -692,14 +699,45 @@ export async function getCachedTokenOhlc24h1m(
   const lastGood = await readOhlcCache(ohlc24h1mLastGoodKey(tokenAddress))
   const skipGmgn = lastGood != null && isFull24h1m(lastGood.candles)
 
+  const nowSec = Math.floor(Date.now() / 1000)
+  const windowFrom = nowSec - OHLC_24H_SPAN_SEC
+  let fetchOpts: {
+    tokenAddress: string
+    hours?: number
+    interval: string
+    skipGmgn?: boolean
+    timeFrom?: number
+    timeTo?: number
+  } = {
+    tokenAddress,
+    hours: 24,
+    interval: '1m',
+    skipGmgn,
+  }
+
+  if (!skipGmgn && lastGood && lastGood.candles.length > 0) {
+    let maxT = lastGood.candles[0]!.time
+    for (const c of lastGood.candles) {
+      if (c.time > maxT) maxT = c.time
+    }
+    const gapFrom = Math.max(windowFrom, maxT + 1)
+    if (gapFrom >= nowSec) {
+      // Already current enough — refresh soft TTL from last-good.
+      await writeOhlcCaches(tokenAddress, lastGood)
+      return lastGood
+    }
+    fetchOpts = {
+      tokenAddress,
+      interval: '1m',
+      timeFrom: gapFrom,
+      timeTo: nowSec,
+      skipGmgn: false,
+    }
+  }
+
   let result: OhlcCachePayload = { candles: [], source: 'none' }
   try {
-    result = await fetchTokenOhlc({
-      tokenAddress,
-      hours: 24,
-      interval: '1m',
-      skipGmgn,
-    })
+    result = await fetchTokenOhlc(fetchOpts)
   } catch {
     result = { candles: [], source: 'none' }
   }
@@ -710,7 +748,7 @@ export async function getCachedTokenOhlc24h1m(
     if (isGmgn) {
       const prior = lastGood?.candles ?? []
       result = {
-        candles: mergeOhlcCandles(prior, result.candles),
+        candles: mergeOhlcCandles(prior, result.candles, nowSec),
         source: 'gmgn',
       }
     }
