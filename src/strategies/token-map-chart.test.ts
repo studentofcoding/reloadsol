@@ -13,6 +13,7 @@ import {
   fetchTokenOhlc,
   getCachedTokenOhlc24h1m,
   mapGmgnKlineBars,
+  rugBarsToTokenOhlc,
   tokenOhlcToRugBars,
 } from '@/strategies/token-map-chart'
 
@@ -475,6 +476,12 @@ describe('getCachedTokenOhlc24h1m', () => {
     expect(bars).toEqual([{ t: 10, o: 1, h: 2, l: 0.5, c: 1.5, v: 3 }])
   })
 
+  it('maps rug bars back to candles', () => {
+    expect(
+      rugBarsToTokenOhlc([{ t: 10, o: 1, h: 2, l: 0.5, c: 1.5, v: 3 }]),
+    ).toEqual([{ time: 10, open: 1, high: 2, low: 0.5, close: 1.5, volume: 3 }])
+  })
+
   it('second call hits cache (one ST fetch)', async () => {
     stubUpstreamOnly()
     vi.stubEnv('SOLANATRACKER_DATA_API_KEY', 'test-key')
@@ -544,5 +551,48 @@ describe('getCachedTokenOhlc24h1m', () => {
     expect(result.source).toBe('brain:cache')
     expect(result.candles).toHaveLength(1)
     expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('serves last-good as *-stale when upstream returns empty', async () => {
+    vi.resetModules()
+    const store = new Map<string, { candles: unknown[]; source: string }>()
+    vi.doMock('@/utils/redis-cache', () => ({
+      cacheGet: async (key: string) => store.get(key) ?? null,
+      cacheSet: async (
+        key: string,
+        value: { candles: unknown[]; source: string },
+      ) => {
+        store.set(key, value)
+      },
+    }))
+    stubUpstreamOnly()
+    vi.stubEnv('SOLANATRACKER_DATA_API_KEY', 'test-key')
+    const uniqueMint = `StaleTest${Date.now()}1111111111111111111`
+    const goodBar = { time: 1, open: 1, high: 1, low: 1, close: 1 }
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ oclhv: [goodBar] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ oclhv: [] }),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { getCachedTokenOhlc24h1m: getCached } = await import(
+      '@/strategies/token-map-chart'
+    )
+    const first = await getCached(uniqueMint)
+    expect(first.candles).toHaveLength(1)
+    expect(first.source).toBe('solanatracker')
+
+    // Expire soft primary so next call re-fetches
+    store.delete(`ohlc:v1:24h1m:${uniqueMint}`)
+    const second = await getCached(uniqueMint)
+    expect(second.candles).toHaveLength(1)
+    expect(second.source).toBe('solanatracker-stale')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 })

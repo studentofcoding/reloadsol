@@ -19,14 +19,22 @@ import {
 import { cacheGet, cacheSet } from '@/utils/redis-cache'
 import { acquireSolanaTrackerOhlcSlot } from '@/utils/solanatracker-ohlc-limit'
 
-/** ponytail: 90s collapses Telegram + Freeview + label capture bursts; upgrade = longer TTL + stampede lock */
-export const OHLC_24H_1M_CACHE_TTL_SEC = 90
+/** ponytail: 10m collapses Freeview+Telegram+shadow bursts; last-good covers 429 */
+export const OHLC_24H_1M_CACHE_TTL_SEC = 600
+/** Keep a successful series for stale serve after soft TTL / upstream fail */
+export const OHLC_24H_1M_LAST_GOOD_TTL_SEC = 86_400
 /** Skip stuck Redis connect/get so Freeview/Telegram still hit ST */
 const OHLC_CACHE_GET_TIMEOUT_MS = 400
 
 function ohlc24h1mCacheKey(tokenAddress: string): string {
   return `ohlc:v1:24h1m:${tokenAddress}`
 }
+
+function ohlc24h1mLastGoodKey(tokenAddress: string): string {
+  return `ohlc:v1:24h1m:last:${tokenAddress}`
+}
+
+type OhlcCachePayload = { candles: TokenOhlcBar[]; source: string }
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -42,6 +50,68 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
       },
     )
   })
+}
+
+async function readOhlcCache(
+  key: string,
+): Promise<OhlcCachePayload | null> {
+  try {
+    const cached = await withTimeout(
+      cacheGet<OhlcCachePayload>(key),
+      OHLC_CACHE_GET_TIMEOUT_MS,
+    )
+    if (cached && Array.isArray(cached.candles) && cached.candles.length > 0) {
+      return cached
+    }
+  } catch {
+    /* fail-open */
+  }
+  return null
+}
+
+async function writeOhlcCaches(
+  tokenAddress: string,
+  result: OhlcCachePayload,
+): Promise<void> {
+  if (result.candles.length === 0) return
+  const primary = ohlc24h1mCacheKey(tokenAddress)
+  const last = ohlc24h1mLastGoodKey(tokenAddress)
+  try {
+    await withTimeout(
+      Promise.all([
+        cacheSet(primary, result, OHLC_24H_1M_CACHE_TTL_SEC),
+        cacheSet(last, result, OHLC_24H_1M_LAST_GOOD_TTL_SEC),
+      ]),
+      OHLC_CACHE_GET_TIMEOUT_MS,
+    )
+  } catch {
+    /* fail-open */
+  }
+}
+
+function staleSourceLabel(base: string | undefined): string {
+  const b = (base ?? '').trim()
+  if (!b || b === 'none') return 'cache'
+  if (b.endsWith('-stale')) return b
+  return `${b}-stale`
+}
+
+export function rugBarsToTokenOhlc(bars: OhlcRugBar[]): TokenOhlcBar[] {
+  return bars.map((b) => ({
+    time: b.t,
+    open: b.o,
+    high: b.h,
+    low: b.l,
+    close: b.c,
+    ...(b.v != null ? { volume: b.v } : {}),
+  }))
+}
+
+function sliceCandlesSince(
+  candles: TokenOhlcBar[],
+  sinceSec: number,
+): TokenOhlcBar[] {
+  return candles.filter((c) => c.time >= sinceSec)
 }
 
 export type TokenChartPoint = {
@@ -480,36 +550,35 @@ export function tokenOhlcToRugBars(candles: TokenOhlcBar[]): OhlcRugBar[] {
 /**
  * Canonical last-24h × 1m series (cached). Telegram / rug-10 / signal_ohlc_labels
  * derive from this. Goes through fetchTokenOhlc (brain first when flag on).
+ * On upstream empty/fail, serves last-good with `*-stale` source.
  */
 export async function getCachedTokenOhlc24h1m(
   tokenAddress: string,
 ): Promise<{ candles: TokenOhlcBar[]; source: string }> {
-  const key = ohlc24h1mCacheKey(tokenAddress)
+  const primary = await readOhlcCache(ohlc24h1mCacheKey(tokenAddress))
+  if (primary) return primary
+
+  let result: OhlcCachePayload = { candles: [], source: 'none' }
   try {
-    const cached = await withTimeout(
-      cacheGet<{ candles: TokenOhlcBar[]; source: string }>(key),
-      OHLC_CACHE_GET_TIMEOUT_MS,
-    )
-    if (cached && Array.isArray(cached.candles) && cached.candles.length > 0) {
-      return cached
-    }
+    result = await fetchTokenOhlc({
+      tokenAddress,
+      hours: 24,
+      interval: '1m',
+    })
   } catch {
-    /* fail-open: Redis hang/timeout → ST */
+    result = { candles: [], source: 'none' }
   }
 
-  const result = await fetchTokenOhlc({
-    tokenAddress,
-    hours: 24,
-    interval: '1m',
-  })
   if (result.candles.length > 0) {
-    try {
-      await withTimeout(
-        cacheSet(key, result, OHLC_24H_1M_CACHE_TTL_SEC),
-        OHLC_CACHE_GET_TIMEOUT_MS,
-      )
-    } catch {
-      /* fail-open */
+    await writeOhlcCaches(tokenAddress, result)
+    return result
+  }
+
+  const lastGood = await readOhlcCache(ohlc24h1mLastGoodKey(tokenAddress))
+  if (lastGood) {
+    return {
+      candles: lastGood.candles,
+      source: staleSourceLabel(lastGood.source),
     }
   }
   return result
@@ -532,6 +601,37 @@ async function loadTrackerHistory(
   return fetchOutcomeMonitorPriceHistory(tokenAddress, chain)
 }
 
+async function loadPersistedOhlcFallback(
+  tokenAddress: string,
+): Promise<{ candles: TokenOhlcBar[]; source: string } | null> {
+  try {
+    const { getLatestDetectSnapshot } = await import(
+      '@/strategies/detect-snapshots'
+    )
+    const snap = await getLatestDetectSnapshot(tokenAddress)
+    if (snap?.bars && snap.bars.length > 0) {
+      return {
+        candles: rugBarsToTokenOhlc(snap.bars),
+        source: 'detect-snapshot',
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    const { loadStoredSignalOhlcBars } = await import(
+      '@/strategies/signal-ohlc-labels'
+    )
+    const bars = await loadStoredSignalOhlcBars(tokenAddress)
+    if (bars.length > 0) {
+      return { candles: rugBarsToTokenOhlc(bars), source: 'signal-ohlc-labels' }
+    }
+  } catch {
+    /* ignore */
+  }
+  return null
+}
+
 export async function loadTokenMapChart(params: {
   tokenAddress: string
   hours?: number
@@ -539,12 +639,25 @@ export async function loadTokenMapChart(params: {
 }): Promise<TokenMapChartPayload> {
   const hours = Math.min(Math.max(params.hours ?? 24, 1), 168)
   const sinceMs = Date.now() - hours * 60 * 60 * 1000
+  const sinceSec = Math.floor(sinceMs / 1000)
   const sinceIso = new Date(sinceMs).toISOString()
   const chain =
     params.chain ??
     (/^0x[a-fA-F0-9]{40}$/i.test(params.tokenAddress) ? 'robinhood' : 'sol')
 
-  const [history, outcomesResult, ohlc] = await Promise.all([
+  const ohlcPromise =
+    hours <= 24
+      ? getCachedTokenOhlc24h1m(params.tokenAddress).then((r) => ({
+          candles: sliceCandlesSince(r.candles, sinceSec),
+          source: r.source,
+        }))
+      : fetchTokenOhlc({
+          tokenAddress: params.tokenAddress,
+          hours,
+          chain,
+        })
+
+  const [history, outcomesResult, ohlcLive] = await Promise.all([
     loadTrackerHistory(params.tokenAddress, chain),
     listStrategyOutcomes({
       tokenAddress: params.tokenAddress,
@@ -552,8 +665,18 @@ export async function loadTokenMapChart(params: {
       limit: 100,
       offset: 0,
     }),
-    fetchTokenOhlc({ tokenAddress: params.tokenAddress, hours, chain }),
+    ohlcPromise,
   ])
+
+  let candles = ohlcLive.candles
+  let ohlcSource = ohlcLive.source
+  if (candles.length === 0) {
+    const persisted = await loadPersistedOhlcFallback(params.tokenAddress)
+    if (persisted) {
+      candles = sliceCandlesSince(persisted.candles, sinceSec)
+      ohlcSource = persisted.source
+    }
+  }
 
   const points: TokenChartPoint[] = []
   for (const p of history) {
@@ -607,8 +730,8 @@ export async function loadTokenMapChart(params: {
     hours,
     points: deduped,
     outcomes,
-    candles: ohlc.candles,
+    candles,
     priceSource: deduped.length > 0 ? 'tracker' : 'empty',
-    ohlcSource: ohlc.source,
+    ohlcSource: candles.length > 0 ? ohlcSource : 'none',
   }
 }

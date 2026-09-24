@@ -37,6 +37,12 @@ afterEach(async () => {
 })
 
 describe('gmgn-api rate limiting + gate (public API)', () => {
+  it('default AI-tier gap is 2000ms (0.5 rps) when env unset', async () => {
+    delete process.env.GMGN_MAX_REQ_PER_SEC
+    const { gmgnMinIntervalMs } = await import('./gmgn-api')
+    expect(gmgnMinIntervalMs()).toBe(2000)
+  })
+
   it('tokenInfo unwraps a normal response', async () => {
     const { tokenInfo } = await import('./gmgn-api')
     responses = [{ status: 200, body: JSON.stringify({ code: 0, data: { symbol: 'HOOD' } }) }]

@@ -75,7 +75,7 @@ New domain — **sim_only by default**. See [GMGN_STRATEGY.md](./GMGN_STRATEGY.m
 
 | Step | Action |
 |------|--------|
-| Env | `GMGN_API_KEY=...` in web `.env` (HTTP default; CLI optional via `GMGN_TRANSPORT=cli`) |
+| Env | `GMGN_API_KEY=...` in web `.env` (HTTP default; CLI optional via `GMGN_TRANSPORT=cli`). Default process gate is **0.5 rps** (`GMGN_MAX_REQ_PER_SEC`); do not set `5` on AI-tier keys or Freeview 429s. See [SPEC-ohlc-rug-spine-v1.md](./SPEC-ohlc-rug-spine-v1.md). |
 | DB | `psql -f db/init/10-gmgn-strategy-domain.sql` + `11-gmgn-sm-kol-combined.sql` + **`13-radar-alert-threads.sql`** on existing volume |
 | Deploy | Rebuild web + cron; workers `gmgn_sim_track` (120s) + `gmgn_activity_poll` (180s) + `gmgn_radar_digest` (86400s) |
 | Enable | `/dev/strategies` → activate `gmgn_sm_kol_combined` or `gmgn_smartmoney_default` (Radar Telegram follows: all GMGN off ⇒ no Radar cards) |

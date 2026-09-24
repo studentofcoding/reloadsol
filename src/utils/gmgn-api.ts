@@ -10,8 +10,9 @@ import type { GmgnTrackResponse, GmgnTrackRow } from './gmgn-cli'
 
 const DEFAULT_HOST = 'https://openapi.gmgn.ai'
 const DEFAULT_TIMEOUT_MS = 15_000
-/** Default max GMGN requests/second across the whole process (env-tunable). */
-const DEFAULT_MAX_REQ_PER_SEC = 5
+/** Default max GMGN requests/second across the whole process (env-tunable).
+ * AI / Agent tier is ~0.5 rps; was 5 and burst Freeview into 429. */
+const DEFAULT_MAX_REQ_PER_SEC = 0.5
 /** Cap on 429 retry sleeps — longer reset windows just fail fast (RATE_LIMIT). */
 const MAX_RETRY_WAIT_MS = 5_000
 /** How long a read-only GET respects a negative rate-limit cache (seconds). */
@@ -24,12 +25,18 @@ const gate: { chain: Promise<void>; lastAt: number } = {
   lastAt: 0,
 }
 
+/** Effective min gap between GMGN HTTP starts (ms). Exported for self-check. */
+export function gmgnMinIntervalMs(): number {
+  const maxPerSec = Number(process.env.GMGN_MAX_REQ_PER_SEC ?? DEFAULT_MAX_REQ_PER_SEC)
+  if (Number.isFinite(maxPerSec) && maxPerSec > 0) {
+    return Math.ceil(1000 / maxPerSec)
+  }
+  return Math.ceil(1000 / DEFAULT_MAX_REQ_PER_SEC)
+}
+
 /** Global min-interval gate for all GMGN requests (serial, env-tunable). */
 function gmgnRateGate(): Promise<void> {
-  const maxPerSec = Number(process.env.GMGN_MAX_REQ_PER_SEC ?? DEFAULT_MAX_REQ_PER_SEC)
-  const minIntervalMs = Number.isFinite(maxPerSec) && maxPerSec > 0
-    ? Math.ceil(1000 / maxPerSec)
-    : 200
+  const minIntervalMs = gmgnMinIntervalMs()
   const next = gate.chain.then(async () => {
     const now = Date.now()
     const wait = Math.max(0, gate.lastAt + minIntervalMs - now)
