@@ -27,11 +27,13 @@ import {
   getDisagreementKillRate,
   isNoulShadowBand,
   mergeKillSwitches,
+  parseEarlyEnterNoulTokenPeakSort,
   strategyKeysForArmFamily,
   FLIP_AGREEMENT_MIN,
   FLIP_MID_MAX,
   FLIP_N_MIN,
   KILL_SWITCH_MIN_N,
+  type EarlyEnterNoulTokenPeakSort,
   type FlipArmFamily,
   type FlipBarCheck,
   type KillSwitchCheck,
@@ -802,4 +804,390 @@ export async function isEarlyEnterNoulKillTripped(): Promise<boolean> {
 export function resetEarlyEnterNoulShadowDbEnsureForTests(): void {
   ensurePromise = null
   killCache = null
+}
+
+export type { EarlyEnterNoulTokenPeakSort }
+
+export type EarlyEnterNoulTokenPeakSlice = {
+  /** Unique shadow mints in this slice (with or without a tracker peak). */
+  uniqueMints: number
+  withPeak: number
+  medianPeakPercent: number | null
+  avgPeakPercent: number | null
+  /** Mints whose tracker peak is at least +100%. */
+  hit100: number
+  /** hit100 / withPeak. Null when no mint in the slice has a peak. */
+  hit100Rate: number | null
+}
+
+export type EarlyEnterNoulTokenPeakBandStats = EarlyEnterNoulTokenPeakSlice & {
+  band: NoulShadowBand
+}
+
+export type EarlyEnterNoulTokenPeakArmStats = EarlyEnterNoulTokenPeakSlice & {
+  arm: FlipArmFamily | 'other'
+}
+
+export type EarlyEnterNoulTokenPeakMint = {
+  tokenAddress: string
+  symbol: string | null
+  chain: string
+  firstPredictedAt: string
+  latestPredictedAt: string
+  firstBand: NoulShadowBand
+  firstDecisionShadow: NoulShadowDecision
+  firstDecisionSpec: NoulSpecDecision
+  /** Mean cl_ml_score across shadow rows. Null when every row is null. */
+  avgClMlScore: number | null
+  /** cl_ml_score on the earliest shadow row. */
+  firstClMlScore: number | null
+  /** First non-null Noul on the mint. Null when Noul was never stored. */
+  noul: number | null
+  /** token_mcap_tracking.peak_growth_percent. Null when the tracker has no row. */
+  peakGrowthPercent: number | null
+  /** Arm of the earliest shadow row. */
+  arm: FlipArmFamily | null
+  firstStrategyKey: string
+}
+
+export type EarlyEnterNoulTokenPeaks = EarlyEnterNoulTokenPeakSlice & {
+  /**
+   * Average peak among mints that have any shadow row with strategy_key LIKE '%at_80%'
+   * and a tracker peak. Distinct from the first-arm at_80 breakdown.
+   */
+  at80AvgPeakPercent: number | null
+  at80WithPeak: number
+  at80Mints: number
+  byFirstBand: EarlyEnterNoulTokenPeakBandStats[]
+  byFirstArm: EarlyEnterNoulTokenPeakArmStats[]
+  mints: EarlyEnterNoulTokenPeakMint[]
+  total: number
+  limit: number
+  offset: number
+  sort: EarlyEnterNoulTokenPeakSort
+}
+
+const TOKEN_PEAK_BAND_ORDER: NoulShadowBand[] = [
+  'suppress',
+  'keep',
+  'mid',
+  'skipped_null',
+  'api_miss',
+]
+
+const TOKEN_PEAK_ORDER_SQL: Record<EarlyEnterNoulTokenPeakSort, string> = {
+  peak_desc:
+    'peak_growth_percent DESC NULLS LAST, latest_predicted_at DESC, token_address ASC',
+  peak_asc:
+    'peak_growth_percent ASC NULLS LAST, latest_predicted_at DESC, token_address ASC',
+  predicted_desc: 'latest_predicted_at DESC, token_address ASC',
+  predicted_asc: 'latest_predicted_at ASC, token_address ASC',
+}
+
+/**
+ * One row per shadow mint. First* columns are the earliest shadow row.
+ * Peak comes from token_mcap_tracking on token_address (table primary key).
+ * Read-only. Historical rows stay until new emits; this query does not backfill.
+ */
+const TOKEN_PEAK_MINTS_CTE = `
+WITH firsts AS (
+  SELECT DISTINCT ON (token_address)
+    token_address,
+    symbol AS first_symbol,
+    chain,
+    predicted_at AS first_predicted_at,
+    band AS first_band,
+    decision_shadow AS first_decision_shadow,
+    decision_spec AS first_decision_spec,
+    strategy_key AS first_strategy_key,
+    cl_ml_score AS first_cl_ml_score
+  FROM early_enter_noul_shadow
+  ORDER BY token_address, predicted_at ASC, id ASC
+),
+aggs AS (
+  SELECT
+    token_address,
+    MAX(predicted_at) AS latest_predicted_at,
+    AVG(cl_ml_score) AS avg_cl_ml_score,
+    BOOL_OR(strategy_key LIKE '%at_80%') AS seen_at_80,
+    (ARRAY_AGG(symbol ORDER BY predicted_at DESC, id DESC)
+      FILTER (WHERE symbol IS NOT NULL AND btrim(symbol) <> ''))[1] AS symbol,
+    (ARRAY_AGG(noul ORDER BY predicted_at ASC, id ASC)
+      FILTER (WHERE noul IS NOT NULL))[1] AS noul
+  FROM early_enter_noul_shadow
+  GROUP BY token_address
+),
+mints AS (
+  SELECT
+    f.token_address,
+    COALESCE(a.symbol, f.first_symbol) AS symbol,
+    f.chain,
+    f.first_predicted_at,
+    a.latest_predicted_at,
+    f.first_band,
+    f.first_decision_shadow,
+    f.first_decision_spec,
+    f.first_strategy_key,
+    f.first_cl_ml_score,
+    a.avg_cl_ml_score,
+    a.noul,
+    a.seen_at_80,
+    CASE
+      WHEN f.first_strategy_key LIKE '%first_seen%' THEN 'first_seen'
+      WHEN f.first_strategy_key LIKE '%at_80%' THEN 'at_80'
+      ELSE 'other'
+    END AS first_arm,
+    t.peak_growth_percent
+  FROM firsts f
+  JOIN aggs a ON a.token_address = f.token_address
+  LEFT JOIN token_mcap_tracking t
+    ON t.token_address = f.token_address
+)
+`
+
+type TokenPeakGroupRow = {
+  grouping_band: string | number
+  grouping_arm: string | number
+  first_band: string | null
+  first_arm: string | null
+  unique_mints: string | number
+  with_peak: string | number
+  median_peak: string | number | null
+  avg_peak: string | number | null
+  hit_100: string | number
+  at80_avg_peak: string | number | null
+  at80_with_peak: string | number
+  at80_mints: string | number
+}
+
+type TokenPeakMintRow = {
+  token_address: string
+  symbol: string | null
+  chain: string
+  first_predicted_at: Date | string
+  latest_predicted_at: Date | string
+  first_band: string
+  first_decision_shadow: string
+  first_decision_spec: string
+  first_strategy_key: string
+  first_cl_ml_score: string | number | null
+  avg_cl_ml_score: string | number | null
+  noul: string | number | null
+  peak_growth_percent: string | number | null
+}
+
+function intOrZero(value: string | number | null | undefined): number {
+  const n = numOrNull(value)
+  return n == null ? 0 : Math.trunc(n)
+}
+
+function isoTimestamp(value: Date | string): string {
+  if (value instanceof Date) return value.toISOString()
+  const d = new Date(value)
+  return Number.isNaN(d.getTime()) ? String(value) : d.toISOString()
+}
+
+function emptyPeakSlice(): EarlyEnterNoulTokenPeakSlice {
+  return {
+    uniqueMints: 0,
+    withPeak: 0,
+    medianPeakPercent: null,
+    avgPeakPercent: null,
+    hit100: 0,
+    hit100Rate: null,
+  }
+}
+
+function sliceFromGroup(row: TokenPeakGroupRow): EarlyEnterNoulTokenPeakSlice {
+  const withPeak = intOrZero(row.with_peak)
+  const hit100 = intOrZero(row.hit_100)
+  return {
+    uniqueMints: intOrZero(row.unique_mints),
+    withPeak,
+    medianPeakPercent: numOrNull(row.median_peak),
+    avgPeakPercent: numOrNull(row.avg_peak),
+    hit100,
+    hit100Rate: withPeak > 0 ? hit100 / withPeak : null,
+  }
+}
+
+function asShadowDecision(value: string): NoulShadowDecision | null {
+  if (value === 'keep' || value === 'suppress' || value === 'follow_spec') return value
+  return null
+}
+
+function asSpecDecision(value: string): NoulSpecDecision | null {
+  if (value === 'keep' || value === 'suppress') return value
+  return null
+}
+
+function emptyTokenPeaks(opts: {
+  limit: number
+  offset: number
+  sort: EarlyEnterNoulTokenPeakSort
+}): EarlyEnterNoulTokenPeaks {
+  return {
+    ...emptyPeakSlice(),
+    at80AvgPeakPercent: null,
+    at80WithPeak: 0,
+    at80Mints: 0,
+    byFirstBand: TOKEN_PEAK_BAND_ORDER.map((band) => ({
+      band,
+      ...emptyPeakSlice(),
+    })),
+    byFirstArm: [
+      { arm: 'first_seen', ...emptyPeakSlice() },
+      { arm: 'at_80', ...emptyPeakSlice() },
+    ],
+    mints: [],
+    total: 0,
+    limit: opts.limit,
+    offset: opts.offset,
+    sort: opts.sort,
+  }
+}
+
+export type LoadEarlyEnterNoulShadowTokenPeaksOpts = {
+  limit?: number
+  offset?: number
+  sort?: EarlyEnterNoulTokenPeakSort | null
+}
+
+/**
+ * All-time unique shadow mints plus tracker peak outcomes.
+ * Independent of the funnel hours window. Paginated; `total` is the full mint count.
+ */
+export async function loadEarlyEnterNoulShadowTokenPeaks(
+  opts: LoadEarlyEnterNoulShadowTokenPeaksOpts = {},
+): Promise<EarlyEnterNoulTokenPeaks> {
+  const sort = parseEarlyEnterNoulTokenPeakSort(opts.sort)
+  const limitRaw = opts.limit ?? 100
+  const limit =
+    Number.isFinite(limitRaw) && limitRaw > 0
+      ? Math.min(Math.floor(limitRaw), 500)
+      : 100
+  const offsetRaw = opts.offset ?? 0
+  const offset =
+    Number.isFinite(offsetRaw) && offsetRaw >= 0 ? Math.floor(offsetRaw) : 0
+  const empty = emptyTokenPeaks({ limit, offset, sort })
+
+  try {
+    await ensureEarlyEnterNoulShadowTable()
+    const orderSql = TOKEN_PEAK_ORDER_SQL[sort]
+    const [summary, list] = await Promise.all([
+      query<TokenPeakGroupRow>(
+        `${TOKEN_PEAK_MINTS_CTE}
+         SELECT
+           GROUPING(first_band) AS grouping_band,
+           GROUPING(first_arm) AS grouping_arm,
+           first_band,
+           first_arm,
+           COUNT(*)::int AS unique_mints,
+           COUNT(*) FILTER (WHERE peak_growth_percent IS NOT NULL)::int AS with_peak,
+           PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY peak_growth_percent)
+             FILTER (WHERE peak_growth_percent IS NOT NULL) AS median_peak,
+           AVG(peak_growth_percent) FILTER (WHERE peak_growth_percent IS NOT NULL) AS avg_peak,
+           COUNT(*) FILTER (WHERE peak_growth_percent >= 100)::int AS hit_100,
+           AVG(peak_growth_percent) FILTER (
+             WHERE seen_at_80 AND peak_growth_percent IS NOT NULL
+           ) AS at80_avg_peak,
+           COUNT(*) FILTER (
+             WHERE seen_at_80 AND peak_growth_percent IS NOT NULL
+           )::int AS at80_with_peak,
+           COUNT(*) FILTER (WHERE seen_at_80)::int AS at80_mints
+         FROM mints
+         GROUP BY GROUPING SETS ((), (first_band), (first_arm))`,
+      ),
+      query<TokenPeakMintRow>(
+        `${TOKEN_PEAK_MINTS_CTE}
+         SELECT
+           token_address,
+           symbol,
+           chain,
+           first_predicted_at,
+           latest_predicted_at,
+           first_band,
+           first_decision_shadow,
+           first_decision_spec,
+           first_strategy_key,
+           first_cl_ml_score,
+           avg_cl_ml_score,
+           noul,
+           peak_growth_percent
+         FROM mints
+         ORDER BY ${orderSql}
+         LIMIT $1 OFFSET $2`,
+        [limit, offset],
+      ),
+    ])
+
+    const overall = summary.rows.find(
+      (row) => intOrZero(row.grouping_band) === 1 && intOrZero(row.grouping_arm) === 1,
+    )
+    const byBand = new Map<NoulShadowBand, EarlyEnterNoulTokenPeakSlice>()
+    const byArm = new Map<string, EarlyEnterNoulTokenPeakSlice>()
+    for (const row of summary.rows) {
+      const slice = sliceFromGroup(row)
+      if (intOrZero(row.grouping_band) === 0 && row.first_band && isNoulShadowBand(row.first_band)) {
+        byBand.set(row.first_band, slice)
+      }
+      if (intOrZero(row.grouping_arm) === 0 && row.first_arm) {
+        byArm.set(row.first_arm, slice)
+      }
+    }
+
+    const base = overall ? sliceFromGroup(overall) : emptyPeakSlice()
+    const armOrder: Array<FlipArmFamily | 'other'> = ['first_seen', 'at_80', 'other']
+    const byFirstArm = armOrder
+      .filter((arm) => arm !== 'other' || (byArm.get('other')?.uniqueMints ?? 0) > 0)
+      .map((arm) => ({
+        arm,
+        ...(byArm.get(arm) ?? emptyPeakSlice()),
+      }))
+
+    const mints: EarlyEnterNoulTokenPeakMint[] = []
+    for (const row of list.rows) {
+      const firstBand = isNoulShadowBand(row.first_band) ? row.first_band : null
+      const firstDecisionShadow = asShadowDecision(row.first_decision_shadow)
+      const firstDecisionSpec = asSpecDecision(row.first_decision_spec)
+      if (!firstBand || !firstDecisionShadow || !firstDecisionSpec) continue
+      mints.push({
+        tokenAddress: row.token_address,
+        symbol: row.symbol ?? null,
+        chain: row.chain,
+        firstPredictedAt: isoTimestamp(row.first_predicted_at),
+        latestPredictedAt: isoTimestamp(row.latest_predicted_at),
+        firstBand,
+        firstDecisionShadow,
+        firstDecisionSpec,
+        avgClMlScore: numOrNull(row.avg_cl_ml_score),
+        firstClMlScore: numOrNull(row.first_cl_ml_score),
+        noul: numOrNull(row.noul),
+        peakGrowthPercent: numOrNull(row.peak_growth_percent),
+        arm: flipArmFamilyFromStrategyKey(row.first_strategy_key),
+        firstStrategyKey: row.first_strategy_key,
+      })
+    }
+
+    return {
+      ...base,
+      at80AvgPeakPercent: overall ? numOrNull(overall.at80_avg_peak) : null,
+      at80WithPeak: overall ? intOrZero(overall.at80_with_peak) : 0,
+      at80Mints: overall ? intOrZero(overall.at80_mints) : 0,
+      byFirstBand: TOKEN_PEAK_BAND_ORDER.map((band) => ({
+        band,
+        ...(byBand.get(band) ?? emptyPeakSlice()),
+      })),
+      byFirstArm,
+      mints,
+      total: base.uniqueMints,
+      limit,
+      offset,
+      sort,
+    }
+  } catch (error) {
+    if (isMissingSchemaError(error)) return empty
+    console.error('[early-enter-noul-shadow] token peaks failed:', error)
+    return empty
+  }
 }

@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import { tokenSearchDetailHref } from '@/components/signals/shared/token-search-href'
 
 type NoulShadowBand =
   | 'suppress'
@@ -81,6 +82,47 @@ type FlipReadiness = {
   byStrategy: FlipStrategyStats[]
 }
 
+type TokenPeakSort = 'peak_desc' | 'peak_asc' | 'predicted_desc' | 'predicted_asc'
+
+type TokenPeakSlice = {
+  uniqueMints: number
+  withPeak: number
+  medianPeakPercent: number | null
+  avgPeakPercent: number | null
+  hit100: number
+  hit100Rate: number | null
+}
+
+type TokenPeakMint = {
+  tokenAddress: string
+  symbol: string | null
+  chain: string
+  firstPredictedAt: string
+  latestPredictedAt: string
+  firstBand: NoulShadowBand
+  firstDecisionShadow: NoulShadowDecision
+  firstDecisionSpec: NoulSpecDecision
+  avgClMlScore: number | null
+  firstClMlScore: number | null
+  noul: number | null
+  peakGrowthPercent: number | null
+  arm: FlipArmFamily | null
+  firstStrategyKey: string
+}
+
+type TokenPeaks = TokenPeakSlice & {
+  at80AvgPeakPercent: number | null
+  at80WithPeak: number
+  at80Mints: number
+  byFirstBand: Array<TokenPeakSlice & { band: NoulShadowBand }>
+  byFirstArm: Array<TokenPeakSlice & { arm: FlipArmFamily | 'other' }>
+  mints: TokenPeakMint[]
+  total: number
+  limit: number
+  offset: number
+  sort: TokenPeakSort
+}
+
 type ShadowListRow = {
   id: number
   predictedAt: string
@@ -121,6 +163,7 @@ type ApiResponse = {
   strategyKey?: string | null
   arm?: FlipArmFamily | null
   band?: NoulShadowBand | null
+  tokenPeaks?: TokenPeaks
   error?: string
 }
 
@@ -137,6 +180,7 @@ const BANDS: NoulShadowBand[] = [
 ]
 
 const PAGE_SIZE = 100
+const TOKEN_PAGE_SIZE = 100
 
 function pct(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return '—'
@@ -153,6 +197,22 @@ function compactVar(n: number | null | undefined): string {
 function score(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return '—'
   return n.toFixed(3)
+}
+
+/** Tracker peak is already a percent (100 = +100% from entry). */
+function peakPct(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return '—'
+  const sign = n > 0 ? '+' : ''
+  return `${sign}${n.toFixed(1)}%`
+}
+
+function rateCount(
+  rate: number | null | undefined,
+  num: number,
+  den: number,
+): string {
+  if (den <= 0 || rate == null) return '—'
+  return `${pct(rate)} (${num}/${den})`
 }
 
 function shortAddr(addr: string): string {
@@ -401,15 +461,24 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
   const [strategyKey, setStrategyKey] = useState('')
   const [band, setBand] = useState('')
   const [offset, setOffset] = useState(0)
+  const [tokenOffset, setTokenOffset] = useState(0)
+  const [tokenSort, setTokenSort] = useState<TokenPeakSort>('peak_desc')
 
   const load = useCallback(
-    async (nextOffset: number) => {
+    async (
+      nextOffset: number,
+      nextTokenOffset: number,
+      nextTokenSort: TokenPeakSort,
+    ) => {
       setLoading(true)
       try {
         const q = new URLSearchParams()
         q.set('hours', String(hours))
         q.set('limit', String(PAGE_SIZE))
         q.set('offset', String(nextOffset))
+        q.set('token_limit', String(TOKEN_PAGE_SIZE))
+        q.set('token_offset', String(nextTokenOffset))
+        q.set('token_sort', nextTokenSort)
         if (arm) q.set('arm', arm)
         if (strategyKey) q.set('strategy_key', strategyKey)
         if (band) q.set('band', band)
@@ -420,6 +489,8 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
         if (!json.success) throw new Error(json.error ?? 'load failed')
         setData(json)
         setOffset(nextOffset)
+        setTokenOffset(nextTokenOffset)
+        setTokenSort(nextTokenSort)
       } catch (e) {
         onNotify?.(
           'error',
@@ -435,7 +506,7 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
 
   useEffect(() => {
     const t = window.setTimeout(() => {
-      void load(0)
+      void load(0, 0, 'peak_desc')
     }, 0)
     return () => window.clearTimeout(t)
   }, [load])
@@ -445,6 +516,10 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
   const rowsTotal = data?.rowsTotal ?? 0
   const showingFrom = rowsTotal === 0 ? 0 : offset + 1
   const showingTo = Math.min(offset + PAGE_SIZE, rowsTotal)
+  const peaks = data?.tokenPeaks
+  const tokenTotal = peaks?.total ?? 0
+  const tokenFrom = tokenTotal === 0 ? 0 : tokenOffset + 1
+  const tokenTo = Math.min(tokenOffset + (peaks?.limit ?? TOKEN_PAGE_SIZE), tokenTotal)
 
   const firstSeen = flip?.byArm.find((a) => a.arm === 'first_seen')
   const at80 = flip?.byArm.find((a) => a.arm === 'at_80')
@@ -467,10 +542,11 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
         <div>
           <h2 className="text-xl font-bold text-white mb-1">Early Enter Noul shadow</h2>
           <p className="text-gray-400 text-sm">
-            Shadow funnel + #54 flip-readiness (n / agree / mid / miss).
-            api_miss is soft-fail and follows SPEC. It is left out of agreement
-            and mid-rate. miss% too high blocks flip. miss is not suppress
-            disagreement. Soft-active stays off. Paper is never flipped.
+            Shadow funnel, #54 flip-readiness (n / agree / mid / miss), and the
+            all-time peak token list. api_miss is soft-fail and follows SPEC.
+            It is left out of agreement and mid-rate. miss% too high blocks
+            flip. miss is not suppress disagreement. Soft-active stays off.
+            Paper is never flipped.
           </p>
         </div>
         <span
@@ -627,6 +703,317 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
       </div>
 
       <div className="border-t border-gray-800 pt-4 space-y-3">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-semibold text-white">Peak / token list</h3>
+            <p className="text-[11px] text-gray-500 max-w-3xl">
+              All-time unique shadow mints joined to tracker peak growth.
+              Summary uses every mint. The table is paged and keeps the full
+              count. First band, decisions, score, and arm come from the
+              earliest shadow row. at_80 avg peak includes any mint with a
+              strategy_key containing at_80. Rows already stored stay in this
+              sample until new emits accumulate. A row opens the token freeview.
+            </p>
+          </div>
+          <p className="text-xs text-gray-500 whitespace-nowrap">
+            {tokenTotal === 0
+              ? 'No unique mints'
+              : `Showing ${tokenFrom}–${tokenTo} of ${tokenTotal}`}
+          </p>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <Chip
+            label={`${peaks?.uniqueMints ?? 0} unique mints`}
+            className="bg-slate-800 text-slate-200"
+          />
+          <Chip
+            label={`${peaks?.withPeak ?? 0} with peak`}
+            className="bg-sky-900/50 text-sky-200"
+          />
+          <Chip
+            label={`median ${peakPct(peaks?.medianPeakPercent)}`}
+            className="bg-gray-800 text-gray-200"
+          />
+          <Chip
+            label={`≥100% ${rateCount(peaks?.hit100Rate, peaks?.hit100 ?? 0, peaks?.withPeak ?? 0)}`}
+            className="bg-emerald-900/50 text-emerald-200"
+          />
+          <Chip
+            label={`at_80 avg ${peakPct(peaks?.at80AvgPeakPercent)} (${peaks?.at80WithPeak ?? 0}/${peaks?.at80Mints ?? 0})`}
+            className="bg-violet-900/50 text-violet-200"
+          />
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-2">
+          <div className="overflow-x-auto">
+            <p className="text-[11px] text-gray-500 mb-1">By first band</p>
+            <table className="w-full text-xs text-left">
+              <thead className="text-gray-400 border-b border-gray-800">
+                <tr>
+                  <th className="py-1.5 pr-2 font-medium">band</th>
+                  <th className="py-1.5 pr-2 font-medium">mints</th>
+                  <th className="py-1.5 pr-2 font-medium">with peak</th>
+                  <th className="py-1.5 pr-2 font-medium">median</th>
+                  <th className="py-1.5 pr-2 font-medium">avg</th>
+                  <th className="py-1.5 pr-2 font-medium">≥100%</th>
+                </tr>
+              </thead>
+              <tbody className="text-gray-200">
+                {(peaks?.byFirstBand ?? []).map((row) => (
+                  <tr key={row.band} className="border-b border-gray-800">
+                    <td className="py-1.5 pr-2">
+                      <Chip label={row.band} className={bandChipClass(row.band)} />
+                    </td>
+                    <td className="py-1.5 pr-2">{row.uniqueMints}</td>
+                    <td className="py-1.5 pr-2">{row.withPeak}</td>
+                    <td className="py-1.5 pr-2">{peakPct(row.medianPeakPercent)}</td>
+                    <td className="py-1.5 pr-2">{peakPct(row.avgPeakPercent)}</td>
+                    <td className="py-1.5 pr-2">
+                      {rateCount(row.hit100Rate, row.hit100, row.withPeak)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="overflow-x-auto">
+            <p className="text-[11px] text-gray-500 mb-1">By first strategy arm</p>
+            <table className="w-full text-xs text-left">
+              <thead className="text-gray-400 border-b border-gray-800">
+                <tr>
+                  <th className="py-1.5 pr-2 font-medium">arm</th>
+                  <th className="py-1.5 pr-2 font-medium">mints</th>
+                  <th className="py-1.5 pr-2 font-medium">with peak</th>
+                  <th className="py-1.5 pr-2 font-medium">median</th>
+                  <th className="py-1.5 pr-2 font-medium">avg</th>
+                  <th className="py-1.5 pr-2 font-medium">≥100%</th>
+                </tr>
+              </thead>
+              <tbody className="text-gray-200">
+                {(peaks?.byFirstArm ?? []).map((row) => (
+                  <tr key={row.arm} className="border-b border-gray-800">
+                    <td className="py-1.5 pr-2 font-mono text-[11px]">{row.arm}</td>
+                    <td className="py-1.5 pr-2">{row.uniqueMints}</td>
+                    <td className="py-1.5 pr-2">{row.withPeak}</td>
+                    <td className="py-1.5 pr-2">{peakPct(row.medianPeakPercent)}</td>
+                    <td className="py-1.5 pr-2">{peakPct(row.avgPeakPercent)}</td>
+                    <td className="py-1.5 pr-2">
+                      {rateCount(row.hit100Rate, row.hit100, row.withPeak)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {(peaks?.mints.length ?? 0) === 0 ? (
+          <p className="text-gray-500 text-sm">
+            {loading && !peaks
+              ? 'Loading…'
+              : tokenTotal === 0
+                ? 'No shadowed mints yet.'
+                : 'No mints on this page.'}
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left min-w-[980px]">
+              <thead className="text-xs text-gray-400 border-b border-gray-700">
+                <tr>
+                  <th className="py-2 pr-2 font-medium">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void load(
+                          offset,
+                          0,
+                          tokenSort === 'predicted_asc'
+                            ? 'predicted_desc'
+                            : tokenSort === 'predicted_desc'
+                              ? 'predicted_asc'
+                              : 'predicted_desc',
+                        )
+                      }
+                      className={`inline-flex items-center gap-1 hover:text-white ${
+                        tokenSort.startsWith('predicted') ? 'text-white' : ''
+                      }`}
+                    >
+                      latest
+                      <span className="text-[10px] text-gray-500">
+                        {tokenSort === 'predicted_desc'
+                          ? '↓'
+                          : tokenSort === 'predicted_asc'
+                            ? '↑'
+                            : '↕'}
+                      </span>
+                    </button>
+                  </th>
+                  <th className="py-2 pr-2 font-medium">token</th>
+                  <th className="py-2 pr-2 font-medium">arm</th>
+                  <th className="py-2 pr-2 font-medium">first band</th>
+                  <th className="py-2 pr-2 font-medium">shadow vs SPEC</th>
+                  <th className="py-2 pr-2 font-medium">cl score</th>
+                  <th className="py-2 pr-2 font-medium">noul</th>
+                  <th className="py-2 pr-2 font-medium">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void load(
+                          offset,
+                          0,
+                          tokenSort === 'peak_desc' ? 'peak_asc' : 'peak_desc',
+                        )
+                      }
+                      className={`inline-flex items-center gap-1 hover:text-white ${
+                        tokenSort.startsWith('peak') ? 'text-white' : ''
+                      }`}
+                    >
+                      peak
+                      <span className="text-[10px] text-gray-500">
+                        {tokenSort === 'peak_asc'
+                          ? '↑'
+                          : tokenSort === 'peak_desc'
+                            ? '↓'
+                            : '↕'}
+                      </span>
+                    </button>
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="text-gray-200">
+                {peaks?.mints.map((r) => {
+                  const href = tokenSearchDetailHref(r.tokenAddress, 'freeview')
+                  const agree = decisionsAgree(
+                    r.firstDecisionShadow,
+                    r.firstDecisionSpec,
+                  )
+                  const cl = r.avgClMlScore ?? r.firstClMlScore
+                  return (
+                    <tr
+                      key={r.tokenAddress}
+                      className="border-b border-gray-800 align-top cursor-pointer hover:bg-gray-800/60"
+                      onClick={() => {
+                        window.open(href, '_blank', 'noopener,noreferrer')
+                      }}
+                    >
+                      <td className="py-2 pr-2 text-xs text-gray-400 whitespace-nowrap">
+                        <div>{formatWhen(r.latestPredictedAt)}</div>
+                        <div className="text-[10px] text-gray-600">
+                          first {formatWhen(r.firstPredictedAt)}
+                        </div>
+                      </td>
+                      <td className="py-2 pr-2">
+                        <a
+                          href={href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="block hover:underline"
+                        >
+                          <div className="font-medium text-white text-xs">
+                            {r.symbol || '—'}
+                          </div>
+                          <div
+                            className="font-mono text-[11px] text-gray-500"
+                            title={r.tokenAddress}
+                          >
+                            {shortAddr(r.tokenAddress)}
+                            <span className="ml-1 text-gray-600">{r.chain}</span>
+                          </div>
+                        </a>
+                      </td>
+                      <td
+                        className="py-2 pr-2 font-mono text-[11px] text-gray-300"
+                        title={r.firstStrategyKey}
+                      >
+                        {r.arm ?? 'other'}
+                      </td>
+                      <td className="py-2 pr-2">
+                        <Chip
+                          label={r.firstBand}
+                          className={bandChipClass(r.firstBand)}
+                        />
+                      </td>
+                      <td className="py-2 pr-2">
+                        <div className="flex flex-wrap items-center gap-1">
+                          <Chip
+                            label={r.firstDecisionShadow}
+                            className={decisionChipClass(r.firstDecisionShadow)}
+                          />
+                          <span className="text-gray-600 text-[11px]">vs</span>
+                          <Chip
+                            label={r.firstDecisionSpec}
+                            className={decisionChipClass(r.firstDecisionSpec)}
+                          />
+                          {agree === true ? (
+                            <span className="text-emerald-400 text-[11px]">agree</span>
+                          ) : agree === false ? (
+                            <span className="text-rose-400 text-[11px]">diff</span>
+                          ) : (
+                            <span className="text-sky-400 text-[11px]">follow</span>
+                          )}
+                        </div>
+                      </td>
+                      <td
+                        className="py-2 pr-2 font-mono text-xs text-gray-400"
+                        title={`avg ${score(r.avgClMlScore)} · first ${score(r.firstClMlScore)}`}
+                      >
+                        {score(cl)}
+                      </td>
+                      <td className="py-2 pr-2 font-mono text-xs text-gray-400">
+                        {r.noul == null ? '—' : score(r.noul)}
+                      </td>
+                      <td
+                        className={`py-2 pr-2 font-mono text-xs ${
+                          r.peakGrowthPercent == null
+                            ? 'text-gray-500'
+                            : r.peakGrowthPercent >= 100
+                              ? 'text-emerald-300'
+                              : r.peakGrowthPercent < 0
+                                ? 'text-rose-300'
+                                : 'text-gray-200'
+                        }`}
+                      >
+                        {peakPct(r.peakGrowthPercent)}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={loading || tokenOffset <= 0}
+            onClick={() =>
+              void load(
+                offset,
+                Math.max(0, tokenOffset - TOKEN_PAGE_SIZE),
+                tokenSort,
+              )
+            }
+            className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-white text-sm rounded"
+          >
+            Prev
+          </button>
+          <button
+            type="button"
+            disabled={loading || tokenOffset + TOKEN_PAGE_SIZE >= tokenTotal}
+            onClick={() =>
+              void load(offset, tokenOffset + TOKEN_PAGE_SIZE, tokenSort)
+            }
+            className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-white text-sm rounded"
+          >
+            Next
+          </button>
+        </div>
+      </div>
+
+      <div className="border-t border-gray-800 pt-4 space-y-3">
         <div className="flex flex-wrap items-end gap-2">
           <label className="text-xs text-gray-400 flex flex-col gap-1">
             Arm
@@ -689,7 +1076,7 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
           <button
             type="button"
             disabled={loading}
-            onClick={() => void load(offset)}
+            onClick={() => void load(offset, tokenOffset, tokenSort)}
             className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-white text-sm rounded"
           >
             Reload
@@ -815,7 +1202,9 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
           <button
             type="button"
             disabled={loading || offset <= 0}
-            onClick={() => void load(Math.max(0, offset - PAGE_SIZE))}
+            onClick={() =>
+              void load(Math.max(0, offset - PAGE_SIZE), tokenOffset, tokenSort)
+            }
             className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-white text-sm rounded"
           >
             Prev
@@ -823,7 +1212,7 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
           <button
             type="button"
             disabled={loading || offset + PAGE_SIZE >= rowsTotal}
-            onClick={() => void load(offset + PAGE_SIZE)}
+            onClick={() => void load(offset + PAGE_SIZE, tokenOffset, tokenSort)}
             className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-white text-sm rounded"
           >
             Next

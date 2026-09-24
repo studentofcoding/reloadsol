@@ -67,6 +67,29 @@ export function flipArmFamilyFromStrategyKey(
   return null
 }
 
+/** Admin token-peak list. Default is peak desc so the biggest outcomes surface first. */
+export const EARLY_ENTER_NOUL_TOKEN_PEAK_SORTS = [
+  'peak_desc',
+  'peak_asc',
+  'predicted_desc',
+  'predicted_asc',
+] as const
+
+export type EarlyEnterNoulTokenPeakSort =
+  (typeof EARLY_ENTER_NOUL_TOKEN_PEAK_SORTS)[number]
+
+export function parseEarlyEnterNoulTokenPeakSort(
+  raw: string | null | undefined,
+): EarlyEnterNoulTokenPeakSort {
+  if (
+    raw &&
+    (EARLY_ENTER_NOUL_TOKEN_PEAK_SORTS as readonly string[]).includes(raw)
+  ) {
+    return raw as EarlyEnterNoulTokenPeakSort
+  }
+  return 'peak_desc'
+}
+
 export const FIRST_SEEN_STRATEGY_KEYS = [
   'mcap_enter_first_seen',
   'mcap_enter_first_seen_rh',
