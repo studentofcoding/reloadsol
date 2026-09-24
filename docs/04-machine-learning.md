@@ -72,3 +72,7 @@ Feature schemas:
 - **Potential exit overlay:** `ML_POTENTIAL_EXIT_MODE=shadow|apply|off`; `apply` (sim only) adjusts sim TP/SL through `potential-exit-overlay.ts` when `potential_ready`. Live capital is never gated by these models.
 - **Soft size is always on** for mcap/signals/gmgn (paper and live mcap). It is not enforce. Do **not** flip `ML_GATE_MODE` / `ML_PATTERN_MODE` to enforce while Pattern F1 is ~0.47.
 - Do-not list (`docs/OPERATOR_STATE.md` constraints, `docs/ML_GATE_PLAN.md` risks): don't gate live until `*_ready`; don't change frozen entry/exit rules mid-collection; reject live gating when `metrics.gate_ready` is false; review shadow `ml_gate_p_bad` histograms before flipping enforce. Current-state: [DECISION_MACHINE.md](./DECISION_MACHINE.md).
+
+## Operator research
+
+- [Early Enter shadow SL sweep paper (Sep 23–24 WIB)](./reports/early-enter-sl-paper-2026-09-24.md)
