@@ -28,6 +28,7 @@ export function mergeOhlcRugIntoEntryFeatures(
     ohlc_rug_dump_pct: evalResult.features.dumpPct,
     ohlc_rug_avg_upper_wick: evalResult.features.avgUpperWick,
     ohlc_rug_vol_death: evalResult.features.volDeathRatio,
+    ohlc_rug_up_only_count: evalResult.features.upOnlyCount,
     ohlc_rug_hits: hitIds,
   }
 }

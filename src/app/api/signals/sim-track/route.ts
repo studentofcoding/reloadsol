@@ -403,8 +403,14 @@ async function runSimTrack(request: NextRequest) {
         const annotated = annotateEntryFeatures(baseFeatures, socialCtx)
         const { attachOhlcRugShadow } = await import('@/strategies/ohlc-rug-shadow')
         const ohlc = await attachOhlcRugShadow(signal.token_address, annotated, {
-          enforce: false,
+          enforce: true,
         })
+        if (ohlc.reject) {
+          skipped.push(
+            `${symbol}: ohlc_rug (${ohlc.reason ?? 'trip'})`,
+          )
+          continue
+        }
         const { attachMlEntryShadow } = await import('@/strategies/ml-entry-shadow')
         const ml = await attachMlEntryShadow(ohlc.features, { enforce: false })
 
@@ -420,10 +426,34 @@ async function runSimTrack(request: NextRequest) {
           strategyId: strategy.id,
           persistEffectiveExit: false,
         })
-        const { softMlSize, stampMlSize } = await import('@/strategies/ml-soft-size')
+        const { loadTargetMachineClScore } = await import(
+          '@/strategies/target-machine-cl-score'
+        )
+        const {
+          sizeFromClosedLoop,
+          applyClosedLoopExit,
+          stampTargetMachineCl,
+        } = await import('@/strategies/target-machine-cl-size')
+        const cl = await loadTargetMachineClScore({
+          mint: signal.token_address,
+          chain,
+          entryMcap:
+            typeof signal.current_mcap === 'number' ? signal.current_mcap : null,
+        })
         const baseSol =
           strategy.config.execution.simBuyNative ?? strategy.config.execution.simBuySol
-        const sized = softMlSize(baseSol, { pBad: ml.pBad })
+        const sized = sizeFromClosedLoop(baseSol, cl.mlScore)
+        const baseExit = applyBrainRiskToExit(
+          signalsToCanonical(strategy).exit,
+          brainRisk,
+        )
+        const clExit = applyClosedLoopExit(
+          {
+            takeProfitPct: baseExit.takeProfitPct,
+            stopLossPct: baseExit.stopLossPct,
+          },
+          sized.p,
+        )
         const simSol = scaleOpenSize(sized.sol, brainRisk)
         if (simSol <= 0) {
           skipped.push(`${symbol}: brain_risk_stand_down`)
@@ -438,9 +468,11 @@ async function runSimTrack(request: NextRequest) {
           solAmount: simSol,
           priceUsd,
           entryFeatures: stampBrainRisk(
-            stampMlSize(overlayResult.features, sized, {
-              pBad: ml.pBad,
-              pWinner: ml.pWinner,
+            stampTargetMachineCl(overlayResult.features, {
+              p: sized.p,
+              sized,
+              exit: clExit,
+              modelVersion: cl.modelVersion,
             }),
             brainRisk,
             { sizedSol: simSol },

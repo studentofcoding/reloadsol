@@ -12,6 +12,7 @@ describe('mergeOhlcRugIntoEntryFeatures', () => {
         avgUpperWick: 0.1,
         wickTripBars: 0,
         volDeathRatio: null,
+        upOnlyCount: null,
       },
       hits: [
         {

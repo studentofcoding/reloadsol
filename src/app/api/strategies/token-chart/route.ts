@@ -5,6 +5,7 @@ import {
   isValidAnyChainTokenAddress,
 } from '@/utils/gmgn-currencies'
 
+export const maxDuration = 60
 
 export async function GET(request: NextRequest) {
   await connection()

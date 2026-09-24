@@ -81,6 +81,7 @@ export function mapShyftTokenToUserToken(token: ShyftWalletToken): UserToken {
   const { raw, ui } = Number.isFinite(cachedUi)
     ? { raw: token.balance, ui: cachedUi }
     : normalizeShyftBalance(token.balance, decimals);
+  const uiAmount = ui ?? 0;
 
   return {
     mintAddress: token.address,
@@ -89,12 +90,12 @@ export function mapShyftTokenToUserToken(token: ShyftWalletToken): UserToken {
     symbol: token.info?.symbol ?? "TOKEN",
     name: token.info?.name ?? token.info?.symbol ?? "Unknown Token",
     logoURI: token.info?.image,
-    uiAmount: ui,
+    uiAmount,
     usdValue: 0,
     usdPriced: false,
     isLoadingPrice: true,
     frozen: false,
-    isNFT: decimals === 0 && ui <= 1,
+    isNFT: decimals === 0 && uiAmount <= 1,
   };
 }
 

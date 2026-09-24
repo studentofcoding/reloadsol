@@ -143,7 +143,7 @@ export const POST = withUnifiedLogging(async (request: NextRequest, logger) => {
 
         const leftoverRows = await fetchMissingMcapRows(
             tokenAddresses,
-            mcapData.map((row: { token_address: string }) => row.token_address),
+            mcapData.map((row) => row.token_address),
             logger,
         )
         const missing = classifyAnalyticsMissing(
@@ -183,7 +183,11 @@ export const POST = withUnifiedLogging(async (request: NextRequest, logger) => {
 });
 
 // Server-side MCap data fetching with improved error handling
-async function fetchMcapTrackingData(tokenAddresses: string[], maxAge: number, logger: any) {
+async function fetchMcapTrackingData(
+    tokenAddresses: string[],
+    maxAge: number,
+    logger: any,
+): Promise<Array<{ token_address: string; last_updated_at?: string | Date | null }>> {
     try {
         const { sql, hasCutoff } = buildMcapAnalyticsSql(maxAge);
         const params: unknown[] = [tokenAddresses];
@@ -198,7 +202,7 @@ async function fetchMcapTrackingData(tokenAddresses: string[], maxAge: number, l
             requestedTokens: tokenAddresses.length
         });
 
-        return rows;
+        return rows as Array<{ token_address: string; last_updated_at?: string | Date | null }>;
     } catch (error) {
         logger.error('api_request', 'MCap data fetch error', error instanceof Error ? error : undefined, {
             error: getErrorMessage(error)

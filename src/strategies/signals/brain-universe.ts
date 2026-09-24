@@ -100,7 +100,7 @@ export function evaluateSignalsBrainOpen<T extends SignalsBrainItem>(
   signal: T,
   universe: BrainSignalsUniverseResult<unknown> | BrainUnionUniverse,
   opts: {
-    climate?: Parameters<typeof evaluateUniverseOpen>[2]['climate']
+    climate?: NonNullable<Parameters<typeof evaluateUniverseOpen>[2]>['climate']
     recipeId?: string
   } = {},
 ): GateEvalResult {

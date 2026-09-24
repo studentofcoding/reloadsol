@@ -31,6 +31,11 @@ export const OHLC_24H_1M_CACHE_TTL_SEC = 600
 export const OHLC_24H_1M_LAST_GOOD_TTL_SEC = 86_400
 /** Skip stuck Redis connect/get so Freeview/Telegram still hit ST */
 const OHLC_CACHE_GET_TIMEOUT_MS = 400
+/**
+ * Freeview token-chart must finish under Cloudflare ~100s.
+ * Budget OHLC cold fill so we return partial/stale instead of hanging.
+ */
+export const TOKEN_MAP_CHART_OHLC_BUDGET_MS = 22_000
 
 function ohlc24h1mCacheKey(tokenAddress: string): string {
   return `ohlc:v1:24h1m:${tokenAddress}`
@@ -919,10 +924,12 @@ export async function loadTokenMapChart(params: {
         candles.length >= 2
           ? candles[candles.length - 1]!.time - candles[0]!.time
           : 0
-      // Cache miss / too short for an old auto window — fetch the exact span.
+      // Prefer any usable cache slice over a second full-span GMGN crawl
+      // that races Cloudflare's ~100s origin timeout.
       if (
         useAuto &&
         !useShortFetch &&
+        candles.length === 0 &&
         spanSec > SHORT_OHLC_FETCH_MAX_SPAN_SEC &&
         spanHave < spanSec * 0.5
       ) {
@@ -951,6 +958,14 @@ export async function loadTokenMapChart(params: {
     })
   })()
 
+  const ohlcBudgeted = withTimeout(
+    ohlcPromise,
+    TOKEN_MAP_CHART_OHLC_BUDGET_MS,
+  ).catch(() => ({
+    candles: [] as TokenOhlcBar[],
+    source: 'timeout',
+  }))
+
   const detectPromise = (async (): Promise<{
     candles: TokenOhlcBar[]
     detectAt: string | null
@@ -974,19 +989,27 @@ export async function loadTokenMapChart(params: {
 
   const [history, ohlcLive, detect] = await Promise.all([
     loadTrackerHistory(params.tokenAddress, chain),
-    ohlcPromise,
+    ohlcBudgeted,
     detectPromise,
   ])
 
   let candles = ohlcLive.candles
-  let ohlcSource = ohlcLive.source
+  let ohlcSource =
+    ohlcLive.source === 'timeout'
+      ? 'timeout'
+      : ohlcLive.source
   if (candles.length === 0) {
     const persisted = await loadPersistedOhlcFallback(params.tokenAddress)
     if (persisted) {
       candles = sliceCandlesSince(persisted.candles, sinceSec).filter(
         (c) => c.time <= timeTo,
       )
-      ohlcSource = persisted.source
+      ohlcSource =
+        ohlcLive.source === 'timeout'
+          ? `${staleSourceLabel(persisted.source)}-timeout`
+          : persisted.source
+    } else if (ohlcLive.source === 'timeout') {
+      ohlcSource = 'timeout'
     }
   }
 
@@ -1047,7 +1070,12 @@ export async function loadTokenMapChart(params: {
     detectCandles: detect.candles,
     detectAt: detect.detectAt,
     priceSource: deduped.length > 0 ? 'tracker' : 'empty',
-    ohlcSource: candles.length > 0 ? ohlcSource : 'none',
+    ohlcSource:
+      candles.length > 0
+        ? ohlcSource
+        : ohlcSource === 'timeout' || ohlcSource.endsWith('-timeout')
+          ? ohlcSource
+          : 'none',
     ...(chartWindow
       ? {
           chartWindow: {

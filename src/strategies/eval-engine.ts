@@ -7,6 +7,7 @@
  * LIVE_TRADE_ENABLED=1 required, and even then v1 does not call a broker.
  */
 import { isClosedLoopPrincipalId, isMlClosedLoopEnabled } from './closed-loop-ml'
+import type { EnvLike } from './env-like'
 
 export type EvalAction = 'skip' | 'shadow_predict' | 'paper_open' | 'live_open'
 export type EvalExecMode = 'paper' | 'live'
@@ -69,43 +70,43 @@ export function selectDiverseEvalCandidates<T extends { eligible: boolean }>(
   return out
 }
 
-export function isEvalEngineEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+export function isEvalEngineEnabled(env: EnvLike = process.env): boolean {
   const raw = env.EVAL_ENGINE?.trim().toLowerCase()
   return raw === '1' || raw === 'true' || raw === 'yes'
 }
 
 /** Shadow is on unless EVAL_SHADOW is explicitly 0/false/no/off. */
-export function isEvalShadowEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+export function isEvalShadowEnabled(env: EnvLike = process.env): boolean {
   const raw = env.EVAL_SHADOW?.trim().toLowerCase()
   if (raw === '0' || raw === 'false' || raw === 'no' || raw === 'off') return false
   return true
 }
 
 /** Paper/live opens only when the engine is on and shadow is explicitly off. */
-export function allowsEvalOpens(env: NodeJS.ProcessEnv = process.env): boolean {
+export function allowsEvalOpens(env: EnvLike = process.env): boolean {
   return isEvalEngineEnabled(env) && !isEvalShadowEnabled(env)
 }
 
-export function getEvalExecMode(env: NodeJS.ProcessEnv = process.env): EvalExecMode {
+export function getEvalExecMode(env: EnvLike = process.env): EvalExecMode {
   return env.EVAL_EXEC_MODE?.trim().toLowerCase() === 'live' ? 'live' : 'paper'
 }
 
-export function isLiveTradeEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+export function isLiveTradeEnabled(env: EnvLike = process.env): boolean {
   const raw = env.LIVE_TRADE_ENABLED?.trim().toLowerCase()
   return raw === '1' || raw === 'true' || raw === 'yes'
 }
 
-export function getMlPaperMinCombined(env: NodeJS.ProcessEnv = process.env): number {
+export function getMlPaperMinCombined(env: EnvLike = process.env): number {
   const n = Number(env.ML_PAPER_MIN_COMBINED)
   return Number.isFinite(n) && n >= 0 && n <= 1 ? n : DEFAULT_ML_PAPER_MIN_COMBINED
 }
 
-export function getMlPaperMinMl(env: NodeJS.ProcessEnv = process.env): number {
+export function getMlPaperMinMl(env: EnvLike = process.env): number {
   const n = Number(env.ML_PAPER_MIN_ML)
   return Number.isFinite(n) && n >= 0 && n <= 1 ? n : DEFAULT_ML_PAPER_MIN_ML
 }
 
-export function evalLiveGateError(env: NodeJS.ProcessEnv = process.env): string | null {
+export function evalLiveGateError(env: EnvLike = process.env): string | null {
   if (getEvalExecMode(env) !== 'live' || !isLiveTradeEnabled(env)) {
     return 'LIVE_NOT_ENABLED'
   }
@@ -113,7 +114,7 @@ export function evalLiveGateError(env: NodeJS.ProcessEnv = process.env): string 
 }
 
 export type EvalDecideOptions = {
-  env?: NodeJS.ProcessEnv
+  env?: EnvLike
   minCombined?: number
   minMl?: number
 }
@@ -151,7 +152,7 @@ export function decideEvalAction(
 
 function evalSkipReason(
   input: EvalDecideInput,
-  opts: { minCombined: number; minMl: number; env: NodeJS.ProcessEnv },
+  opts: { minCombined: number; minMl: number; env: EnvLike },
 ): string | null {
   if (input.alreadyOpen) return 'already_open'
   if (input.alreadyClosed) return 'already_closed'
@@ -174,7 +175,7 @@ function shadowOrOpen(
   action: 'paper_open' | 'live_open',
   reason: string,
   mode: EvalExecMode,
-  env: NodeJS.ProcessEnv,
+  env: EnvLike,
 ): Pick<EvalDecision, 'action' | 'reason' | 'mode'> {
   if (!allowsEvalOpens(env)) {
     return { action: 'shadow_predict', reason: 'predicted', mode }

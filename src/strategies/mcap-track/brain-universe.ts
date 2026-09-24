@@ -100,7 +100,7 @@ export function evaluateMcapBrainOpen<T extends McapBrainItem>(
   snapshot: T,
   universe: BrainMcapUniverseResult<unknown> | BrainUnionUniverse,
   opts: {
-    climate?: Parameters<typeof evaluateUniverseOpen>[2]['climate']
+    climate?: NonNullable<Parameters<typeof evaluateUniverseOpen>[2]>['climate']
     recipeId?: string
   } = {},
 ): GateEvalResult {

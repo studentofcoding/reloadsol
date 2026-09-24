@@ -253,13 +253,30 @@ async function openSimPosition(params: {
     sizedSol: params.solAmount,
   })
   scoredEntryFeatures = stampScoreRisk(scoredEntryFeatures, scoreRisk)
-  const effectiveExit = scoreRisk.called
+  let effectiveExit = scoreRisk.called
     ? exitAfterScore
     : frozenExitForSimOpen(
         overlayResult.effectiveExit,
         baseExit,
         brainRisk,
       )
+
+  // Target machine: cl_take_profit_pct / cl_stop_loss_pct stamped on paper opens
+  const clTp = scoredEntryFeatures.cl_take_profit_pct
+  const clSl = scoredEntryFeatures.cl_stop_loss_pct
+  if (
+    effectiveExit &&
+    typeof clTp === 'number' &&
+    Number.isFinite(clTp) &&
+    typeof clSl === 'number' &&
+    Number.isFinite(clSl)
+  ) {
+    effectiveExit = {
+      ...effectiveExit,
+      takeProfitPct: clTp,
+      stopLossPct: clSl,
+    }
+  }
 
   const record = buildTradingRecord({
     walletAddress: simWallet,
@@ -1043,42 +1060,84 @@ async function runSimTrack(request: NextRequest) {
         const annotated = annotateEntryFeatures(baseFeatures, socialCtx)
         const { attachOhlcRugShadow } = await import('@/strategies/ohlc-rug-shadow')
         const ohlc = await attachOhlcRugShadow(snapshot.token_address, annotated, {
-          enforce: false,
+          enforce: execMode.isSimulated,
         })
-        const ml = await attachMlEntryShadow(ohlc.features, { enforce: true })
-        if (ml.gateReject) {
-          if (ml.pBad != null) {
-            logMlGateCounterfactual({
-              mintAddress: snapshot.token_address,
-              strategyId: strategy.id,
-              pBad: ml.pBad,
-              threshold: getMlGatePBadMax(),
-              reason: ml.gateReason ?? 'ml_gate_reject',
-            })
-          }
-          skipped.push(`${snapshot.token_symbol}: ml_gate_reject`)
+        if (ohlc.reject) {
+          skipped.push(
+            `${snapshot.token_symbol}: ohlc_rug (${ohlc.reason ?? 'trip'})`,
+          )
           continue
         }
-        if (ml.patternReject) {
-          if (ml.pWinner != null) {
-            logPatternGateCounterfactual({
-              mintAddress: snapshot.token_address,
-              strategyId: strategy.id,
-              pWinner: ml.pWinner,
-              threshold: getPatternPWinnerMin(),
-              reason: ml.patternReason ?? 'ml_pattern_reject',
-            })
+        const ml = await attachMlEntryShadow(ohlc.features, {
+          enforce: !execMode.isSimulated,
+        })
+        if (!execMode.isSimulated) {
+          if (ml.gateReject) {
+            if (ml.pBad != null) {
+              logMlGateCounterfactual({
+                mintAddress: snapshot.token_address,
+                strategyId: strategy.id,
+                pBad: ml.pBad,
+                threshold: getMlGatePBadMax(),
+                reason: ml.gateReason ?? 'ml_gate_reject',
+              })
+            }
+            skipped.push(`${snapshot.token_symbol}: ml_gate_reject`)
+            continue
           }
-          skipped.push(`${snapshot.token_symbol}: ml_pattern_reject`)
-          continue
+          if (ml.patternReject) {
+            if (ml.pWinner != null) {
+              logPatternGateCounterfactual({
+                mintAddress: snapshot.token_address,
+                strategyId: strategy.id,
+                pWinner: ml.pWinner,
+                threshold: getPatternPWinnerMin(),
+                reason: ml.patternReason ?? 'ml_pattern_reject',
+              })
+            }
+            skipped.push(`${snapshot.token_symbol}: ml_pattern_reject`)
+            continue
+          }
         }
         const scoredEntryFeatures = ml.features
-        const { softMlSize, stampMlSize } = await import('@/strategies/ml-soft-size')
-        const sized = softMlSize(nativeBuyAmount, { pBad: ml.pBad })
-        const sizedFeatures = stampMlSize(scoredEntryFeatures, sized, {
-          pBad: ml.pBad,
-          pWinner: ml.pWinner,
-        })
+
+        let sized: { sol: number; mult: number }
+        let sizedFeatures: Record<string, unknown>
+        if (execMode.isSimulated) {
+          const { loadTargetMachineClScore } = await import(
+            '@/strategies/target-machine-cl-score'
+          )
+          const {
+            sizeFromClosedLoop,
+            applyClosedLoopExit,
+            stampTargetMachineCl,
+          } = await import('@/strategies/target-machine-cl-size')
+          const cl = await loadTargetMachineClScore({
+            mint: snapshot.token_address,
+            chain,
+            entryMcap: entry.entryMcap,
+          })
+          const clSized = sizeFromClosedLoop(nativeBuyAmount, cl.mlScore)
+          sized = clSized
+          const baseExit = {
+            takeProfitPct: strategy.config.exit.takeProfitPct,
+            stopLossPct: strategy.config.exit.stopLossPct,
+          }
+          const clExit = applyClosedLoopExit(baseExit, clSized.p)
+          sizedFeatures = stampTargetMachineCl(scoredEntryFeatures, {
+            p: clSized.p,
+            sized: clSized,
+            exit: clExit,
+            modelVersion: cl.modelVersion,
+          })
+        } else {
+          const { softMlSize, stampMlSize } = await import('@/strategies/ml-soft-size')
+          sized = softMlSize(nativeBuyAmount, { pBad: ml.pBad })
+          sizedFeatures = stampMlSize(scoredEntryFeatures, sized, {
+            pBad: ml.pBad,
+            pWinner: ml.pWinner,
+          })
+        }
 
         if (!execMode.isSimulated) {
           const halted = await isRealTradingHalted()

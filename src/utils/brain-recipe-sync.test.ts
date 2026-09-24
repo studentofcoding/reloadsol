@@ -148,7 +148,9 @@ describe('promote/deactivate/dormant write client', () => {
       universe: ['union'],
       profileId: 'default',
     })
-    expect(calls[0]?.body.gates.map((g: { kind: string }) => g.kind)).not.toContain('bmScore')
+    expect(
+      (calls[0]?.body as { gates: Array<{ kind: string }> }).gates.map((g) => g.kind),
+    ).not.toContain('bmScore')
     expect(calls[1]).toMatchObject({
       url: `${DEFAULT_MARKET_BRAIN_URL}/recipes/mcap_enter_first_seen/activate`,
       method: 'POST',

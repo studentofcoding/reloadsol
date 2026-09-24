@@ -27,14 +27,16 @@ Sliding **last ≤10 × 1m** at eval time (not anchored to launch). OR of:
 | `dump_10m` | `(first.c − last.c) / first.c ≥ 40%` |
 | `wick_reject` | avg upper-wick ≥ 0.60 and ≥2 ranged bars |
 | `volume_death` | `lastVol / mean(earlier) ≤ 0.25` (≥2 vols) |
+| `up_only_10` | `n === 10` and every bar `c > o` (no trip if `n < 10`) |
 
-`n<10` uses whatever bars exist. Freeview label (`system` / `rug` / `potential`) is human; trip badge is live recompute.
+`n<10` uses whatever bars exist for dump/wick/vol; `up_only_10` requires a full 10. Freeview label (`system` / `rug` / `potential`) is human; trip badge is live recompute.
 
 ### Triggers
 
 - Freeview: `GET /api/gmgn/detect-snapshot` + Strategy correlation `GET /api/strategies/token-chart`
 - Concentration ban: `captureDetectSnapshot`
-- Shadow (`enforce: false`): signals / mcap / trending entry / GMGN radar pipeline  
+- **Enforce** (`enforce: true`): Target machine paper paths — signals `sim-track` + mcap `sim-track` when simulated ([SPEC-target-machine-spine-v1.md](./SPEC-target-machine-spine-v1.md))
+- Shadow (`enforce: false`): mcap live opens / trending entry / GMGN radar pipeline  
 - **Not** wired: social `sim-track`, gmgn `sim-track` HTTP open
 
 ### Efficiency (priority)
@@ -59,7 +61,7 @@ Sliding **last ≤10 × 1m** at eval time (not anchored to launch). OR of:
 
 ### Out of scope v1
 
-Hard `enforce: true`, Redis cross-replica GMGN limiter, weight-aware per-route spacing, changing dump/wick/vol thresholds.
+Global OHLC `enforce: true` on live / non–Target-machine paths, Redis cross-replica GMGN limiter, weight-aware per-route spacing, changing dump/wick/vol thresholds. Paper-path enforce is owned by [SPEC-target-machine-spine-v1.md](./SPEC-target-machine-spine-v1.md).
 
 ## Ops checklist (C)
 

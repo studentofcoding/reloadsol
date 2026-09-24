@@ -10,27 +10,16 @@ import {
   type ExecutionAdapter,
   type ExecutionAdapterResult,
 } from './eval-engine'
+import type { EnvLike } from './env-like'
 import { MCAP_TRACKER_SIM_WALLET, simWalletForChain } from './sim-wallets'
 import type { CombinedScoreChain } from './combined-score'
 import type { McapTrackerStrategy, StrategyChain } from './types'
+import type { McapSnapshot } from '@/utils/mcap-tracker'
 
 export type PaperOpenContext = {
   chain: CombinedScoreChain
   strategy: McapTrackerStrategy
-  snapshot: {
-    token_address: string
-    token_symbol: string
-    current_mcap: number | null
-    first_mcap: number | null
-    first_seen_at: string
-    last_updated_at: string
-    when_reach_80pct: string | null
-    mcap_growth_percent: number | null
-    organic_score: number | null
-    top_holders_pct: number | null
-    volume_5m?: number | null
-    label?: string | null
-  }
+  snapshot: McapSnapshot
   decision: EvalDecision
 }
 
@@ -81,12 +70,12 @@ export class PaperExecutionAdapter implements ExecutionAdapter {
         snapshot: {
           token_address: decision.mint,
           token_symbol: decision.mint.slice(0, 8),
-          current_mcap: null,
-          first_mcap: null,
+          current_mcap: 0,
+          first_mcap: 0,
           first_seen_at: decision.decidedAt,
           last_updated_at: decision.decidedAt,
           when_reach_80pct: null,
-          mcap_growth_percent: null,
+          mcap_growth_percent: 0,
           organic_score: null,
           top_holders_pct: null,
         },
@@ -102,9 +91,9 @@ export class PaperExecutionAdapter implements ExecutionAdapter {
 }
 
 export class LiveExecutionAdapter implements ExecutionAdapter {
-  constructor(private readonly env: NodeJS.ProcessEnv = process.env) {}
+  constructor(private readonly env: EnvLike = process.env) {}
 
-  async open(): Promise<ExecutionAdapterResult> {
+  async open(_decision: EvalDecision): Promise<ExecutionAdapterResult> {
     const gate = evalLiveGateError(this.env)
     if (gate) {
       console.warn(`[eval-engine] live adapter refused: ${gate}`)
@@ -114,15 +103,15 @@ export class LiveExecutionAdapter implements ExecutionAdapter {
     return { ok: false, error: LIVE_STUB_NO_BROKER, opened: false }
   }
 
-  async close(): Promise<ExecutionAdapterResult> {
-    return this.open()
+  async close(decision: EvalDecision): Promise<ExecutionAdapterResult> {
+    return this.open(decision)
   }
 }
 
 export function selectExecutionAdapter(
   mode: 'paper' | 'live',
   deps?: PaperExecutionDeps,
-  env: NodeJS.ProcessEnv = process.env,
+  env: EnvLike = process.env,
 ): ExecutionAdapter {
   return mode === 'live' ? new LiveExecutionAdapter(env) : new PaperExecutionAdapter(deps)
 }

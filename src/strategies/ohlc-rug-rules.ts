@@ -24,7 +24,7 @@ export const DEFAULT_OHLC_RUG_THRESHOLDS: OhlcRugThresholds = {
 export const OHLC_RUG_MAX_BARS = 10
 
 export type OhlcRugRuleHit = {
-  id: 'dump_10m' | 'wick_reject' | 'volume_death'
+  id: 'dump_10m' | 'wick_reject' | 'volume_death' | 'up_only_10'
   label: string
   value: number | null
   threshold: number
@@ -40,6 +40,8 @@ export type OhlcRugFeatures = {
   avgUpperWick: number | null
   wickTripBars: number
   volDeathRatio: number | null
+  /** Count of bars with c > o in the window (null if n === 0). */
+  upOnlyCount: number | null
 }
 
 export type OhlcRugEval = {
@@ -168,6 +170,19 @@ export function evaluateOhlcRugRules(
     skipReason: volSkipReason,
   })
 
+  const upOnlyCount = n > 0 ? bars.filter((b) => b.c > b.o).length : null
+  const upOnlySkipped = n < OHLC_RUG_MAX_BARS
+  const upOnlyTrip = !upOnlySkipped && upOnlyCount === OHLC_RUG_MAX_BARS
+  hits.push({
+    id: 'up_only_10',
+    label: 'All 10 bars green (c > o)',
+    value: upOnlyCount,
+    threshold: OHLC_RUG_MAX_BARS,
+    passed: upOnlyTrip,
+    skipped: upOnlySkipped,
+    skipReason: upOnlySkipped ? `need ${OHLC_RUG_MAX_BARS} bars` : undefined,
+  })
+
   const trip = hits.some((h) => h.passed)
 
   return {
@@ -178,6 +193,7 @@ export function evaluateOhlcRugRules(
       avgUpperWick,
       wickTripBars,
       volDeathRatio,
+      upOnlyCount,
     },
     hits,
   }
@@ -192,11 +208,15 @@ export function ohlcRugHitReasons(evalResult: OhlcRugEval): string[] {
           ? '—'
           : h.id === 'dump_10m'
             ? `${(h.value * 100).toFixed(1)}%`
-            : h.value.toFixed(3)
+            : h.id === 'up_only_10'
+              ? `${h.value}/${h.threshold}`
+              : h.value.toFixed(3)
       const th =
         h.id === 'dump_10m'
           ? `${(h.threshold * 100).toFixed(0)}%`
-          : h.threshold.toFixed(2)
+          : h.id === 'up_only_10'
+            ? `${h.threshold}`
+            : h.threshold.toFixed(2)
       return `ohlc ${h.id}: ${v} vs ${th}`
     })
 }

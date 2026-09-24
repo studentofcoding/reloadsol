@@ -27,7 +27,10 @@ vi.mock('@/strategies/sim-monitor-snapshots', () => ({
 import { listStrategyOutcomes } from '@/strategies/db'
 import { fetchTokenMapActivity } from '@/strategies/token-map-activity'
 import { tokenKline } from '@/utils/gmgn-api'
-import { loadTokenMapChart } from '@/strategies/token-map-chart'
+import {
+  loadTokenMapChart,
+  TOKEN_MAP_CHART_OHLC_BUDGET_MS,
+} from '@/strategies/token-map-chart'
 import { NEW_CHART_SPAN_SEC } from '@/strategies/token-map-chart-window'
 
 const mint = 'ChartWin1111111111111111111111111111111'
@@ -52,7 +55,7 @@ describe('loadTokenMapChart window=auto', () => {
       {
         id: 'social:1',
         domain: 'social',
-        kind: 'mention',
+        kind: 'social_event',
         title: 'FOMO',
         detail: 'x',
         occurredAt: new Date((now - 120) * 1000).toISOString(),
@@ -132,5 +135,40 @@ describe('loadTokenMapChart window=auto', () => {
     expect(result.chartWindow?.mode).toBe('old')
     expect(result.chartWindow?.timeFrom).toBe(anchor)
     expect(result.hours).toBeCloseTo(3, 1)
+  })
+
+  it('ohlc budget fail-softs when upstream stalls (no hang)', async () => {
+    vi.useFakeTimers()
+    const now = Math.floor(Date.now() / 1000)
+    const anchor = now - 2 * 3600
+    vi.mocked(listStrategyOutcomes).mockResolvedValue({
+      rows: [
+        {
+          id: 'o1',
+          domain: 'signals',
+          strategy_id: 'signals_default',
+          entry_at: new Date(anchor * 1000).toISOString(),
+          exit_at: null,
+          status: 'open',
+          pnl_pct: null,
+          is_simulated: true,
+        },
+      ],
+      total: 1,
+    } as never)
+    vi.mocked(tokenKline).mockImplementation(() => new Promise(() => {}))
+
+    const pending = loadTokenMapChart({
+      tokenAddress: mint,
+      window: 'auto',
+      chain: 'sol',
+    })
+    await vi.advanceTimersByTimeAsync(TOKEN_MAP_CHART_OHLC_BUDGET_MS + 50)
+    const result = await pending
+    vi.useRealTimers()
+
+    expect(result.chartWindow?.mode).toBe('old')
+    expect(result.ohlcSource).toMatch(/timeout|none/)
+    expect(Array.isArray(result.candles)).toBe(true)
   })
 })

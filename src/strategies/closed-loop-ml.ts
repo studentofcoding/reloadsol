@@ -5,6 +5,7 @@
  * ensemble when the set is thin) → mlScore ∈ [0, 1]. Combined-score consumes
  * that as an optional `ml` weight. Missing model / flag off → null, no throw.
  */
+import type { EnvLike } from './env-like'
 import { scoreClosedLoopLogistic } from './entry-pattern-scorer'
 import {
   computeEntryMcapBand,
@@ -95,7 +96,7 @@ export type ClosedLoopScoreSnapshot = {
 }
 
 export function isMlClosedLoopEnabled(
-  env: NodeJS.ProcessEnv = process.env,
+  env: EnvLike = process.env,
 ): boolean {
   const raw = env.ML_CLOSED_LOOP?.trim().toLowerCase()
   return raw === '1' || raw === 'true' || raw === 'yes'
@@ -111,7 +112,7 @@ export function isClosedLoopPrincipalId(strategyId: string | null | undefined): 
 }
 
 export function resolveClosedLoopArtifactPath(
-  env: NodeJS.ProcessEnv = process.env,
+  env: EnvLike = process.env,
 ): string {
   const raw = env.ML_CLOSED_LOOP_ARTIFACT?.trim()
   return raw || DEFAULT_CLOSED_LOOP_ARTIFACT

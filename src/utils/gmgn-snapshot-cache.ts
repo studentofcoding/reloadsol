@@ -1,6 +1,6 @@
 import { GmgnApiError, tokenInfo, tokenSecurity } from '@/utils/gmgn-api'
 import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
-import { cacheGet, cacheSet } from '@/utils/redis-cache'
+import { cacheDel, cacheGet, cacheSet } from '@/utils/redis-cache'
 
 /**
  * Shared short-TTL cache for GMGN token info + security, used by the
@@ -19,6 +19,20 @@ function snapshotKey(chain: GmgnTradeChain, address: string): string {
   return `gmgn:token-snapshot:${chain}:${address.toLowerCase()}`
 }
 
+/** Reject HTTP payload shapes that used to poison this key (route overwrite). */
+export function isGmgnSnapshotData(value: unknown): value is GmgnSnapshotData {
+  if (value == null || typeof value !== 'object') return false
+  const v = value as Record<string, unknown>
+  return (
+    v.info != null &&
+    typeof v.info === 'object' &&
+    !Array.isArray(v.info) &&
+    v.security != null &&
+    typeof v.security === 'object' &&
+    !Array.isArray(v.security)
+  )
+}
+
 /**
  * Cached token info + security. A `RATE_LIMIT` error is re-thrown (callers
  * map it to a 429 response); any other per-endpoint failure degrades to the
@@ -29,8 +43,12 @@ export async function getGmgnTokenSnapshotCached(
   address: string,
 ): Promise<GmgnSnapshotData | undefined> {
   const key = snapshotKey(chain, address)
-  const cached = await cacheGet<GmgnSnapshotData>(key)
-  if (cached) return cached
+  const cached = await cacheGet<unknown>(key)
+  if (cached != null) {
+    if (isGmgnSnapshotData(cached)) return cached
+    // Poisoned by old route payload write — drop and refetch.
+    void cacheDel(key)
+  }
 
   let rateLimited: GmgnApiError | null = null
   const [info, security] = await Promise.all([

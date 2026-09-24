@@ -4,13 +4,9 @@ import { buildGmgnTokenSnapshot } from '@/strategies/gmgn-token-snapshot'
 import { GmgnApiError } from '@/utils/gmgn-api'
 import { isGmgnTradeChain, isValidTradeTokenAddress } from '@/utils/gmgn-currencies'
 import { isValidMintAddress } from '@/utils/jupiter'
-import {
-  getGmgnTokenSnapshotCached,
-} from '@/utils/gmgn-snapshot-cache'
-import { cacheSet } from '@/utils/redis-cache'
+import { getGmgnTokenSnapshotCached } from '@/utils/gmgn-snapshot-cache'
 
-
-const SNAPSHOT_TTL_S = 10
+export const maxDuration = 60
 
 function isHoneypot(security: Record<string, unknown>): boolean {
   return (
@@ -64,20 +60,17 @@ export async function GET(request: NextRequest) {
 
     const cached = await getGmgnTokenSnapshotCached(chain, address)
     if (!cached) {
-      // Nothing cached and nothing fetchable — surface the upstream problem.
-      throw new GmgnApiError(
-        'GMGN token info/security unavailable for this address',
+      // Soft degrade — UI can hide stats; do not poison Redis or throw 500.
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'GMGN token info/security unavailable for this address',
+        },
+        { status: 502 },
       )
     }
 
     const { info, security } = cached
-
-    const symbol =
-      typeof info.symbol === 'string'
-        ? info.symbol
-        : typeof info.name === 'string'
-          ? info.name
-          : null
 
     const holdersRaw = info.holder_count ?? info.holders
     const holders =
@@ -104,7 +97,7 @@ export async function GET(request: NextRequest) {
     const snapshot = buildGmgnTokenSnapshot(info, security)
     const concBan = evaluateConcentrationBan(snapshot)
 
-    const payload = {
+    return NextResponse.json({
       success: true,
       address,
       chain,
@@ -114,11 +107,7 @@ export async function GET(request: NextRequest) {
       isHoneypot: isHoneypot(security),
       concentrationBanned: concBan.ban,
       concentrationReasons: concBan.reasons,
-    }
-    // Short-TTL cache for the payload itself (this endpoint is hit per token
-    // card and per simulated trade leg).
-    void cacheSet(`gmgn:token-snapshot:${chain}:${address.toLowerCase()}`, payload, SNAPSHOT_TTL_S)
-    return NextResponse.json(payload)
+    })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     const status = errorStatus(error)

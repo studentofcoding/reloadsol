@@ -86,4 +86,39 @@ describe('evaluateOhlcRugRules', () => {
     expect(wick.value).toBeCloseTo(1, 5)
     expect(wick.passed).toBe(true)
   })
+
+  it('skips up_only_10 when n < 10', () => {
+    const greens = Array.from({ length: 5 }, (_, i) =>
+      bar(i + 1, 1, 1.2, 1, 1.1, 10),
+    )
+    const r = evaluateOhlcRugRules(greens)
+    const up = r.hits.find((h) => h.id === 'up_only_10')!
+    expect(up.skipped).toBe(true)
+    expect(up.passed).toBe(false)
+    expect(r.features.upOnlyCount).toBe(5)
+  })
+
+  it('trips up_only_10 when all 10 bars are green', () => {
+    const greens = Array.from({ length: 10 }, (_, i) =>
+      bar(i + 1, 1 + i * 0.1, 2 + i * 0.1, 1 + i * 0.1, 1.05 + i * 0.1, 10),
+    )
+    const r = evaluateOhlcRugRules(greens)
+    const up = r.hits.find((h) => h.id === 'up_only_10')!
+    expect(up.skipped).toBeFalsy()
+    expect(up.passed).toBe(true)
+    expect(up.value).toBe(10)
+    expect(r.trip).toBe(true)
+  })
+
+  it('does not trip up_only_10 when one of 10 is not green', () => {
+    const bars = Array.from({ length: 10 }, (_, i) =>
+      i === 5
+        ? bar(i + 1, 1.1, 1.1, 1, 1, 10) // red: c < o
+        : bar(i + 1, 1, 1.2, 1, 1.1, 10),
+    )
+    const r = evaluateOhlcRugRules(bars)
+    const up = r.hits.find((h) => h.id === 'up_only_10')!
+    expect(up.passed).toBe(false)
+    expect(up.value).toBe(9)
+  })
 })

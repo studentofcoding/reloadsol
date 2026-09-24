@@ -16,6 +16,7 @@ import {
   type EvalRiskSnapshot,
   type EvalScanSummary,
 } from './eval-engine'
+import type { EnvLike } from './env-like'
 import { buildPredictionFromDecision, isPredictAction } from './eval-predictions'
 import {
   selectExecutionAdapter,
@@ -34,7 +35,7 @@ export type EvalScanDeps = {
     decisions: EvalDecision[],
   ) => Promise<void | { linkedCount?: number }>
   now?: Date
-  env?: NodeJS.ProcessEnv
+  env?: EnvLike
   limit?: number
 }
 
@@ -167,7 +168,8 @@ export async function runEvalScan(deps: EvalScanDeps = {}): Promise<{
   })
   const persisted = await (deps.persist ?? persistEvalRun)(runId, summary, decisions)
   if (persisted && typeof persisted === 'object' && 'linkedCount' in persisted) {
-    summary.linkedCount = persisted.linkedCount
+    const n = Number((persisted as { linkedCount?: unknown }).linkedCount)
+    summary.linkedCount = Number.isFinite(n) ? n : 0
   }
   return { summary, decisions }
 }

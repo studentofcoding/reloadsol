@@ -1,3 +1,5 @@
+import type { EnvLike } from './env-like'
+
 /**
  * Early Enter toast/Telegram soft gate (closed-loop mlScore only).
  * Pure helpers — no model I/O. Pattern pWinner is display-only.
@@ -14,13 +16,13 @@ function parseOnOffEnv(value: string | undefined, fallback: boolean): boolean {
 
 /** Default on. `0` / `false` restores pre-SPEC emit (no closed-loop cut). */
 export function isEarlyEnterMlSoftGateEnabled(
-  env: NodeJS.ProcessEnv = process.env,
+  env: EnvLike = process.env,
 ): boolean {
   return parseOnOffEnv(env.EARLY_ENTER_ML_SOFT_GATE, true)
 }
 
 export function getEarlyEnterMlMin(
-  env: NodeJS.ProcessEnv = process.env,
+  env: EnvLike = process.env,
 ): number {
   const raw = env.EARLY_ENTER_ML_MIN?.trim()
   if (!raw) return DEFAULT_EARLY_ENTER_ML_MIN

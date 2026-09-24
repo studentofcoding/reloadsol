@@ -261,7 +261,7 @@ describe('fetchTokenOhlc', () => {
       interval: '1m',
     })
     expect(result.source).toBe('gmgn')
-    expect(tokenKline.mock.calls.length).toBeGreaterThan(1)
+    expect(vi.mocked(tokenKline).mock.calls.length).toBeGreaterThan(1)
     expect(result.candles.length).toBeGreaterThan(GMGN_KLINE_PAGE_BARS)
   })
 
@@ -378,8 +378,8 @@ describe('fetchTokenOhlc', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(String(fetchMock.mock.calls[0]![0])).toContain('/ohlc?')
     expect(String(fetchMock.mock.calls[1]![0])).toContain(SECURE_CHART)
-    const init = fetchMock.mock.calls[1]![1] as RequestInit
-    expect(init.headers).toBeUndefined()
+    const init = (fetchMock.mock.calls[1] as unknown as [unknown, RequestInit?])[1]
+    expect(init?.headers).toBeUndefined()
   })
 
   it('falls back to SolanaTracker on brain timeout', async () => {
