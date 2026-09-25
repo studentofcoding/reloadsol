@@ -1,6 +1,6 @@
 # SPEC — Trending: GMGN feed + durable re-entry guard (+ drop rugged) v1
 
-**Status:** to-spec (docs only)
+**Status:** shipped (2026-09-25) — commit `5d019b5`, live on `flowey-vps`
 **Date:** 2026-09-25
 **Surface:** `reloadsol` trending path — `trending-track/cycle.ts`, `trending-bot-rh-sim.ts`, `utils/gmgn-trending-feed.ts`, `utils/dlmm/reopen-guard.ts` consumer, `/api/gmgn/trending/filtered`
 **Lane:** autotrade & algo
@@ -209,10 +209,25 @@ ssh flowey-vps 'curl -s -X POST -H "X-Trigger-Secret: $SECRET" http://127.0.0.1:
 | 2026-09-25 | Rug source | `token_rug_list` (source of truth), not `token_mcap_tracking.label` |
 | 2026-09-25 | Build order | Guard first, feed switch second, drop-rugged third |
 | 2026-09-25 | Edge | Out of scope — separate data track |
+| 2026-09-25 | Shipped | `5d019b5` deployed; guard live (`att_rh` opens 9–11/10min → 1); `TRENDING_FEED=gmgn` set on VPS |
 
 ---
 
-## 11. Related docs
+## 11. Shipped — verification (2026-09-25)
+
+Commit `5d019b5`; deployed via `scripts/ship-standalone-to-vps.sh` (host build refused: 3719MB < 4096MB).
+
+- **Phase 1 live.** `att_rh` buys per 5-min bucket: `13:30=6, 13:35=5, 13:40=5, 13:45=4, **13:50=1**` (web restarted 13:49:26 GMT+7). Baseline before: 76,912 closes / 1,239 mints ≈ 26.6 closes/mint/day.
+- **Phase 3 live.** `/api/gmgn/trending/filtered?chain=sol` → 200 with tokens, rug filter in the path.
+- **Phase 2 live.** `TRENDING_FEED=gmgn` set in the server `.env`; web restarted healthy. Discovery-only. The Sol cycle is gated by trading hours (`403 outside 16:00-04:00 GMT+7`), so Sol candidates are confirmed in the next window; the RH twin (same feed + adapter) already runs it in prod.
+- **Gate.** 35 unit tests pass; `lint` 0 errors; `verify:no-raw-useeffect` clean; `next build` exit 0; `npm run start` boots (home 200 / `/api/health` 200).
+- **Hygiene.** Server's foreign WIP (docker-compose ×2, nginx.conf, 5 ml artifacts) byte-identical after the pull — `shasum -a 256 -c` all OK, nothing stashed.
+
+**Open observation:** `att_rh` has **no `strategy_definitions` row** (every row is `chain='sol'`), so the RH twin runs on the registry default and cannot be toggled from Admin. Separate ticket.
+
+---
+
+## 12. Related docs
 
 - Strategy spine: [../03-strategies-and-automation.md](../03-strategies-and-automation.md), [../STRATEGY_ARCHITECTURE.md](../STRATEGY_ARCHITECTURE.md)
 - Rug registry: [SPEC-potential-rug-labels-tracker-honesty-v1.md](./SPEC-potential-rug-labels-tracker-honesty-v1.md)

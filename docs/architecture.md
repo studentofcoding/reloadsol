@@ -173,7 +173,7 @@ sequenceDiagram
 
   Cron->>Track: key + User-Agent reloadsol-cron-service
   Track->>Strat: refreshTrackStrategyCache
-  Track->>Jup: fetch toptrending/1h
+  Track->>Jup: discovery feed (GMGN rank | toptrending/1h)
   Track->>Track: filter union + assign strategy
   alt real mode
     Track->>Wallet: Jupiter swap buy/sell

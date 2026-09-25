@@ -41,6 +41,7 @@ Cooldowns are per-token and env-tunable (defaults shown):
 | DLMM reopen cooldown | `loadRecentlyClosedDlmmOutcomes()` (`src/strategies/outcomes.ts`) feeds `reopen-guard.ts`; skips a pool/token closed within the window | `DLMM_REOPEN_COOLDOWN_MIN=60`, `DLMM_REOPEN_TOKEN_COOLDOWN_MIN=1440` |
 | GMGN discovery cooldown | `config.discovery.cooldownHours` filters recent sim records per strategy (`collectRecentMints` in `src/app/api/gmgn/sim-track/route.ts`; `filterGmgnCandidatesByCooldown` in `src/strategies/gmgn-pipeline.ts`) | 24h (roster 6h) |
 | Trending duplicate purchase | `TOKEN_PURCHASE_COOLDOWN_HOURS` / `MAX_PURCHASES_PER_TOKEN` (env) + `bot_trade_locks` (`src/strategies/trending-track/constants.ts`, `wallet.ts`) | 24h / 2 buys |
+| Trending bot re-entry guard | `loadClosedTrendingOutcomes()` (`src/strategies/outcomes.ts`) + `trendingBlockedKeys()` (`src/utils/trending-reopen-guard.ts`), keyed `(strategy_id, token_address)` off `strategy_outcomes`; applied in `trending-bot-rh-sim.ts` and both `cycle.ts` open paths | `TRENDING_REENTRY_COOLDOWN_MIN=1440`, `TRENDING_MAX_PURCHASES_PER_TOKEN=2` |
 
 ## 2. Worker / strategy inventory
 
@@ -48,7 +49,7 @@ Go cron (`main.go`) fires each worker; each row: what it tracks → action/alert
 
 | Worker (Go ID) | Tracks | Action / alert | Cadence (env) | Files |
 |---|---|---|---|---|
-| `trending_tracker` | Jupiter 1h trending (`toptrending/1h`) | Union pre-filter across active trending strategies → `assignTokenToStrategy` → sim/real buy (TP/SL per strategy); full-close → `recordTrendingBotOutcome` | 5m | `main.go`, `src/strategies/trending-track/cycle.ts`, `filtering.ts`, `wallet.ts`, `src/app/api/trending/track/route.ts`, `registry.ts` |
+| `trending_tracker` | Discovery: **GMGN market rank** when `TRENDING_FEED=gmgn` (live), else Jupiter `toptrending/1h` | Union pre-filter across active trending strategies → `assignTokenToStrategy` → re-entry guard → sim/real buy (TP/SL per strategy); full-close → `recordTrendingBotOutcome` | 5m | `main.go`, `src/strategies/trending-track/cycle.ts`, `filtering.ts`, `gmgn-discovery.ts`, `wallet.ts`, `src/app/api/trending/track/route.ts`, `registry.ts` |
 | `filtered_trending` / `unfiltered_trending` | same feed, filtered / raw | Discord list notifications (dedup slots) + mcap bulk-track snapshots; keeps "hot list" dashboards warm | 2m | `src/app/api/trending/filtered/route.ts`, `src/app/api/trending/route.ts`, `src/utils/trending-notification-dedup.ts` |
 | `signals_refresh` | signals scoring data | warms `GET /api/trading/signals`; powers Stage-1 Early Enter scoring | 60s | `main.go runSignalRefresh`, `src/app/api/trading/signals/route.ts` |
 | `signals_sim_track` | mcap-tracking candidates scored per signals strategy | paper buys/sells on `signals-sim` / `signals-sim-rh`; batched chain prices + social context; soft ML size; job-locked | 120s | `src/app/api/signals/sim-track/route.ts`, `src/strategies/signals-pipeline.ts`, `signals-scoring.ts`, `telegram-alpha-sim.ts`, `ml-soft-size.ts` |
@@ -139,7 +140,7 @@ MCap sim entry pipeline (open phase): candidate → L1 rules (`mcap-sim-track.ts
 
 | Domain | Discovery input | UI | Outcome writer | Notes |
 |---|---|---|---|---|
-| trending_bot | Jupiter trending feed | `/dev/algo-tester`, `/dev/strategies` | `recordTrendingBotOutcome` | 4 strategies; registry floor 200k mcap; RH twin sim-only |
+| trending_bot | GMGN market rank (`TRENDING_FEED=gmgn`, live); Jupiter `toptrending/1h` when `jupiter` | `/dev/algo-tester`, `/dev/strategies` | `recordTrendingBotOutcome` | 4 strategies; registry floor 200k mcap; RH twin sim-only |
 | signals | `token_mcap_tracking` + scoring | `/dev/signals` (board/live/tracker) | `recordSignalsOutcome` | `signals_default` + `signals_sell_over_100` |
 | mcap_tracker | mcap snapshots + milestones | mcap tracker UI, `/dev/strategies` | `recordMcapTrackerOutcome` | `first_seen` / `milestone_80` templates |
 | dlmm | Meteora pools | `/dev/dlmm` | `recordDlmmOutcome` | hunter (screen) + healer (manage); separate agent pause |
@@ -174,5 +175,5 @@ Chain split: definitions and sim wallets are per `chain` (`sol` | `robinhood`); 
 
 - Monitor/trigger workers at `/dev/algo-tester` → Config → Workers (`?panel=workers`; needs `CRON_SERVICE_URL`, default `http://cron:8080`). Worker status: `ok` (last success within 2× interval), `stale` (>2× interval), `error` (failed after last success), `never_run`, `disabled`, `offline`.
 - Manual run: `POST /trigger/<worker>` on cron `:8080` with `X-Trigger-Secret`, or the dev proxy `POST /api/workers/trigger`. `npm run dev` alone does not run cron — sim/social history gaps usually mean the `reloadsol-cron` container is down (see algo_overview.md gap-diagnosis).
-- Key env defaults: `TRENDING_TRACKER_SECRET`/`TRIGGER_SECRET` (auth), `SIGNALS_SIM_INTERVAL=120`, `MCAP_TRACKER_SIM_OPEN_INTERVAL=15`, `MCAP_TRACKER_SIM_INTERVAL=120`, `GMGN_SIM_INTERVAL=120`, `GMGN_ACTIVITY_POLL_INTERVAL=180`, `SOCIAL_ROLLUP_INTERVAL=300`, `DLMM_SCREEN_INTERVAL=300`, `DLMM_MANAGE_INTERVAL=60`, `RH_CLMM_MANAGE_INTERVAL=300`, `SOL_ARB_SCAN_INTERVAL=60`, `STRATEGY_REPORT_INTERVAL=86400`, `STRATEGY_TRACK_TELEGRAM_ENABLED` (global telegram kill switch).
+- Key env defaults: `TRENDING_TRACKER_SECRET`/`TRIGGER_SECRET` (auth), `TRENDING_FEED` (`gmgn` \| `jupiter`), `TRENDING_REENTRY_COOLDOWN_MIN=1440`, `TRENDING_MAX_PURCHASES_PER_TOKEN=2`, `TRENDING_DROP_RUGGED` (on), `SIGNALS_SIM_INTERVAL=120`, `MCAP_TRACKER_SIM_OPEN_INTERVAL=15`, `MCAP_TRACKER_SIM_INTERVAL=120`, `GMGN_SIM_INTERVAL=120`, `GMGN_ACTIVITY_POLL_INTERVAL=180`, `SOCIAL_ROLLUP_INTERVAL=300`, `DLMM_SCREEN_INTERVAL=300`, `DLMM_MANAGE_INTERVAL=60`, `RH_CLMM_MANAGE_INTERVAL=300`, `SOL_ARB_SCAN_INTERVAL=60`, `STRATEGY_REPORT_INTERVAL=86400`, `STRATEGY_TRACK_TELEGRAM_ENABLED` (global telegram kill switch).
 - Docs disagreements resolved in favor of code: registry now includes RH sim twins (`att_rh`, `signals_default_rh`, `mcap_enter_*_rh`) and `social_only_fomo_gt7`, GMGN strategies are **inactive by default**, and DLMM/RH cadences differ from older docs' "5m DLMM" phrasing (screen/sim-track 300s, manage 60s).

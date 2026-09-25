@@ -50,7 +50,7 @@ Each subsection: **Capture** (what triggers entry) → **Calculate** (filters/sc
 
 ### `att` (trending_bot)
 
-- **Capture:** `POST /api/trending/track` every 5m → Jupiter trending list (`toptrending/1h`).
+- **Capture:** `POST /api/trending/track` every 5m → **GMGN market rank** (`TRENDING_FEED=gmgn`, live) — set `jupiter` for the legacy `toptrending/1h` list. Discovery only; per-position pricing stays Jupiter (sol) / DexScreener (Robinhood).
 - **Calculate:** Union pre-filter across active strategies; `assignTokenToStrategy()`. Filtering: mcap 200k–5M, organic ≥60, priceChange bands, top holders ≤30%.
 - **Result:** TP1 45% (sell 90%), TP2 100%, SL -35%, max hold 24h, buy 0.035 SOL → `recordTrendingBotOutcome` on **full** close only.
 

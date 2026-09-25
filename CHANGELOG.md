@@ -8,6 +8,14 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Trending bot churn: GMGN discovery feed + durable re-entry guard + drop rugged
+
+- **Durable re-entry guard** ([`trending-reopen-guard.ts`](src/utils/trending-reopen-guard.ts) + `loadClosedTrendingOutcomes()` in [`outcomes.ts`](src/strategies/outcomes.ts)): a `(strategy_id, token_address)` closed inside `TRENDING_REENTRY_COOLDOWN_MIN` (default 1440 = 24h), or past `TRENDING_MAX_PURCHASES_PER_TOKEN` (default 2), is not reopened. Keyed on `strategy_outcomes`, so it survives restarts — the same lesson as the DLMM `outcomeBlockedKeys` guard. Wired into [`trending-bot-rh-sim.ts`](src/strategies/trending-bot-rh-sim.ts) and both Sol open paths in [`trending-track/cycle.ts`](src/strategies/trending-track/cycle.ts).
+- **One discovery feed:** `TRENDING_FEED=gmgn` (live) makes the Sol trending cycle read `getFilteredGmgnTrending('sol')` — the same cached GMGN rank snapshot the Trending Tokens list uses — adapted into the existing filter → assign → buy pipeline ([`gmgn-discovery.ts`](src/strategies/trending-track/gmgn-discovery.ts)). Default `jupiter`. **Discovery only**: pricing (Jupiter/DexScreener) and execution (Jupiter/Raptor) unchanged.
+- **Drop rugged:** `filterRuggedMints()` drops `token_rug_list` mints from the shared feed AFTER the cache read, so a freshly marked rug disappears on the next request — for the UI list and the bot's candidates alike (`TRENDING_DROP_RUGGED`, default on).
+- **Live result:** `att_rh` buys fell from ~9–11 per 10 min to **1** immediately after deploy (13:49 GMT+7), against a baseline of 76,912 closes over 1,239 mints (~26.6 closes/mint/day).
+- SPEC: [docs/specs/SPEC-trending-gmgn-feed-reentry-guard-v1.md](docs/specs/SPEC-trending-gmgn-feed-reentry-guard-v1.md). Tests: `trending-reopen-guard.test.ts`, `gmgn-discovery.test.ts`, extended `gmgn-trending-filtered.test.ts`.
+
 ### Fixed — flat closes, CLOSE chart fallback, follow-alert arms, api_miss kill
 
 - Flat pnl (`0` or dust) is **breakeven**, not won. Win% numerator excludes flats. Telegram CLOSE says BREAKEVEN. Rank cache key bumped so avg×n+win% does not keep the old inflated board.
