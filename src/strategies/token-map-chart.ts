@@ -37,6 +37,11 @@ const OHLC_CACHE_GET_TIMEOUT_MS = 400
  * Budget OHLC cold fill so we return partial/stale instead of hanging.
  */
 export const TOKEN_MAP_CHART_OHLC_BUDGET_MS = 22_000
+/**
+ * When our own 1m series already covers the window, don't wait out the full
+ * upstream budget before falling back to it.
+ */
+export const TOKEN_MAP_CHART_OWN_SERIES_BUDGET_MS = 4_000
 
 function ohlc24h1mCacheKey(tokenAddress: string): string {
   return `ohlc:v1:24h1m:${tokenAddress}`
@@ -1028,9 +1033,15 @@ export async function loadTokenMapChart(params: {
     })
   })()
 
+  // Our own series is a cheap local read; having it lets the upstream budget be
+  // short instead of 22s of dead waiting when brain/ST/GMGN are all failing.
+  const ownBars = await loadOwnOhlcBars(params.tokenAddress, sinceSec, timeTo)
+
   const ohlcBudgeted = withTimeout(
     ohlcPromise,
-    TOKEN_MAP_CHART_OHLC_BUDGET_MS,
+    ownBars.length >= 2
+      ? TOKEN_MAP_CHART_OWN_SERIES_BUDGET_MS
+      : TOKEN_MAP_CHART_OHLC_BUDGET_MS,
   ).catch(() => ({
     candles: [] as TokenOhlcBar[],
     source: 'timeout',
@@ -1070,9 +1081,8 @@ export async function loadTokenMapChart(params: {
       : ohlcLive.source
   if (candles.length === 0) {
     // Our own live 1m series comes before the frozen label/detect snapshots.
-    const own = await loadOwnOhlcBars(params.tokenAddress, sinceSec, timeTo)
-    if (own.length > 0) {
-      candles = own
+    if (ownBars.length > 0) {
+      candles = ownBars
       ohlcSource = 'own-1m'
     } else {
       const persisted = await loadPersistedOhlcFallback(params.tokenAddress)
