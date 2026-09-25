@@ -1,5 +1,5 @@
 import { NextRequest, connection } from 'next/server'
-import { getLogs } from '@/utils/api-logger'
+import { getLogs } from '@/utils/unified-logger'
 
 export async function GET(request: NextRequest) {
   await connection()

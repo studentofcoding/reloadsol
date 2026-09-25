@@ -71,6 +71,17 @@ interface TradeLogEntry extends BaseLogEntry {
 const logBuffer: (ApiLogEntry | TradeLogEntry)[] = []
 const MAX_LOG_ENTRIES = 1000
 
+// Auto-overwrite window: entries older than this are dropped on every write, so the
+// buffer never holds more than ~LOG_BUFFER_TTL_HOURS of activity. MAX_LOG_ENTRIES stays
+// as the hard ceiling. This buffer is the only production-visible log path — note that
+// `console.log` is stripped from production builds (next.config.js `removeConsole`),
+// so `writeLog`'s console output is invisible in prod while `getLogs()` still works.
+const LOG_BUFFER_TTL_HOURS = Math.max(
+    1,
+    Number(process.env.LOG_BUFFER_TTL_HOURS || 24) || 24
+)
+const LOG_BUFFER_TTL_MS = LOG_BUFFER_TTL_HOURS * 60 * 60 * 1000
+
 // Color codes for console output
 const colors = {
     debug: '\x1b[36m',   // Cyan
@@ -99,8 +110,24 @@ export function generateRequestId(): string {
     return `req_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`
 }
 
+// Drop entries past the retention window. The buffer is append-ordered by timestamp,
+// so expired entries are always at the head.
+function pruneExpiredEntries(now: number): void {
+    const cutoff = now - LOG_BUFFER_TTL_MS
+    let expired = 0
+    while (
+        expired < logBuffer.length &&
+        new Date(logBuffer[expired].timestamp).getTime() < cutoff
+    ) {
+        expired++
+    }
+    if (expired > 0) logBuffer.splice(0, expired)
+}
+
 // Core logging function
 function writeLog(entry: ApiLogEntry | TradeLogEntry): void {
+    pruneExpiredEntries(Date.now())
+
     // Add to buffer
     logBuffer.push(entry)
 
@@ -440,6 +467,8 @@ export function getLogStats(): {
     logsByEndpoint: Record<string, number>
     averageResponseTime: number
     errorRate: number
+    /** Auto-overwrite window applied to the in-memory buffer. */
+    retentionHours: number
     tradeStats: {
         totalTrades: number
         successfulTrades: number
@@ -449,6 +478,7 @@ export function getLogStats(): {
 } {
     const stats = {
         totalLogs: logBuffer.length,
+        retentionHours: LOG_BUFFER_TTL_HOURS,
         logsByLevel: {} as Record<LogLevel, number>,
         logsByOperation: {} as Record<TradeOperationType, number>,
         logsByEndpoint: {} as Record<string, number>,

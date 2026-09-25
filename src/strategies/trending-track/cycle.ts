@@ -64,7 +64,7 @@ import {
   performSellOperation,
   shouldSellToken,
 } from './trade-ops'
-import { isWithinTradingHours } from './schedule'
+import { TRADING_HOURS_LABEL, isWithinTradingHours } from './schedule'
 import type { TrackedToken, TradingSimulation, PriceRecord, PriceTracking } from './types'
 
 async function simBrainBuyPlan(
@@ -150,12 +150,15 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
       )
     }
 
-    console.log(`🚀 Starting trading cycle with ${activeStrategies.length} active strategies`)
+    logger.info('api_request', `Starting trading cycle with ${activeStrategies.length} active strategies`)
 
     // Check trading hours restriction
     const timeCheck = isWithinTradingHours()
     if (!timeCheck.allowed) {
-      console.log(`⏰ ${timeCheck.reason}`)
+      logger.info(
+        'api_request',
+        timeCheck.reason || 'Trading restricted outside trading hours'
+      )
 
       // Send Discord notification about time restriction
       if (shouldEnableNotifications()) {
@@ -164,7 +167,7 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
             `⏰ Trading Request Rejected - Outside Trading Hours`,
             ``,
             `Current Time: ${timeCheck.currentTime}`,
-            `Trading Hours: 16:00 - 04:00 GMT+7`,
+            `Trading Hours: ${TRADING_HOURS_LABEL}`,
             `Reason: ${timeCheck.reason}`,
             ``,
             `⏰ ${formatAppDateTime(new Date())}`
@@ -186,14 +189,14 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
         error: 'Trading not allowed at this time',
         message: timeCheck.reason,
         currentTime: timeCheck.currentTime,
-        tradingHours: '16:00 - 04:00 GMT+7',
+        tradingHours: TRADING_HOURS_LABEL,
         timestamp: new Date().toISOString()
       }, { status: 403 })
     }
 
-    console.log(`✅ Trading allowed at ${timeCheck.currentTime}`)
+    logger.info('api_request', `Trading allowed at ${timeCheck.currentTime ?? ''}`)
 
-    console.log('🔍 Starting 5-minute trending token tracking...')
+    logger.info('api_request', 'Starting 5-minute trending token tracking')
 
     // Discovery source: GMGN market rank when TRENDING_FEED=gmgn (the same
     // cached snapshot the UI list reads), else the Jupiter toptrending list.
@@ -201,7 +204,12 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
     if (trendingFeedIsGmgn()) {
       const { tokens: gmgnTokens } = await getFilteredGmgnTrending('sol')
       pools = gmgnTokens.map(gmgnTokenToJupiterPool)
-      console.log(`🧭 TRENDING_FEED=gmgn — ${pools.length} GMGN candidates`)
+      // log.info (not console.log): production builds strip console.log, so this is only
+      // visible via the unified logger buffer — GET /api/logs?level=info.
+      logger.info('token_detection', `TRENDING_FEED=gmgn — ${pools.length} GMGN candidates`, {
+        chain: 'sol',
+        candidates: pools.length,
+      })
     } else {
       // Fetch current trending tokens from Jupiter API with fallback & retry
       const TRENDING_URLS = [
@@ -1785,7 +1793,7 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
     if (DEBUG_LOG) {
       console.debug('✅ 5-minute tracking completed:', summary)
     } else {
-      console.log(`✅ 5-minute tracking completed: processed ${summary.processed} tokens; new ${summary.new_tokens_added}, updated ${summary.tokens_updated}`)
+      logger.info('api_request', `5-minute tracking completed: processed ${summary.processed} tokens; new ${summary.new_tokens_added}, updated ${summary.tokens_updated}`)
 
       // Log strategy distribution summary
       console.log('📊 Active strategy summary:')

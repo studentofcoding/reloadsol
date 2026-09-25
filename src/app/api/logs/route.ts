@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse, connection } from 'next/server'
-import { getLogs, getLogStats, clearLogs, LogLevel } from '@/utils/api-logger'
+import { getLogs, getLogStats, clearLogs, LogLevel } from '@/utils/unified-logger'
 import { formatAppDateTime } from '@/utils/datetime'
 
 export async function GET(request: NextRequest) {
@@ -40,10 +40,15 @@ export async function GET(request: NextRequest) {
       const textOutput = logs.map(log => {
         const timestamp = formatAppDateTime(log.timestamp)
         const duration = log.duration ? `[${log.duration}ms]` : ''
-        const status = log.response?.statusCode ? `[${log.response.statusCode}]` : ''
+        // Unified log entries are a union of API and trade entries — only the API shape
+        // carries endpoint/method/response.
+        const status =
+          'response' in log && log.response?.statusCode ? `[${log.response.statusCode}]` : ''
+        const route =
+          'endpoint' in log && log.endpoint ? `[${log.method ?? ''} ${log.endpoint}]` : `[${log.operation}]`
         const error = log.error ? ` ERROR: ${log.error.message}` : ''
-        
-        return `[${log.level.toUpperCase()}] ${timestamp} [${log.method} ${log.endpoint}] ${status} ${duration} - ${log.message}${error}`
+
+        return `[${log.level.toUpperCase()}] ${timestamp} ${route} ${status} ${duration} - ${log.message}${error}`
       }).join('\n')
 
       return new NextResponse(textOutput, {

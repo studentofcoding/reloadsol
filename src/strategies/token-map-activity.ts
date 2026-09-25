@@ -65,7 +65,10 @@ async function fetchSimActivityForMint(
        FROM trading_records
        WHERE wallet_address = ANY($1::text[])
          AND timestamp >= $2::timestamptz
-         AND data->'tokens' @> jsonb_build_array(jsonb_build_object('mintAddress', $3))
+         -- $3::text is required: a bare parameter inside jsonb_build_object() has no
+         -- inferable type, so the extended protocol rejected the whole statement with
+         -- "could not determine data type of parameter $3" and this feed came back empty.
+         AND data->'tokens' @> jsonb_build_array(jsonb_build_object('mintAddress', $3::text))
        ORDER BY timestamp DESC
        LIMIT $4`,
       [wallets, sinceIso, tokenAddress, limit],

@@ -1,5 +1,6 @@
 import { compareTradeQuotes, checkProviderHealth } from './trade-comparison'
 import { testSingleTrade, benchmarkProviders } from './trade-comparison-test'
+import { fetchTokenMetadataFromJupiter } from './jupiter-metadata'
 import type { TradeQuoteRequest, ProviderQuote } from '@/types'
 
 // Real Jupiter pools data fetched from https://datapi.jup.ag/v1/pools
@@ -842,14 +843,11 @@ export const searchTokenStats = async (tokenAddress: string): Promise<{
   }
 } | null> => {
   try {
-    // Get basic token info from Jupiter
-    const jupiterResponse = await fetch(`https://tokens.jup.ag/token/${tokenAddress}`)
-
-    if (!jupiterResponse.ok) {
-      return null
-    }
-
-    const basicData = await jupiterResponse.json()
+    // Basic token info via the shared Jupiter Token API v2 helper (lite-api.jup.ag), which
+    // throttles and retries 429/504. The previous direct call to
+    // https://tokens.jup.ag/token/<mint> used a retired host that no longer resolves
+    // (getaddrinfo ENOTFOUND), so this function threw on every call and returned null.
+    const basicData = await fetchTokenMetadataFromJupiter(tokenAddress)
 
     // Get price data from Jupiter price API
     let priceData = null
