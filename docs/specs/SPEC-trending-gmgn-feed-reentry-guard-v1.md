@@ -223,7 +223,7 @@ Commit `5d019b5`; deployed via `scripts/ship-standalone-to-vps.sh` (host build r
 - **Gate.** 35 unit tests pass; `lint` 0 errors; `verify:no-raw-useeffect` clean; `next build` exit 0; `npm run start` boots (home 200 / `/api/health` 200).
 - **Hygiene.** Server's foreign WIP (docker-compose ×2, nginx.conf, 5 ml artifacts) byte-identical after the pull — `shasum -a 256 -c` all OK, nothing stashed.
 
-**Open observation:** `att_rh` has **no `strategy_definitions` row** (every row is `chain='sol'`), so the RH twin runs on the registry default and cannot be toggled from Admin. Separate ticket.
+**Resolved (2026-09-25, `8eef7b1`):** `att_rh` had no `strategy_definitions` row *and* the Admin write dropped `chain`. Fixed: `upsertStrategyDefinition` now persists `chain` (default `'sol'`), `PATCH /api/strategies/[id]` resolves it from the registry entry, and `db/init/38-rh-strategy-definitions.sql` seeds all six RH twins. Verified live — migration `INSERT 0 6`, and `PATCH /api/strategies/att_rh` returns 200 with `"chain":"robinhood"`.
 
 ---
 

@@ -8,6 +8,13 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Robinhood strategy twins are Admin-toggleable (chain-less upsert)
+
+- `strategy_definitions.id` is the sole PK and `chain` (added in `24-strategy-chain.sql`) defaulted to `'sol'` — but [`upsertStrategyDefinition`](src/strategies/db.ts) never wrote the column. An Admin toggle on any Robinhood twin therefore wrote `chain='sol'`, which the chain-scoped registry read (`WHERE domain = $1 AND chain = $2`) can never see: the toggle silently no-opped, and `att_rh` in particular had **no row at all** and ran on its registry default.
+- `upsertStrategyDefinition` now accepts + persists `chain` in both INSERT branches and sets `chain = EXCLUDED.chain` on conflict (defaults to `'sol'`, so existing callers are unchanged). `PATCH /api/strategies/[id]` resolves the chain from the registry entry (RH twins carry `chain:'robinhood'`), falling back to `?chain=`, and passes it on all six domain upserts.
+- New [`db/init/38-rh-strategy-definitions.sql`](db/init/38-rh-strategy-definitions.sql): repairs any twin row left on `'sol'`, then seeds the six RH twins (`att_rh`, `signals_default_rh`, `mcap_enter_first_seen_rh`, `mcap_enter_at_80_rh`, `gmgn_smartmoney_rh`, `gmgn_kol_momentum_rh`) with `chain='robinhood'`, `config '{}'` and `is_active` matching their registry defaults — idempotent (`ON CONFLICT DO NOTHING`) and behaviour-neutral.
+- Test: `strategy-definition-chain.test.ts` pins the chain round-trip for both branches plus the `'sol'` default. Verified live: migration `INSERT 0 6`, and `PATCH /api/strategies/att_rh` returns `200` with `"chain":"robinhood"` and persists on the right chain.
+
 ### Fixed — Trending bot churn: GMGN discovery feed + durable re-entry guard + drop rugged
 
 - **Durable re-entry guard** ([`trending-reopen-guard.ts`](src/utils/trending-reopen-guard.ts) + `loadClosedTrendingOutcomes()` in [`outcomes.ts`](src/strategies/outcomes.ts)): a `(strategy_id, token_address)` closed inside `TRENDING_REENTRY_COOLDOWN_MIN` (default 1440 = 24h), or past `TRENDING_MAX_PURCHASES_PER_TOKEN` (default 2), is not reopened. Keyed on `strategy_outcomes`, so it survives restarts — the same lesson as the DLMM `outcomeBlockedKeys` guard. Wired into [`trending-bot-rh-sim.ts`](src/strategies/trending-bot-rh-sim.ts) and both Sol open paths in [`trending-track/cycle.ts`](src/strategies/trending-track/cycle.ts).
