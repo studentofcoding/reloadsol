@@ -220,8 +220,11 @@ CREATE TABLE fomo_fills (
   chain          TEXT NOT NULL DEFAULT 'robinhood',
   UNIQUE (source_fill_id)
 );
-CREATE INDEX idx_fomo_fills_token_ts  ON fomo_fills (token_address, occurred_at DESC);
-CREATE INDEX idx_fomo_fills_wallet_ts ON fomo_fills (wallet_address, occurred_at DESC);
+-- Indexes must match the queries that exist: the demand read filters lower(token_address),
+-- the tape read orders by occurred_at. db/init/40-index-hygiene.sql replaced the original
+-- plain-column pair, which pg_stat_user_indexes showed had never been scanned.
+CREATE INDEX idx_fomo_fills_token_lower_ts ON fomo_fills (lower(token_address), occurred_at DESC);
+CREATE INDEX idx_fomo_fills_occurred       ON fomo_fills (occurred_at DESC);
 ```
 
 > The site's `id` is **monotonic and already present in both WS and `/tape`** — use it as the high-water mark (`last_id`) for resume/reconnect and for dedupe, not just tx hash (a wallet can re-buy the same token).

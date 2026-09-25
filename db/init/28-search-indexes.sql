@@ -27,6 +27,8 @@ CREATE INDEX IF NOT EXISTS idx_strategy_outcomes_chain_token_created
 CREATE INDEX IF NOT EXISTS idx_strategy_outcomes_chain_created
   ON strategy_outcomes (chain, created_at DESC);
 
--- Q7: token containment in trading_records.jsonb `data` (sim activity poll).
-CREATE INDEX IF NOT EXISTS idx_trading_records_data_gin
-  ON trading_records USING gin (data);
+-- Q7: token containment in trading_records.jsonb `data` (sim activity poll). The predicate
+-- is `data->'tokens' @> …`, so the index must be on that expression — a GIN on the whole
+-- `data` column can never be matched to it. See db/init/40-index-hygiene.sql.
+CREATE INDEX IF NOT EXISTS idx_trading_records_tokens_gin
+  ON trading_records USING gin ((data->'tokens') jsonb_path_ops);

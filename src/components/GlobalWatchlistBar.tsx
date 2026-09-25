@@ -267,9 +267,9 @@ export default function GlobalWatchlistBar() {
 
   return (
     <div className="w-full min-h-[40px] mb-2">
-      <div className="flex max-w-6xl mx-auto items-center gap-2 overflow-x-auto px-2 py-1.5 flex-nowrap scrollbar-thin">
+      <div className="flex max-w-6xl mx-auto flex-col gap-1 px-2 py-1.5">
         {showWatchlist ? (
-          <>
+          <div className="flex items-center gap-2 overflow-x-auto flex-nowrap scrollbar-thin">
             <span className="shrink-0 text-[10px] uppercase tracking-wide text-gray-500">
               Watchlist
             </span>
@@ -311,18 +311,11 @@ export default function GlobalWatchlistBar() {
                 </div>
               );
             })}
-          </>
-        ) : null}
-
-        {showWatchlist && showOpen ? (
-          <span
-            className="shrink-0 h-5 w-px bg-gray-600"
-            aria-hidden
-          />
+          </div>
         ) : null}
 
         {showOpen ? (
-          <>
+          <div className="flex items-center gap-2 overflow-x-auto flex-nowrap scrollbar-thin border-t border-gray-800 pt-1">
             <span className="shrink-0 text-[10px] uppercase tracking-wide text-amber-600/90">
               Open
             </span>
@@ -348,7 +341,7 @@ export default function GlobalWatchlistBar() {
                 </div>
               );
             })}
-          </>
+          </div>
         ) : null}
       </div>
 

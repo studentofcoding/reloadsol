@@ -8,6 +8,18 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Postgres index hygiene: one wrong expression cost 438 MB and four slow queries
+
+- **`idx_trading_records_data_gin` was 438 MB and had never been scanned once.** `db/init/28-search-indexes.sql` created it as `USING gin (data)`, but the only containment query ([`token-map-activity.ts`](src/strategies/token-map-activity.ts)) filters `data->'tokens' @>` — Postgres matches a GIN to the indexed *expression*, so it never could use it. The plan instead scanned `idx_trading_records_timestamp` and filtered **66,161 rows** to return nothing (159 ms). Replaced with `idx_trading_records_tokens_gin` (`gin ((data->'tokens') jsonb_path_ops)`) → **1.8–4.4 ms** via `BitmapAnd` with the wallet index.
+- **Same class of bug in `fomo_fills`:** [`fomo-demand.ts`](src/utils/fomo-demand.ts) filters `lower(token_address)`, so the plain-column btree could only be scanned end-to-end then filtered (187 ms) → `idx_fomo_fills_token_lower_ts` → **0.055 ms**. `fomo/ingest`'s `ORDER BY occurred_at DESC LIMIT 50` had **no** index at all (427 ms parallel seq scan) → `idx_fomo_fills_occurred` → **1.6 ms**. `idx_alpha_wallet_roster_score` gives the roster's unfiltered top-N its first support (seq scan → **0.287 ms**).
+- **Space: 807 MB → 384 MB of indexes (−423 MB, −52%).** Never-scanned index space 519 MB → 96 MB. Evidence: `pg_stat_user_indexes.idx_scan = 0` with `stats_reset = 'never'`, so the counters span the database's whole life.
+- **[`db/init/40-index-hygiene.sql`](db/init/40-index-hygiene.sql)** — all `CONCURRENTLY` + `IF [NOT] EXISTS`, re-runnable, no write lock. `28-search-indexes.sql` is corrected at the source so a fresh database no longer builds the unusable GIN just to have `40` drop it.
+- **Rejected by measurement, not taste:** a `(wallet_address, timestamp DESC)` index (the wallet bitmap already serves it), `(status, score DESC, updated_at DESC)` (that query is already 2 ms), a partial `signal_ohlc_labels` index (18 MB table, no slow path), indexing the tiny tables (29 / 26 / 400 rows — a `seq_scan` counter there is not a missing-index signal), and bulk-dropping all 88 zero-scan indexes (**39 are constraint-backed** PK/unique). SPEC: [docs/specs/SPEC-index-hygiene-v1.md](docs/specs/SPEC-index-hygiene-v1.md).
+
+### Changed — Trade header: watchlist row above the open-position row
+
+- [`GlobalWatchlistBar.tsx`](src/components/GlobalWatchlistBar.tsx) was a single left-to-right row (Watchlist chips · vertical divider · open chips). It is now a column with **Watchlist on top and Open beneath it**, each row keeping its own horizontal scroller, with the divider replaced by a top border on the Open row. Guards (`showWatchlist` / `showOpen`), `min-h-[40px]`, centering and the `OpenSellModal` behaviour are unchanged.
+
 ### Added — own 1m OHLC series + honest Freeview chart fetch
 
 - **Our own 1m OHLC series.** `token_ohlc_bars` (0 rows, unread, un-writable, no `volume` column) is adopted: `db/init/39-token-ohlc-bars-own-series.sql` adds `volume`, `source`, `samples` and a retention index. A new **15s `ohlc_sampler` worker** (`POST /api/ohlc/sample`) batches Jupiter Price V3 via `getUsdPrices` for mcap candidates in the 30k–2M band + `trending_token_tracker` rows (≤ `OHLC_SAMPLE_MAX_MINTS`, default 300) and folds each sample into the current minute — `open` first, `high`/`low` extremes, `close` latest, `samples++` — with `OHLC_BARS_RETENTION_HOURS` (48) pruning in the same tick. `volume` is **NULL by design**: no source in our stack exposes a 1-minute volume.
