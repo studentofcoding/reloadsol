@@ -109,6 +109,7 @@ import {
 } from "@/utils/solana";
 import { trackSell, trackClose } from "@/utils/operations-api";
 import { fetchTokenPricesForTracking } from "@/utils/trading-tracker";
+import { computeOpenTradeCycle } from "@/utils/simulation-trades";
 import GmgnKlineChart from "@/components/GmgnKlineChart";
 import { useTradingData } from "./TradingDataProvider";
 // ✅ NEW: Import PnL sharing system
@@ -179,7 +180,7 @@ export default function BulkTokenSeller({
     autoSelectBestEndpoint,
   } = useRpc();
   const triggerPostTradeRefresh = usePostTradeRefresh({ refetchRecords: true });
-  const { trackOperation } = useTradingData();
+  const { trackOperation, records } = useTradingData();
   const { showOutcome, hideOutcome, outcomeModalProps } = useTradeOutcome();
   const [pendingCloseableTokens, setPendingCloseableTokens] = useState<
     TokenToSell[]
@@ -1667,17 +1668,34 @@ export default function BulkTokenSeller({
                   current.solAmount > prev.solAmount ? current : prev,
               );
 
-              if (mostSignificantToken) {
-                // Calculate P&L percentage (we don't have buy data here, so we'll estimate)
-                // This is a simplified approach - in a real scenario you'd want to track buy history
-                const estimatedBuyValue = mostSignificantToken.solAmount * 0.8; // Assume 25% profit for demo
-                const pnlPercentage = pnlShareService.calculatePnLPercentage(
-                  estimatedBuyValue,
-                  mostSignificantToken.solAmount,
+              if (mostSignificantToken && currentSolPrice > 0) {
+                const held = selectedTokens.find(
+                  (t) => t.mintAddress === mostSignificantToken.mintAddress,
                 );
+                const soldUi =
+                  held && held.uiAmount > 0
+                    ? (held.uiAmount * (held.sellPercentage || 100)) / 100
+                    : 0;
+                const cycle = computeOpenTradeCycle(
+                  records,
+                  mostSignificantToken.mintAddress,
+                  "live",
+                );
+                const costUsd =
+                  cycle &&
+                  cycle.weightedBuyPriceUsd > 0 &&
+                  soldUi > 0
+                    ? cycle.weightedBuyPriceUsd * soldUi
+                    : null;
+                const proceedsUsd =
+                  mostSignificantToken.solAmount * currentSolPrice;
+                const pnlPercentage =
+                  costUsd != null
+                    ? pnlShareService.exactPnlPercentage(costUsd, proceedsUsd)
+                    : null;
 
-                if (Math.abs(pnlPercentage) >= 5) {
-                  // Only trigger for trades with >= 5% P&L
+                if (pnlPercentage != null && Math.abs(pnlPercentage) >= 5) {
+                  const costSol = costUsd! / currentSolPrice;
                   setTimeout(async () => {
                     try {
                       await autoTriggerShare({
@@ -1687,7 +1705,7 @@ export default function BulkTokenSeller({
                           "Token",
                         profitPercentage: pnlPercentage,
                         tokenAddress: mostSignificantToken.mintAddress,
-                        solAmountBought: estimatedBuyValue,
+                        solAmountBought: costSol,
                         solAmountSold: mostSignificantToken.solAmount,
                       });
                     } catch (error) {
@@ -1839,6 +1857,7 @@ export default function BulkTokenSeller({
     triggerPostTradeRefresh,
     showOutcome,
     trackOperation,
+    records,
     useGmgnPath,
     useRhParentPath,
     tradeFromAddress,

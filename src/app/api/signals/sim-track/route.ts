@@ -36,6 +36,7 @@ import { isAuthorizedRequest } from '@/utils/dlmm/config'
 import { simWalletForChain } from '@/strategies/sim-wallets'
 import {
   getOpenStrategySimPositions as getOpenPositionsForStrategy,
+  shouldCloseSignalsClExit,
   type StrategySimOpenPosition as OpenPosition,
 } from '@/strategies/open-strategy-sim-positions'
 import { STRATEGY_CHAINS, type StrategyChain } from '@/strategies/types'
@@ -257,6 +258,15 @@ async function runSimTrack(request: NextRequest) {
       const scored = await scoreSignalsForStrategy(strategy, { chain })
       const scoredByMint = new Map(scored.map((s) => [s.token_address, s]))
 
+      // Batch once for cl price-PnL fallback when entry/live mcap missing.
+      const openPrices =
+        openPositions.length > 0
+          ? await getOpenPositionPrices(
+              openPositions.map((p) => p.mintAddress),
+              chain,
+            )
+          : ({} as Record<string, number>)
+
       for (const pos of openPositions) {
         await appendSimPositionMonitorSnapshot({
           records,
@@ -292,7 +302,47 @@ async function runSimTrack(request: NextRequest) {
           })
           closed++
           openMintSet.delete(pos.mintAddress)
+          continue
         }
+
+        // Stage 5a: OR stamped cl TP/SL / maxHold when score says hold.
+        if (!pos.effectiveExit) continue
+        const entryMcap =
+          typeof pos.entryFeatures.entry_mcap === 'number'
+            ? pos.entryFeatures.entry_mcap
+            : typeof pos.entryFeatures.first_mcap === 'number'
+              ? pos.entryFeatures.first_mcap
+              : null
+        const currentMcap =
+          typeof signal?.current_mcap === 'number' ? signal.current_mcap : null
+        const clClose = shouldCloseSignalsClExit({
+          exit: pos.effectiveExit,
+          entryAt: pos.entryAt,
+          entryMcap,
+          currentMcap,
+          entryPriceUsd: pos.entryPriceUsd,
+          currentPriceUsd: openPrices[pos.mintAddress] ?? null,
+        })
+        if (!clClose.close) continue
+        await closeSimPosition({
+          strategyId: strategy.id,
+          chain,
+          mintAddress: pos.mintAddress,
+          symbol: signal?.token_symbol || pos.symbol,
+          entryAt: pos.entryAt,
+          entryFeatures: pos.entryFeatures,
+          exitMcap: currentMcap,
+          exitGrowthPercent:
+            entryMcap != null &&
+            entryMcap > 0 &&
+            currentMcap != null &&
+            currentMcap > 0
+              ? (clClose.pnlPct ?? null)
+              : null,
+          collect,
+        })
+        closed++
+        openMintSet.delete(pos.mintAddress)
       }
 
       // REL-20: flush close-phase writes before re-fetching records
@@ -358,7 +408,7 @@ async function runSimTrack(request: NextRequest) {
           break
         }
 
-        const priceUsd = entryPrices[signal.token_address] || 0.000001
+        const priceUsd = entryPrices[signal.token_address]
         const liveMetrics = await resolveTokenMonitorSnapshot(
           signal.token_address,
           signal.current_mcap,
@@ -401,82 +451,88 @@ async function runSimTrack(request: NextRequest) {
           },
         )
         const annotated = annotateEntryFeatures(baseFeatures, socialCtx)
-        const { attachOhlcRugShadow } = await import('@/strategies/ohlc-rug-shadow')
-        const ohlc = await attachOhlcRugShadow(signal.token_address, annotated, {
-          enforce: true,
+        const { signalsToCanonical } = await import('@/strategies/canonical-params')
+        const { prepareTargetMachinePaperOpen } = await import(
+          '@/strategies/prepare-target-machine-paper-open'
+        )
+        const {
+          appendSpineDecision,
+          spinePassDecision,
+          spineSkipDecision,
+        } = await import('@/strategies/spine-tick-log')
+        const canonicalExit = applyBrainRiskToExit(
+          signalsToCanonical(strategy).exit,
+          brainRisk,
+        )
+        const baseSol =
+          strategy.config.execution.simBuyNative ?? strategy.config.execution.simBuySol
+        const spine = await prepareTargetMachinePaperOpen({
+          mint: signal.token_address,
+          chain,
+          features: annotated,
+          priceUsd,
+          baseSol,
+          baseExit: canonicalExit,
+          entryMcap:
+            typeof signal.current_mcap === 'number' ? signal.current_mcap : null,
         })
-        if (ohlc.reject) {
-          skipped.push(
-            `${symbol}: ohlc_rug (${ohlc.reason ?? 'trip'})`,
+        if (!spine.ok) {
+          skipped.push(`${symbol}: ${spine.reason}`)
+          await appendSpineDecision(
+            spineSkipDecision(
+              'signals_sim_track',
+              signal.token_address,
+              spine.stage,
+              spine.reason,
+              symbol,
+            ),
           )
           continue
         }
-        const { attachMlEntryShadow } = await import('@/strategies/ml-entry-shadow')
-        const ml = await attachMlEntryShadow(ohlc.features, { enforce: false })
-
-        // Phase B: stamp exit-overlay audit only — signals exits stay scoring-driven
-        const { signalsToCanonical } = await import('@/strategies/canonical-params')
         const { resolveExitOverlayForOpen } = await import(
           '@/strategies/potential-exit-overlay'
         )
         const overlayResult = await resolveExitOverlayForOpen({
-          baseExit: applyBrainRiskToExit(signalsToCanonical(strategy).exit, brainRisk),
-          features: ml.features,
+          baseExit: canonicalExit,
+          features: spine.features,
           mintAddress: signal.token_address,
           strategyId: strategy.id,
           persistEffectiveExit: false,
         })
-        const { loadTargetMachineClScore } = await import(
-          '@/strategies/target-machine-cl-score'
-        )
-        const {
-          sizeFromClosedLoop,
-          applyClosedLoopExit,
-          stampTargetMachineCl,
-        } = await import('@/strategies/target-machine-cl-size')
-        const cl = await loadTargetMachineClScore({
-          mint: signal.token_address,
-          chain,
-          entryMcap:
-            typeof signal.current_mcap === 'number' ? signal.current_mcap : null,
-        })
-        const baseSol =
-          strategy.config.execution.simBuyNative ?? strategy.config.execution.simBuySol
-        const sized = sizeFromClosedLoop(baseSol, cl.mlScore)
-        const baseExit = applyBrainRiskToExit(
-          signalsToCanonical(strategy).exit,
-          brainRisk,
-        )
-        const clExit = applyClosedLoopExit(
-          {
-            takeProfitPct: baseExit.takeProfitPct,
-            stopLossPct: baseExit.stopLossPct,
-          },
-          sized.p,
-        )
-        const simSol = scaleOpenSize(sized.sol, brainRisk)
+        const simSol = scaleOpenSize(spine.solAmount, brainRisk)
         if (simSol <= 0) {
           skipped.push(`${symbol}: brain_risk_stand_down`)
+          await appendSpineDecision(
+            spineSkipDecision(
+              'signals_sim_track',
+              signal.token_address,
+              'size',
+              'brain_risk_stand_down',
+              symbol,
+            ),
+          )
           continue
         }
 
+        await appendSpineDecision(
+          spinePassDecision('signals_sim_track', signal.token_address, symbol, {
+            p: spine.p,
+            solAmount: simSol,
+            takeProfitPct: spine.effectiveExit.takeProfitPct,
+            stopLossPct: spine.effectiveExit.stopLossPct,
+          }),
+        )
         await openSignalsSimPosition({
           strategyId: strategy.id,
           chain,
           mintAddress: signal.token_address,
           symbol,
           solAmount: simSol,
-          priceUsd,
-          entryFeatures: stampBrainRisk(
-            stampTargetMachineCl(overlayResult.features, {
-              p: sized.p,
-              sized,
-              exit: clExit,
-              modelVersion: cl.modelVersion,
-            }),
-            brainRisk,
-            { sizedSol: simSol },
-          ),
+          priceUsd: spine.priceUsd,
+          entryFeatures: stampBrainRisk(overlayResult.features, brainRisk, {
+            sizedSol: simSol,
+          }),
+          effectiveExit: spine.effectiveExit,
           collect,
         })
         opened++

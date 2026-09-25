@@ -3,6 +3,7 @@ import { getNativeUsd } from '@/utils/native-usd'
 import { SIGNALS_SIM_WALLET, simWalletForChain } from '@/strategies/sim-wallets'
 import type { StrategyChain } from '@/strategies/types'
 import type { TrackingRecord } from '@/utils/trading-tracker'
+import type { McapEffectiveExit } from '@/utils/mcap-sim-track'
 
 export { SIGNALS_SIM_WALLET }
 
@@ -14,6 +15,8 @@ export async function openSignalsSimPosition(params: {
   solAmount: number
   priceUsd: number
   entryFeatures: Record<string, unknown>
+  /** Target machine / overlay exit frozen at open (same shape as mcap). */
+  effectiveExit?: McapEffectiveExit | null
   /** REL-20: when provided, the record is collected for a later bulk insert
    *  instead of being inserted here (caller's flush surfaces DB errors). */
   collect?: (record: TrackingRecord) => void
@@ -56,6 +59,16 @@ export async function openSignalsSimPosition(params: {
       strategy_id: params.strategyId,
       entry_at: new Date().toISOString(),
       entry_features: params.entryFeatures,
+      entry_price_usd: params.priceUsd,
+      ...(params.effectiveExit
+        ? {
+            effective_exit: {
+              stopLossPct: params.effectiveExit.stopLossPct,
+              takeProfitPct: params.effectiveExit.takeProfitPct,
+              maxHoldHours: params.effectiveExit.maxHoldHours,
+            },
+          }
+        : {}),
     },
   })
 

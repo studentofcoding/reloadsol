@@ -400,7 +400,7 @@ export const SOCIAL_STRATEGIES: Record<string, import('./types').SocialStrategy>
     id: 'social_only_fomo_gt7',
     name: 'Social-only FOMO (>7)',
     description:
-      'Paper trade when FOMO mentions >7 in 30m, also on TRENDINGSSOL, and only on social rollups',
+      'Paper trade when FOMO mentions >7 in 30m (GMGN_Smart_Money_FOMO). No TRENDINGSSOL co-req; mcap/signals presence does not block.',
     is_active: true,
     chain: 'sol',
     execution_mode: 'sim_only',
@@ -409,8 +409,7 @@ export const SOCIAL_STRATEGIES: Record<string, import('./types').SocialStrategy>
         minMentions30m: 7,
         topSource: 'GMGN_Smart_Money_FOMO',
         maxCandidatesPerTick: 5,
-        requireMentionSources: ['TRENDINGSSOL'],
-        listenChannelPeers: { TRENDINGSSOL: '@trendingssol' },
+        requireMentionSources: [],
       },
       execution: { simBuySol: 0.02, maxOpenPositions: 5 },
       exit: { ...DEFAULT_SOCIAL_EXIT },

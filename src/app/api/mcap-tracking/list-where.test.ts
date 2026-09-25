@@ -26,10 +26,11 @@ describe('mcap list label filter', () => {
     )
   })
 
-  it('omitted label adds no label predicate', () => {
+  it('default list hides rugged and stopped rows', () => {
     const built = buildMcapListWhere({ chain: 'sol' })
     expect(built.error).toBeUndefined()
-    expect(built.sql).not.toMatch(/label/i)
+    expect(built.sql).toContain(`(label IS DISTINCT FROM 'rugged')`)
+    expect(built.sql).toContain(`(stop_reason IS NULL)`)
     expect(built.values).toEqual(['sol'])
   })
 
@@ -40,10 +41,25 @@ describe('mcap list label filter', () => {
     expect(all.values).toEqual(omitted.values)
   })
 
+  it('search bypasses default hide so stopped rows are recoverable', () => {
+    const built = buildMcapListWhere({ chain: 'sol', search: '5pSEZ', label: 'all' })
+    expect(built.sql).not.toContain(`stop_reason IS NULL`)
+    expect(built.sql).not.toContain(`label IS DISTINCT FROM 'rugged'`)
+    expect(built.sql).toContain('token_symbol ILIKE')
+  })
+
+  it('explicit rugged chip still lists rugs (no default hide)', () => {
+    const built = buildMcapListWhere({ label: 'rugged' })
+    expect(built.sql).toContain('label = $1')
+    expect(built.sql).not.toContain(`label IS DISTINCT FROM 'rugged'`)
+    expect(built.sql).not.toContain(`stop_reason IS NULL`)
+  })
+
   it('label ANDs with chain so pagination where matches the chip', () => {
     const built = buildMcapListWhere({ chain: 'sol', label: 'potential' })
     expect(built.sql).toContain('chain = $1')
     expect(built.sql).toContain('label = $2')
     expect(built.values).toEqual(['sol', 'potential'])
+    expect(built.sql).not.toContain(`stop_reason IS NULL`)
   })
 })

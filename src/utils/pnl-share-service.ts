@@ -296,10 +296,18 @@ export class PnLShareService {
     }
   }
 
+  /**
+   * (proceeds − cost) / cost × 100. Null when cost is missing so callers
+   * do not invent a percentage.
+   */
+  exactPnlPercentage(cost: number, proceeds: number): number | null {
+    if (!(cost > 0) || !Number.isFinite(proceeds)) return null
+    return ((proceeds - cost) / cost) * 100
+  }
+
   // Calculate PnL percentage from SOL amounts
   calculatePnLPercentage(solAmountBought: number, solAmountSold: number): number {
-    if (solAmountBought <= 0) return 0
-    return ((solAmountSold - solAmountBought) / solAmountBought) * 100
+    return this.exactPnlPercentage(solAmountBought, solAmountSold) ?? 0
   }
 
   // Auto-trigger share modal for successful sells

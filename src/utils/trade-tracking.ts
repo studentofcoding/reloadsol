@@ -78,6 +78,40 @@ export async function trackRealBuy(
   })
 }
 
+export async function publishLiveSwap(
+  trackOperation: TrackFn,
+  params: {
+    side: 'buy' | 'sell'
+    walletAddress: string
+    signature: string
+    tokenMint: string
+    tokenSymbol?: string
+    tokenUiAmount?: number
+    quoteAmount: number
+  },
+): Promise<void> {
+  const meta: RealTradeMeta = {
+    walletAddress: params.walletAddress,
+    signatures: [params.signature],
+    solAmount: params.quoteAmount,
+    jupiter_swap: true,
+    tokens: [
+      {
+        mintAddress: params.tokenMint,
+        symbol: params.tokenSymbol,
+        tokenAmount: params.tokenUiAmount,
+        solAmount: params.quoteAmount,
+      },
+    ],
+  }
+  try {
+    if (params.side === 'buy') await trackRealBuy(trackOperation, meta)
+    else await trackRealSell(trackOperation, meta)
+  } catch (err) {
+    console.error('[publishLiveSwap] ledger write failed', err)
+  }
+}
+
 export async function trackRealSell(
   trackOperation: TrackFn,
   meta: RealTradeMeta,

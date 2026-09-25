@@ -13,6 +13,8 @@ import { useSolRowHoldings } from "@/hooks/useSolRowHoldings";
 import { useWalletBalances } from "@/hooks/useWalletBalances";
 import { isWalletUserRejection } from "@/utils/wallet-rejection";
 import { rowMarketSwap } from "@/utils/row-market-swap";
+import { publishLiveSwap } from "@/utils/trade-tracking";
+import { useTradingData } from "@/components/TradingDataProvider";
 import {
   priorityFeeFromSolInput,
   priorityFeeReserveLamports,
@@ -223,6 +225,7 @@ export default function SignalsTab() {
   const isRhNetwork = network === "robinhood";
   const rowHoldings = useSolRowHoldings(!isRhNetwork);
   const { publicKey, connected, signTransaction } = useWallet();
+  const { trackOperation } = useTradingData();
   const { connection } = useConnection();
   const walletAddress = connected && publicKey ? publicKey.toBase58() : null;
   const { walletBalance: walletBalanceSol, refreshBalances } = useWalletBalances({
@@ -386,6 +389,16 @@ export default function SignalsTab() {
       patchFloatingBuy(tokenAddress, {
         loading: false,
         status: `Sent · impact ${result.impactPct.toFixed(2)}%`,
+      });
+      void publishLiveSwap(trackOperation, {
+        side: "buy",
+        walletAddress: publicKey.toBase58(),
+        signature: result.signature,
+        tokenMint: tokenAddress,
+        tokenUiAmount: result.outAmount
+          ? Number(result.outAmount) / 1e6
+          : undefined,
+        quoteAmount: buySolAmount,
       });
       await refreshBalances(true);
       void rowHoldings.refetchFresh();

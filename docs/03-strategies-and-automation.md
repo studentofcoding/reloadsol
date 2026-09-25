@@ -92,7 +92,7 @@ Go cron (`main.go`) fires each worker; each row: what it tracks → action/alert
 | `mcap_enter_at_80` (+ `_rh`) | mcap_tracker | active (primary thesis) | `milestone_80`; fill = live `current_mcap` at open |
 | `dlmm_default` | dlmm | active | min TVL 50k, fee/TVL 0.1, TP 5%, SL -10%, OOR 16m |
 | `gmgn_smartmoney_default`, `gmgn_kol_momentum`, `gmgn_sm_kol_combined`, RH twins, `gmgn_roster_concurrence` | gmgn | inactive by default (sim_only) | security gate `clean` only; `config.radar`; roster bands |
-| `social_only_fomo_gt7` | social | active | FOMO mentions >7 / 30m on TRENDINGSSOL |
+| `social_only_fomo_gt7` | social | active | FOMO mentions >7 / 30m (FOMO-first; no TRENDINGSSOL co-req) |
 
 Full typed defaults incl. RH twins: `src/strategies/registry.ts`; seeds + later GMGN/social inserts: `db/init/02-schema.sql`, `10`, `11`, `15`.
 

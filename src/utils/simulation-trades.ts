@@ -13,6 +13,30 @@ export interface OpenSimCycle {
   weightedBuyPriceUsd: number
 }
 
+/** Token-amount weighted USD cost basis across adds (partial sells keep basis). */
+export function applyBuyCostBasis(
+  cycle: OpenSimCycle,
+  tokenAmt: number,
+  priceUsd: number | undefined,
+  solPerToken: number,
+  simulationType?: 'manual' | 'strategy',
+): void {
+  const prevAmt = cycle.remainingTokenAmount
+  const prevPx = cycle.weightedBuyPriceUsd
+  cycle.totalSolBought += solPerToken
+  cycle.remainingTokenAmount += tokenAmt
+  if (priceUsd != null && priceUsd > 0 && tokenAmt > 0) {
+    const totalAmt = prevAmt + tokenAmt
+    cycle.weightedBuyPriceUsd =
+      prevAmt > 0 && prevPx > 0
+        ? (prevPx * prevAmt + priceUsd * tokenAmt) / totalAmt
+        : priceUsd
+  }
+  if (simulationType) {
+    cycle.simulationType = simulationType
+  }
+}
+
 /** Compute open simulation cycle for a mint from trading records. */
 export function computeOpenSimCycle(
   records: TrackingRecord[],
@@ -55,20 +79,18 @@ export function computeOpenSimCycles(
             remainingTokenAmount: 0,
             totalSolBought: 0,
             simulationType: op.simulation_type,
-            weightedBuyPriceUsd: tkn.priceUsd || 0,
+            weightedBuyPriceUsd: 0,
           }
           cycles.set(mintAddress, cycle)
         }
 
-        const tokenAmt = tkn.tokenAmount || 0
-        cycle.totalSolBought += solPerToken
-        cycle.remainingTokenAmount += tokenAmt
-        if (tkn.priceUsd) {
-          cycle.weightedBuyPriceUsd = tkn.priceUsd
-        }
-        if (op.simulation_type) {
-          cycle.simulationType = op.simulation_type
-        }
+        applyBuyCostBasis(
+          cycle,
+          tkn.tokenAmount || 0,
+          tkn.priceUsd,
+          solPerToken,
+          op.simulation_type,
+        )
       } else if (op.operationType === 'sell') {
         const cycle = cycles.get(mintAddress)
         if (!cycle) continue
@@ -125,19 +147,17 @@ export function computeOpenTradeCycle(
             remainingTokenAmount: 0,
             totalSolBought: 0,
             simulationType: op.simulation_type,
-            weightedBuyPriceUsd: tkn.priceUsd || 0,
+            weightedBuyPriceUsd: 0,
           }
         }
 
-        const tokenAmt = tkn.tokenAmount || 0
-        cycle.totalSolBought += solPerToken
-        cycle.remainingTokenAmount += tokenAmt
-        if (tkn.priceUsd) {
-          cycle.weightedBuyPriceUsd = tkn.priceUsd
-        }
-        if (op.simulation_type) {
-          cycle.simulationType = op.simulation_type
-        }
+        applyBuyCostBasis(
+          cycle,
+          tkn.tokenAmount || 0,
+          tkn.priceUsd,
+          solPerToken,
+          op.simulation_type,
+        )
       } else if (op.operationType === 'sell' && cycle) {
         let tokenAmt = tkn.tokenAmount || 0
         if (op.close_position) {

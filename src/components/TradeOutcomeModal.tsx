@@ -148,14 +148,18 @@ export default function TradeOutcomeModal({
               success ? 'text-emerald-100' : 'text-red-100'
             }`}
           >
-            {success
-              ? `${operationLabel(operation)} successful`
-              : `${operationLabel(operation)} failed`}
+            {success && operation === 'buy'
+              ? `You've successfully bought ${tokenLabel}`
+              : success
+                ? `${operationLabel(operation)} successful`
+                : `${operationLabel(operation)} failed`}
           </h3>
-          <p className="text-gray-300 text-sm mb-1">{tokenLabel}</p>
-          {success && typeof solAmount === 'number' ? (
+          {success && operation !== 'buy' ? (
+            <p className="text-gray-300 text-sm mb-1">{tokenLabel}</p>
+          ) : null}
+          {success && operation === 'sell' && typeof solAmount === 'number' ? (
             <p className="text-gray-400 text-sm">
-              {operation === 'buy' ? 'Spent' : 'Received'}:{' '}
+              Received:{' '}
               <span className="text-white font-mono">
                 {solAmount.toFixed(4)} {amountUnit}
               </span>

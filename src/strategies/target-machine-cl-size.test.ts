@@ -44,6 +44,17 @@ describe('applyClosedLoopExit', () => {
     expect(r.takeProfitPct).toBe(10)
     expect(r.stopLossPct).toBe(5)
   })
+
+  it('keeps negative strategy SL negative (does not floor to +5)', () => {
+    const r = applyClosedLoopExit({ takeProfitPct: 100, stopLossPct: -50 }, 1)
+    expect(r.stopLossPct).toBeCloseTo(-40)
+    expect(r.stopLossPct).toBeLessThan(0)
+  })
+
+  it('ceil-magnitudes tiny negative SL to at least -5', () => {
+    const r = applyClosedLoopExit({ takeProfitPct: 100, stopLossPct: -1 }, 0)
+    expect(r.stopLossPct).toBe(-5)
+  })
 })
 
 describe('sizeFromClosedLoop', () => {

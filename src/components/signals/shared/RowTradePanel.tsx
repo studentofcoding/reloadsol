@@ -25,6 +25,8 @@ import {
   warmTrackerMarketSwap,
 } from "@/utils/tracker-market-swap";
 import { rowMarketSwap } from "@/utils/row-market-swap";
+import { publishLiveSwap } from "@/utils/trade-tracking";
+import { useTradingData } from "@/components/TradingDataProvider";
 
 type HoldingLeg = {
   balanceRaw: number;
@@ -94,6 +96,7 @@ export default function RowTradePanel({
 }) {
   const { publicKey, connected, signTransaction } = useWallet();
   const { connection } = useConnection();
+  const { trackOperation } = useTradingData();
   const walletAddress = connected && publicKey ? publicKey.toBase58() : null;
   const { walletBalance, usdcBalance, isLoadingBalances, refreshBalances } =
     useWalletBalances({
@@ -253,6 +256,25 @@ export default function RowTradePanel({
         setStatus,
       );
       setSignature(result.signature);
+      const soldUi =
+        side === "sell"
+          ? ((holding?.uiAmount ?? 0) * (Number.parseFloat(sellPercent) || 0)) /
+            100
+          : undefined;
+      // ponytail: pump mints are usually 6 decimals; quote path only needs a positive size
+      const boughtUi =
+        side === "buy" && result.outAmount
+          ? Number(result.outAmount) / 1e6
+          : undefined;
+      void publishLiveSwap(trackOperation, {
+        side,
+        walletAddress: publicKey.toBase58(),
+        signature: result.signature,
+        tokenMint: tokenAddress,
+        tokenSymbol,
+        tokenUiAmount: side === "sell" ? soldUi : boughtUi,
+        quoteAmount: side === "buy" ? humanAmount : Math.max(soldUi ?? 0, 1e-9),
+      });
       setStatus(
         `Sent · impact ${result.impactPct.toFixed(2)}% · auto slippage ${(result.slippageBps / 100).toFixed(2)}%${result.volatile ? " (capped)" : ""}`,
       );

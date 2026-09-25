@@ -1,8 +1,6 @@
 'use server';
 
-import { updateTag } from 'next/cache';
 import { requireActionSession } from './auth';
-import { CACHE_TAGS } from '@/lib/cache-tags';
 import {
   addWatchlistEntry,
   removeWatchlistEntry,
@@ -41,9 +39,7 @@ export async function addToWatchlist(input: WatchlistAddInput) {
     chain,
   });
 
-  // Read-your-own-writes: the watchlist UI reflects the change immediately.
-  updateTag(CACHE_TAGS.watchlist(session.address));
-
+  // Client React Query owns the list cache — no updateTag (avoids full-page refresh).
   return { success: true as const, entry };
 }
 
@@ -60,8 +56,6 @@ export async function removeFromWatchlist(
   }
 
   await removeWatchlistEntry(session.address, address, resolvedChain);
-
-  updateTag(CACHE_TAGS.watchlist(session.address));
 
   return { success: true as const };
 }

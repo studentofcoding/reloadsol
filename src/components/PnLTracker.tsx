@@ -2262,32 +2262,6 @@ export default function PnLTracker() {
             );
           }
 
-          // ✅ NEW: Auto-trigger share modal for fast sells
-          const pnlPercentage = pnlShareService.calculatePnLPercentage(
-            position.solAmountBought,
-            sellResult.totalReceived || 0,
-          );
-
-          if (Math.abs(pnlPercentage) >= 1) {
-            // Only trigger for trades with >= 1% P&L
-            setTimeout(async () => {
-              try {
-                await autoTriggerShare({
-                  coinName: position.symbol || position.name || "Token",
-                  profitPercentage: pnlPercentage,
-                  tokenAddress: position.mintAddress,
-                  solAmountBought: position.solAmountBought,
-                  solAmountSold: sellResult.totalReceived || 0,
-                });
-              } catch (error) {
-                console.error(
-                  "Error auto-triggering share for fast sell:",
-                  error,
-                );
-              }
-            }, 1000);
-          }
-
           // Track operation for PnL and history via React Query system
           try {
             const { fetchTokenPricesForTracking } =
@@ -2296,6 +2270,44 @@ export default function PnLTracker() {
               position.mintAddress,
             ]);
             const currentSolPrice = await getSolPriceUSD();
+
+            const soldUi =
+              tokenToSell.uiAmount * (tokenForSale.sellPercentage / 100);
+            const proceeds = sellResult.totalReceived || 0;
+            const boughtUi = position.buyTokenAmount ?? 0;
+            const costSol =
+              position.buyPriceUsd &&
+              position.buyPriceUsd > 0 &&
+              currentSolPrice > 0 &&
+              soldUi > 0
+                ? (position.buyPriceUsd * soldUi) / currentSolPrice
+                : boughtUi > 0 && position.solAmountBought > 0 && soldUi > 0
+                  ? position.solAmountBought *
+                    Math.min(1, soldUi / boughtUi)
+                  : null;
+            const pnlPercentage =
+              costSol != null
+                ? pnlShareService.exactPnlPercentage(costSol, proceeds)
+                : null;
+
+            if (pnlPercentage != null && Math.abs(pnlPercentage) >= 1) {
+              setTimeout(async () => {
+                try {
+                  await autoTriggerShare({
+                    coinName: position.symbol || position.name || "Token",
+                    profitPercentage: pnlPercentage,
+                    tokenAddress: position.mintAddress,
+                    solAmountBought: costSol!,
+                    solAmountSold: proceeds,
+                  });
+                } catch (error) {
+                  console.error(
+                    "Error auto-triggering share for fast sell:",
+                    error,
+                  );
+                }
+              }, 1000);
+            }
 
             const enhancedTokenData = {
               mintAddress: position.mintAddress,

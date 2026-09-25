@@ -169,13 +169,16 @@ async function openSimPosition(params: {
   scoredEntryFeatures?: Record<string, unknown> | null
   strategy: McapTrackerStrategy
   brainRisk?: ResolvedBrainRisk
+  /** Live USD at the spine pass. Missing stays unset — do not invent a price. */
+  priceUsd?: number | null
   /** REL-20: records are collected and bulk-inserted by the route per phase. */
   collect: (record: TrackingRecord) => void
 }): Promise<void> {
   const simWallet = simWalletForChain(MCAP_TRACKER_SIM_WALLET, params.chain)
   // "sol" amounts are native-token amounts; on robinhood that's ETH.
   const solPrice = await getNativeUsd(params.chain)
-  const priceUsd = 0.000001
+  const priceUsd =
+    params.priceUsd != null && params.priceUsd > 0 ? params.priceUsd : 0.000001
   const tokenAmount =
     priceUsd > 0 && solPrice > 0
       ? (params.solAmount * solPrice) / priceUsd
@@ -1104,32 +1107,55 @@ async function runSimTrack(request: NextRequest) {
         let sized: { sol: number; mult: number }
         let sizedFeatures: Record<string, unknown>
         if (execMode.isSimulated) {
-          const { loadTargetMachineClScore } = await import(
-            '@/strategies/target-machine-cl-score'
+          const { prepareTargetMachinePaperOpen } = await import(
+            '@/strategies/prepare-target-machine-paper-open'
           )
           const {
-            sizeFromClosedLoop,
-            applyClosedLoopExit,
-            stampTargetMachineCl,
-          } = await import('@/strategies/target-machine-cl-size')
-          const cl = await loadTargetMachineClScore({
+            appendSpineDecision,
+            spinePassDecision,
+            spineSkipDecision,
+          } = await import('@/strategies/spine-tick-log')
+          const spine = await prepareTargetMachinePaperOpen({
             mint: snapshot.token_address,
             chain,
+            features: scoredEntryFeatures,
+            priceUsd: liveMetrics.price_usd,
+            baseSol: nativeBuyAmount,
+            baseExit: {
+              takeProfitPct: strategy.config.exit.takeProfitPct,
+              stopLossPct: strategy.config.exit.stopLossPct,
+              maxHoldHours: strategy.config.exit.maxHoldHours,
+            },
             entryMcap: entry.entryMcap,
           })
-          const clSized = sizeFromClosedLoop(nativeBuyAmount, cl.mlScore)
-          sized = clSized
-          const baseExit = {
-            takeProfitPct: strategy.config.exit.takeProfitPct,
-            stopLossPct: strategy.config.exit.stopLossPct,
+          if (!spine.ok) {
+            skipped.push(`${snapshot.token_symbol}: ${spine.reason}`)
+            await appendSpineDecision(
+              spineSkipDecision(
+                'mcap_tracker_sim_track',
+                snapshot.token_address,
+                spine.stage,
+                spine.reason,
+                snapshot.token_symbol,
+              ),
+            )
+            continue
           }
-          const clExit = applyClosedLoopExit(baseExit, clSized.p)
-          sizedFeatures = stampTargetMachineCl(scoredEntryFeatures, {
-            p: clSized.p,
-            sized: clSized,
-            exit: clExit,
-            modelVersion: cl.modelVersion,
-          })
+          sized = spine.sized
+          sizedFeatures = spine.features
+          await appendSpineDecision(
+            spinePassDecision(
+              'mcap_tracker_sim_track',
+              snapshot.token_address,
+              snapshot.token_symbol,
+              {
+                p: spine.p,
+                solAmount: spine.solAmount,
+                takeProfitPct: spine.effectiveExit.takeProfitPct,
+                stopLossPct: spine.effectiveExit.stopLossPct,
+              },
+            ),
+          )
         } else {
           const { softMlSize, stampMlSize } = await import('@/strategies/ml-soft-size')
           sized = softMlSize(nativeBuyAmount, { pBad: ml.pBad })
@@ -1186,6 +1212,7 @@ async function runSimTrack(request: NextRequest) {
             mintAddress: snapshot.token_address,
             symbol: snapshot.token_symbol,
             solAmount: simSol,
+            priceUsd: liveMetrics.price_usd,
             entryMcap: entry.entryMcap,
             entryTemplate: strategy.config.entryTemplate,
             entryAt: entry.entryAt,

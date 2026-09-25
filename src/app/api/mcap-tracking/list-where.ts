@@ -93,6 +93,15 @@ export function buildMcapListWhere(
     values.push(...labelSql.values)
   }
 
+  // Default list: hide stopped/rugged. Search or explicit label chip recovers them.
+  const hasSearch = Boolean(params.search?.trim())
+  const labelRaw = (params.label ?? '').trim()
+  const isDefaultLabel = labelRaw === '' || labelRaw === 'all'
+  if (!hasSearch && isDefaultLabel) {
+    conditions.push(`(label IS DISTINCT FROM 'rugged')`)
+    conditions.push(`(stop_reason IS NULL)`)
+  }
+
   const sql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
   return { sql, values }
 }

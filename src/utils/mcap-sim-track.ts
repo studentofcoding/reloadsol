@@ -20,7 +20,7 @@ export type McapSimOpenPosition = {
   effectiveExit: McapEffectiveExit | null
 }
 
-function readEffectiveExit(sim: Record<string, unknown>): McapEffectiveExit | null {
+export function readEffectiveExit(sim: Record<string, unknown>): McapEffectiveExit | null {
   const raw = sim.effective_exit
   if (!raw || typeof raw !== 'object') return null
   const e = raw as Record<string, unknown>

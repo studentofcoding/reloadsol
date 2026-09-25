@@ -243,6 +243,10 @@ export async function fetchAndScoreSignals(
     conditions.push('is_tracking_stuck = false')
   }
 
+  // Default Signals list: hide stopped/rugged (search recovery is Tracker ?search=).
+  conditions.push(`(label IS DISTINCT FROM 'rugged')`)
+  conditions.push(`(stop_reason IS NULL)`)
+
   params.push(recencyCutoff)
   conditions.push(`first_seen_at >= $${params.length}`)
   params.push(lastUpdateCutoff)

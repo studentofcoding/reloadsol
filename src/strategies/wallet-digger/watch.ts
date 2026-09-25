@@ -288,8 +288,8 @@ export async function runRosterWatch(params?: {
     let simOpened = false
     if (!(await hasOpenSim(cluster.tokenAddress))) {
       try {
-        const priceUsd = readNum(gate.features.gmgn_price_usd) ?? 0.000001
-        await openGmgnSimPosition({
+        const priceUsd = readNum(gate.features.gmgn_price_usd) ?? 0
+        const openedOk = await openGmgnSimPosition({
           strategy: strategy as GmgnStrategy,
           mintAddress: cluster.tokenAddress,
           symbol,
@@ -301,7 +301,7 @@ export async function runRosterWatch(params?: {
           },
           entryPriceUsd: priceUsd,
         })
-        simOpened = true
+        simOpened = openedOk
       } catch (e) {
         log.warn('api_request', 'roster-watch sim open failed', { err: String(e) })
         skipped.push(`${chain}:${symbol}: sim ${e instanceof Error ? e.message : String(e)}`)

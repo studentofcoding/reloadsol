@@ -10,6 +10,7 @@ import NetworkRouteGate from "@/components/NetworkRouteGate";
 import DevRouteGate from "@/components/DevRouteGate";
 import TradingDataProvider from "@/components/TradingDataProvider";
 import TradeProviderBar from "@/components/TradeProviderBar";
+import GlobalWatchlistBar from "@/components/GlobalWatchlistBar";
 import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import {
   isDevRoute,
@@ -51,6 +52,8 @@ export default function TradeShellClient({
 
   return (
     <TradingDataProvider>
+      <GlobalWatchlistBar />
+
       <NavigationTabs
         activeOverlayTab={activeOverlayTab}
         onTabSelect={setActiveOverlayTab}

@@ -188,8 +188,8 @@ async function openSimPosition(params: {
   symbol: string
   entryFeatures: Record<string, unknown>
   entryPriceUsd: number
-}): Promise<void> {
-  await openGmgnSimPosition(params)
+}): Promise<boolean> {
+  return openGmgnSimPosition(params)
 }
 
 export async function POST(request: NextRequest) {
@@ -287,19 +287,22 @@ async function runSimTrack(request: NextRequest) {
         }
 
         const entryPriceUsd =
-          typeof candidate.entryFeatures.gmgn_price_usd === 'number'
+          typeof candidate.entryFeatures.gmgn_price_usd === 'number' &&
+          candidate.entryFeatures.gmgn_price_usd > 0
             ? candidate.entryFeatures.gmgn_price_usd
-            : candidate.tradeUsd > 0
-              ? candidate.tradeUsd / 1000
-              : 0.000001
+            : 0
 
-        await openSimPosition({
+        const openedOk = await openSimPosition({
           strategy,
           mintAddress: candidate.tokenAddress,
           symbol: candidate.symbol,
           entryFeatures: candidate.entryFeatures,
           entryPriceUsd,
         })
+        if (!openedOk) {
+          skipped.push(`${candidate.symbol}: spine_skip`)
+          continue
+        }
 
         opened++
         openMintSet.add(candidate.tokenAddress)

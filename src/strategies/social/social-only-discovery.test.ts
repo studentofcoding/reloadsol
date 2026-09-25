@@ -31,17 +31,15 @@ function rollup(
 }
 
 describe('social-only-discovery', () => {
-  it('registry seeds social_only_fomo_gt7', () => {
+  it('registry seeds social_only_fomo_gt7 FOMO-first (no TRENDINGSSOL co-req)', () => {
     const s = SOCIAL_STRATEGIES.social_only_fomo_gt7
     expect(s.id).toBe('social_only_fomo_gt7')
     expect(s.chain).toBe('sol')
     expect(s.is_active).toBe(true)
     expect(s.config.entry.minMentions30m).toBe(7)
     expect(s.config.entry.topSource).toBe(PATTERN_TOP_SOURCE_GMGN_FOMO)
-    expect(s.config.entry.requireMentionSources).toEqual(['TRENDINGSSOL'])
-    expect(s.config.entry.listenChannelPeers).toEqual({
-      TRENDINGSSOL: '@trendingssol',
-    })
+    expect(s.config.entry.requireMentionSources).toEqual([])
+    expect(s.config.entry.listenChannelPeers).toBeUndefined()
   })
 
   it('mergeSocialStrategy overlays notify and entry', () => {
@@ -88,7 +86,7 @@ describe('social-only-discovery', () => {
     ).toBe('wrong_source')
   })
 
-  it('filters only-social candidates', () => {
+  it('filters candidates; empty requireMentionSources does not need secondary', () => {
     const mintOk = 'MintOk111'
     const mintElsewhere = 'MintElse222'
     const mintClosed = 'MintClosed333'
@@ -106,7 +104,6 @@ describe('social-only-discovery', () => {
       presentElsewhere: new Set([mintElsewhere]),
       openMints: new Set(),
       closedMints: new Set([mintClosed]),
-      requiredMentionMints: new Set([mintOk, mintElsewhere, mintClosed]),
     })
 
     expect(eligible.map((c) => c.tokenAddress)).toEqual([mintOk])
@@ -115,15 +112,19 @@ describe('social-only-discovery', () => {
     expect(skipped.some((s) => s.includes('low_mentions'))).toBe(true)
   })
 
-  it('skips FOMO-ok mint without required secondary source', () => {
+  it('when requireMentionSources set, skips mint without secondary source', () => {
     const mintMissing = 'MintMissing999'
     const mintOk = 'MintWithTrend888'
+    const entryWithTrend = {
+      ...entry,
+      requireMentionSources: ['TRENDINGSSOL'],
+    }
     const { eligible, skipped } = filterSocialOnlyCandidates({
       rollups: [
         rollup({ token_address: mintMissing, mention_count_30m: 20 }),
         rollup({ token_address: mintOk, mention_count_30m: 12 }),
       ],
-      entry,
+      entry: entryWithTrend,
       presentElsewhere: new Set(),
       openMints: new Set(),
       closedMints: new Set(),

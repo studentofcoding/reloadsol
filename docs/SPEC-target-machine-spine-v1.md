@@ -39,7 +39,7 @@ Strategy templates (`first_seen`, `at_80`, …) feed candidates into the spine. 
 2. **Score** — `p =` closed-loop `mlScore` from `loadCombinedScore` / `scoreClosedLoopFromCombined`. Fail-soft; missing → `p = 0.5` for sizing (no hard gate).
 3. **Size / TP / SL** — [`target-machine-cl-size.ts`](../src/strategies/target-machine-cl-size.ts): size via `softMlSize(base, { pBad: 1 - p })`; TP/SL multipliers `0.8+0.4p` / `1.2-0.4p` on strategy base exit %.
 4. **Paper execute** — existing signals / mcap sim opens.
-5. **Resolve → retrain** — existing outcome pipeline (no new resolve code in v1).
+5. **Resolve → retrain** — Stage **5a** (shipped): paper resolve honors stamped `cl` TP/SL. Signals manage closes on score `exit` **OR** frozen `effective_exit` (prefer mcap growth `entry_mcap`→live, else price PnL via `shouldCloseSignalsClExit`). Auto-retrain / cron train still out of scope.
 
 ## Wire points
 
@@ -55,4 +55,4 @@ Strategy templates (`first_seen`, `at_80`, …) feed candidates into the spine. 
 - Gallery / corpus training / labeling honesty
 - Global OHLC `enforce: true`
 - Live execute on this spine
-- Resolve/retrain code changes
+- Auto-retrain / cron train (Stage 5b+)

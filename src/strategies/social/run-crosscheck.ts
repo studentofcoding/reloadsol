@@ -243,16 +243,26 @@ export async function runSignalCrosscheck(body: CrosscheckRequest): Promise<Cros
       parsed.token_name?.trim() ||
       parsed.token_address.slice(0, 8)
 
-    await openSignalsSimPosition({
-      strategyId,
-      mintAddress: parsed.token_address,
-      symbol,
-      solAmount: channelCtx.sim_buy_sol,
-      priceUsd: jupiterPrice ?? parsed.signal_price_usd,
-      entryFeatures: {
+    const priceUsd = jupiterPrice ?? parsed.signal_price_usd
+    const { prepareTargetMachinePaperOpen } = await import(
+      '@/strategies/prepare-target-machine-paper-open'
+    )
+    const {
+      appendSpineDecision,
+      spinePassDecision,
+      spineSkipDecision,
+    } = await import('@/strategies/spine-tick-log')
+    const { signalsToCanonical } = await import('@/strategies/canonical-params')
+    const baseExit = baseStrategy
+      ? signalsToCanonical(baseStrategy).exit
+      : { takeProfitPct: 50, stopLossPct: -25, maxHoldHours: 12 }
+    const spine = await prepareTargetMachinePaperOpen({
+      mint: parsed.token_address,
+      chain: 'sol',
+      features: {
         entry_mcap: parsed.market_cap_usd,
         first_mcap: parsed.market_cap_usd,
-        initial_price_usd: jupiterPrice ?? parsed.signal_price_usd,
+        initial_price_usd: priceUsd,
         signal_price_usd: parsed.signal_price_usd,
         jupiter_price_usd: jupiterPrice,
         pct_diff: diff,
@@ -260,14 +270,47 @@ export async function runSignalCrosscheck(body: CrosscheckRequest): Promise<Cros
         crosscheck_passed: true,
         token_name: parsed.token_name,
       },
+      priceUsd,
+      baseSol: channelCtx.sim_buy_sol,
+      baseExit,
+      entryMcap: parsed.market_cap_usd,
     })
+    if (!spine.ok) {
+      await appendSpineDecision(
+        spineSkipDecision(
+          'signals_sim_track',
+          parsed.token_address,
+          spine.stage,
+          spine.reason,
+          symbol,
+        ),
+      )
+    } else {
+      await openSignalsSimPosition({
+        strategyId,
+        mintAddress: parsed.token_address,
+        symbol,
+        solAmount: spine.solAmount,
+        priceUsd: spine.priceUsd,
+        entryFeatures: spine.features,
+        effectiveExit: spine.effectiveExit,
+      })
+      await appendSpineDecision(
+        spinePassDecision('signals_sim_track', parsed.token_address, symbol, {
+          p: spine.p,
+          solAmount: spine.solAmount,
+          takeProfitPct: spine.effectiveExit.takeProfitPct,
+          stopLossPct: spine.effectiveExit.stopLossPct,
+        }),
+      )
 
-    if (parsed.market_cap_usd != null && parsed.market_cap_usd > 0) {
-      await trackTokenMcap(parsed.token_address, symbol, parsed.market_cap_usd)
+      if (parsed.market_cap_usd != null && parsed.market_cap_usd > 0) {
+        await trackTokenMcap(parsed.token_address, symbol, parsed.market_cap_usd)
+      }
+
+      await updateCrosscheckSimOpened(row.id)
+      simOpened = true
     }
-
-    await updateCrosscheckSimOpened(row.id)
-    simOpened = true
   }
 
   await notifyCrosscheckResult({

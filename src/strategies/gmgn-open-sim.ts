@@ -1,6 +1,4 @@
 import { buildFullEntryFeatureSnapshot } from '@/strategies/resolve-entry-snapshot'
-import { attachMlEntryShadow } from '@/strategies/ml-entry-shadow'
-import { softMlSize, stampMlSize } from '@/strategies/ml-soft-size'
 import type { GmgnStrategy } from '@/strategies/types'
 import { getNativeUsd } from '@/utils/native-usd'
 import { simWalletForChain } from '@/strategies/sim-wallets'
@@ -30,14 +28,13 @@ export async function openGmgnSimPosition(params: {
   symbol: string
   entryFeatures: Record<string, unknown>
   entryPriceUsd: number
-}): Promise<void> {
+}): Promise<boolean> {
   const chain = params.strategy.chain ?? 'sol'
   // solAmount / solPrice are native-token denominated; that's ETH on robinhood.
   const baseSol =
     params.strategy.config.execution.simBuyNative ??
     params.strategy.config.execution.simBuySol
   const solPrice = await getNativeUsd(chain)
-  const priceUsd = params.entryPriceUsd > 0 ? params.entryPriceUsd : 0.000001
 
   const entryAt = new Date().toISOString()
   const entryMcap = readFiniteNumber(params.entryFeatures.gmgn_market_cap_usd)
@@ -55,13 +52,38 @@ export async function openGmgnSimPosition(params: {
     },
     params.entryFeatures,
   )
-  const ml = await attachMlEntryShadow(fullFeatures, { enforce: false })
-  const sized = softMlSize(baseSol, { pBad: ml.pBad })
-  const solAmount = sized.sol
-  const stampedFeatures = stampMlSize(ml.features, sized, {
-    pBad: ml.pBad,
-    pWinner: ml.pWinner,
+  const { prepareTargetMachinePaperOpen } = await import(
+    '@/strategies/prepare-target-machine-paper-open'
+  )
+  const {
+    appendSpineDecision,
+    spinePassDecision,
+    spineSkipDecision,
+  } = await import('@/strategies/spine-tick-log')
+  const spine = await prepareTargetMachinePaperOpen({
+    mint: params.mintAddress,
+    chain,
+    features: fullFeatures,
+    priceUsd: params.entryPriceUsd > 0 ? params.entryPriceUsd : null,
+    baseSol,
+    baseExit: params.strategy.config.exit,
+    entryMcap,
   })
+  if (!spine.ok) {
+    await appendSpineDecision(
+      spineSkipDecision(
+        'gmgn_sim_track',
+        params.mintAddress,
+        spine.stage,
+        spine.reason,
+        params.symbol,
+      ),
+    )
+    return false
+  }
+  const solAmount = spine.solAmount
+  const priceUsd = spine.priceUsd
+  const stampedFeatures = spine.features
   const tokenAmount =
     priceUsd > 0 && solPrice > 0 ? (solAmount * solPrice) / priceUsd : solAmount * 1_000_000
 
@@ -93,6 +115,7 @@ export async function openGmgnSimPosition(params: {
     trading_simulation: {
       entry_at: entryAt,
       entry_price_usd: priceUsd,
+      effective_exit: spine.effectiveExit,
       entry_features: {
         ...stampedFeatures,
         entry_at: entryAt,
@@ -115,4 +138,13 @@ export async function openGmgnSimPosition(params: {
     topHoldersPct,
     features: stampedFeatures,
   })
+  await appendSpineDecision(
+    spinePassDecision('gmgn_sim_track', params.mintAddress, params.symbol, {
+      p: spine.p,
+      solAmount: spine.solAmount,
+      takeProfitPct: spine.effectiveExit.takeProfitPct,
+      stopLossPct: spine.effectiveExit.stopLossPct,
+    }),
+  )
+  return true
 }

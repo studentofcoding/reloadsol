@@ -27,9 +27,10 @@ import {
 import type { SocialStrategy } from '@/strategies/types'
 import {
   getOpenStrategySimPositions as getOpenPositionsForStrategy,
-  shouldClosePriceSimPosition as shouldClosePosition,
+  shouldCloseSignalsClExit,
   type StrategySimOpenPosition as OpenPosition,
 } from '@/strategies/open-strategy-sim-positions'
+import { appendSimPositionMonitorSnapshot } from '@/strategies/sim-monitor-snapshots'
 
 export const maxDuration = 120
 
@@ -165,23 +166,20 @@ async function openSimPosition(params: {
   symbol: string
   entryFeatures: Record<string, unknown>
   entryPriceUsd: number
+  solAmount: number
+  effectiveExit: {
+    takeProfitPct: number
+    stopLossPct: number
+    maxHoldHours: number
+  }
 }): Promise<void> {
-  const solAmount = params.strategy.config.execution.simBuySol
   const solPrice = await getSolPriceUSD()
-  const priceUsd = params.entryPriceUsd > 0 ? params.entryPriceUsd : 0.000001
+  const priceUsd = params.entryPriceUsd
+  const solAmount = params.solAmount
   const tokenAmount =
-    priceUsd > 0 && solPrice > 0 ? (solAmount * solPrice) / priceUsd : solAmount * 1_000_000
+    priceUsd > 0 && solPrice > 0 ? (solAmount * solPrice) / priceUsd : 0
 
   const entryAt = new Date().toISOString()
-
-  const fullFeatures = await buildFullEntryFeatureSnapshot(
-    params.mintAddress,
-    {
-      entryAt,
-      tokenSymbol: params.symbol,
-    },
-    params.entryFeatures,
-  )
 
   const record = buildTradingRecord({
     walletAddress: SOCIAL_SIM_WALLET,
@@ -210,8 +208,9 @@ async function openSimPosition(params: {
     trading_simulation: {
       entry_at: entryAt,
       entry_price_usd: priceUsd,
+      effective_exit: params.effectiveExit,
       entry_features: {
-        ...fullFeatures,
+        ...params.entryFeatures,
         entry_at: entryAt,
         initial_price_usd: priceUsd,
         token_symbol: params.symbol,
@@ -228,7 +227,7 @@ async function openSimPosition(params: {
     tokenSymbol: params.symbol,
     tokenAddress: params.mintAddress,
     isSimulated: true,
-    features: fullFeatures,
+    features: params.entryFeatures,
   })
 }
 
@@ -269,12 +268,21 @@ async function runSimTrack(request: NextRequest) {
 
       const pendingCloses: TrackingRecord[] = []
       for (const pos of openPositions) {
-        const currentPrice = prices[pos.mintAddress] ?? pos.entryPriceUsd
-        const { close, reason } = shouldClosePosition({
+        await appendSimPositionMonitorSnapshot({
+          records,
+          strategyId: strategy.id,
+          mintAddress: pos.mintAddress,
+        })
+        const currentPrice = prices[pos.mintAddress] ?? null
+        const exit = pos.effectiveExit ?? strategy.config.exit
+        const entryMcap = readFiniteNumber(pos.entryFeatures.entry_mcap)
+        const { close, reason } = shouldCloseSignalsClExit({
+          exit,
+          entryAt: pos.entryAt,
+          entryMcap,
+          currentMcap: null,
           entryPriceUsd: pos.entryPriceUsd,
           currentPriceUsd: currentPrice,
-          entryAt: pos.entryAt,
-          exit: strategy.config.exit,
         })
         if (close) {
           await closeSimPosition({
@@ -330,22 +338,69 @@ async function runSimTrack(request: NextRequest) {
           break
         }
 
-        const entryPriceUsd = openPrices[candidate.tokenAddress] || 0.000001
+        const rawPrice = openPrices[candidate.tokenAddress]
+        const entryPriceUsd =
+          typeof rawPrice === 'number' && rawPrice > 0 ? rawPrice : null
         const symbol = candidate.tokenAddress.slice(0, 8)
-
-        await openSimPosition({
-          strategy,
-          mintAddress: candidate.tokenAddress,
-          symbol,
-          entryFeatures: {
+        const entryAt = new Date().toISOString()
+        const fullFeatures = await buildFullEntryFeatureSnapshot(
+          candidate.tokenAddress,
+          { entryAt, tokenSymbol: symbol },
+          {
             mention_count_30m: candidate.mentionCount30m,
             telegram_mention_count_30m: candidate.mentionCount30m,
             telegram_top_source: candidate.topSource,
             top_source: candidate.topSource,
             social_entry: 'social_only_fomo',
           },
-          entryPriceUsd,
+        )
+        const { prepareTargetMachinePaperOpen } = await import(
+          '@/strategies/prepare-target-machine-paper-open'
+        )
+        const {
+          appendSpineDecision,
+          spinePassDecision,
+          spineSkipDecision,
+        } = await import('@/strategies/spine-tick-log')
+        const spine = await prepareTargetMachinePaperOpen({
+          mint: candidate.tokenAddress,
+          chain: SOCIAL_CHAIN,
+          features: fullFeatures,
+          priceUsd: entryPriceUsd,
+          baseSol: strategy.config.execution.simBuySol,
+          baseExit: strategy.config.exit,
         })
+        if (!spine.ok) {
+          skipped.push(`${symbol}: ${spine.reason}`)
+          await appendSpineDecision(
+            spineSkipDecision(
+              'social_sim_track',
+              candidate.tokenAddress,
+              spine.stage,
+              spine.reason,
+              symbol,
+            ),
+          )
+          continue
+        }
+
+        await openSimPosition({
+          strategy,
+          mintAddress: candidate.tokenAddress,
+          symbol,
+          entryFeatures: spine.features,
+          entryPriceUsd: spine.priceUsd,
+          solAmount: spine.solAmount,
+          effectiveExit: spine.effectiveExit,
+        })
+        await appendSpineDecision(
+          spinePassDecision('social_sim_track', candidate.tokenAddress, symbol, {
+            p: spine.p,
+            solAmount: spine.solAmount,
+            takeProfitPct: spine.effectiveExit.takeProfitPct,
+            stopLossPct: spine.effectiveExit.stopLossPct,
+          }),
+        )
 
         opened++
         openMintSet.add(candidate.tokenAddress)

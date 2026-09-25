@@ -34,6 +34,7 @@ import OutcomeReviewModal, {
 } from "@/components/strategies/OutcomeReviewModal";
 import CombinedScoreWeightsPanel from "@/components/strategies/CombinedScoreWeightsPanel";
 import EvalEnginePanel from "@/components/strategies/EvalEnginePanel";
+import SpinePanel from "@/components/strategies/SpinePanel";
 import EarlyEnterNoulShadowPanel from "@/components/strategies/EarlyEnterNoulShadowPanel";
 import Ml2ExitOverlayPanel from "@/components/strategies/Ml2ExitOverlayPanel";
 import StrategyReviewPanel from "@/components/strategies/StrategyReviewPanel";
@@ -158,7 +159,7 @@ function toggleActiveWithNotifySync(
   })
 }
 
-type TabId = "config" | "reports" | "review" | "workers";
+type TabId = "config" | "reports" | "review" | "workers" | "spine";
 
 type StrategiesResponse = {
   success: boolean;
@@ -387,7 +388,7 @@ function AdminToastBanner({
 
 function parseTabParam(value: string | null): TabId {
   if (value === "outcomes" || value === "reports") return "reports";
-  if (value === "workers" || value === "review") return value;
+  if (value === "workers" || value === "review" || value === "spine") return value;
   return "config";
 }
 
@@ -495,6 +496,7 @@ export default function StrategyAdminHub({
   const showWorkers = embedded
     ? embedded.view === "config"
     : tab === "workers";
+  const showSpine = !embedded && tab === "spine";
 
   useEffect(() => {
     if (!embedded) return;
@@ -1090,6 +1092,13 @@ export default function StrategyAdminHub({
           className={`shrink-0 px-4 py-2 text-sm rounded-t ${tab === "workers" ? "bg-gray-800 text-white" : "text-gray-400"}`}
         >
           Workers
+        </button>
+        <button
+          type="button"
+          onClick={() => switchTab("spine")}
+          className={`shrink-0 px-4 py-2 text-sm rounded-t ${tab === "spine" ? "bg-gray-800 text-white" : "text-gray-400"}`}
+        >
+          Spine
         </button>
       </ScrollableMenuRow>
       ) : null}
@@ -2004,6 +2013,12 @@ export default function StrategyAdminHub({
         <div id="algo-tester-review">
           <StrategyReviewPanel />
         </div>
+      ) : null}
+
+      {showSpine ? (
+        <section id="algo-tester-spine">
+          <SpinePanel />
+        </section>
       ) : null}
 
       {showWorkers && (
@@ -3067,7 +3082,7 @@ function SocialCard({
     (entry.requireMentionSources ?? []).join(', '),
   );
   const [trendingssolChannel, setTrendingssolChannel] = useState(
-    entry.listenChannelPeers?.TRENDINGSSOL ?? '@trendingssol',
+    entry.listenChannelPeers?.TRENDINGSSOL ?? '',
   );
   const [maxCandidates, setMaxCandidates] = useState(String(entry.maxCandidatesPerTick));
   const [simBuy, setSimBuy] = useState(String(e.simBuySol));
@@ -3112,25 +3127,25 @@ function SocialCard({
           />
         </label>
         <label className="text-gray-400 col-span-2">
-          Require mention sources (30m, comma-separated)
+          Require mention sources (30m, comma-separated; empty = FOMO-only)
           <input
             className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white"
             value={requireMentionSources}
             onChange={(ev) => setRequireMentionSources(ev.target.value)}
-            placeholder="TRENDINGSSOL"
+            placeholder="optional e.g. TRENDINGSSOL"
           />
         </label>
         <label className="text-gray-400 col-span-2">
-          TRENDINGSSOL channel (ingest listen peer)
+          TRENDINGSSOL channel (optional ingest listen peer)
           <input
             className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white"
             value={trendingssolChannel}
             onChange={(ev) => setTrendingssolChannel(ev.target.value)}
-            placeholder="@trendingssol or -100…"
+            placeholder="@trendingssol or -100… (leave empty if unused)"
           />
           <span className="text-gray-500 mt-1 block">
-            Telegram @username or numeric id. social-ingest polls this; source
-            label stays TRENDINGSSOL for the FOMO gate.
+            Only used when TRENDINGSSOL is in require mention sources.
+            Telegram @username or numeric id for social-ingest listen.
           </span>
         </label>
         <label className="text-gray-400">
@@ -3531,9 +3546,11 @@ function StrategyConfigTab({
             </>
           ) : (
             <>
-              Social-only FOMO entry when a token is present only on{" "}
-              <code className="text-xs">social_token_rollups</code> with FOMO mentions &gt;7 in 30m.
-              Paper wallet: <code className="text-xs">social-sim</code>.
+              FOMO-first paper when{' '}
+              <code className="text-xs">social_token_rollups</code> has
+              GMGN_Smart_Money_FOMO mentions &gt;7 in 30m. No TRENDINGSSOL
+              co-req; already on mcap/signals does not block. Paper wallet:{' '}
+              <code className="text-xs">social-sim</code>.
             </>
           )}
         </p>

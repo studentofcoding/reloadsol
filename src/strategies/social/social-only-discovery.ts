@@ -108,7 +108,8 @@ export function filterSocialOnlyCandidates(params: {
   return { eligible, skipped }
 }
 
-/** Mints present on non-social boards (or open gmgn outcomes). */
+/** Mints present on non-social boards that still block FOMO-first paper.
+ *  Mcap tracker + trading_signals are intentionally ignored (FOMO-first). */
 export async function loadMintsPresentElsewhere(
   tokenAddresses: string[],
 ): Promise<Set<string>> {
@@ -129,12 +130,6 @@ export async function loadMintsPresentElsewhere(
     }
   }
 
-  await addFrom(
-    `SELECT token_address FROM token_mcap_tracking WHERE token_address = ANY($1::text[])`,
-  )
-  await addFrom(
-    `SELECT token_address FROM trading_signals WHERE token_address = ANY($1::text[])`,
-  )
   await addFrom(
     `SELECT token_address FROM trending_token_tracker WHERE token_address = ANY($1::text[])`,
   )

@@ -32,12 +32,16 @@ export function applyClosedLoopExit(
 } {
   const p = resolveClosedLoopP(pRaw)
   const { tpMult, slMult } = closedLoopExitMults(p)
+  const rawTp = base.takeProfitPct * tpMult
+  const rawSl = base.stopLossPct * slMult
   return {
     p,
     tpMult,
     slMult,
-    takeProfitPct: Math.max(TP_MIN, base.takeProfitPct * tpMult),
-    stopLossPct: Math.max(SL_MIN, base.stopLossPct * slMult),
+    takeProfitPct: Math.max(TP_MIN, rawTp),
+    // Negative SL (e.g. -50) must stay negative; Math.max(5, -50) was wrong.
+    stopLossPct:
+      rawSl < 0 ? Math.min(-SL_MIN, rawSl) : Math.max(SL_MIN, rawSl),
   }
 }
 

@@ -206,6 +206,15 @@ export function useGlobalWatchlist() {
     }
   };
 
+  const removingAddress =
+    removeMutation.isPending && removeMutation.variables
+      ? removeMutation.variables
+      : null;
+  const addingAddress =
+    addMutation.isPending && addMutation.variables
+      ? addMutation.variables.tokenAddress
+      : null;
+
   return {
     entries,
     currentPrices,
@@ -217,6 +226,9 @@ export function useGlobalWatchlist() {
     remove: removeMutation.mutateAsync,
     toggle,
     isPending: addMutation.isPending || removeMutation.isPending,
+    removingAddress,
+    addingAddress,
+    isRemoving: (tokenAddress: string) => removingAddress === tokenAddress,
     walletConnected: enabled,
   };
 }

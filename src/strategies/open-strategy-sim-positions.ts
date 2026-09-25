@@ -1,5 +1,10 @@
 import { computeOpenSimCycle } from '@/utils/simulation-trades'
 import type { TrackingRecord } from '@/utils/trading-tracker'
+import {
+  readEffectiveExit,
+  type McapEffectiveExit,
+} from '@/utils/mcap-sim-track'
+import { computeMcapSimPnlPct } from '@/utils/mcap-tracker'
 
 export type StrategySimOpenPosition = {
   mintAddress: string
@@ -7,6 +12,7 @@ export type StrategySimOpenPosition = {
   entryAt: string | null
   entryPriceUsd: number
   entryFeatures: Record<string, unknown>
+  effectiveExit: McapEffectiveExit | null
 }
 
 /** Open strategy sim cycles for a wallet filtered by bot_strategy. */
@@ -49,6 +55,7 @@ export function getOpenStrategySimPositions(
         entryAt: typeof sim.entry_at === 'string' ? sim.entry_at : null,
         entryPriceUsd,
         entryFeatures,
+        effectiveExit: readEffectiveExit(sim),
       })
     }
   }
@@ -94,4 +101,56 @@ export function shouldClosePriceSimPosition(params: {
     }
   }
   return { close: false, reason: 'hold', pnlPct }
+}
+
+/**
+ * Target machine signals resolve: prefer mcap growth vs entry_mcap, else price PnL.
+ */
+export function shouldCloseSignalsClExit(params: {
+  exit: PriceSimExitConfig
+  entryAt: string | null
+  entryMcap: number | null
+  currentMcap: number | null
+  entryPriceUsd: number
+  currentPriceUsd: number | null
+  nowMs?: number
+}): PriceSimExitDecision {
+  const { exit, entryAt } = params
+  const entryMcap =
+    params.entryMcap != null &&
+    Number.isFinite(params.entryMcap) &&
+    params.entryMcap > 0
+      ? params.entryMcap
+      : null
+  const currentMcap =
+    params.currentMcap != null &&
+    Number.isFinite(params.currentMcap) &&
+    params.currentMcap > 0
+      ? params.currentMcap
+      : null
+
+  if (entryMcap != null && currentMcap != null) {
+    const growth = computeMcapSimPnlPct(entryMcap, currentMcap)
+    if (growth <= exit.stopLossPct) {
+      return { close: true, reason: 'stop_loss', pnlPct: growth }
+    }
+    if (growth >= exit.takeProfitPct) {
+      return { close: true, reason: 'take_profit', pnlPct: growth }
+    }
+    if (entryAt && exit.maxHoldHours > 0) {
+      const heldMs = (params.nowMs ?? Date.now()) - new Date(entryAt).getTime()
+      if (heldMs >= exit.maxHoldHours * 60 * 60 * 1000) {
+        return { close: true, reason: 'max_hold', pnlPct: growth }
+      }
+    }
+    return { close: false, reason: 'hold', pnlPct: growth }
+  }
+
+  return shouldClosePriceSimPosition({
+    entryPriceUsd: params.entryPriceUsd,
+    currentPriceUsd: params.currentPriceUsd ?? 0,
+    entryAt,
+    exit,
+    nowMs: params.nowMs,
+  })
 }
