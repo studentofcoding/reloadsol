@@ -26,3 +26,7 @@ export const MIN_SOL_BALANCE = parseFloat(process.env.MIN_SOL_BALANCE || '0.1') 
 export const TOKEN_PURCHASE_COOLDOWN_HOURS = parseInt(process.env.TOKEN_PURCHASE_COOLDOWN_HOURS || '24') // Hours to wait before re-purchasing same token
 export const MAX_PURCHASES_PER_TOKEN = parseInt(process.env.MAX_PURCHASES_PER_TOKEN || '2') // Maximum times to purchase same token
 export const MIN_WALLET_BALANCE_FOR_DUPLICATE_CHECK = 1000 // Minimum token balance to consider "already holding"
+
+// === Re-entry / churn guard keyed on strategy_outcomes (GMGN-feed path) ===
+export const TRENDING_REENTRY_COOLDOWN_MIN = parseInt(process.env.TRENDING_REENTRY_COOLDOWN_MIN || '1440') // Minutes a (strategy, mint) is blocked after a close
+export const TRENDING_MAX_PURCHASES_PER_TOKEN = parseInt(process.env.TRENDING_MAX_PURCHASES_PER_TOKEN || '2') // Lifetime opens per (strategy, mint)

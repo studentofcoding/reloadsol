@@ -8,8 +8,13 @@
 import { fetchTradingRecordsForWallet } from './db'
 import { decideRhTrendingExit } from './exit-ladder'
 import { getActiveStrategiesWithState } from './load-strategy'
-import { recordTrendingBotOutcome } from './outcomes'
+import { loadClosedTrendingOutcomes, recordTrendingBotOutcome } from './outcomes'
 import { RH_MAX_OPEN_POSITIONS_DEFAULT } from './registry'
+import { trendingBlockedKeys, trendingReentryKey } from '@/utils/trending-reopen-guard'
+import {
+  TRENDING_MAX_PURCHASES_PER_TOKEN,
+  TRENDING_REENTRY_COOLDOWN_MIN,
+} from './trending-track/constants'
 import { simWalletForChain, TRENDING_BOT_SIM_WALLET } from './sim-wallets'
 import type { TrendingBotStrategy } from './types'
 import { getFilteredGmgnTrending } from '@/utils/gmgn-trending-feed'
@@ -289,6 +294,12 @@ export async function runTrendingBotRhSimCycle(): Promise<RhTrendingSimResult[]>
 
   const { tokens } = await getFilteredGmgnTrending(CHAIN)
   const records = await fetchTradingRecordsForWallet(SIM_WALLET)
+  // Durable re-entry guard: never reopen a (strategy, mint) already closed
+  // inside the cooldown, or past its lifetime open cap.
+  const blocked = trendingBlockedKeys(await loadClosedTrendingOutcomes(CHAIN), {
+    cooldownMinutes: TRENDING_REENTRY_COOLDOWN_MIN,
+    maxPurchasesPerToken: TRENDING_MAX_PURCHASES_PER_TOKEN,
+  })
   const results: RhTrendingSimResult[] = []
 
   for (const strategyId of strategies) {
@@ -353,6 +364,10 @@ export async function runTrendingBotRhSimCycle(): Promise<RhTrendingSimResult[]>
       strategy.max_open_positions ?? RH_MAX_OPEN_POSITIONS_DEFAULT
     for (const token of candidates) {
       if (openMints.has(token.token_address)) continue
+      if (blocked.has(trendingReentryKey(strategyId, token.token_address))) {
+        skipped.push(`${token.token_symbol}: re-entry cooldown`)
+        continue
+      }
       if (openMints.size >= maxOpenPositions) {
         skipped.push(`${token.token_symbol}: max positions`)
         break

@@ -338,6 +338,45 @@ export async function loadRecentlyClosedDlmmOutcomes(
   }
 }
 
+/**
+ * Closed trending_bot outcomes for a chain, for the durable re-entry guard.
+ * Durable across restarts, unlike the transient position-table checks.
+ */
+export async function loadClosedTrendingOutcomes(
+  chain: StrategyChain,
+  limit = 2000,
+): Promise<import('@/utils/trending-reopen-guard').TrendingOutcomeRow[]> {
+  try {
+    const { rows } = await query<{
+      strategy_id: string
+      token_address: string
+      exit_at: string | null
+      created_at: string | null
+    }>(
+      `SELECT strategy_id, token_address, exit_at, created_at
+       FROM strategy_outcomes
+       WHERE domain = 'trending_bot'
+         AND chain = $1
+       ORDER BY created_at DESC
+       LIMIT $2`,
+      [chain, limit],
+    )
+    return rows.map((r) => ({
+      strategy_id: r.strategy_id,
+      token_address: r.token_address,
+      exit_at: r.exit_at,
+      created_at: r.created_at,
+    }))
+  } catch (error) {
+    if (isMissingSchemaError(error)) return []
+    console.warn(
+      '[strategies/outcomes] closed trending outcome lookup failed:',
+      error instanceof Error ? error.message : error,
+    )
+    return []
+  }
+}
+
 /** Closed positions whose outcome insert failed after timestamp coerce. Skip until process restart. */
 const dlmmOutcomeSyncSkipIds = new Set<string>()
 

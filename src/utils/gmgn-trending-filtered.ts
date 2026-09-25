@@ -216,3 +216,21 @@ export function filterAndSortGmgnTrending(
     total_after_filter: filtered.length,
   }
 }
+
+/**
+ * Rugged mints (token_rug_list) never reach the trending list or the bot's
+ * candidates. Pure so the feed can apply it AFTER the cache read — a freshly
+ * marked rug disappears immediately instead of waiting out the cache window.
+ */
+export function filterRuggedMints<T extends { token_address: string }>(
+  tokens: T[],
+  rugSet: Set<string>,
+): T[] {
+  if (rugSet.size === 0) return tokens
+  return tokens.filter((t) => !rugSet.has(t.token_address))
+}
+
+/** Rug filter toggle. On unless explicitly set to `false`. */
+export function trendingDropRuggedEnabled(): boolean {
+  return (process.env.TRENDING_DROP_RUGGED || 'true').trim().toLowerCase() !== 'false'
+}

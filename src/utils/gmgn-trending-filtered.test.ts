@@ -3,6 +3,7 @@ import type { GmgnMarketRankRow } from '@/utils/gmgn-api'
 import {
   criteriaForChain,
   filterAndSortGmgnTrending,
+  filterRuggedMints,
   GMGN_FILTERED_CRITERIA,
   gmgnCommunityCue,
   gmgnFomoCue,
@@ -11,6 +12,7 @@ import {
   normalizePriceChangeToFraction,
   passesGmgnFilteredCriteria,
   ROBINHOOD_FILTERED_CRITERIA,
+  trendingDropRuggedEnabled,
 } from '@/utils/gmgn-trending-filtered'
 
 describe('normalizePriceChangeToFraction', () => {
@@ -302,5 +304,38 @@ describe('filterAndSortGmgnTrending with chain arg', () => {
     const rhResult = filterAndSortGmgnTrending([baseRow], 'robinhood')
     expect(solResult.tokens).toHaveLength(0)
     expect(rhResult.tokens).toHaveLength(1)
+  })
+})
+
+describe('filterRuggedMints', () => {
+  const tokens = [{ token_address: 'MINT_A' }, { token_address: 'MINT_B' }]
+
+  it('drops mints present in the rug set', () => {
+    expect(filterRuggedMints(tokens, new Set(['MINT_B'])).map((t) => t.token_address)).toEqual([
+      'MINT_A',
+    ])
+  })
+
+  it('is a no-op for an empty rug set', () => {
+    expect(filterRuggedMints(tokens, new Set())).toBe(tokens)
+  })
+
+  it('keeps every mint when none is rugged', () => {
+    expect(filterRuggedMints(tokens, new Set(['OTHER']))).toHaveLength(2)
+  })
+})
+
+describe('trendingDropRuggedEnabled', () => {
+  const original = process.env.TRENDING_DROP_RUGGED
+
+  it('defaults on and only disables on an explicit false', () => {
+    delete process.env.TRENDING_DROP_RUGGED
+    expect(trendingDropRuggedEnabled()).toBe(true)
+    process.env.TRENDING_DROP_RUGGED = 'false'
+    expect(trendingDropRuggedEnabled()).toBe(false)
+    process.env.TRENDING_DROP_RUGGED = 'true'
+    expect(trendingDropRuggedEnabled()).toBe(true)
+    if (original === undefined) delete process.env.TRENDING_DROP_RUGGED
+    else process.env.TRENDING_DROP_RUGGED = original
   })
 })

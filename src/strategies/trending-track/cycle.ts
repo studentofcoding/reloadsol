@@ -29,15 +29,19 @@ import {
   getUnionFilterForActiveStrategies,
 } from '@/strategies/load-strategy'
 import { runTrendingBotRhSimCycle } from '@/strategies/trending-bot-rh-sim'
+import { loadClosedTrendingOutcomes } from '@/strategies/outcomes'
+import { trendingBlockedKeys, trendingReentryKey } from '@/utils/trending-reopen-guard'
 import { resolveTrendingSimMode } from '@/utils/trending-execution-mode'
 import { applyBrainTrendingUniverse } from './brain-universe'
+import { getFilteredGmgnTrending } from '@/utils/gmgn-trending-feed'
+import { gmgnTokenToJupiterPool, trendingFeedIsGmgn } from './gmgn-discovery'
 import { getBuyAmountForStrategy } from './strategy-params'
 import {
   createBrainRiskSession,
   scaleOpenSize,
   type ResolvedBrainRisk,
 } from '@/utils/brain-regime-risk'
-import { TRACKER_TABLE, DISCORD_WEBHOOK_URL, DEBUG_LOG } from './constants'
+import { TRACKER_TABLE, DISCORD_WEBHOOK_URL, DEBUG_LOG, TRENDING_REENTRY_COOLDOWN_MIN, TRENDING_MAX_PURCHASES_PER_TOKEN } from './constants'
 import {
   initializeStrategyTracking,
   activeTrades,
@@ -191,63 +195,74 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
 
     console.log('🔍 Starting 5-minute trending token tracking...')
 
-    // Fetch current trending tokens from Jupiter API with fallback & retry
-    const TRENDING_URLS = [
-      'https://datapi.jup.ag/v1/pools/toptrending/1h',
-      'https://api.jup.ag/v1/pools/toptrending/1h',
-    ]
+    // Discovery source: GMGN market rank when TRENDING_FEED=gmgn (the same
+    // cached snapshot the UI list reads), else the Jupiter toptrending list.
+    let pools: any[]
+    if (trendingFeedIsGmgn()) {
+      const { tokens: gmgnTokens } = await getFilteredGmgnTrending('sol')
+      pools = gmgnTokens.map(gmgnTokenToJupiterPool)
+      console.log(`🧭 TRENDING_FEED=gmgn — ${pools.length} GMGN candidates`)
+    } else {
+      // Fetch current trending tokens from Jupiter API with fallback & retry
+      const TRENDING_URLS = [
+        'https://datapi.jup.ag/v1/pools/toptrending/1h',
+        'https://api.jup.ag/v1/pools/toptrending/1h',
+      ]
 
-    let response: Response | null = null
+      let response: Response | null = null
 
-    for (const url of TRENDING_URLS) {
-      try {
-        response = await fetch(url, {
-          headers: {
-            accept: 'application/json',
-            'cache-control': 'no-cache',
-            'user-agent': 'reloadsol-bot/1.0 (+https://reloadsol.xyz)'
+      for (const url of TRENDING_URLS) {
+        try {
+          response = await fetch(url, {
+            headers: {
+              accept: 'application/json',
+              'cache-control': 'no-cache',
+              'user-agent': 'reloadsol-bot/1.0 (+https://reloadsol.xyz)'
+            }
+          })
+
+          if (response.ok) break
+
+          if (response.status === 403 || response.status === 429) {
+            console.warn(`Trending track API ${url} responded with ${response.status}. Retrying next mirror...`)
+            await new Promise(res => setTimeout(res, 500))
+            continue
           }
-        })
 
-        if (response.ok) break
-
-        if (response.status === 403 || response.status === 429) {
-          console.warn(`Trending track API ${url} responded with ${response.status}. Retrying next mirror...`)
-          await new Promise(res => setTimeout(res, 500))
-          continue
+          throw new Error(`Jupiter API responded with status: ${response.status}`)
+        } catch (err) {
+          console.error(`Error fetching trending tokens from ${url}:`, err)
         }
-
-        throw new Error(`Jupiter API responded with status: ${response.status}`)
-      } catch (err) {
-        console.error(`Error fetching trending tokens from ${url}:`, err)
       }
-    }
 
-    if (!response || !response.ok) {
-      throw new Error('All Jupiter trending API endpoints failed')
-    }
+      if (!response || !response.ok) {
+        throw new Error('All Jupiter trending API endpoints failed')
+      }
 
-    const data = await response.json() as JupiterResponse
+      const data = await response.json() as JupiterResponse
 
-    if (!Array.isArray(data?.pools)) {
-      throw new Error('Invalid Jupiter trending response: missing pools array')
+      if (!Array.isArray(data?.pools)) {
+        throw new Error('Invalid Jupiter trending response: missing pools array')
+      }
+
+      pools = data.pools
     }
 
     // Opt-in: intersect Jupiter toptrending with market-brain /union (membership).
     // Off by default; skipped when MARKET_BRAIN_TOKEN is missing. Does not change execute.
-    const brainUniverse = await applyBrainTrendingUniverse(data.pools)
+    const brainUniverse = await applyBrainTrendingUniverse(pools)
     if (brainUniverse.error && !brainUniverse.applied) {
       console.warn(`🧠 market-brain trending universe skipped: ${brainUniverse.error}`)
     } else if (brainUniverse.applied) {
       console.log(
-        `🧠 market-brain /union membership: kept ${brainUniverse.kept}/${brainUniverse.total} Jupiter pools (${brainUniverse.unionSize} union mints)`,
+        `🧠 market-brain /union membership: kept ${brainUniverse.kept}/${brainUniverse.total} candidates (${brainUniverse.unionSize} union mints)`,
       )
     }
-    data.pools = brainUniverse.pools
+    pools = brainUniverse.pools
     const brainRiskSession = createBrainRiskSession()
 
     // Enhanced filtering with comprehensive tracking
-    console.log(`🔍 Starting enhanced token filtering for ${data.pools.length} tokens...`)
+    console.log(`🔍 Starting enhanced token filtering for ${pools.length} tokens...`)
     const customFilterConfig = parseCustomFilterConfig()
     const { filterConfig: unionFilter } = await getUnionFilterForActiveStrategies()
 
@@ -260,7 +275,7 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
     console.log(`🔧 Union pre-filter config:`, effectiveFilter)
 
     const { results: filterResults, summary: filteringSummary } =
-      await performEnhancedFiltering(data.pools, undefined, effectiveFilter)
+      await performEnhancedFiltering(pools, undefined, effectiveFilter)
 
     // Extract accepted tokens
     const filteredTokens = filterResults
@@ -498,6 +513,16 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
       await query(`DELETE FROM ${TRACKER_TABLE} WHERE id = ANY($1::text[])`, [purgeIds])
     }
 
+    // Durable re-entry guard (strategy_outcomes-keyed): never reopen a
+    // (strategy, mint) already closed inside the cooldown or past its cap.
+    const trendingBlocked = trendingBlockedKeys(
+      await loadClosedTrendingOutcomes('sol'),
+      {
+        cooldownMinutes: TRENDING_REENTRY_COOLDOWN_MIN,
+        maxPurchasesPerToken: TRENDING_MAX_PURCHASES_PER_TOKEN,
+      },
+    )
+
     // Assign strategies to filtered tokens
     console.log(`🎯 Assigning strategies to ${filteredTokens.length} filtered tokens...`)
 
@@ -724,6 +749,11 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
 
             if (!tokenMatchesTrendingBotStrategy(token, strategy)) {
               console.log(`🚫 Token ${token.token_symbol} rejected by strategy '${assignedStrategy}': outside filtering band`)
+              continue
+            }
+
+            if (trendingBlocked.has(trendingReentryKey(assignedStrategy, token.token_address))) {
+              console.log(`⏭️ Token ${token.token_symbol} skipped: re-entry cooldown (${assignedStrategy})`)
               continue
             }
 
@@ -1016,6 +1046,11 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
 
               if (!tokenMatchesTrendingBotStrategy(token, strategy)) {
                 console.log(`🚫 Dip buy ${token.token_symbol} rejected by '${assignedStrategy}': outside filtering band`)
+                continue
+              }
+
+              if (trendingBlocked.has(trendingReentryKey(assignedStrategy, token.token_address))) {
+                console.log(`⏭️ Dip buy ${token.token_symbol} skipped: re-entry cooldown (${assignedStrategy})`)
                 continue
               }
 

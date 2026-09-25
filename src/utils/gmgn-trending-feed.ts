@@ -3,9 +3,12 @@ import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
 import {
   criteriaForChain,
   filterAndSortGmgnTrending,
+  filterRuggedMints,
+  trendingDropRuggedEnabled,
   type GmgnFilteredCriteria,
   type GmgnFilteredTrendingToken,
 } from '@/utils/gmgn-trending-filtered'
+import { getRugAddressSet } from '@/utils/rug-list/db'
 import { bulkTrackTokenMcaps, isInTrackingRange } from '@/utils/mcap-tracker'
 import { attachFirstDetections } from '@/utils/first-detection'
 import { fetchWithCache } from '@/utils/portfolio-cache'
@@ -92,9 +95,29 @@ export async function getFilteredGmgnTrending(
   }
 
   const { data, origin } = await run
+  // Rug filter runs AFTER the cache read so a freshly marked rug drops on the
+  // next request instead of waiting out the TTL window.
+  const tokens = await dropRuggedMints(
+    await attachFirstDetections(data.tokens, chain),
+    chain,
+  )
   return {
     ...data,
-    tokens: await attachFirstDetections(data.tokens, chain),
+    tokens,
     cached: origin !== 'miss',
+  }
+}
+
+/** Drop mints in the shared rug registry (`token_rug_list`) for this chain. */
+async function dropRuggedMints<T extends { token_address: string }>(
+  tokens: T[],
+  chain: GmgnTradeChain,
+): Promise<T[]> {
+  if (tokens.length === 0 || !trendingDropRuggedEnabled()) return tokens
+  try {
+    return filterRuggedMints(tokens, await getRugAddressSet(chain))
+  } catch (error) {
+    console.warn('[gmgn-trending-feed] rug filter failed, serving unfiltered:', error)
+    return tokens
   }
 }
