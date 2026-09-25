@@ -339,13 +339,22 @@ export async function loadRecentlyClosedDlmmOutcomes(
 }
 
 /**
- * Closed trending_bot outcomes for a chain, for the durable re-entry guard.
- * Durable across restarts, unlike the transient position-table checks.
+ * Closed outcomes for the re-entry guard.
+ *
+ * The load window is derived from the cooldown and filtered in SQL, rather than relying
+ * on a bare `LIMIT` against `created_at`. With 76k+ rows a plain limit only covered the
+ * last ~31h, so at high churn a still-cooling mint could fall out of the set and be
+ * reopened. The window is floored at 24h so the lifetime-cap counts keep the same
+ * effective horizon they had under the old limit.
+ *
+ * Ordered by the same timestamp the guard reads: `exit_at`, falling back to `created_at`.
  */
 export async function loadClosedTrendingOutcomes(
   chain: StrategyChain,
+  cooldownMinutes = 1440,
   limit = 2000,
 ): Promise<import('@/utils/trending-reopen-guard').TrendingOutcomeRow[]> {
+  const windowMinutes = Math.max(1, Math.max(cooldownMinutes, 1440))
   try {
     const { rows } = await query<{
       strategy_id: string
@@ -357,9 +366,10 @@ export async function loadClosedTrendingOutcomes(
        FROM strategy_outcomes
        WHERE domain = 'trending_bot'
          AND chain = $1
-       ORDER BY created_at DESC
-       LIMIT $2`,
-      [chain, limit],
+         AND COALESCE(exit_at, created_at) > NOW() - make_interval(mins => $2::int)
+       ORDER BY COALESCE(exit_at, created_at) DESC
+       LIMIT $3`,
+      [chain, windowMinutes, limit],
     )
     return rows.map((r) => ({
       strategy_id: r.strategy_id,

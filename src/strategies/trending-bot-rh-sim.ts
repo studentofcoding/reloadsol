@@ -296,10 +296,13 @@ export async function runTrendingBotRhSimCycle(): Promise<RhTrendingSimResult[]>
   const records = await fetchTradingRecordsForWallet(SIM_WALLET)
   // Durable re-entry guard: never reopen a (strategy, mint) already closed
   // inside the cooldown, or past its lifetime open cap.
-  const blocked = trendingBlockedKeys(await loadClosedTrendingOutcomes(CHAIN), {
-    cooldownMinutes: TRENDING_REENTRY_COOLDOWN_MIN,
-    maxPurchasesPerToken: TRENDING_MAX_PURCHASES_PER_TOKEN,
-  })
+  const blocked = trendingBlockedKeys(
+    await loadClosedTrendingOutcomes(CHAIN, TRENDING_REENTRY_COOLDOWN_MIN),
+    {
+      cooldownMinutes: TRENDING_REENTRY_COOLDOWN_MIN,
+      maxPurchasesPerToken: TRENDING_MAX_PURCHASES_PER_TOKEN,
+    },
+  )
   const results: RhTrendingSimResult[] = []
 
   for (const strategyId of strategies) {
@@ -356,6 +359,10 @@ export async function runTrendingBotRhSimCycle(): Promise<RhTrendingSimResult[]>
       if (decision.action === 'close') {
         closed++
         openMints.delete(pos.mintAddress)
+        // `blocked` was built from outcomes that existed BEFORE this close, so without
+        // this the mint is reopened by the candidate loop below within the same cycle —
+        // observed live: close 16:13:01 → buy 16:13:02 on the same mint.
+        blocked.add(trendingReentryKey(strategyId, pos.mintAddress))
       }
     }
 

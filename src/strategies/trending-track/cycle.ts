@@ -524,7 +524,7 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
     // Durable re-entry guard (strategy_outcomes-keyed): never reopen a
     // (strategy, mint) already closed inside the cooldown or past its cap.
     const trendingBlocked = trendingBlockedKeys(
-      await loadClosedTrendingOutcomes('sol'),
+      await loadClosedTrendingOutcomes('sol', TRENDING_REENTRY_COOLDOWN_MIN),
       {
         cooldownMinutes: TRENDING_REENTRY_COOLDOWN_MIN,
         maxPurchasesPerToken: TRENDING_MAX_PURCHASES_PER_TOKEN,
