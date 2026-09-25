@@ -244,6 +244,7 @@ type Config struct {
     StrategySearchInterval int // seconds (0 = disabled)
     DLMMSecret         string
     SolArbScanInterval int // seconds (0 = disabled)
+    OhlcSampleInterval int // seconds — 1m OHLC sampler (0 = disabled)
     FomoWsEnabled      bool
 }
 
@@ -419,6 +420,16 @@ func NewCronService() *CronService {
             }
             return 60 // default 60s; set 0 to disable
         }(),
+        // Own 1m OHLC series: 15s ticks give 4 samples per minute, which is what
+        // makes a real intra-minute high/low possible.
+        OhlcSampleInterval: func() int {
+            if v := os.Getenv("OHLC_SAMPLE_INTERVAL"); v != "" {
+                if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
+                    return iv
+                }
+            }
+            return 15 // default 15s; set 0 to disable
+        }(),
         FomoWsEnabled: envBool("FOMO_WS_ENABLED", true),
     }
 
@@ -493,6 +504,17 @@ func (cs *CronService) Start() {
         log.Fatal("Failed to add signals refresh cron job:", err)
     }
     cs.workers.BindEntry(sigRefreshEntryID, "signals_refresh")
+
+    // Own 1m OHLC sampler – every N seconds (default 15, 0 = disabled)
+    if cs.config.OhlcSampleInterval > 0 {
+        ohlcSpec := fmt.Sprintf("@every %ds", cs.config.OhlcSampleInterval)
+        ohlcEntryID, err := cs.cron.AddFunc(ohlcSpec, cs.runOhlcSample)
+        if err != nil {
+            cs.logger.Error(fmt.Sprintf("Failed to add OHLC sampler cron job: %v", err))
+            log.Fatal("Failed to add OHLC sampler cron job:", err)
+        }
+        cs.workers.BindEntry(ohlcEntryID, "ohlc_sampler")
+    }
 
     // Signals sim track – every N seconds (default 120)
     signalsSimSpec := fmt.Sprintf("@every %ds", cs.config.SignalsSimInterval)
@@ -716,6 +738,7 @@ func (cs *CronService) Start() {
     http.HandleFunc("/trigger/rh-lp-screen", cs.requireTriggerSecret(cs.manualRhLpScreenTrigger))
     http.HandleFunc("/trigger/strategy-search", cs.requireTriggerSecret(cs.manualStrategySearchTrigger))
     http.HandleFunc("/trigger/sol-arb-scan", cs.requireTriggerSecret(cs.manualSolArbScanTrigger))
+    http.HandleFunc("/trigger/ohlc-sampler", cs.requireTriggerSecret(cs.manualOhlcSampleTrigger))
     http.HandleFunc("/trigger/fomo-ws", cs.requireTriggerSecret(cs.manualFomoWsTrigger))
     http.HandleFunc("/logs/test", cs.testDiscordLogs)
 
@@ -726,6 +749,9 @@ func (cs *CronService) Start() {
     cs.logger.Info("📊 Unfiltered trending tracker: every 2 minutes")
     cs.logger.Info(fmt.Sprintf("🛡️ SL/TP monitor: every %d seconds", cs.config.SLTPMonitorInterval))
     cs.logger.Info(fmt.Sprintf("📡 Signals refresh: every %d seconds", cs.config.SignalRefreshInterval))
+    if cs.config.OhlcSampleInterval > 0 {
+        cs.logger.Info(fmt.Sprintf("🕯️ OHLC 1m sampler: every %d seconds", cs.config.OhlcSampleInterval))
+    }
     cs.logger.Info(fmt.Sprintf("🧪 Signals sim track: every %d seconds", cs.config.SignalsSimInterval))
     cs.logger.Info(fmt.Sprintf("📈 MCap tracker sim open: every %d seconds", cs.config.McapTrackerSimOpenInterval))
     cs.logger.Info(fmt.Sprintf("📈 MCap tracker sim manage: every %d seconds", cs.config.McapTrackerSimInterval))
@@ -1688,6 +1714,35 @@ func (cs *CronService) runSolArbScan() {
     }
     cs.logger.Success(fmt.Sprintf("✅ SOL arb scan completed: %s", resp))
     cs.workers.Success("sol_arb_scan")
+}
+
+// runOhlcSample folds one batched price sample into the current 1m OHLC bar.
+// 409 means another tick holds the job lock — a skip, not a failure.
+func (cs *CronService) runOhlcSample() {
+    cs.workers.Begin("ohlc_sampler")
+    url := fmt.Sprintf("%s/api/ohlc/sample?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
+    resp, err := cs.makeRequest("POST", url, nil)
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("❌ OHLC sampler failed: %v", err))
+        cs.workers.Fail("ohlc_sampler", err.Error())
+        return
+    }
+    cs.logger.Success(fmt.Sprintf("✅ OHLC sampler completed: %s", resp))
+    cs.workers.Success("ohlc_sampler")
+}
+
+func (cs *CronService) manualOhlcSampleTrigger(w http.ResponseWriter, r *http.Request) {
+    if r.Method != "POST" {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    cs.logger.Info("🔧 Manual OHLC sampler trigger")
+    cs.runOhlcSample()
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]string{
+        "message":   "OHLC sampler triggered manually",
+        "timestamp": time.Now().UTC().Format(time.RFC3339),
+    })
 }
 
 func (cs *CronService) manualSolArbScanTrigger(w http.ResponseWriter, r *http.Request) {

@@ -130,7 +130,7 @@ Outcomes land in `strategy_outcomes` only on **full position close**.
 
 ---
 
-## 3. Cron workers (11 jobs)
+## 3. Cron workers (28 registered; key jobs below)
 
 Registered in [`worker_tracker.go`](../worker_tracker.go), scheduled in [`main.go`](../main.go).
 
@@ -147,8 +147,9 @@ Registered in [`worker_tracker.go`](../worker_tracker.go), scheduled in [`main.g
 | `sltp_monitor` | every 60s | `GET /api/sl-tp-monitor` | infra |
 | `daily_summary` | 00:00 UTC | `POST /api/trending/summary` | infra |
 | `pnl_update` | 02:00 UTC | `POST /api/pnl/update` | infra |
+| `ohlc_sampler` | every 15s (env, 0=off) | `POST /api/ohlc/sample` | algo |
 
-**Removed (2026-06):** `ohlc_update`, `price_monitor` — charts use GMGN embed only; inter-cycle price alerts dropped in favor of trending track + SL/TP monitor.
+**Removed (2026-06):** `ohlc_update`, `price_monitor` — charts use GMGN embed only; inter-cycle price alerts dropped in favor of trending track + SL/TP monitor. **Re-added (2026-09)** as `ohlc_sampler` (our own 1m series, see [SPEC-ohlc-own-1m-v1.md](./specs/SPEC-ohlc-own-1m-v1.md)).
 
 **Worker observability**
 
@@ -275,7 +276,7 @@ Live candles come from **Solana Tracker** (`fetchTokenOhlc` / `GET /api/gmgn/tok
 
 | Table | Notes |
 |-------|-------|
-| `token_ohlc_bars` | Orphaned after OHLC **worker** removal; unused — training OHLC uses tables above |
+| `token_ohlc_bars` | **Our own 1m OHLC series** — written by the 15s `ohlc_sampler` worker (`POST /api/ohlc/sample`), read by the Freeview chart as the dependency-free source behind brain → SolanaTracker → GMGN. `volume` is NULL by design (no 1-minute volume exists in our stack); `samples` = price samples folded into the bar. Retention: `OHLC_BARS_RETENTION_HOURS` (default 48). |
 
 ---
 
@@ -350,7 +351,6 @@ Set `TRENDING_LIST_DISCORD_VIA_CRON=false` for local dev without cron (re-enable
 | **Medium** | Consolidate daily summary | Done — `daily_summary` cron only; inline track logic removed |
 | **Medium** | Auth on Go `/trigger/*` | Not used — `/trigger/*` open on cron port; rely on network/firewall |
 | **Medium** | Discord notification dedup | Done — cron-only list alerts + cooldown dedup; track filtering summary skipped when `TRENDING_LIST_DISCORD_VIA_CRON=true` |
-| **Low** | Drop `token_ohlc_bars` table | Orphaned worker table (unused; training OHLC is separate) |
 | **Low** | Refresh [Overview.md](./Overview.md) | Still references removed pages (mcap-tracker nav, catch-the-coin) |
 
 ---

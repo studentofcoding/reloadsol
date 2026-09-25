@@ -12,3 +12,4 @@ Implementable handoffs. Code PRs should follow these rather than re-litigating p
 | [SPEC-jev-soft-gate-shadow-v1.md](./SPEC-jev-soft-gate-shadow-v1.md) | Implementing. Jev Noul shadow beside Early Enter soft gate (`early_enter_noul_shadow`); paper untouched |
 | [SPEC-signals-strategy-list-v1.md](./SPEC-signals-strategy-list-v1.md) | To-spec (docs only). Signals-tab strategy picker ranked by raw unfloored PnL; unique mint + cross-strategy badge |
 | [SPEC-trending-gmgn-feed-reentry-guard-v1.md](./SPEC-trending-gmgn-feed-reentry-guard-v1.md) | **Shipped** (5d019b5). Trending: GMGN as single discovery feed (`TRENDING_FEED=gmgn` live), durable `strategy_outcomes`-keyed re-entry guard, drop rugged from the feed |
+| [SPEC-ohlc-own-1m-v1.md](./SPEC-ohlc-own-1m-v1.md) | Implementing. Own 1m OHLC series (`token_ohlc_bars` + 15s `ohlc_sampler`), window-first chart fetch, honest failure copy. No new dependency; GeckoTerminal/DexScreener deferred |

@@ -8,6 +8,15 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — own 1m OHLC series + honest Freeview chart fetch
+
+- **Our own 1m OHLC series.** `token_ohlc_bars` (0 rows, unread, un-writable, no `volume` column) is adopted: `db/init/39-token-ohlc-bars-own-series.sql` adds `volume`, `source`, `samples` and a retention index. A new **15s `ohlc_sampler` worker** (`POST /api/ohlc/sample`) batches Jupiter Price V3 via `getUsdPrices` for mcap candidates in the 30k–2M band + `trending_token_tracker` rows (≤ `OHLC_SAMPLE_MAX_MINTS`, default 300) and folds each sample into the current minute — `open` first, `high`/`low` extremes, `close` latest, `samples++` — with `OHLC_BARS_RETENTION_HOURS` (48) pruning in the same tick. `volume` is **NULL by design**: no source in our stack exposes a 1-minute volume.
+- **Seed from history we already own** (`npm run ohlc:seed-bars`, `scripts/seed-ohlc-bars.ts`): copies the 1m bar sets in `signal_ohlc_labels.bars` (~21.8k) and `token_detect_snapshots.bars` (~2.5k) into the series (their `v` → `volume`), so charts are not flat on day 1 for tokens already labelled.
+- **Chart fetch is window-first.** `window=auto` (and any span < 20h) now fetches exactly its own span with a span-sized interval instead of the 24h×1m canonical series — a 6.9h window went from ~16 gated GMGN pages (≈32s) to ~1. Only a genuine ~24h window still uses the canonical series. `fetchGmgnKlinePaged` takes a **deadline** and bails after consecutive empty pages, so it can no longer overrun the 22s chart budget or drain the shared GMGN gate.
+- **Source order + honest failures.** `loadTokenMapChart` is now live upstream (brain → SolanaTracker → GMGN) → **our own 1m series** (`ohlcSource: 'own-1m'`) → stored label/detect bars → nothing. The chart no longer draws a synthetic flat line over an upstream timeout; the note names the real failure. `priceSource` reflects candles as well as tracker points.
+- Context (measured): the cold chart took **22.035s** and returned `candles 0` because brain `/ohlc` was 502 (`solanatracker empty | gmgn empty`) and SolanaTracker is **403 out-of-credits account-wide**. GeckoTerminal and DexScreener were evaluated and **not** adopted (see the SPEC): DexScreener has no OHLC endpoint at all, and GT's free tier rate-limits at ~8 calls with no headers while commercial use needs a paid plan.
+- SPEC: [docs/specs/SPEC-ohlc-own-1m-v1.md](docs/specs/SPEC-ohlc-own-1m-v1.md). Tests: `token-map-chart-paging.test.ts`.
+
 ### Fixed — Robinhood strategy twins are Admin-toggleable (chain-less upsert)
 
 - `strategy_definitions.id` is the sole PK and `chain` (added in `24-strategy-chain.sql`) defaulted to `'sol'` — but [`upsertStrategyDefinition`](src/strategies/db.ts) never wrote the column. An Admin toggle on any Robinhood twin therefore wrote `chain='sol'`, which the chain-scoped registry read (`WHERE domain = $1 AND chain = $2`) can never see: the toggle silently no-opped, and `att_rh` in particular had **no row at all** and ran on its registry default.

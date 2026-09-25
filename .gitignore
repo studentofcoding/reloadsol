@@ -42,6 +42,9 @@ goldsky/.rendered/
 # macOS
 .DS_Store
 
+# /debug skill log output (local tooling, never committed)
+.debug/
+
 # Host-local VPS state — never commit, and keep out of `git clean -fd`:
 # nginx/certs holds the origin TLS key that the :443 vhost mounts, cloudflared/
 # holds tunnel credentials, and the htpasswd file gates the flowey admin vhost.

@@ -19,6 +19,7 @@
     "prebuild": "node scripts/prebuild-strip-local-venvs.js",
     "postbuild": "node scripts/lock-next-env.js",
     "ml:backfill-labels": "npx tsx scripts/backfill-ml-labels.ts",
+    "ohlc:seed-bars": "npx tsx scripts/seed-ohlc-bars.ts",
     "ml:train-closed-loop": "npx tsx scripts/train-closed-loop-ml.ts",
     "ml:eval-scan": "npx tsx scripts/eval-engine-scan.ts",
     "mcap:backfill-labels": "npx tsx scripts/backfill-mcap-labels.ts",

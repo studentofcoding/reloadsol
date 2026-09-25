@@ -1,4 +1,5 @@
 import { listStrategyOutcomes } from '@/strategies/db'
+import { query } from '@/utils/db'
 import {
   fetchOutcomeMonitorPriceHistory,
   fetchTrackerTokenMetrics,
@@ -396,6 +397,8 @@ export async function fetchTokenOhlc(params: {
   brain?: MarketBrainFetchOpts
   /** When Redis already holds a full 24h series, skip GMGN kline. */
   skipGmgn?: boolean
+  /** Remaining wall-clock budget for the fallback paging walk. */
+  deadlineMs?: number
 }): Promise<{ candles: TokenOhlcBar[]; source: string }> {
   const { timeFrom, timeTo, type } = ohlcWindow(params)
   const gmgnChain: GmgnTradeChain =
@@ -433,6 +436,7 @@ export async function fetchTokenOhlc(params: {
     type,
     gmgnChain,
     skipGmgn: params.skipGmgn === true,
+    deadlineMs: params.deadlineMs,
   })
 }
 
@@ -564,9 +568,19 @@ export async function fetchGmgnKlinePaged(params: {
   resolution: string
   timeFrom: number
   timeTo: number
+  /**
+   * Wall-clock budget for the whole walk. The loader passes its remaining
+   * chart budget so a 24h x 1m request can't spend it all and still time out.
+   */
+  deadlineMs?: number
+  /** Stop after this many consecutive empty pages (upstream has nothing). */
+  maxEmptyPages?: number
 }): Promise<TokenOhlcBar[]> {
   const resSec = gmgnResolutionSec(params.resolution)
   const pageSpanSec = GMGN_KLINE_PAGE_BARS * resSec
+  const startedAt = Date.now()
+  const maxEmptyPages = params.maxEmptyPages ?? 3
+  let emptyPages = 0
   let cursor = params.timeFrom
   let merged: TokenOhlcBar[] = []
   let pages = 0
@@ -575,6 +589,9 @@ export async function fetchGmgnKlinePaged(params: {
   ) + 1
 
   while (cursor < params.timeTo && pages < maxPages) {
+    if (params.deadlineMs != null && Date.now() - startedAt > params.deadlineMs) {
+      break
+    }
     const pageEnd = Math.min(params.timeTo, cursor + pageSpanSec)
     try {
       const raw = await tokenKline({
@@ -587,9 +604,12 @@ export async function fetchGmgnKlinePaged(params: {
       const page = mapGmgnKlineBars(raw)
       pages++
       if (page.length === 0) {
+        emptyPages++
+        if (emptyPages >= maxEmptyPages) break
         cursor = pageEnd
         continue
       }
+      emptyPages = 0
       merged = unionOhlcCandles(merged, page)
       const lastT = page[page.length - 1]!.time
       // Advance past last bar; avoid infinite loop on sticky timestamps.
@@ -611,6 +631,7 @@ async function fetchTokenOhlcUpstream(params: {
   type: string
   gmgnChain: GmgnTradeChain
   skipGmgn?: boolean
+  deadlineMs?: number
 }): Promise<{ candles: TokenOhlcBar[]; source: string }> {
   if (wantsGmgnOhlc(params.gmgnChain, params.tokenAddress)) {
     if (params.skipGmgn) return { candles: [], source: 'none' }
@@ -621,6 +642,7 @@ async function fetchTokenOhlcUpstream(params: {
         resolution: params.type,
         timeFrom: params.timeFrom,
         timeTo: params.timeTo,
+        deadlineMs: params.deadlineMs,
       })
       if (candles.length === 0) return { candles: [], source: 'none' }
       return { candles, source: 'gmgn' }
@@ -680,6 +702,7 @@ async function fetchTokenOhlcUpstream(params: {
       resolution: params.type,
       timeFrom: params.timeFrom,
       timeTo: params.timeTo,
+      deadlineMs: params.deadlineMs,
     })
     if (candles.length === 0) return { candles: [], source: 'none' }
     return { candles, source: 'gmgn' }
@@ -799,6 +822,66 @@ async function loadTrackerHistory(
   return fetchOutcomeMonitorPriceHistory(tokenAddress, chain)
 }
 
+/**
+ * Our own 1m series (`token_ohlc_bars`), written by the 15s sampler. The
+ * dependency-free source: it needs no upstream, so a chart still draws when
+ * brain / SolanaTracker / GMGN all miss.
+ */
+async function loadOwnOhlcBars(
+  tokenAddress: string,
+  sinceSec: number,
+  timeTo: number,
+): Promise<TokenOhlcBar[]> {
+  try {
+    const { rows } = await query<{
+      timestamp: string
+      open: unknown
+      high: unknown
+      low: unknown
+      close: unknown
+      volume: unknown
+    }>(
+      `SELECT timestamp, open, high, low, close, volume
+         FROM token_ohlc_bars
+        WHERE token_address = $1
+          AND interval = '1m'
+          AND timestamp >= to_timestamp($2)
+          AND timestamp <= to_timestamp($3)
+        ORDER BY timestamp ASC`,
+      [tokenAddress, sinceSec, timeTo],
+    )
+    const out: TokenOhlcBar[] = []
+    for (const r of rows) {
+      const time = Math.floor(new Date(r.timestamp).getTime() / 1000)
+      const open = num(r.open)
+      const high = num(r.high)
+      const low = num(r.low)
+      const close = num(r.close)
+      if (
+        !Number.isFinite(time) ||
+        open == null ||
+        high == null ||
+        low == null ||
+        close == null
+      ) {
+        continue
+      }
+      const volume = num(r.volume)
+      out.push({
+        time,
+        open,
+        high,
+        low,
+        close,
+        ...(volume != null ? { volume } : {}),
+      })
+    }
+    return out
+  } catch {
+    return []
+  }
+}
+
 async function loadPersistedOhlcFallback(
   tokenAddress: string,
 ): Promise<{ candles: TokenOhlcBar[]; source: string } | null> {
@@ -901,60 +984,47 @@ export async function loadTokenMapChart(params: {
 
   const spanSec = timeTo - timeFrom
   const useShortFetch = useAuto && spanSec <= SHORT_OHLC_FETCH_MAX_SPAN_SEC
+  // Bar size for a bounded window: 1m only for short spans, 5m/15m beyond.
+  const windowInterval = useShortFetch ? '1m' : ohlcIntervalForHours(hours)
+  // Only a genuine ~24h window is worth the canonical 24h x 1m series (16 gated
+  // GMGN pages); anything shorter fetches exactly its own span instead, which is
+  // what made a 6.9h Freeview window blow the 22s budget.
+  const useCanonical24h = !useAuto && hours >= 20
 
   const ohlcPromise = (async (): Promise<{
     candles: TokenOhlcBar[]
     source: string
   }> => {
-    if (useShortFetch) {
-      return fetchTokenOhlc({
+    if (useCanonical24h) {
+      const cached = await getCachedTokenOhlc24h1m(params.tokenAddress)
+      return {
+        candles: sliceCandlesSince(cached.candles, sinceSec).filter(
+          (c) => c.time <= timeTo,
+        ),
+        source: cached.source,
+      }
+    }
+    if (useAuto || useShortFetch || hours <= 24) {
+      const live = await fetchTokenOhlc({
         tokenAddress: params.tokenAddress,
-        interval: '1m',
+        interval: windowInterval,
         chain,
         timeFrom,
         timeTo,
+        deadlineMs: TOKEN_MAP_CHART_OHLC_BUDGET_MS,
       })
-    }
-    if (hours <= 24 || useAuto) {
-      const cached = await getCachedTokenOhlc24h1m(params.tokenAddress)
-      let candles = sliceCandlesSince(cached.candles, sinceSec).filter(
-        (c) => c.time <= timeTo,
-      )
-      const spanHave =
-        candles.length >= 2
-          ? candles[candles.length - 1]!.time - candles[0]!.time
-          : 0
-      // Prefer any usable cache slice over a second full-span GMGN crawl
-      // that races Cloudflare's ~100s origin timeout.
-      if (
-        useAuto &&
-        !useShortFetch &&
-        candles.length === 0 &&
-        spanSec > SHORT_OHLC_FETCH_MAX_SPAN_SEC &&
-        spanHave < spanSec * 0.5
-      ) {
-        const live = await fetchTokenOhlc({
-          tokenAddress: params.tokenAddress,
-          interval: '1m',
-          chain,
-          timeFrom,
-          timeTo,
-        })
-        if (live.candles.length > 0) {
-          return {
-            candles: live.candles.filter(
-              (c) => c.time >= sinceSec && c.time <= timeTo,
-            ),
-            source: live.source,
-          }
-        }
+      return {
+        candles: live.candles.filter(
+          (c) => c.time >= sinceSec && c.time <= timeTo,
+        ),
+        source: live.source,
       }
-      return { candles, source: cached.source }
     }
     return fetchTokenOhlc({
       tokenAddress: params.tokenAddress,
       hours,
       chain,
+      deadlineMs: TOKEN_MAP_CHART_OHLC_BUDGET_MS,
     })
   })()
 
@@ -999,17 +1069,24 @@ export async function loadTokenMapChart(params: {
       ? 'timeout'
       : ohlcLive.source
   if (candles.length === 0) {
-    const persisted = await loadPersistedOhlcFallback(params.tokenAddress)
-    if (persisted) {
-      candles = sliceCandlesSince(persisted.candles, sinceSec).filter(
-        (c) => c.time <= timeTo,
-      )
-      ohlcSource =
-        ohlcLive.source === 'timeout'
-          ? `${staleSourceLabel(persisted.source)}-timeout`
-          : persisted.source
-    } else if (ohlcLive.source === 'timeout') {
-      ohlcSource = 'timeout'
+    // Our own live 1m series comes before the frozen label/detect snapshots.
+    const own = await loadOwnOhlcBars(params.tokenAddress, sinceSec, timeTo)
+    if (own.length > 0) {
+      candles = own
+      ohlcSource = 'own-1m'
+    } else {
+      const persisted = await loadPersistedOhlcFallback(params.tokenAddress)
+      if (persisted) {
+        candles = sliceCandlesSince(persisted.candles, sinceSec).filter(
+          (c) => c.time <= timeTo,
+        )
+        ohlcSource =
+          ohlcLive.source === 'timeout'
+            ? `${staleSourceLabel(persisted.source)}-timeout`
+            : persisted.source
+      } else if (ohlcLive.source === 'timeout') {
+        ohlcSource = 'timeout'
+      }
     }
   }
 
@@ -1069,7 +1146,7 @@ export async function loadTokenMapChart(params: {
     candles,
     detectCandles: detect.candles,
     detectAt: detect.detectAt,
-    priceSource: deduped.length > 0 ? 'tracker' : 'empty',
+    priceSource: deduped.length > 0 || candles.length > 0 ? 'tracker' : 'empty',
     ohlcSource:
       candles.length > 0
         ? ohlcSource

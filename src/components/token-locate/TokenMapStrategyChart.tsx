@@ -404,12 +404,20 @@ export default function TokenMapStrategyChart({
           [srcNote, detectNote, CHART_TZ].filter(Boolean).join(' · ') || null,
         )
       } else {
+        // Never fake a flat axis over an upstream failure: say what actually failed.
+        const upstreamFailed =
+          payload.ohlcSource === 'timeout' ||
+          (payload.ohlcSource ?? '').endsWith('-timeout')
         if (linePoints.length === 0) {
-          linePoints = buildPlaceholderPoints(activities, payload.outcomes)
+          if (!upstreamFailed) {
+            linePoints = buildPlaceholderPoints(activities, payload.outcomes)
+          }
           setNote(
-            linePoints.length > 0
-              ? 'No tracker price history — flat axis; markers still show strategy timing.'
-              : 'No price history and no strategy events in this window.',
+            upstreamFailed
+              ? `OHLC source failed (${payload.ohlcSource}) — no price axis. Markers still show strategy timing; Retry or check the upstream.`
+              : linePoints.length > 0
+                ? 'No tracker price history — flat axis; markers still show strategy timing.'
+                : 'No price history and no strategy events in this window.',
           )
         } else {
           setNote(null)
