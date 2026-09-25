@@ -301,6 +301,8 @@ export async function loadStrategyDefinitionById(
 export async function upsertStrategyDefinition(params: {
   id: string
   domain: StrategyDomain
+  /** Chain this definition belongs to. Defaults to 'sol'. */
+  chain?: StrategyChain
   name: string
   description?: string | null
   config: Record<string, unknown>
@@ -309,15 +311,18 @@ export async function upsertStrategyDefinition(params: {
 }): Promise<{ ok: boolean; error?: string }> {
   const updatedAt = new Date().toISOString()
   const configJson = JSON.stringify(params.config)
+  // Omitted chain must not write NULL into a NOT NULL DEFAULT 'sol' column.
+  const chain: StrategyChain = params.chain ?? 'sol'
 
   try {
     if (params.execution_mode) {
       await query(
         `INSERT INTO strategy_definitions (
-           id, domain, name, description, config, is_active, updated_at, execution_mode
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           id, domain, chain, name, description, config, is_active, updated_at, execution_mode
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          ON CONFLICT (id) DO UPDATE SET
            domain = EXCLUDED.domain,
+           chain = EXCLUDED.chain,
            name = EXCLUDED.name,
            description = EXCLUDED.description,
            config = EXCLUDED.config,
@@ -327,6 +332,7 @@ export async function upsertStrategyDefinition(params: {
         [
           params.id,
           params.domain,
+          chain,
           params.name,
           params.description ?? null,
           configJson,
@@ -338,10 +344,11 @@ export async function upsertStrategyDefinition(params: {
     } else {
       await query(
         `INSERT INTO strategy_definitions (
-           id, domain, name, description, config, is_active, updated_at
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+           id, domain, chain, name, description, config, is_active, updated_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          ON CONFLICT (id) DO UPDATE SET
            domain = EXCLUDED.domain,
+           chain = EXCLUDED.chain,
            name = EXCLUDED.name,
            description = EXCLUDED.description,
            config = EXCLUDED.config,
@@ -350,6 +357,7 @@ export async function upsertStrategyDefinition(params: {
         [
           params.id,
           params.domain,
+          chain,
           params.name,
           params.description ?? null,
           configJson,

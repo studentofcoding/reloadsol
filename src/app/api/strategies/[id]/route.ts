@@ -21,6 +21,7 @@ import {
 } from '@/strategies/close-on-deactivate'
 import { updateAgentConfig } from '@/utils/dlmm/db'
 import { mergeStrategyConfigPatch } from '@/strategies/merge-strategy-config-patch'
+import { parseStrategyChain } from '@/strategies/types'
 import { deactivateLegoRecipe } from '@/utils/brain-recipe-sync'
 import type {
   ExecutionMode,
@@ -111,6 +112,13 @@ export async function PATCH(
     }
 
     const body = (await request.json()) as PatchBody
+    // The registry entry knows its own chain (RH twins carry `chain: 'robinhood'`).
+    // Without this the upsert wrote `chain='sol'`, so the row was invisible to the
+    // robinhood registry read and the toggle silently no-opped.
+    const chain = parseStrategyChain(
+      (resolved.base as { chain?: string }).chain ??
+        request.nextUrl.searchParams.get('chain'),
+    )
     const existingRow = await loadStrategyDefinitionById(id)
     // Omit config → keep DB override; partial config → deep-merge onto existing
     const configOverride = mergeStrategyConfigPatch(
@@ -131,6 +139,7 @@ export async function PATCH(
       const result = await upsertStrategyDefinition({
         id,
         domain: 'trending_bot',
+        chain,
         name: body.name ?? merged.name,
         description: body.description ?? merged.description,
         config: configOverride,
@@ -167,6 +176,7 @@ export async function PATCH(
       const result = await upsertStrategyDefinition({
         id,
         domain: 'signals',
+        chain,
         name: body.name ?? merged.name,
         description: body.description ?? merged.description,
         config: configOverride,
@@ -204,6 +214,7 @@ export async function PATCH(
       const result = await upsertStrategyDefinition({
         id,
         domain: 'mcap_tracker',
+        chain,
         name: body.name ?? merged.name,
         description: body.description ?? merged.description,
         config: configOverride,
@@ -241,6 +252,7 @@ export async function PATCH(
       const result = await upsertStrategyDefinition({
         id,
         domain: 'gmgn',
+        chain,
         name: body.name ?? merged.name,
         description: body.description ?? merged.description,
         config: configOverride,
@@ -278,6 +290,7 @@ export async function PATCH(
       const result = await upsertStrategyDefinition({
         id,
         domain: 'social',
+        chain,
         name: body.name ?? merged.name,
         description: body.description ?? merged.description,
         config: configOverride,
@@ -314,6 +327,7 @@ export async function PATCH(
     const result = await upsertStrategyDefinition({
       id,
       domain: 'dlmm',
+      chain,
       name: body.name ?? merged.name,
       description: body.description ?? merged.description,
       config: configOverride,
