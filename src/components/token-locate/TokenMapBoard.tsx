@@ -40,30 +40,30 @@ function groupActivity(
   return map
 }
 
-export default function TokenMapBoard({
+export type ConcentrationBanNotice = {
+  banned: boolean
+  reasons: string[]
+}
+
+export function TokenMapBoardView({
   result,
   activities,
   newIds,
+  showGmgn,
+  onShowGmgnChange,
+  concBan,
+  onConcentrationBan,
 }: {
   result: TokenLocateResult
   activities: TokenMapActivityItem[]
   newIds: Set<string>
+  showGmgn: boolean
+  onShowGmgnChange: (next: boolean) => void
+  concBan: ConcentrationBanNotice | null
+  onConcentrationBan: (payload: ConcentrationBanNotice) => void
 }) {
   const presenceByDomain = groupPresence(result.strategyPresence ?? [])
   const activityByDomain = groupActivity(activities)
-  const [showGmgn, setShowGmgn] = useState(true)
-  const [concBan, setConcBan] = useState<{
-    banned: boolean
-    reasons: string[]
-  } | null>(null)
-
-  const onConcentrationBan = useCallback(
-    (payload: { banned: boolean; reasons: string[] }) => {
-      setConcBan(payload)
-    },
-    [],
-  )
-
   const concentrationBanned = concBan?.banned === true
   const chartChain = /^0x/i.test(result.tokenAddress) ? 'robinhood' : 'sol'
 
@@ -76,30 +76,29 @@ export default function TokenMapBoard({
           </h2>
           <p className="font-mono text-xs text-gray-500">{result.tokenAddress}</p>
         </div>
-        {!concentrationBanned ? (
-          <div className="flex flex-wrap items-center gap-3 text-xs">
-            <label className="inline-flex items-center gap-1.5 text-gray-400 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={showGmgn}
-                onChange={(e) => setShowGmgn(e.target.checked)}
-                className="rounded border-gray-600 bg-gray-800"
-              />
-              GMGN chart
-            </label>
-            <a href={result.links.chart} className="text-blue-400 hover:underline" target="_blank" rel="noreferrer">
-              Chart
-            </a>
-            <a href={result.links.jupiter} className="text-blue-400 hover:underline" target="_blank" rel="noreferrer">
-              Jupiter
-            </a>
-            <a href={result.links.strategies} className="text-blue-400 hover:underline">
-              Outcomes
-            </a>
-          </div>
-        ) : null}
+        <div className="flex flex-wrap items-center gap-3 text-xs">
+          <label className="inline-flex items-center gap-1.5 text-gray-400 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showGmgn}
+              onChange={(e) => onShowGmgnChange(e.target.checked)}
+              className="rounded border-gray-600 bg-gray-800"
+            />
+            GMGN chart
+          </label>
+          <a href={result.links.chart} className="text-blue-400 hover:underline" target="_blank" rel="noreferrer">
+            Chart
+          </a>
+          <a href={result.links.jupiter} className="text-blue-400 hover:underline" target="_blank" rel="noreferrer">
+            Jupiter
+          </a>
+          <a href={result.links.strategies} className="text-blue-400 hover:underline">
+            Outcomes
+          </a>
+        </div>
       </div>
 
+      {/* Banner only. Ban does not blank charts, lanes, links, or the stats rail. */}
       {concentrationBanned ? (
         <div className="rounded-lg border border-red-800/80 bg-red-950/50 px-3 py-2 text-sm text-red-200">
           <p className="font-semibold">Banned: concentration</p>
@@ -111,7 +110,6 @@ export default function TokenMapBoard({
         </div>
       ) : null}
 
-      {/* OHLC rug panel always visible (evidence); GMGN only when not concentration-banned */}
       <div className="flex flex-col gap-2 md:flex-row md:items-stretch">
         <div className="w-full min-w-[7rem] md:w-[10%] md:shrink-0">
           <OhlcRugPanel
@@ -119,7 +117,7 @@ export default function TokenMapBoard({
             tokenSymbol={result.symbol}
           />
         </div>
-        {!concentrationBanned && showGmgn ? (
+        {showGmgn ? (
           <div className="min-w-0 h-[300px] w-full overflow-hidden rounded-xl border border-gray-700 bg-black md:w-[90%] md:flex-1">
             <GmgnChartEmbed
               tokenAddress={result.tokenAddress}
@@ -132,52 +130,65 @@ export default function TokenMapBoard({
         ) : null}
       </div>
 
-      <div
-        className={
-          concentrationBanned
-            ? 'w-full max-w-xs'
-            : 'flex flex-col gap-2 md:flex-row md:items-stretch'
-        }
-      >
-        <div
-          className={
-            concentrationBanned
-              ? 'w-full'
-              : 'w-full min-w-[7rem] md:w-[10%] md:shrink-0'
-          }
-        >
+      <div className="flex flex-col gap-2 md:flex-row md:items-stretch">
+        <div className="w-full min-w-[7rem] md:w-[10%] md:shrink-0">
           <GmgnTokenStatsGrid
             tokenAddress={result.tokenAddress}
             variant="rail"
             onConcentrationBan={onConcentrationBan}
           />
         </div>
-        {!concentrationBanned ? (
-          <div className="min-w-0 w-full md:w-[90%] md:flex-1">
-            <TokenMapStrategyChart
-              tokenAddress={result.tokenAddress}
-              activities={activities}
-              chartWindow="auto"
-              chain={chartChain}
-            />
-          </div>
-        ) : null}
+        <div className="min-w-0 w-full md:w-[90%] md:flex-1">
+          <TokenMapStrategyChart
+            tokenAddress={result.tokenAddress}
+            activities={activities}
+            chartWindow="auto"
+            chain={chartChain}
+          />
+        </div>
       </div>
 
-      {!concentrationBanned ? (
-        <div className="flex gap-3 overflow-x-auto pb-2">
-          {TOKEN_MAP_LANES.map((lane) => (
-            <TokenMapLane
-              key={lane.domain}
-              domain={lane.domain}
-              label={lane.label}
-              presence={presenceByDomain.get(lane.domain) ?? []}
-              activities={activityByDomain.get(lane.domain) ?? []}
-              newIds={newIds}
-            />
-          ))}
-        </div>
-      ) : null}
+      <div className="flex gap-3 overflow-x-auto pb-2">
+        {TOKEN_MAP_LANES.map((lane) => (
+          <TokenMapLane
+            key={lane.domain}
+            domain={lane.domain}
+            label={lane.label}
+            presence={presenceByDomain.get(lane.domain) ?? []}
+            activities={activityByDomain.get(lane.domain) ?? []}
+            newIds={newIds}
+          />
+        ))}
+      </div>
     </div>
+  )
+}
+
+export default function TokenMapBoard({
+  result,
+  activities,
+  newIds,
+}: {
+  result: TokenLocateResult
+  activities: TokenMapActivityItem[]
+  newIds: Set<string>
+}) {
+  const [showGmgn, setShowGmgn] = useState(true)
+  const [concBan, setConcBan] = useState<ConcentrationBanNotice | null>(null)
+
+  const onConcentrationBan = useCallback((payload: ConcentrationBanNotice) => {
+    setConcBan(payload)
+  }, [])
+
+  return (
+    <TokenMapBoardView
+      result={result}
+      activities={activities}
+      newIds={newIds}
+      showGmgn={showGmgn}
+      onShowGmgnChange={setShowGmgn}
+      concBan={concBan}
+      onConcentrationBan={onConcentrationBan}
+    />
   )
 }
