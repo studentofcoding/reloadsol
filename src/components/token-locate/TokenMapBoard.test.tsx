@@ -61,7 +61,7 @@ function markup(banned: boolean) {
       onShowGmgnChange={() => {}}
       concBan={
         banned
-          ? { banned: true, reasons: ['Bundlers H. 63.5% > 50%'] }
+          ? { banned: true, reasons: ['Bundlers H. 70.0% > 65%'] }
           : null
       }
       onConcentrationBan={() => {}}
@@ -74,7 +74,7 @@ describe('TokenMapBoardView concentration ban', () => {
     const html = markup(true)
 
     expect(html).toContain('Banned: concentration')
-    expect(html).toContain('Bundlers H. 63.5% &gt; 50%')
+    expect(html).toContain('Bundlers H. 70.0% &gt; 65%')
     expect(html).toContain('GMGN chart')
     expect(html).toContain('href="https://chart.example/token"')
     expect(html).toContain('href="https://jup.example/token"')

@@ -7,7 +7,7 @@ import { captureDetectSnapshot } from '@/strategies/detect-snapshots'
 import { markTokenRug } from '@/utils/rug-list/service'
 
 /** Hard ban when any axis is strictly greater than this percent. */
-export const CONCENTRATION_BAN_PCT = 50
+export const CONCENTRATION_BAN_PCT = 65
 
 export type ConcentrationBanEval = {
   ban: boolean

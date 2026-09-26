@@ -67,7 +67,7 @@ Operationalization of “≥80% rug” for v1 is **not** a calibrated `P(rug)` m
 
 **Still recommended defaults (not re-confirmed by HITL; implementer may tune behind flags, not by changing AND shape):**
 
-- Concentration also fails if `top_10_adjusted ≥ 0.20` (20%), **or** existing concentration-ban **> 50%**.
+- Concentration also fails if `top_10_adjusted ≥ 0.20` (20%), **or** existing concentration-ban **> 65%**.
 - Wash/organic fails if raw Jupiter `organicScore` is below the current non-graduated floor (**&lt; 70**), **or** `fresh_wallets ≥ 0.70` (70%).
 - One failing AND leg → heavy discovery downrank (not hard reject), except score ≤ 45 which is already a discovery **exclude**.
 
@@ -135,7 +135,7 @@ Rank **descending** `organicScore` for potential. Short interval (`5m` / `1h`) f
 
 | Signal | Path | Hard today? | Relation to this filter |
 |---|---|---|---|
-| Concentration-ban | `src/strategies/concentration-ban.ts` `CONCENTRATION_BAN_PCT = 50` | **Hard** (top10 / dev / bundlers **> 50%** → `markTokenRug`) | Recommended extra way to fail **concentration leg** |
+| Concentration-ban | `src/strategies/concentration-ban.ts` `CONCENTRATION_BAN_PCT = 65` | **Hard** (top10 / dev / bundlers **> 65%** → `markTokenRug`) | Recommended extra way to fail **concentration leg** |
 | GMGN security | `gmgn-security-gate.ts` `maxTop10HolderRate: 0.2` | Hard when enabled | Stricter top10 on GMGN path; **keep**. This filter does not replace it |
 | Jupiter organic in `assessTokenRisk` | `risk-assessment.ts` | Soft Discord/UI | Pre-grad: ≥85 LOW, ≥70 MED, else HIGH. **&lt;70 is the current non-graduated floor** for wash-leg fail |
 | Strategy `organicScoreMin` | `canonical-params.ts`, `mcap-sim-track.ts` | Hard when set | Orthogonal strategy band; do not conflate |
@@ -192,7 +192,7 @@ Screener samples have occasionally returned values **> 1** (e.g. `2.48`). Those 
 |---|---|---|
 | `score100` unknown **or** `score100 ≤ 45` | **Locked** | Also **discovery exclude** |
 | `top_10_adjusted ≥ 0.20` | Recommended default | 20% clustered top-10 |
-| Existing concentration-ban trips (top10 / dev / bundlers **> 50%**) | Recommended default | Reuse `evaluateConcentrationBan` |
+| Existing concentration-ban trips (top10 / dev / bundlers **> 65%**) | Recommended default | Reuse `evaluateConcentrationBan` |
 
 Optional (log / ML, not v1 AND unless a flag turns them on): max `clusters[].share`, low `nakamoto_coefficient`, high gini / HHI.
 
@@ -368,7 +368,7 @@ Table-driven tests for `toScore100` and the truth table in §5.3:
 | `null` score | unknown → discovery exclude |
 | `organicScoreLabel: 'low'` but raw `80` | must **not** fail Leg B on label |
 | `supply_stats.bundles: 0.9` with healthy score/top10/organic | must **not** fail on bundles alone |
-| concentration-ban top10 `51%`, organic `90` | A fail, B pass → no hard reject |
+| concentration-ban top10 `66%`, organic `90` | A fail, B pass → no hard reject |
 | `audit.isSus === true` + `score100=20` | both fail → hard reject |
 | `audit.isSus` absent | not a Leg B fail |
 
