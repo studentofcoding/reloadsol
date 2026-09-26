@@ -2,7 +2,7 @@
 
 **Status:** implemented (2026-09-24)  
 **Date:** 2026-09-24  
-**Related:** [SPEC-ohlc-rug-spine-v1.md](./SPEC-ohlc-rug-spine-v1.md) (OHLC Stage-1 facts)
+**Related:** [SPEC-ohlc-rug-spine-v1.md](./SPEC-ohlc-rug-spine-v1.md) (OHLC Stage-1 facts), [SPEC-sol-first-spine-4class-ohlc-v1.md](./SPEC-sol-first-spine-4class-ohlc-v1.md) (4-class OHLC second head + soft size; extends this spine)
 
 ## Goal
 
