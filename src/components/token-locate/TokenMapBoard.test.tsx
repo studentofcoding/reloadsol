@@ -23,16 +23,33 @@ vi.mock('@/components/token-locate/TokenMapStrategyChart', () => ({
   default: () => <div>strategy-chart</div>,
 }))
 
-const result = {
+const result: TokenLocateResult = {
   tokenAddress: 'CbcyNo7m1amFWqEQm2m4PLv1UNvpcL3C1Ujm6AkzpKoU',
   symbol: 'TEST',
+  found: true,
   strategyPresence: [],
+  locations: {
+    trending: null,
+    mcap: null,
+    signals: null,
+    social: null,
+    outcomes: { count: 0 },
+    dlmmPotential: false,
+    rugList: false,
+    activeLockCount: 0,
+  },
+  rawSections: [],
+  fetchedAt: '2026-09-26T00:00:00.000Z',
   links: {
     chart: 'https://chart.example/token',
     jupiter: 'https://jup.example/token',
+    signals: '/signals',
+    algoTester: '/algo',
+    social: '/social',
     strategies: '/dev/outcomes',
+    dlmm: '/dlmm',
   },
-} as TokenLocateResult
+}
 
 function markup(banned: boolean) {
   return renderToStaticMarkup(
