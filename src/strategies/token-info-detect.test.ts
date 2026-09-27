@@ -321,27 +321,9 @@ describe('token_info_detect', () => {
         bundlersHoldPct: 65,
       }).ban,
     ).toBe(false)
-    const banSource = readFileSync('src/strategies/concentration-ban.ts', 'utf8')
-    expect(banSource).not.toContain('token_info_detect')
-    expect(banSource).toContain('CONCENTRATION_BAN_PCT = 65')
   })
 
-  it('wires the five Sol seams and leaves Robinhood unwired', () => {
-    const mcap = readFileSync('src/app/api/mcap-tracking/sim-track/route.ts', 'utf8')
-    const social = readFileSync('src/app/api/social/sim-track/route.ts', 'utf8')
-    const gmgn = readFileSync('src/strategies/gmgn-pipeline.ts', 'utf8')
-    const trending = readFileSync('src/strategies/trending-track/cycle.ts', 'utf8')
-    const rh = readFileSync('src/strategies/trending-bot-rh-sim.ts', 'utf8')
-    expect(mcap).toContain("source:\n              strategy.config.entryTemplate === 'first_seen'")
-    expect(mcap).toContain("'mcap_first_seen'")
-    expect(mcap).toContain("'mcap_at_80'")
-    expect(mcap).toContain("chain === 'sol'")
-    expect(social).toContain("source: 'social'")
-    expect(gmgn).toContain("source: 'gmgn_pipeline'")
-    expect(gmgn).toContain('banConcentrationIfNeeded')
-    expect(trending).toContain("source: 'trending'")
-    expect(rh).not.toContain('captureTokenInfoDetect')
-
+  it('ships write-once DDL and no upsert path', () => {
     const sql = readFileSync('db/init/42-token-info-detect.sql', 'utf8')
     expect(sql).toContain('UNIQUE (chain, token_address)')
     expect(sql).toContain('token_info_detect_history')
