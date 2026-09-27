@@ -34,13 +34,25 @@ fi
 # NOT EXISTS / ADD COLUMN IF NOT EXISTS), so re-running on an existing volume is
 # safe and backfills any migrations added after the volume was first created
 # (the Docker entrypoint only runs init scripts on a fresh data dir).
+# A failing file is reported but does NOT abort the run — otherwise one
+# non-idempotent migration silently skips every later one. The exit code is
+# still nonzero so callers fail the deploy. Guarded by `npm run db:check-migrations`.
+failed=()
 for f in db/init/*.sql; do
   [[ -f "$f" ]] || fail "Missing $f"
   log "Applying $f ..."
-  docker exec -i \
+  if ! docker exec -i \
     -e PGPASSWORD="${POSTGRES_PASSWORD}" \
     reloadsol-db \
-    psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-reloadsol_db}" -v ON_ERROR_STOP=1 < "$f"
+    psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-reloadsol_db}" -v ON_ERROR_STOP=1 < "$f"; then
+    failed+=("$f")
+  fi
 done
+
+if [[ "${#failed[@]}" -gt 0 ]]; then
+  log "ERROR: ${#failed[@]} migration(s) failed (later files were still applied):"
+  printf '  [init-local-db] FAILED %s\n' "${failed[@]}" >&2
+  exit 1
+fi
 
 log "Schema applied (extensions + roles + tables + migrations)"
