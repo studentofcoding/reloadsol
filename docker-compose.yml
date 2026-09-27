@@ -19,6 +19,8 @@ services:
     image: postgres:16-alpine
     container_name: reloadsol-db
     restart: unless-stopped
+    # Keep the DB resident: memory+swap capped at the limit => no container swap.
+    memswap_limit: 1G
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
@@ -26,19 +28,19 @@ services:
     command:
       - postgres
       - -c
-      - shared_buffers=128MB
+      - shared_buffers=256MB
       - -c
-      - work_mem=16MB
+      - work_mem=24MB
       - -c
       - max_connections=50
       - -c
-      - effective_cache_size=512MB
+      - effective_cache_size=1536MB
       - -c
-      - maintenance_work_mem=64MB
+      - maintenance_work_mem=128MB
     deploy:
       resources:
         limits:
-          memory: 768M
+          memory: 1G
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d:ro
@@ -104,12 +106,15 @@ services:
       context: .
       dockerfile: Dockerfile.web
     container_name: reloadsol-web
+    # Keep the app resident (V8 heap is capped below); no container swap.
+    memswap_limit: 768M
     ports:
       - "3000:3000"
     env_file:
       - .env
     environment:
       NODE_ENV: production
+      NODE_OPTIONS: ${WEB_NODE_OPTIONS:---max-old-space-size=512}
       PORT: 3000
       HOSTNAME: 0.0.0.0
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
