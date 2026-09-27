@@ -27,6 +27,8 @@ import { useRhEvmWallet } from "@/hooks/useRhEvmWallet";
 import { useRhBatchExecutorAddress } from "@/hooks/useRhBatchExecutorAddress";
 import { useTrendingSearch } from "@/hooks/useTrendingSearch";
 import { useQuery } from "@tanstack/react-query";
+import RosterSolChartLink from "@/components/signals/RosterSolChartLink";
+import { fetchTokenMetadataBatch } from "@/utils/token-metadata-client";
 import type { Address } from "viem";
 import RhPermit2SetupSheet, {
   RhPermit2StatusBanner,
@@ -477,6 +479,19 @@ export default function BulkTokenBuyer() {
     },
     enabled: isDevUser,
     staleTime: 60_000,
+  });
+
+  const rosterSolMintsKey = useMemo(() => {
+    if (effectiveChain !== "sol") return "";
+    return (rosterRecsQuery.data ?? []).map((rec) => rec.address).join(",");
+  }, [effectiveChain, rosterRecsQuery.data]);
+
+  const { data: rosterTokenMeta } = useQuery({
+    queryKey: ["gmgn-roster-recs-meta", rosterSolMintsKey],
+    queryFn: () =>
+      fetchTokenMetadataBatch(rosterSolMintsKey.split(",").filter(Boolean)),
+    enabled: rosterSolMintsKey.length > 0,
+    staleTime: 10 * 60 * 1000,
   });
 
   // Risk analysis state
@@ -1977,17 +1992,26 @@ export default function BulkTokenBuyer() {
                     Roster digger ({effectiveChain})
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {rosterRecsQuery.data!.map((rec) => (
-                      <button
-                        key={rec.address}
-                        type="button"
-                        onClick={() => handleAddFromSearch(rec.address)}
-                        className="rounded-lg bg-gray-800 px-2 py-1 font-mono text-xs text-gray-200 hover:bg-gray-700"
-                        title={rec.address}
-                      >
-                        {rec.address.slice(0, 6)}…{rec.address.slice(-4)}
-                      </button>
-                    ))}
+                    {rosterRecsQuery.data!.map((rec) =>
+                      effectiveChain === "sol" ? (
+                        <RosterSolChartLink
+                          key={rec.address}
+                          mint={rec.address}
+                          metaSymbol={rosterTokenMeta?.get(rec.address)?.symbol}
+                          className="rounded-lg bg-gray-800 px-2 py-1 text-xs text-gray-200 hover:bg-gray-700"
+                        />
+                      ) : (
+                        <button
+                          key={rec.address}
+                          type="button"
+                          onClick={() => handleAddFromSearch(rec.address)}
+                          className="rounded-lg bg-gray-800 px-2 py-1 font-mono text-xs text-gray-200 hover:bg-gray-700"
+                          title={rec.address}
+                        >
+                          {rec.address.slice(0, 6)}…{rec.address.slice(-4)}
+                        </button>
+                      ),
+                    )}
                   </div>
                 </div>
               ) : null}

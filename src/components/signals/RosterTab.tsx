@@ -1,8 +1,11 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import InsightPressButton from "@/components/insight/InsightPressButton";
+import RosterSolChartLink from "@/components/signals/RosterSolChartLink";
+import { rosterTokenLabel, shortAddr } from "@/components/signals/roster-token-label";
+import { fetchTokenMetadataBatch } from "@/utils/token-metadata-client";
 
 type HitToken = {
   token_address: string;
@@ -53,11 +56,6 @@ type SignalRow = {
   skip_reason: string | null;
   market_cap_usd: number | null;
 };
-
-function shortAddr(a: string): string {
-  if (a.length <= 12) return a;
-  return `${a.slice(0, 4)}…${a.slice(-4)}`;
-}
 
 function guessGmgnChain(address: string, chain?: string | null): string {
   if (chain === "robinhood" || chain === "sol" || chain === "bsc" || chain === "base" || chain === "eth") {
@@ -111,16 +109,21 @@ function scoreTooltip(row: RosterRow): string {
   ].join("\n");
 }
 
-function hitsTooltip(row: RosterRow): string {
+function hitsTooltip(
+  row: RosterRow,
+  labelFor: (token: HitToken) => string,
+): string {
   const tokens = row.hit_tokens ?? [];
   if (!tokens.length) return "no dig hits recorded";
   const lines = tokens.map((t) => {
+    const name = labelFor(t);
     const addr = shortAddr(t.token_address);
+    const head = name === addr ? name : `${name} (${addr})`;
     const profit =
       t.profit_usd != null && Number.isFinite(t.profit_usd)
         ? ` ($${Math.round(t.profit_usd).toLocaleString()})`
         : "";
-    return `${addr}${profit}`;
+    return `${head}${profit}`;
   });
   return [`Token hits (${tokens.length}):`, ...lines].join("\n");
 }
@@ -198,6 +201,44 @@ export default function RosterTab() {
   const needsFollow = rosterQuery.data?.needsFollow ?? [];
   const digRuns = rosterQuery.data?.digRuns ?? [];
   const signals = rosterQuery.data?.signals ?? [];
+
+  const solMintsKey = useMemo(() => {
+    const data = rosterQuery.data;
+    if (!data) return "";
+    const set = new Set<string>();
+    for (const signal of data.signals ?? []) {
+      if (guessGmgnChain(signal.token_address, signal.chain) === "sol") {
+        set.add(signal.token_address);
+      }
+    }
+    for (const row of data.roster ?? []) {
+      for (const hit of row.hit_tokens ?? []) {
+        if (guessGmgnChain(hit.token_address, hit.chain) === "sol") {
+          set.add(hit.token_address);
+        }
+      }
+    }
+    return Array.from(set).join(",");
+  }, [rosterQuery.data]);
+
+  const { data: tokenMeta } = useQuery({
+    queryKey: ["roster-tab-token-meta", solMintsKey],
+    queryFn: () =>
+      fetchTokenMetadataBatch(solMintsKey.split(",").filter(Boolean)),
+    enabled: solMintsKey.length > 0,
+    staleTime: 10 * 60 * 1000,
+  });
+
+  const hitLabel = (token: HitToken) => {
+    if (guessGmgnChain(token.token_address, token.chain) !== "sol") {
+      return shortAddr(token.token_address);
+    }
+    return rosterTokenLabel({
+      mint: token.token_address,
+      metaSymbol: tokenMeta?.get(token.token_address)?.symbol,
+    });
+  };
+
   const error =
     actionError ||
     (rosterQuery.error instanceof Error
@@ -323,7 +364,7 @@ export default function RosterTab() {
                   </HoverTip>
                   {" · "}
                   hits{" "}
-                  <HoverTip text={hitsTooltip(row)}>
+                  <HoverTip text={hitsTooltip(row, hitLabel)}>
                     {row.runner_hits}
                   </HoverTip>
                 </span>
@@ -395,7 +436,7 @@ export default function RosterTab() {
                       </HoverTip>
                     </td>
                     <td className="px-3 py-1.5">
-                      <HoverTip text={hitsTooltip(row)}>
+                      <HoverTip text={hitsTooltip(row, hitLabel)}>
                         {row.runner_hits}
                       </HoverTip>
                     </td>
@@ -432,35 +473,46 @@ export default function RosterTab() {
           <p className="text-gray-500">No signals yet.</p>
         ) : (
           <ul className="divide-y divide-white/10 rounded-xl shadow-elev">
-            {signals.map((s) => (
-              <li key={s.id} className="px-3 py-2 text-xs">
-                <div className="font-medium text-white">
-                  <a
-                    href={gmgnTokenUrl(s.token_address, s.chain)}
-                    target="_blank"
-                    rel="noopener noreferrer"
+            {signals.map((s) => {
+              const chain = guessGmgnChain(s.token_address, s.chain);
+              return (
+                <li key={s.id} className="px-3 py-2 text-xs">
+                  <div className="font-medium text-white">
+                    {chain === "sol" ? (
+                      <RosterSolChartLink
+                        mint={s.token_address}
+                        symbol={s.symbol}
+                        metaSymbol={tokenMeta?.get(s.token_address)?.symbol}
                         className="underline-offset-2 fine-hover:underline"
-                  >
-                    {s.symbol || shortAddr(s.token_address)}
-                  </a>
-                  {" · "}
-                  <span className="text-amber-200/80">
-                    {guessGmgnChain(s.token_address, s.chain)}
-                  </span>
-                  {" · "}
-                  {s.makers?.length ?? 0} wallets
-                </div>
-                <div className="text-gray-500">
-                  {new Date(s.fired_at).toLocaleString()}
-                  {s.market_cap_usd != null
-                    ? ` · mcap $${Math.round(s.market_cap_usd).toLocaleString()}`
-                    : ""}
-                  {s.telegram_sent ? " · tg" : ""}
-                  {s.sim_opened ? " · sim" : ""}
-                  {s.skip_reason ? ` · skip: ${s.skip_reason}` : ""}
-                </div>
-              </li>
-            ))}
+                      />
+                    ) : (
+                      <a
+                        href={gmgnTokenUrl(s.token_address, s.chain)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={s.token_address}
+                        className="underline-offset-2 fine-hover:underline"
+                      >
+                        {s.symbol || shortAddr(s.token_address)}
+                      </a>
+                    )}
+                    {" · "}
+                    <span className="text-amber-200/80">{chain}</span>
+                    {" · "}
+                    {s.makers?.length ?? 0} wallets
+                  </div>
+                  <div className="text-gray-500">
+                    {new Date(s.fired_at).toLocaleString()}
+                    {s.market_cap_usd != null
+                      ? ` · mcap $${Math.round(s.market_cap_usd).toLocaleString()}`
+                      : ""}
+                    {s.telegram_sent ? " · tg" : ""}
+                    {s.sim_opened ? " · sim" : ""}
+                    {s.skip_reason ? ` · skip: ${s.skip_reason}` : ""}
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>
