@@ -55,7 +55,7 @@ Sliding **last ≤10 × 1m** at eval time (not anchored to launch). OR of:
 
 ### Redis extend vs Postgres (G/H)
 
-- **Postgres** (`token_detect_snapshots` / labels): unchanged point-in-time capture — not extended by GMGN merge.
+- **Postgres** (`token_detect_snapshots` / labels): unchanged point-in-time OHLC capture — not extended by GMGN merge. Token Info tiles are a different ledger: [SPEC-token-info-universal-ledger-v1.md](./specs/SPEC-token-info-universal-ledger-v1.md).
 - **Redis** (`ohlc:v1:24h1m:*`): chart series; GMGN results **merge** (union by time, trim to last 24h). When Redis already spans ~24h, **do not** call GMGN again.
 - **Strategy correlation**: paints Redis as gray “extended” and detect-snapshot bars as amber “detect”.
 
