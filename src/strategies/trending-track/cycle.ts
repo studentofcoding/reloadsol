@@ -19,6 +19,10 @@ import { trendingListDiscordViaCronOnly } from '@/utils/trending-notification-de
 import { formatAppDateTime } from '@/utils/datetime'
 import type { JupiterResponse } from '@/types'
 import { assignTokenToStrategy } from '@/strategies/assign'
+import {
+  captureTokenInfoDetectBatch,
+  type TokenInfoDetectCapture,
+} from '@/strategies/token-info-detect'
 import { tokenMatchesTrendingBotStrategy } from '@/strategies/strategy-filters'
 import {
   refreshTrackStrategyCache,
@@ -85,6 +89,7 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
   const requestId = Math.random().toString(36).substring(7)
 
   const { acquireJobLock, releaseJobLock } = await import('@/utils/bot-job-lock')
+  const tokenInfoCaptures: TokenInfoDetectCapture[] = []
   const jobLock = await acquireJobLock('trending_track', 600)
   if (!jobLock.acquired) {
     console.log(`⏭️ Skipping track cycle: ${jobLock.reason}`)
@@ -752,6 +757,12 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
               console.log(`🚫 Token ${token.token_symbol} rejected: no active strategy matches mcap/organic/holders band`)
               continue
             }
+            tokenInfoCaptures.push({
+              chain: 'sol',
+              tokenAddress: token.token_address,
+              detectingStrategy: assignedStrategy,
+              source: 'trending',
+            })
 
             const strategy = resolveTradingStrategy(assignedStrategy)
 
@@ -1049,6 +1060,12 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
                 console.log(`🚫 Dip buy ${token.token_symbol} rejected: no active strategy matches band`)
                 continue
               }
+              tokenInfoCaptures.push({
+                chain: 'sol',
+                tokenAddress: token.token_address,
+                detectingStrategy: assignedStrategy,
+                source: 'trending',
+              })
 
               const strategy = resolveTradingStrategy(assignedStrategy)
 
@@ -1843,6 +1860,7 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
       timestamp: new Date().toISOString()
     }, { status: 500 })
   } finally {
+    await captureTokenInfoDetectBatch(tokenInfoCaptures)
     await releaseJobLock('trending_track')
   }
 }

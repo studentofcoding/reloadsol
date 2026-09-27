@@ -37,6 +37,7 @@ import { mcapTrackerToCanonical } from '@/strategies/canonical-params'
 import { resolveExitOverlayForOpen } from '@/strategies/potential-exit-overlay'
 import type { McapTrackerStrategy, StrategyChain } from '@/strategies/types'
 import { STRATEGY_CHAINS } from '@/strategies/types'
+import { captureTokenInfoDetectBatch } from '@/strategies/token-info-detect'
 import { simWalletForChain } from '@/strategies/sim-wallets'
 import { getNativeUsd } from '@/utils/native-usd'
 import {
@@ -960,6 +961,29 @@ async function runSimTrack(request: NextRequest) {
         execMode.isSimulated && brainUniverse.applied
           ? brainUniverse.items
           : trackingRows
+
+      if (chain === 'sol') {
+        const selected = openRows.filter(
+          (snapshot) =>
+            getMcapSimOpenSkipReason(
+              strategy,
+              snapshot,
+              openMintSet,
+              closedOutcomeKeys,
+            ) == null,
+        )
+        await captureTokenInfoDetectBatch(
+          selected.map((snapshot) => ({
+            chain: 'sol' as const,
+            tokenAddress: snapshot.token_address,
+            detectingStrategy: strategy.id,
+            source:
+              strategy.config.entryTemplate === 'first_seen'
+                ? 'mcap_first_seen'
+                : 'mcap_at_80',
+          })),
+        )
+      }
 
       const brainRisk = execMode.isSimulated
         ? await brainRiskSession.resolve({

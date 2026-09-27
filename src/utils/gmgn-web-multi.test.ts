@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('@/strategies/token-info-detect', () => ({
+  tokenInfoDetectRowExists: vi.fn(async () => false),
+}))
+
 import { evaluateConcentrationBan } from '@/strategies/concentration-ban'
+import { tokenInfoDetectRowExists } from '@/strategies/token-info-detect'
 import { buildGmgnTokenSnapshot } from '@/strategies/gmgn-token-snapshot'
 import {
   sampleGmgnWebFullInfo,
@@ -336,6 +342,15 @@ describe('fetchGmgnWebMultiTokenInfo', () => {
     const rows = await enqueueGmgnWebLedgerMint(MINT_A)
     expect(rows).toBeUndefined()
     expect(fetchMock).not.toHaveBeenCalled()
+    expect(getGmgnWebMultiMetrics().ledgerSkips).toBe(1)
+  })
+
+  it('skips a ledger refetch when token_info_detect already has the mint', async () => {
+    vi.mocked(tokenInfoDetectRowExists).mockResolvedValueOnce(true)
+    const rows = await enqueueGmgnWebLedgerMint(MINT_A)
+    expect(rows).toBeUndefined()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(tokenInfoDetectRowExists).toHaveBeenCalledWith('sol', MINT_A)
     expect(getGmgnWebMultiMetrics().ledgerSkips).toBe(1)
   })
 })
