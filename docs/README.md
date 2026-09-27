@@ -23,6 +23,7 @@ this folder remain authoritative references.
 | — | [SPEC-jev-soft-gate-shadow-v1.md](./specs/SPEC-jev-soft-gate-shadow-v1.md) | To-spec: Jev Noul shadow beside Early Enter soft gate; log sink `early_enter_noul_shadow`; paper untouched |
 | — | [SPEC-target-machine-spine-v1.md](./SPEC-target-machine-spine-v1.md) | Implemented: paper Target machine spine (`rug → cl(p) → size/TP/SL → paper execute`) |
 | — | [SPEC-sol-first-spine-4class-ohlc-v1.md](./SPEC-sol-first-spine-4class-ohlc-v1.md) | Draft: Sol-first spine — 4-class OHLC second head + soft size. Extends the Target machine spine. Numerics TBD; docs only |
+| — | [SPEC-gmgn-web-multi-token-info-v1.md](./specs/SPEC-gmgn-web-multi-token-info-v1.md) | Public gmgn.ai multi-token info for Freeview / ledger capture. Flag `GMGN_TOKEN_INFO_SOURCE=web` (default openapi). Max batch 8. OpenAPI stays for trade/search/rank |
 
 ## Diagrams
 
