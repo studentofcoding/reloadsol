@@ -78,6 +78,7 @@
 ## Data Model (Postgres — `token_mcap_tracking`)
 
 - Core fields: `token_address`, `token_symbol`, `first_mcap`, `current_mcap`, `mcap_growth_percent`, `first_seen_at`, `last_updated_at`.
+- `first_seen_at` is mutable (`normalizeTrackingTimeline` repairs it; `resetTrackingSession` rewrites it). It is not the immutable Token Info detect clock. That clock is specified in [SPEC-token-info-universal-ledger-v1.md](./specs/SPEC-token-info-universal-ledger-v1.md).
 - Milestones: `when_reach_80pct`, `when_reach_120pct`, `when_reach_200pct`.
 - Status: `is_tracking_stuck` and inferred finished state (via API based on `MAX_TRACKING_AGE_MS`).
 
