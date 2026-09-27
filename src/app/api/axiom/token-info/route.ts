@@ -23,6 +23,53 @@ const RATE_LIMIT_CONFIG = {
   timeout: 10000     // 10 second timeout
 };
 
+// Upstream statuses that mean "not now" rather than "this token is broken":
+// 425 (Too Early, what api.axiom.trade returns) plus the usual gateway set.
+const UPSTREAM_UNAVAILABLE = new Set([425, 429, 502, 503, 504]);
+
+// Negative cache: a failing pairAddress is not re-fetched for this long, so a
+// page holding many tokens cannot hammer an unavailable upstream.
+const NEGATIVE_TTL_MS = 120_000;
+const NEGATIVE_MAX_ENTRIES = 500;
+const negativeCache = new Map<string, number>(); // pairAddress -> retry-at epoch ms
+
+function negativeRetryAfterMs(pairAddress: string): number | null {
+  const retryAt = negativeCache.get(pairAddress);
+  if (retryAt == null) return null;
+  const remaining = retryAt - Date.now();
+  if (remaining <= 0) {
+    negativeCache.delete(pairAddress);
+    return null;
+  }
+  return remaining;
+}
+
+function rememberNegative(pairAddress: string): void {
+  if (negativeCache.size >= NEGATIVE_MAX_ENTRIES) {
+    for (const [key, retryAt] of negativeCache) {
+      if (retryAt <= Date.now()) negativeCache.delete(key);
+    }
+    if (negativeCache.size >= NEGATIVE_MAX_ENTRIES) {
+      const oldest = negativeCache.keys().next().value;
+      if (oldest != null) negativeCache.delete(oldest);
+    }
+  }
+  negativeCache.set(pairAddress, Date.now() + NEGATIVE_TTL_MS);
+}
+
+function unavailableResponse(pairAddress: string, details: string): NextResponse {
+  const remaining = negativeRetryAfterMs(pairAddress) ?? NEGATIVE_TTL_MS;
+  return NextResponse.json(
+    {
+      error: 'Axiom upstream unavailable',
+      details,
+      unavailable: true,
+      retryAfter: Math.ceil(remaining / 1000),
+    },
+    { status: 503 },
+  );
+}
+
 // Helper function to calculate exponential backoff
 function calculateBackoff(consecutiveErrors: number, maxBackoff: number): number {
   const baseBackoff = Math.min(1000 * Math.pow(2, consecutiveErrors - 1), maxBackoff);
@@ -50,17 +97,20 @@ export async function GET(request: NextRequest) {
       }, { status: 400 })
     }
 
-    console.log(`🔍 Fetching Axiom token info for mint: ${mintAddress}`)
+    // A recently failed pair is answered from the negative cache — no upstream call.
+    if (negativeRetryAfterMs(mintAddress) != null) {
+      return unavailableResponse(mintAddress, 'Cached upstream failure')
+    }
 
-    // Check if we're in backoff period
+    // Global backoff after consecutive upstream failures.
     const now = Date.now();
     if (now < rateLimitState.backoffUntil) {
-      console.log(`Axiom API in backoff until ${new Date(rateLimitState.backoffUntil).toISOString()}`);
       return NextResponse.json({
-        error: 'Rate limited',
-        details: 'Service temporarily unavailable due to rate limiting',
+        error: 'Axiom upstream unavailable',
+        details: 'Service temporarily unavailable due to upstream failures',
+        unavailable: true,
         retryAfter: Math.ceil((rateLimitState.backoffUntil - now) / 1000)
-      }, { status: 429 });
+      }, { status: 503 });
     }
 
     // Enforce minimum interval between requests
@@ -98,22 +148,15 @@ export async function GET(request: NextRequest) {
       signal: AbortSignal.timeout(RATE_LIMIT_CONFIG.timeout)
     })
 
-    // Handle rate limiting from Axiom API
-    if (response.status === 429) {
-      console.warn('Rate limited by Axiom API');
+    // Upstream "not now" (425 Too Early, 429, 5xx): back off and remember the pair.
+    if (UPSTREAM_UNAVAILABLE.has(response.status)) {
       rateLimitState.consecutiveErrors++;
       rateLimitState.backoffUntil = Date.now() + calculateBackoff(rateLimitState.consecutiveErrors, RATE_LIMIT_CONFIG.maxBackoff);
-      
-      return NextResponse.json({
-        error: 'Rate limited by upstream API',
-        details: 'The Axiom API has rate limited our request',
-        retryAfter: Math.ceil(calculateBackoff(rateLimitState.consecutiveErrors, RATE_LIMIT_CONFIG.maxBackoff) / 1000)
-      }, { status: 429 });
+      rememberNegative(mintAddress);
+      return unavailableResponse(mintAddress, `Upstream ${response.status} ${response.statusText}`)
     }
 
     if (!response.ok) {
-      console.error(`Axiom API error: ${response.status} ${response.statusText}`);
-      
       // Increase error count for non-OK responses
       rateLimitState.consecutiveErrors++;
 

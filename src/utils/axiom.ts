@@ -27,11 +27,26 @@ interface AxiomResponse {
   error?: string
   requiresAuth?: boolean
   pairNotFound?: boolean
+  /** Upstream is not answering right now (425 Too Early / 429 / 5xx). Not an error to report. */
+  unavailable?: boolean
 }
 
-// Cache for Axiom API responses to avoid repeated calls
-const axiomCache = new Map<string, { data: AxiomTokenInfo; timestamp: number }>()
+// Cache for Axiom API responses. Failures are cached too (shorter TTL) so a mint
+// that cannot be resolved is not re-fetched on every poll.
+const axiomCache = new Map<string, { response: AxiomResponse; timestamp: number }>()
 const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes cache
+const NEGATIVE_CACHE_DURATION = 2 * 60 * 1000 // 2 minutes for failures
+
+const UNAVAILABLE_STATUSES = new Set([425, 429, 502, 503, 504])
+
+const loggedFailures = new Map<string, number>()
+/** At most one line per mint per negative TTL — not one per poll. */
+function logFailureOnce(mintAddress: string, message: string): void {
+  const last = loggedFailures.get(mintAddress) ?? 0
+  if (Date.now() - last < NEGATIVE_CACHE_DURATION) return
+  loggedFailures.set(mintAddress, Date.now())
+  console.warn(`[axiom] risk data unavailable for ${mintAddress}: ${message}`)
+}
 
 function getApiBaseUrl(): string {
   if (typeof window !== 'undefined') return ''
@@ -39,94 +54,95 @@ function getApiBaseUrl(): string {
 }
 
 export async function fetchAxiomTokenInfo(mintAddress: string): Promise<AxiomResponse> {
+  // Cache first: successes for 5m, failures for 2m.
+  const cached = axiomCache.get(mintAddress)
+  if (cached) {
+    const ttl = cached.response.success ? CACHE_DURATION : NEGATIVE_CACHE_DURATION
+    if (Date.now() - cached.timestamp < ttl) return cached.response
+  }
+
+  const remember = (response: AxiomResponse): AxiomResponse => {
+    axiomCache.set(mintAddress, { response, timestamp: Date.now() })
+    return response
+  }
+
   try {
-    // Check cache first
-    const cached = axiomCache.get(mintAddress)
-    if (cached && (Date.now() - cached.timestamp) < CACHE_DURATION) {
-      return { success: true, data: cached.data }
-    }
+    const jupiterData = await fetchTokenMetadataFromJupiter(mintAddress)
+    const graduatedPool = jupiterData?.graduatedPool
 
-    // Get the graduated pool directly from Jupiter metadata function
-    console.log(`🔍 Getting graduated pool for mint: ${mintAddress}`)
-
-    try {
-      const jupiterData = await fetchTokenMetadataFromJupiter(mintAddress)
-      const graduatedPool = jupiterData?.graduatedPool
-
-      if (!graduatedPool) {
-        console.warn(`No graduated pool found for mint: ${mintAddress}`)
-        return {
-          success: false,
-          error: 'No graduated pool available for this token',
-          pairNotFound: true
-        }
-      }
-
-      console.log(`🎯 Using graduated pool: ${graduatedPool} for mint: ${mintAddress}`)
-
-      // Fetch from our proxy API endpoint using the graduated pool
-      const baseUrl = getApiBaseUrl()
-      const response = await fetch(`${baseUrl}/api/axiom/token-info?pairAddress=${encodeURIComponent(graduatedPool)}`, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json'
-        },
-        // Add timeout
-        signal: AbortSignal.timeout(10000) // 10 second timeout
-      })
-
-      const result = await response.json()
-
-      // Handle authentication error
-      if (result.requiresAuth) {
-        return {
-          success: false,
-          error: 'Axiom API requires authentication',
-          requiresAuth: true
-        }
-      }
-
-      // Handle pair not found error
-      if (result.pairNotFound) {
-        return {
-          success: false,
-          error: 'Token not found in Axiom database',
-          pairNotFound: true
-        }
-      }
-
-      if (!response.ok) {
-        throw new Error(`Axiom API error: ${response.status} ${response.statusText}`)
-      }
-
-      if (!result.success || !result.data) {
-        throw new Error(result.error || 'Invalid response from Axiom API')
-      }
-
-      const data: AxiomTokenInfo = result.data
-
-      // Validate required fields
-      if (typeof data.numHolders !== 'number' || typeof data.insidersHoldPercent !== 'number' || typeof data.bundlersHoldPercent !== 'number') {
-        throw new Error('Invalid response format from Axiom API')
-      }
-
-      // Cache the result
-      axiomCache.set(mintAddress, { data, timestamp: Date.now() })
-
-      return { success: true, data }
-    } catch (error) {
-      console.error(`Failed to fetch Axiom token info for ${mintAddress}:`, error)
-      return {
+    if (!graduatedPool) {
+      return remember({
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      }
+        error: 'No graduated pool available for this token',
+        pairNotFound: true,
+      })
     }
+
+    const baseUrl = getApiBaseUrl()
+    const response = await fetch(
+      `${baseUrl}/api/axiom/token-info?pairAddress=${encodeURIComponent(graduatedPool)}`,
+      {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(10000), // 10 second timeout
+      },
+    )
+
+    const result = (await response.json().catch(() => ({}))) as AxiomResponse
+
+    // Upstream not answering: soft "unavailable", negative-cached, one log per mint.
+    if (UNAVAILABLE_STATUSES.has(response.status) || result.unavailable) {
+      logFailureOnce(mintAddress, `upstream ${response.status}`)
+      return remember({
+        success: false,
+        error: 'Axiom risk data unavailable',
+        unavailable: true,
+      })
+    }
+
+    if (result.requiresAuth) {
+      return remember({
+        success: false,
+        error: 'Axiom API requires authentication',
+        requiresAuth: true,
+      })
+    }
+
+    if (result.pairNotFound) {
+      return remember({
+        success: false,
+        error: 'Token not found in Axiom database',
+        pairNotFound: true,
+      })
+    }
+
+    if (!response.ok || !result.success || !result.data) {
+      logFailureOnce(mintAddress, result.error || `http ${response.status}`)
+      return remember({
+        success: false,
+        error: result.error || `Axiom API error: ${response.status}`,
+      })
+    }
+
+    const data: AxiomTokenInfo = result.data
+
+    // Validate required fields
+    if (
+      typeof data.numHolders !== 'number' ||
+      typeof data.insidersHoldPercent !== 'number' ||
+      typeof data.bundlersHoldPercent !== 'number'
+    ) {
+      logFailureOnce(mintAddress, 'invalid response format')
+      return remember({ success: false, error: 'Invalid response format from Axiom API' })
+    }
+
+    return remember({ success: true, data })
   } catch (error) {
-    console.error(`Failed to fetch Axiom token info for ${mintAddress}:`, error)
-    return {
+    logFailureOnce(mintAddress, error instanceof Error ? error.message : 'Unknown error')
+    return remember({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
-    }
+      error: error instanceof Error ? error.message : 'Unknown error',
+    })
   }
 }
 

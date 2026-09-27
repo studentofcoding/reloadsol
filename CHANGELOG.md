@@ -16,6 +16,11 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Signals-tab list now carries the social bursts.** `social_only_fomo_gt7` joins the Signals picker universe (`src/utils/signals-strategy-id.ts`, `src/strategies/signals-strategy-list.ts`); selecting it lists the live events-derived burst set ([`social-burst-list.ts`](src/strategies/social/social-burst-list.ts)) — every new entry burst appears as a row with the 30m mention count as its score — instead of reading `trading_signals`. Burst rows match only the social entry (never signals/mcap), and Robinhood has no social twin.
 - **Not this change (still open):** the mcap path stays blocked by its saturated `maxOpenPositions` + market-brain `/union` paper gating, and the social strategy's own 5-position cap will eventually stop it catching.
 
+### Fixed — Axiom risk panel 425 flood + one chart per token on the buy page
+
+- **`/api/axiom/token-info` answered 425 for every pair and the client re-requested each mint on every poll**, flooding the console (`Failed to fetch Axiom token info for …: Axiom API error: 425`) and hammering a dead upstream. 425 (Too Early) is now treated like 429/5xx: the route backs off, negative-caches the pair for 120 s and answers a soft `503 { unavailable: true, retryAfter }`; the client caches *failures* for 2 min, maps `unavailable` to a non-error result, and logs at most one line per mint per TTL (`[axiom] risk data unavailable for …`). The per-poll `console.log` noise in both files is gone.
+- **The buy page showed one chart for the "active" token.** With more than one parsed mint, [`BulkTokenBuyer.tsx`](src/components/BulkTokenBuyer.tsx) now opens every mint's GMGN chart in a grid — 3 across, the rest on the second row (5 max, 240 px each); a single token keeps the full-height 400 px chart.
+
 ### Changed — mcap / signals kanban tag `potential` is now `rising`
 
 - The gold chip on `/dev/signals` is a tracking tag (auto when peak growth > 0), not a buy path. Stored label is `rising` on `token_mcap_tracking`, synced `trading_signals`, and OHLC cards keyed by that tag (`db/init/41-rename-tracking-label-rising.sql`). Reads still accept legacy `potential` for one release.

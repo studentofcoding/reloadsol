@@ -2170,16 +2170,36 @@ export default function BulkTokenBuyer() {
                       }
                     })()}
                   </div>
-                  <div className="bg-gray-800 border border-gray-600 rounded-xl p-0 overflow-hidden relative">
-                    {/* DLMM-style chart: stable lazy iframe + loading state + open-on-GMGN */}
-                    <GmgnKlineChart
-                      key={`gmgn-chart-${effectiveChain}-${selectedToken}`}
-                      tokenMint={selectedToken}
-                      chain={effectiveChain}
-                      height={400}
-                      interval="5"
-                    />
-                  </div>
+                  {validMints.length > 1 ? (
+                    // More than one token: open every parsed mint's chart —
+                    // 3 across on the top row, the rest on the second (5 max).
+                    <div className="grid grid-cols-3 gap-3">
+                      {validMints.slice(0, 5).map((mint) => (
+                        <div
+                          key={`gmgn-chart-${effectiveChain}-${mint}`}
+                          className="bg-gray-800 border border-gray-600 rounded-xl p-0 overflow-hidden relative"
+                        >
+                          <GmgnKlineChart
+                            tokenMint={mint}
+                            chain={effectiveChain}
+                            height={240}
+                            interval="5"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="bg-gray-800 border border-gray-600 rounded-xl p-0 overflow-hidden relative">
+                      {/* DLMM-style chart: stable lazy iframe + loading state + open-on-GMGN */}
+                      <GmgnKlineChart
+                        key={`gmgn-chart-${effectiveChain}-${selectedToken}`}
+                        tokenMint={selectedToken}
+                        chain={effectiveChain}
+                        height={400}
+                        interval="5"
+                      />
+                    </div>
+                  )}
                 </div>
               )}
               {/* SOL Amount Input */}
