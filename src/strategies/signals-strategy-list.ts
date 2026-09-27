@@ -5,7 +5,7 @@ import {
   type SignalsListChain,
   type SignalsListPickerOption,
 } from '@/utils/signals-strategy-id'
-import { MCAP_TRACKER_STRATEGIES, SIGNALS_STRATEGIES } from './registry'
+import { MCAP_TRACKER_STRATEGIES, SIGNALS_STRATEGIES, SOCIAL_STRATEGIES } from './registry'
 import { computeScoreAndDecision, type SignalScoringItem } from './signals-scoring'
 import type { ScoredSignal } from './signals-pipeline'
 import type {
@@ -37,7 +37,7 @@ export const SIGNALS_LIST_SCORING = {
 
 type UniverseEntry = {
   strategyId: string
-  domain: 'signals' | 'mcap_tracker'
+  domain: 'signals' | 'mcap_tracker' | 'social'
   template?: 'default' | 'sell_over_100'
 }
 
@@ -47,6 +47,7 @@ const UNIVERSE: Record<SignalsListChain, readonly UniverseEntry[]> = {
     { strategyId: 'signals_sell_over_100', domain: 'signals', template: 'sell_over_100' },
     { strategyId: 'mcap_enter_first_seen', domain: 'mcap_tracker' },
     { strategyId: 'mcap_enter_at_80', domain: 'mcap_tracker' },
+    { strategyId: 'social_only_fomo_gt7', domain: 'social' },
   ],
   robinhood: [
     { strategyId: 'signals_default_rh', domain: 'signals', template: 'default' },
@@ -135,6 +136,7 @@ function displayName(strategyId: string, overrides?: Record<string, string>): st
   return (
     SIGNALS_STRATEGIES[strategyId]?.name ??
     MCAP_TRACKER_STRATEGIES[strategyId]?.name ??
+    SOCIAL_STRATEGIES[strategyId]?.name ??
     strategyId
   )
 }
@@ -242,12 +244,17 @@ function mcapStrategyFor(
 
 function strategyMatches(
   entry: UniverseEntry,
-  item: ScoredSignal,
+  item: SignalsListPoolItem,
   scoreConfig: SignalsStrategyConfig,
   mcapById: Record<string, McapTrackerStrategy>,
   openMints: Set<string>,
   closedMints: Set<string>,
 ): boolean {
+  // Social burst rows are pre-filtered by the burst pool and match only social.
+  const isSocialRow = item.social_entry === true
+  if (entry.domain === 'social') return isSocialRow
+  if (isSocialRow) return false
+
   if (entry.domain === 'signals' && entry.template) {
     const result = computeScoreAndDecision(item, {
       ...scoreConfig,
@@ -274,7 +281,17 @@ function collapseMints(pool: readonly ScoredSignal[]): ScoredSignal[] {
   return out
 }
 
-export type SignalsListRow = ScoredSignal & { alsoMatches: SignalsListAlsoMatch[] }
+export type SignalsListRow = SignalsListPoolItem & { alsoMatches: SignalsListAlsoMatch[] }
+
+/**
+ * Signals-list pool row. `social_entry` marks a row from the social FOMO burst
+ * pool, which only matches the social universe entry (never signals/mcap).
+ */
+export type SignalsListPoolItem = ScoredSignal & {
+  social_entry?: boolean
+  mention_count_30m?: number | null
+  top_source?: string | null
+}
 
 /**
  * One row per mint that matches the selected strategy.
@@ -285,7 +302,7 @@ export type SignalsListRow = ScoredSignal & { alsoMatches: SignalsListAlsoMatch[
 export function projectSignalsStrategyList(input: {
   chain: StrategyChain
   selectedId: string
-  pool: readonly ScoredSignal[]
+  pool: readonly SignalsListPoolItem[]
   limit: number
   scoreConfig: SignalsStrategyConfig
   mcapById: Record<string, McapTrackerStrategy>
@@ -341,7 +358,13 @@ export function projectSignalsStrategyList(input: {
     })
   }
 
-  if (selected.domain === 'signals') {
+  if (selected.domain === 'social') {
+    rows.sort((a, b) => {
+      const mentions = (b.mention_count_30m ?? 0) - (a.mention_count_30m ?? 0)
+      if (mentions !== 0) return mentions
+      return a.token_address.localeCompare(b.token_address)
+    })
+  } else if (selected.domain === 'signals') {
     rows.sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score
       return (b.mcap_growth_percent || 0) - (a.mcap_growth_percent || 0)
