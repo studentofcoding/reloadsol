@@ -52,8 +52,19 @@ const NOUL_QUESTION_KEY = 'early_enter_keep'
 export const EARLY_ENTER_NOUL_INSTRUCTIONS =
   'Should we keep (emit) this Early Enter toast/Telegram alert given the closed-loop ML score and soft-gate settings in state? Answer yes to keep/emit, no to suppress.'
 
-export async function callTypeSafeNoul(
-  state: EarlyEnterNoulState,
+export type TypeSafeNoulQuestion = {
+  questionKey: string
+  instructions: string
+  criteria: { true: string; false: string }
+}
+
+/**
+ * Generic Noul yes/no question. Callers own the state, wording, and thresholds.
+ * Missing creds / timeout / http / parse → soft-fail, caller falls back to code.
+ */
+export async function callTypeSafeNoulQuestion(
+  state: Record<string, unknown>,
+  question: TypeSafeNoulQuestion,
   opts?: {
     apiKey?: string | null
     baseUrl?: string
@@ -84,13 +95,10 @@ export async function callTypeSafeNoul(
         model,
         state,
         questions: {
-          [NOUL_QUESTION_KEY]: {
+          [question.questionKey]: {
             type: 'noul',
-            instructions: EARLY_ENTER_NOUL_INSTRUCTIONS,
-            criteria: {
-              true: 'Keep / emit the Early Enter toast and Telegram alert',
-              false: 'Suppress the Early Enter toast and Telegram alert',
-            },
+            instructions: question.instructions,
+            criteria: question.criteria,
           },
         },
       }),
@@ -103,7 +111,7 @@ export async function callTypeSafeNoul(
       model?: string
       answers?: Record<string, { type?: string; noul?: number }>
     }
-    const answer = json.answers?.[NOUL_QUESTION_KEY]
+    const answer = json.answers?.[question.questionKey]
     const noul = answer?.noul
     if (typeof noul !== 'number' || !Number.isFinite(noul)) {
       return { ok: false, reason: 'parse' }
@@ -117,4 +125,28 @@ export async function callTypeSafeNoul(
   } finally {
     clearTimeout(timer)
   }
+}
+
+export async function callTypeSafeNoul(
+  state: EarlyEnterNoulState,
+  opts?: {
+    apiKey?: string | null
+    baseUrl?: string
+    model?: string
+    timeoutMs?: number
+    fetchImpl?: typeof fetch
+  },
+): Promise<TypeSafeNoulCallResult> {
+  return callTypeSafeNoulQuestion(
+    state as unknown as Record<string, unknown>,
+    {
+      questionKey: NOUL_QUESTION_KEY,
+      instructions: EARLY_ENTER_NOUL_INSTRUCTIONS,
+      criteria: {
+        true: 'Keep / emit the Early Enter toast and Telegram alert',
+        false: 'Suppress the Early Enter toast and Telegram alert',
+      },
+    },
+    opts,
+  )
 }

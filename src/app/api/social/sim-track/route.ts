@@ -17,8 +17,8 @@ import { getSolPriceUSD } from '@/utils/solana'
 import { log } from '@/utils/unified-logger'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
 import {
-  fetchFomoRollupCandidates,
   filterSocialOnlyCandidates,
+  loadFomoBurstCandidates,
   loadMintsPresentElsewhere,
   loadMintsWithRequiredMentionSources,
   loadSocialClosedMints,
@@ -26,12 +26,20 @@ import {
 } from '@/strategies/social/social-only-discovery'
 import type { SocialStrategy } from '@/strategies/types'
 import {
+  decideMoonbagTrailingExit,
   getOpenStrategySimPositions as getOpenPositionsForStrategy,
-  shouldCloseSignalsClExit,
+  moonbagExitConfig,
+  peakGainPctFromFeatures,
+  priceGainPct,
   type StrategySimOpenPosition as OpenPosition,
 } from '@/strategies/open-strategy-sim-positions'
 import { appendSimPositionMonitorSnapshot } from '@/strategies/sim-monitor-snapshots'
 import { captureTokenInfoDetectBatch } from '@/strategies/token-info-detect'
+import {
+  evaluateSocialFomoNoul,
+  recordSocialFomoNoulShadowRow,
+  socialFomoNoulSuppresses,
+} from '@/strategies/social/social-fomo-noul-shadow'
 
 export const maxDuration = 120
 
@@ -276,15 +284,25 @@ async function runSimTrack(request: NextRequest) {
         })
         const currentPrice = prices[pos.mintAddress] ?? null
         const exit = pos.effectiveExit ?? strategy.config.exit
-        const entryMcap = readFiniteNumber(pos.entryFeatures.entry_mcap)
-        const { close, reason } = shouldCloseSignalsClExit({
-          exit,
-          entryAt: pos.entryAt,
-          entryMcap,
-          currentMcap: null,
-          entryPriceUsd: pos.entryPriceUsd,
-          currentPriceUsd: currentPrice,
-        })
+        const moonbag = moonbagExitConfig()
+        const gainPct = priceGainPct(pos.entryPriceUsd, currentPrice)
+        const heldHours = pos.entryAt
+          ? (Date.now() - new Date(pos.entryAt).getTime()) / 3_600_000
+          : 0
+        const { close, reason } =
+          gainPct == null
+            ? { close: false, reason: 'hold' as const }
+            : decideMoonbagTrailingExit({
+                exit: { ...exit, maxHoldHours: moonbag.maxHoldHours },
+                gainPct,
+                peakGainPct: peakGainPctFromFeatures(
+                  pos.entryPriceUsd,
+                  pos.entryFeatures,
+                ),
+                heldHours,
+                armPct: moonbag.armPct,
+                trailPct: moonbag.trailPct,
+              })
         if (close) {
           await closeSimPosition({
             strategyId: strategy.id,
@@ -304,7 +322,11 @@ async function runSimTrack(request: NextRequest) {
       }
       if (pendingCloses.length > 0) await insertTradingRecords(pendingCloses)
 
-      const rollups = await fetchFomoRollupCandidates(strategy.config.entry, 100)
+      const rollups = await loadFomoBurstCandidates(strategy.config.entry, {
+        chain: SOCIAL_CHAIN,
+        limit: 100,
+      })
+      const burstByMint = new Map(rollups.map((r) => [r.token_address, r]))
       const candidateMints = rollups.map((r) => r.token_address)
       const requireSources = requiredMentionSources(strategy.config.entry)
       const [presentElsewhere, priorClosed, requiredMentionMints] = await Promise.all([
@@ -353,6 +375,48 @@ async function runSimTrack(request: NextRequest) {
           typeof rawPrice === 'number' && rawPrice > 0 ? rawPrice : null
         const symbol = candidate.tokenAddress.slice(0, 8)
         const entryAt = new Date().toISOString()
+
+        const burst = burstByMint.get(candidate.tokenAddress)
+        const noul = await evaluateSocialFomoNoul({
+          chain: SOCIAL_CHAIN,
+          mentions30m: candidate.mentionCount30m,
+          mentions24h: burst?.mention_count_24h ?? candidate.mentionCount30m,
+          uniqueChannels30m: burst?.unique_channel_count_30m ?? 0,
+          minutesSinceFirstMention: null,
+          fomoBuyCount1h: burst?.fomo_buy_count_1h ?? 0,
+          fomoEdge1h: burst?.fomo_edge_1h ?? null,
+          mcap: burst?.mcap ?? null,
+          firstMcap: burst?.first_mcap ?? null,
+          mcapGrowthPct: burst?.mcap_growth_percent ?? null,
+          holdersPct: burst?.top_holders_pct ?? null,
+          organicScore: burst?.organic_score ?? null,
+        })
+        await recordSocialFomoNoulShadowRow({
+          tokenAddress: candidate.tokenAddress,
+          symbol,
+          chain: SOCIAL_CHAIN,
+          strategyKey: strategy.id,
+          mentions30m: candidate.mentionCount30m,
+          mentions24h: burst?.mention_count_24h ?? candidate.mentionCount30m,
+          uniqueChannels30m: burst?.unique_channel_count_30m ?? 0,
+          fomoBuyCount1h: burst?.fomo_buy_count_1h ?? 0,
+          fomoEdge1h: burst?.fomo_edge_1h ?? null,
+          mcap: burst?.mcap ?? null,
+          mcapGrowthPct: burst?.mcap_growth_percent ?? null,
+          holdersPct: burst?.top_holders_pct ?? null,
+          organicScore: burst?.organic_score ?? null,
+          specWouldPass: true,
+          noulCalled: noul.called,
+          noul: noul.noul,
+          band: noul.band,
+          decisionShadow: noul.decision,
+          mode: noul.mode,
+        })
+        if (socialFomoNoulSuppresses(noul)) {
+          skipped.push(`${symbol}: noul_suppress`)
+          continue
+        }
+
         const fullFeatures = await buildFullEntryFeatureSnapshot(
           candidate.tokenAddress,
           { entryAt, tokenSymbol: symbol },

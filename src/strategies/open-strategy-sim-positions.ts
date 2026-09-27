@@ -5,6 +5,7 @@ import {
   type McapEffectiveExit,
 } from '@/utils/mcap-sim-track'
 import { computeMcapSimPnlPct } from '@/utils/mcap-tracker'
+import { readMonitorSnapshotsFromFeatures } from './entry-feature-snapshot'
 
 export type StrategySimOpenPosition = {
   mintAddress: string
@@ -75,8 +76,93 @@ export type PriceSimExitConfig = {
 
 export type PriceSimExitDecision = {
   close: boolean
-  reason: 'missing_price' | 'stop_loss' | 'take_profit' | 'max_hold' | 'hold'
+  reason: 'missing_price' | 'stop_loss' | 'take_profit' | 'max_hold' | 'hold' | 'trailing_moonbag'
   pnlPct: number | null
+}
+
+/** Moonbag trailing knobs. Off when armPct <= 0. Env-tunable. */
+export type MoonbagExitConfig = {
+  armPct: number
+  trailPct: number
+  maxHoldHours: number
+}
+
+export function moonbagExitConfig(
+  env: Record<string, string | undefined> = process.env,
+): MoonbagExitConfig {
+  const num = (raw: string | undefined, fallback: number): number => {
+    const n = Number(raw)
+    return Number.isFinite(n) ? n : fallback
+  }
+  return {
+    armPct: num(env.SOCIAL_MOONBAG_ARM_PCT, 60),
+    trailPct: num(env.SOCIAL_MOONBAG_TRAIL_PCT, 35),
+    maxHoldHours: num(env.SOCIAL_MOONBAG_MAX_HOLD_H, 72),
+  }
+}
+
+/** Price-based gain %, null when either price is unusable. */
+export function priceGainPct(
+  entryPriceUsd: number,
+  currentPriceUsd: number | null | undefined,
+): number | null {
+  if (!(entryPriceUsd > 0)) return null
+  if (currentPriceUsd == null || !Number.isFinite(currentPriceUsd) || currentPriceUsd <= 0) {
+    return null
+  }
+  return ((currentPriceUsd - entryPriceUsd) / entryPriceUsd) * 100
+}
+
+/**
+ * Best gain since entry, from the position's own monitor_snapshots (already
+ * sampled every manage tick). Null when there is nothing usable yet.
+ */
+export function peakGainPctFromFeatures(
+  entryPriceUsd: number,
+  entryFeatures: Record<string, unknown> | null | undefined,
+): number | null {
+  if (!(entryPriceUsd > 0)) return null
+  let peak: number | null = null
+  for (const snap of readMonitorSnapshotsFromFeatures(entryFeatures)) {
+    const gain = priceGainPct(entryPriceUsd, snap.price_usd)
+    if (gain == null) continue
+    if (peak == null || gain > peak) peak = gain
+  }
+  return peak
+}
+
+/**
+ * Peak trailing "moonbag" exit: once the best gain reaches `armPct`, ride the
+ * peak and close on a `trailPct` retrace instead of the fixed TP; below the arm
+ * the normal TP/SL applies unchanged. SL always wins first.
+ */
+export function decideMoonbagTrailingExit(params: {
+  exit: PriceSimExitConfig
+  gainPct: number
+  peakGainPct: number | null
+  heldHours: number
+  armPct: number
+  trailPct: number
+}): PriceSimExitDecision {
+  const { exit, gainPct, heldHours, armPct, trailPct } = params
+  if (gainPct <= exit.stopLossPct) {
+    return { close: true, reason: 'stop_loss', pnlPct: gainPct }
+  }
+
+  const peak = Math.max(params.peakGainPct ?? gainPct, gainPct)
+  if (armPct > 0) {
+    // Moonbag mode owns the exit: no fixed TP, the peak retrace decides.
+    if (peak >= armPct && gainPct <= peak * (1 - trailPct / 100)) {
+      return { close: true, reason: 'trailing_moonbag', pnlPct: gainPct }
+    }
+  } else if (gainPct >= exit.takeProfitPct) {
+    return { close: true, reason: 'take_profit', pnlPct: gainPct }
+  }
+
+  if (exit.maxHoldHours > 0 && heldHours >= exit.maxHoldHours) {
+    return { close: true, reason: 'max_hold', pnlPct: gainPct }
+  }
+  return { close: false, reason: 'hold', pnlPct: gainPct }
 }
 
 /** Shared SL / TP / max-hold exit for price-based paper domains (gmgn, social, …). */

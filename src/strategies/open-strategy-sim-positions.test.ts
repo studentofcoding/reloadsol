@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  decideMoonbagTrailingExit,
   getOpenStrategySimPositions,
+  moonbagExitConfig,
+  peakGainPctFromFeatures,
+  priceGainPct,
   shouldClosePriceSimPosition,
   shouldCloseSignalsClExit,
 } from './open-strategy-sim-positions'
@@ -100,6 +104,82 @@ describe('shouldCloseSignalsClExit', () => {
         currentPriceUsd: 1.7,
       }).reason,
     ).toBe('take_profit')
+  })
+})
+
+describe('decideMoonbagTrailingExit', () => {
+  const base = { exit, heldHours: 1, armPct: 60, trailPct: 35 }
+
+  it('keeps SL first', () => {
+    expect(decideMoonbagTrailingExit({ ...base, gainPct: -40, peakGainPct: 10 }).reason).toBe(
+      'stop_loss',
+    )
+  })
+
+  it('holds before the arm (no fixed TP in moonbag mode)', () => {
+    // Old behavior would have taken profit at +60; moonbag mode lets it run.
+    expect(decideMoonbagTrailingExit({ ...base, gainPct: 55, peakGainPct: 55 }).reason).toBe('hold')
+  })
+
+  it('rides the peak and closes on the retrace', () => {
+    // peak 200 → 35% retrace floor 130
+    expect(decideMoonbagTrailingExit({ ...base, gainPct: 150, peakGainPct: 200 }).reason).toBe('hold')
+    expect(
+      decideMoonbagTrailingExit({ ...base, gainPct: 120, peakGainPct: 200 }).reason,
+    ).toBe('trailing_moonbag')
+  })
+
+  it('uses the current gain when there is no peak history', () => {
+    expect(
+      decideMoonbagTrailingExit({ ...base, gainPct: 90, peakGainPct: null }).reason,
+    ).toBe('hold')
+    expect(
+      decideMoonbagTrailingExit({ ...base, gainPct: 20, peakGainPct: null }).reason,
+    ).toBe('hold')
+  })
+
+  it('keeps TP when moonbag mode is off (armPct <= 0)', () => {
+    expect(
+      decideMoonbagTrailingExit({ ...base, armPct: 0, gainPct: 70, peakGainPct: 90 }).reason,
+    ).toBe('take_profit')
+  })
+
+  it('enforces the extended max hold', () => {
+    expect(
+      decideMoonbagTrailingExit({
+        ...base,
+        heldHours: 100,
+        gainPct: 80,
+        peakGainPct: 100,
+      }).reason,
+    ).toBe('max_hold')
+  })
+})
+
+describe('moonbag helpers', () => {
+  it('defaults the moonbag knobs and respects env', () => {
+    expect(moonbagExitConfig({})).toEqual({ armPct: 60, trailPct: 35, maxHoldHours: 72 })
+    expect(
+      moonbagExitConfig({ SOCIAL_MOONBAG_ARM_PCT: '100', SOCIAL_MOONBAG_TRAIL_PCT: '20' }),
+    ).toEqual({ armPct: 100, trailPct: 20, maxHoldHours: 72 })
+  })
+
+  it('priceGainPct guards unusable prices', () => {
+    expect(priceGainPct(1, 2)).toBeCloseTo(100, 6)
+    expect(priceGainPct(1, null)).toBeNull()
+    expect(priceGainPct(0, 2)).toBeNull()
+  })
+
+  it('peakGainPctFromFeatures reads the position monitor snapshots', () => {
+    const features = {
+      monitor_snapshots: [
+        { timestamp: '2026-09-01T00:00:00Z', price_usd: 1.5, volume_5m: null },
+        { timestamp: '2026-09-01T00:10:00Z', price_usd: 3, volume_5m: null },
+        { timestamp: '2026-09-01T00:20:00Z', price_usd: 1.2, volume_5m: null },
+      ],
+    }
+    expect(peakGainPctFromFeatures(1, features)).toBeCloseTo(200, 6)
+    expect(peakGainPctFromFeatures(1, {})).toBeNull()
   })
 })
 

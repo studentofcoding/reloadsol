@@ -238,6 +238,10 @@ Process: [`main.go`](../main.go) — container `reloadsol-cron`, port **8080** (
 | `MCAP_TRACKER_SIM_OPEN_INTERVAL` | 15 | mcap tracker sim open (`phase=open`) |
 | `MCAP_TRACKER_SIM_INTERVAL` | 120 | mcap tracker sim manage (`phase=manage`) |
 | `SOCIAL_ROLLUP_INTERVAL` | 300 | social rollup + 24h patterns |
+| `SOCIAL_SIM_INTERVAL` | 900 (prod) | social sim-track (FOMO burst open) |
+| `SOCIAL_BURST_WINDOW_MIN` | 30 | FOMO burst window read from `social_token_events` |
+| `SOCIAL_MOONBAG_ARM_PCT` / `_TRAIL_PCT` / `_MAX_HOLD_H` | 60 / 35 / 72 | social peak-trailing moonbag exit |
+| `SOCIAL_FOMO_NOUL_MODE` | `shadow` | Jev Noul beside the social open (`enforce` to suppress; `SOCIAL_FOMO_NOUL_KILL_SWITCH` forces shadow) |
 | `DLMM_SCREEN_INTERVAL` | 300 | dlmm screen |
 | `DLMM_SIM_TRACK_INTERVAL` | 300 | dlmm sim-track |
 | `DLMM_MANAGE_INTERVAL` | 60 | dlmm manage |
