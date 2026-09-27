@@ -113,6 +113,47 @@ never hand-write the stamp to fake freshness.
 If the tree is clean you can ship straight from the repo root; only reach for the worktree when
 the checkout is dirty.
 
+## Memory & swap (3.7G VPS)
+
+Measured on `flowey-vps`: RAM use ~1.2G/3.7G is fine; the alarming number was swap at 46 %. It is
+**cold residue**, not pressure (`si/so` ≈ 0, memory PSI `full avg300` < 1 %), and it is a policy
+artefact, not a shortage:
+
+- **`vm.swappiness=60`** kept ~2 GB of reclaimable file cache and pushed ~960 MB of anonymous
+  process memory to disk (`Active(anon)+Inactive(anon) 982 MB` ≈ swap used 959 MB).
+- The swap is dominated by **host co-tenants** (`dockerd` ~61 MB, Tencent `YDService` ~49 MB,
+  `python`/`node` services); all reloadsol containers together are ~116 MB, `web` is 0.
+- **Postgres was under-buffered**: `shared_buffers=128MB` gave a **51 % heap hit ratio** and
+  ~400 MB of temp spills — `work_mem` was too *small*, not too large.
+
+What the repo now sets:
+
+- `scripts/ensure-swap.sh` also writes `/etc/sysctl.d/99-reloadsol-memory.conf`
+  (`vm.swappiness=10`, `vm.vfs_cache_pressure=50`) and applies it — idempotent, needs root, already
+  invoked by `docker-deploy.sh`. Override via `SWAPPINESS` / `VFS_CACHE_PRESSURE`.
+- `docker-compose.yml`: db `shared_buffers 256MB`, `work_mem 24MB`,
+  `effective_cache_size 1536MB`, `maintenance_work_mem 128MB`, limit `1G`; `web` gets
+  `NODE_OPTIONS=--max-old-space-size=512` (override `WEB_NODE_OPTIONS`); `web` and `reloadsol-db`
+  set `memswap_limit` equal to their memory limit so they cannot swap out (Compose v2 silently
+  ignores `mem_swappiness`; `memswap_limit` is the knob that binds).
+- Worst-case db memory ≈ `shared_buffers + DEFAULT_POOL_SIZE(30) × work_mem(24MB) ≈ 976MB`, under
+  the 1G limit.
+
+Apply (limits only bind on recreate) and verify:
+
+```bash
+sudo bash scripts/ensure-swap.sh
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-deps --force-recreate reloadsol-db web
+sysctl vm.swappiness                                   # 10
+docker inspect -f '{{.HostConfig.Memory}} {{.HostConfig.MemorySwappiness}}' reloadsol-db reloadsol-web
+docker exec reloadsol-db psql -U reloadsol -d reloadsol_db -tAc \
+  "SELECT sum(heap_blks_hit), sum(heap_blks_read) FROM pg_statio_user_tables"   # hit ratio climbs off 51%
+```
+
+Optional one-time reclaim of already-swapped pages (needs ~960 MB free; ~2 GB is available):
+`sudo swapoff -a && sudo swapon -a`. Do **not** set `vm.overcommit_memory=2` — `Committed_AS` is
+~46 GB (V8/thread VA reservations) against a ~4 GB commit limit.
+
 ## Edge nginx (Cloudflare → `reloadsol-nginx` :80)
 
 Multi-app origin on this VPS: `reloadsol.app`, `terminal.reloadsol.app`, `flowey.space` / `vs.flowey.space`.
