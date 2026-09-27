@@ -18,8 +18,26 @@ vi.mock('@/utils/gmgn-api', () => ({
   tokenSecurity: vi.fn(),
 }))
 
+vi.mock('@/utils/gmgn-web-multi', () => ({
+  usesGmgnWebTokenInfo: vi.fn(() => false),
+  fetchGmgnWebMultiTokenInfo: vi.fn(),
+  GmgnWebMultiError: class GmgnWebMultiError extends Error {
+    code?: string
+    constructor(message: string, code?: string) {
+      super(message)
+      this.name = 'GmgnWebMultiError'
+      this.code = code
+    }
+  },
+}))
+
 import { cacheDel, cacheGet, cacheSet } from '@/utils/redis-cache'
 import { tokenInfo, tokenSecurity } from '@/utils/gmgn-api'
+import {
+  fetchGmgnWebMultiTokenInfo,
+  GmgnWebMultiError,
+  usesGmgnWebTokenInfo,
+} from '@/utils/gmgn-web-multi'
 import {
   getGmgnTokenSnapshotCached,
   isGmgnSnapshotData,
@@ -53,6 +71,9 @@ describe('getGmgnTokenSnapshotCached', () => {
     vi.mocked(cacheDel).mockReset()
     vi.mocked(tokenInfo).mockReset()
     vi.mocked(tokenSecurity).mockReset()
+    vi.mocked(fetchGmgnWebMultiTokenInfo).mockReset()
+    vi.mocked(usesGmgnWebTokenInfo).mockReset()
+    vi.mocked(usesGmgnWebTokenInfo).mockReturnValue(false)
   })
 
   it('treats poisoned cache as miss, deletes key, refetches', async () => {
@@ -81,6 +102,44 @@ describe('getGmgnTokenSnapshotCached', () => {
     })
     const data = await getGmgnTokenSnapshotCached('sol', 'MintB')
     expect(tokenInfo).not.toHaveBeenCalled()
+    expect(fetchGmgnWebMultiTokenInfo).not.toHaveBeenCalled()
     expect(data?.info).toEqual({ symbol: 'CACHED' })
+  })
+
+  it('uses web multi for sol when the source flag is on', async () => {
+    vi.mocked(usesGmgnWebTokenInfo).mockReturnValue(true)
+    vi.mocked(cacheGet).mockResolvedValue(null)
+    vi.mocked(fetchGmgnWebMultiTokenInfo).mockResolvedValue([
+      {
+        address: 'MintA',
+        info: { symbol: 'WEB' },
+        security: { renounced_mint: true },
+      },
+    ])
+
+    const data = await getGmgnTokenSnapshotCached('sol', 'MintA')
+    expect(fetchGmgnWebMultiTokenInfo).toHaveBeenCalledWith(['MintA'], {
+      includeHolderStat: 'if-missing',
+    })
+    expect(tokenInfo).not.toHaveBeenCalled()
+    expect(tokenSecurity).not.toHaveBeenCalled()
+    expect(data).toEqual({
+      info: { symbol: 'WEB' },
+      security: { renounced_mint: true },
+    })
+    expect(cacheSet).toHaveBeenCalled()
+  })
+
+  it('maps a web cooldown to RATE_LIMIT', async () => {
+    vi.mocked(usesGmgnWebTokenInfo).mockReturnValue(true)
+    vi.mocked(cacheGet).mockResolvedValue(null)
+    vi.mocked(fetchGmgnWebMultiTokenInfo).mockRejectedValue(
+      new GmgnWebMultiError('cooldown', 'BLOCKED'),
+    )
+
+    await expect(getGmgnTokenSnapshotCached('sol', 'MintA')).rejects.toMatchObject({
+      code: 'RATE_LIMIT',
+    })
+    expect(tokenInfo).not.toHaveBeenCalled()
   })
 })

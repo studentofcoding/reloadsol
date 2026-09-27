@@ -1,5 +1,10 @@
 import { GmgnApiError, tokenInfo, tokenSecurity } from '@/utils/gmgn-api'
 import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
+import {
+  fetchGmgnWebMultiTokenInfo,
+  GmgnWebMultiError,
+  usesGmgnWebTokenInfo,
+} from '@/utils/gmgn-web-multi'
 import { cacheDel, cacheGet, cacheSet } from '@/utils/redis-cache'
 
 /**
@@ -50,6 +55,10 @@ export async function getGmgnTokenSnapshotCached(
     void cacheDel(key)
   }
 
+  if (usesGmgnWebTokenInfo(chain)) {
+    return loadWebSnapshot(address, key)
+  }
+
   let rateLimited: GmgnApiError | null = null
   const [info, security] = await Promise.all([
     tokenInfo({ chain, address }).catch((e: unknown) => {
@@ -75,6 +84,38 @@ export async function getGmgnTokenSnapshotCached(
     return undefined
   }
   const data = { info: infoSafe, security: securitySafe }
+  void cacheSet(key, data, SNAPSHOT_TTL_S)
+  return data
+}
+
+/**
+ * Public web multi path. Same Redis snapshot key and 10s TTL as OpenAPI.
+ * 429 / Cloudflare cooldown becomes RATE_LIMIT so the route can answer 429
+ * without a retry loop. Other misses degrade to undefined.
+ */
+async function loadWebSnapshot(
+  address: string,
+  key: string,
+): Promise<GmgnSnapshotData | undefined> {
+  let rows: Awaited<ReturnType<typeof fetchGmgnWebMultiTokenInfo>>
+  try {
+    rows = await fetchGmgnWebMultiTokenInfo([address], { includeHolderStat: 'if-missing' })
+  } catch (error) {
+    if (
+      error instanceof GmgnWebMultiError &&
+      (error.code === 'RATE_LIMIT' || error.code === 'BLOCKED')
+    ) {
+      throw new GmgnApiError('GMGN web multi cooldown', 'RATE_LIMIT')
+    }
+    return undefined
+  }
+
+  const row = rows.find((item) => item.address === address) ?? rows[0]
+  if (!row) return undefined
+  if (Object.keys(row.info).length === 0 && Object.keys(row.security).length === 0) {
+    return undefined
+  }
+  const data = { info: row.info, security: row.security }
   void cacheSet(key, data, SNAPSHOT_TTL_S)
   return data
 }
