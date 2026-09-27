@@ -341,10 +341,15 @@ export function projectSignalsStrategyList(input: {
     }
     if (!matching.has(input.selectedId)) continue
 
-    const display = computeScoreAndDecision(item, {
-      ...input.scoreConfig,
-      template: displayTemplate,
-    })
+    // Social rows are burst candidates, not token_mcap_tracking signals rows, so
+    // the signals scorer is meaningless for them — keep the burst score/rationale.
+    const display =
+      selected.domain === 'social'
+        ? { score: item.score, decision: item.decision, rationale: item.rationale }
+        : computeScoreAndDecision(item, {
+            ...input.scoreConfig,
+            template: displayTemplate,
+          })
     const alsoMatches = strategies
       .filter(
         (option) => option.strategyId !== input.selectedId && matching.has(option.strategyId),

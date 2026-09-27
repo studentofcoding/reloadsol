@@ -491,6 +491,10 @@ describe('social burst list', () => {
     })
     expect(listed.signals.map((s) => s.token_address)).toEqual(['mint-b', 'mint-a'])
     expect(listed.strategies.map((s) => s.strategyId)).toContain('social_only_fomo_gt7')
+    // The burst count survives — the signals scorer must not overwrite it.
+    expect(listed.signals[0].score).toBe(16)
+    expect(listed.signals[0].decision).toBe('enter')
+    expect(listed.signals[0].rationale).toBe('FOMO 16 mentions / 30m')
   })
 
   it('resolves the social id as a list query', () => {
