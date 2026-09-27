@@ -2,6 +2,7 @@ import { query, queryOne } from '@/utils/db'
 import { log } from '@/utils/unified-logger'
 import { formatAppTimeWithZone } from '@/utils/datetime'
 import type { AppNetwork } from '@/utils/app-network'
+import type { TrackerWriteLabel } from '@/utils/tracker-label'
 
 /** Shared mcap tracker thresholds (no side effects — safe for unit tests). */
 export const STOP_LOSS_THRESHOLD = parseFloat(
@@ -18,7 +19,9 @@ function isUniqueViolation(error: unknown): boolean {
   )
 }
 
-export type TokenLabel = 'valid' | 'traded_live' | 'potential' | 'rugged' | 'watching'
+export type TokenLabel = TrackerWriteLabel
+/** Kanban tag as stored. `potential` is the pre-rename read alias. */
+export type TokenLabelStored = TokenLabel | 'potential'
 
 export interface McapSnapshot {
   token_address: string
@@ -38,7 +41,7 @@ export interface McapSnapshot {
   peak_growth_percent?: number | null
   peak_seen_at?: string | null
   is_tracking_stuck?: boolean
-  label?: TokenLabel | null
+  label?: TokenLabelStored | null
   stop_reason?: string | null
   organic_score?: number | null
   top_holders_pct?: number | null
@@ -59,10 +62,10 @@ const mcapCache = new Map<string, McapSnapshot>()
 
 /**
  * Set only when applyAutoLabelsFromMilestones changes the label to
- * potential or rugged. Consumed after that row is persisted.
+ * rising or rugged. Consumed after that row is persisted.
  * Keyed by object identity so a later copy does not recapture.
  */
-const pendingAutoLabelOhlc = new WeakMap<McapSnapshot, 'potential' | 'rugged'>()
+const pendingAutoLabelOhlc = new WeakMap<McapSnapshot, 'rising' | 'rugged'>()
 const CACHE_TTL_MS = 2 * 60 * 1000 // 2 minutes cache
 
 // Update stuck detection defaults to 6 hours (env override still applies)
@@ -368,7 +371,9 @@ export function updatePeakMcap(
 /**
  * Auto-label from milestones:
  * - drop -40/-80 → rugged (never overwrite traded_live)
- * - peak_growth > 0 → potential (never overwrite traded_live / rugged)
+ * - peak_growth > 0 → rising (never overwrite traded_live / rugged / rising)
+ * Legacy stored `potential` is the same tag: leave it (SQL migrates the
+ * string) so a rename does not recapture OHLC.
  */
 export function applyAutoLabelsFromMilestones(record: McapSnapshot): boolean {
   const current = record.label ?? null
@@ -380,8 +385,11 @@ export function applyAutoLabelsFromMilestones(record: McapSnapshot): boolean {
   }
 
   const peakGrowth = record.peak_growth_percent ?? 0
-  if (peakGrowth > 0 && (!current || current === 'valid' || current === 'watching')) {
-    record.label = 'potential'
+  if (
+    peakGrowth > 0 &&
+    (!current || current === 'valid' || current === 'watching')
+  ) {
+    record.label = 'rising'
     return true
   }
   return false
@@ -430,7 +438,7 @@ export function applyMcapSessionUpdates(
   const labelChanged = applyAutoLabelsFromMilestones(record)
   if (
     labelChanged &&
-    (record.label === 'potential' || record.label === 'rugged')
+    (record.label === 'rising' || record.label === 'rugged')
   ) {
     pendingAutoLabelOhlc.set(record, record.label)
   }
@@ -445,7 +453,7 @@ export async function capturePendingMcapAutoLabelOhlc(
   record: McapSnapshot,
 ): Promise<void> {
   const pending = pendingAutoLabelOhlc.get(record)
-  if (pending !== 'potential' && pending !== 'rugged') return
+  if (pending !== 'rising' && pending !== 'rugged') return
   if (record.label !== pending) return
   pendingAutoLabelOhlc.delete(record)
   try {
@@ -468,8 +476,8 @@ export async function capturePendingMcapAutoLabelOhlc(
   }
 }
 
-/** Manual PUT of potential. Rug already captures inside markTokenRug. */
-export async function captureManualMcapPotentialOhlc(
+/** Manual PUT of rising. Rug already captures inside markTokenRug. */
+export async function captureManualMcapRisingOhlc(
   tokenAddress: string,
   tokenSymbol?: string | null,
 ): Promise<void> {
@@ -479,12 +487,12 @@ export async function captureManualMcapPotentialOhlc(
     )
     await captureSignalOhlcLabel({
       tokenAddress,
-      label: 'potential',
+      label: 'rising',
       tokenSymbol,
       source: 'mcap_label_manual',
     })
   } catch (error) {
-    log.warn('price_tracking', 'OHLC capture failed after manual potential', {
+    log.warn('price_tracking', 'OHLC capture failed after manual rising', {
       tokenAddress,
       error: error instanceof Error ? error.message : String(error),
     })

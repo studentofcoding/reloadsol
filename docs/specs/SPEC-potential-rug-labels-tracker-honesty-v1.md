@@ -1,5 +1,7 @@
 # SPEC — Potential / rug tracker labels, OHLC corpus, Tracker filters, join honesty v1
 
+> **Label rename (2026-09-27):** the kanban tag this SPEC stores as `potential` is now `rising` (`db/init/41-rename-tracking-label-rising.sql`). The auto-rule is the same (peak growth > 0; never overwrite `traded_live` / `rugged`). OHLC corpus cards for that tag use `rising` (legacy `potential` rows are migrated). Still not this tag: ML `v2-potential` / `ml_potential_*`, `token_detect_snapshots.rug_label`, `strategy_episodes.rug_label`, and `dlmm_potential_list` membership. Reads accept `potential` as an alias for one release.
+
 **Status:** to-spec (docs only)
 **Date:** 2026-09-22
 **Surface:** `reloadsol` MCap tracker (`token_mcap_tracking`, `/dev/signals?tab=tracker`); OHLC corpus (`signal_ohlc_labels`, `/dev/ohlc-labels`); token-map lane (`TokenMapLane`); Algo Tester open (`/dev/algo-tester?tab=open`)

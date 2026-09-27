@@ -13,7 +13,8 @@ const startMs = Date.parse(start)
 describe('toSignalOhlcStoreLabel', () => {
   it('maps rugged → rug', () => {
     expect(toSignalOhlcStoreLabel('rugged')).toBe('rug')
-    expect(toSignalOhlcStoreLabel('potential')).toBe('potential')
+    expect(toSignalOhlcStoreLabel('rising')).toBe('rising')
+    expect(toSignalOhlcStoreLabel('potential')).toBe('rising')
     expect(toSignalOhlcStoreLabel('watching')).toBeNull()
   })
 })
@@ -33,12 +34,12 @@ describe('peakPriceTimestampMs', () => {
   })
 })
 
-describe('resolveSignalOhlcWindow potential', () => {
+describe('resolveSignalOhlcWindow rising', () => {
   const nowMs = startMs + 30 * 60_000
 
   it('uses peak first', () => {
     const w = resolveSignalOhlcWindow({
-      label: 'potential',
+      label: 'rising',
       nowMs,
       ctx: {
         tracking_started_at: start,
@@ -55,7 +56,7 @@ describe('resolveSignalOhlcWindow potential', () => {
 
   it('falls back 200→120→80', () => {
     const w = resolveSignalOhlcWindow({
-      label: 'potential',
+      label: 'rising',
       nowMs,
       ctx: {
         tracking_started_at: start,
@@ -68,7 +69,7 @@ describe('resolveSignalOhlcWindow potential', () => {
 
   it('caps at 10m', () => {
     const w = resolveSignalOhlcWindow({
-      label: 'potential',
+      label: 'rising',
       nowMs: startMs + 60 * 60_000,
       ctx: { tracking_started_at: start },
     })
@@ -80,7 +81,7 @@ describe('resolveSignalOhlcWindow potential', () => {
 describe('resolveCaptureWindowMs', () => {
   it('no track anchor → last 10m ending now', () => {
     const nowMs = startMs + 60 * 60_000
-    const w = resolveCaptureWindowMs({}, 'potential', nowMs)
+    const w = resolveCaptureWindowMs({}, 'rising', nowMs)
     expect(w.endReason).toBe('label_now')
     expect(w.endMs).toBe(nowMs)
     expect(w.startMs).toBe(nowMs - POTENTIAL_MAX_MS)
@@ -90,7 +91,7 @@ describe('resolveCaptureWindowMs', () => {
     const nowMs = startMs + 30 * 60_000
     const w = resolveCaptureWindowMs(
       { tracking_started_at: start },
-      'potential',
+      'rising',
       nowMs,
     )
     expect(w.startMs).toBe(startMs)

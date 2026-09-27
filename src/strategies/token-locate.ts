@@ -15,7 +15,7 @@ import { formatJupiterTokenLink } from '@/utils/telegram'
 import { resolveTrackerStrategyId } from '@/utils/trading-simulation'
 import { loadStrategyDefinitionRows } from './db'
 import { fetchRecentSocialEvents, fetchSocialRollup } from './social/db'
-import { mcapTrackedAlgoTesterHref } from '@/utils/tracker-label'
+import { canonicalTrackerLabel, mcapTrackedAlgoTesterHref } from '@/utils/tracker-label'
 
 export {
   isTrackedMcapPresence,
@@ -320,7 +320,7 @@ function buildStrategyPresence(params: {
       strategyId: null,
       strategyName: null,
       source: 'token_mcap_tracking',
-      label: toStr(mcapRow.label),
+      label: canonicalTrackerLabel(toStr(mcapRow.label)) ?? undefined,
       deepLink: mcapTrackedAlgoTesterHref(mint, chain),
       linkLabel: 'Open positions',
       note: 'Tracked on MCap — not an open strategy',
@@ -333,7 +333,7 @@ function buildStrategyPresence(params: {
       strategyId: null,
       strategyName: null,
       source: 'trading_signals',
-      label: toStr(signalsRow.label),
+      label: canonicalTrackerLabel(toStr(signalsRow.label)) ?? undefined,
       deepLink: links.signals,
     })
   }
@@ -560,7 +560,7 @@ export async function locateTokenByAddress(
       'token_mcap_tracking',
       'internal',
       mcapRow,
-      toStr(mcapRow?.label),
+      canonicalTrackerLabel(toStr(mcapRow?.label)) ?? null,
     ),
     section(
       'mcap-notifications',
@@ -575,7 +575,7 @@ export async function locateTokenByAddress(
       'trading_signals',
       'internal',
       signalsRow,
-      toStr(signalsRow?.label),
+      canonicalTrackerLabel(toStr(signalsRow?.label)) ?? null,
     ),
     section(
       'social-rollup',
@@ -659,7 +659,7 @@ export async function locateTokenByAddress(
     mcap: mcapRow
       ? {
           present: true,
-          label: toStr(mcapRow.label),
+          label: canonicalTrackerLabel(toStr(mcapRow.label)) ?? undefined,
           firstSeenAt: toIso(mcapRow.first_seen_at),
           firstMcap: toNum(mcapRow.first_mcap),
           currentMcap: toNum(mcapRow.current_mcap),
@@ -667,7 +667,7 @@ export async function locateTokenByAddress(
         }
       : null,
     signals: signalsRow
-      ? { present: true, label: toStr(signalsRow.label) }
+      ? { present: true, label: canonicalTrackerLabel(toStr(signalsRow.label)) ?? undefined }
       : null,
     social: socialRollup
       ? {

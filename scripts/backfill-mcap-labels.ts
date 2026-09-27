@@ -260,13 +260,13 @@ async function main(): Promise<void> {
       const { rows: totals } = await query<{ label: string; count: number }>(
         `SELECT label, COUNT(*)::int AS count
          FROM signal_ohlc_labels
-         WHERE label IN ('potential', 'rug')
+         WHERE label IN ('rising', 'potential', 'rug')
          GROUP BY label`,
       )
       let potential = 0
       let rug = 0
       for (const row of totals) {
-        if (row.label === 'potential') potential = row.count
+        if (row.label === 'rising' || row.label === 'potential') potential += row.count
         if (row.label === 'rug') rug = row.count
       }
       return { potential, rug }

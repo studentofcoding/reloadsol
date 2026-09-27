@@ -99,11 +99,11 @@ describe('locateTokenByAddress', () => {
     expect(result.found).toBe(true)
     expect(result.symbol).toBe('SOL')
     expect(result.locations.mcap?.present).toBe(true)
-    expect(result.locations.mcap?.label).toBe('potential')
+    expect(result.locations.mcap?.label).toBe('rising')
     expect(result.locations.mcap?.firstSeenAt).toBe('2026-09-01T03:00:00.000Z')
 
     const mcapSection = result.rawSections.find((s) => s.id === 'mcap-tracking')
-    expect(mcapSection?.recordLabel).toBe('potential')
+    expect(mcapSection?.recordLabel).toBe('rising')
     expect(mcapSection?.label).toBe('Mcap Tracker')
     expect(mcapSection?.dataTier).toBe('internal')
 

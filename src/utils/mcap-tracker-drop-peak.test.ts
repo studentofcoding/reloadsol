@@ -84,15 +84,15 @@ describe('drop milestones + auto labels', () => {
     expect(record.label).toBe('rugged')
   })
 
-  it('labels potential when peak growth is positive', () => {
+  it('labels rising when peak growth is positive', () => {
     const record = row({ label: 'valid', peak_growth_percent: 0 })
     const now = new Date().toISOString()
     applyMcapSessionUpdates(record, 140_000, 40, now)
     expect(record.peak_growth_percent).toBe(40)
-    expect(record.label).toBe('potential')
+    expect(record.label).toBe('rising')
   })
 
-  it('does not overwrite traded_live with rugged or potential', () => {
+  it('does not overwrite traded_live with rugged or rising', () => {
     const record = row({ label: 'traded_live' })
     const now = new Date().toISOString()
     applyMcapSessionUpdates(record, 10_000, -90, now)
@@ -100,7 +100,7 @@ describe('drop milestones + auto labels', () => {
     expect(record.label).toBe('traded_live')
   })
 
-  it('does not downgrade rugged to potential', () => {
+  it('does not downgrade rugged to rising', () => {
     const record = row({
       label: 'rugged',
       when_drop_40pct: '2026-07-09T00:00:00.000Z',
@@ -119,20 +119,22 @@ describe('drop milestones + auto labels', () => {
     expect(record.when_drop_80pct).toBeNull()
   })
 
-  it('labels watching with a positive peak as potential', () => {
+  it('labels watching with a positive peak as rising', () => {
     const record = row({ label: 'watching', peak_growth_percent: 1 })
     expect(applyAutoLabelsFromMilestones(record)).toBe(true)
-    expect(record.label).toBe('potential')
+    expect(record.label).toBe('rising')
   })
 
-  it('promotes potential to rugged when a drop stamp is set', () => {
-    const record = row({
-      label: 'potential',
-      peak_growth_percent: 40,
-      when_drop_40pct: '2026-09-22T00:00:00.000Z',
-    })
-    expect(applyAutoLabelsFromMilestones(record)).toBe(true)
-    expect(record.label).toBe('rugged')
+  it('promotes rising and legacy potential to rugged when a drop stamp is set', () => {
+    for (const label of ['rising', 'potential'] as const) {
+      const record = row({
+        label,
+        peak_growth_percent: 40,
+        when_drop_40pct: '2026-09-22T00:00:00.000Z',
+      })
+      expect(applyAutoLabelsFromMilestones(record)).toBe(true)
+      expect(record.label).toBe('rugged')
+    }
   })
 
   it('keeps rugged when drops are cleared and peak is still positive', () => {
@@ -172,13 +174,13 @@ describe('auto-label OHLC hook', () => {
     const record = row({ label: 'watching', peak_growth_percent: 0 })
     const now = new Date().toISOString()
     applyMcapSessionUpdates(record, 110_000, 10, now)
-    expect(record.label).toBe('potential')
+    expect(record.label).toBe('rising')
     await capturePendingMcapAutoLabelOhlc(record)
-    expect(record.label).toBe('potential')
+    expect(record.label).toBe('rising')
     expect(captureSignalOhlcLabel).toHaveBeenCalledWith(
       expect.objectContaining({
         tokenAddress: 'mint1',
-        label: 'potential',
+        label: 'rising',
         source: 'mcap_auto_label',
       }),
     )
@@ -189,21 +191,21 @@ describe('auto-label OHLC hook', () => {
   it('does not capture when the label did not change', async () => {
     vi.mocked(captureSignalOhlcLabel).mockClear()
     const record = row({
-      label: 'potential',
+      label: 'rising',
       peak_mcap: 200_000,
       peak_growth_percent: 100,
     })
     applyMcapSessionUpdates(record, 150_000, 50, new Date().toISOString())
-    expect(record.label).toBe('potential')
+    expect(record.label).toBe('rising')
     await capturePendingMcapAutoLabelOhlc(record)
     expect(captureSignalOhlcLabel).not.toHaveBeenCalled()
   })
 
-  it('captures rugged (not a second potential) when a potential row drops', async () => {
+  it('captures rugged (not a second rising card) when a rising row drops', async () => {
     vi.mocked(captureSignalOhlcLabel).mockResolvedValueOnce('ohlc-1')
     const record = row({
       token_address: 'mint-drop',
-      label: 'potential',
+      label: 'rising',
       peak_growth_percent: 40,
       peak_mcap: 140_000,
     })

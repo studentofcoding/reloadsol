@@ -157,7 +157,7 @@ export async function PATCH(request: NextRequest) {
         })
         await upsertSignalOhlcLabelFromBars({
           tokenAddress: address,
-          label: 'potential',
+          label: 'rising',
           bars: updated.bars,
           tokenSymbol: body.tokenSymbol ?? null,
           source: 'freeview',

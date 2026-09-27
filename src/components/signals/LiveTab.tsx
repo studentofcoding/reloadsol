@@ -251,7 +251,7 @@ export default function LiveTab() {
             let changed = false;
             json.data.forEach((item: any) => {
               if (
-                ["watching", "potential", "rugged"].includes(item.label) &&
+                ["watching", "rising", "potential", "rugged"].includes(item.label) &&
                 !newKeptIds.has(item.token_address)
               ) {
                 newKeptIds.add(item.token_address);
@@ -270,7 +270,7 @@ export default function LiveTab() {
 
   const handleLabelToken = async (
     token: TrendingToken,
-    label: "potential" | "rugged",
+    label: "rising" | "rugged",
     e: React.MouseEvent,
   ) => {
     e.stopPropagation();
@@ -281,7 +281,10 @@ export default function LiveTab() {
       const alreadyRugged =
         currentLabel === "rugged" || isTokenRugged(token.token_address);
       targetLabel = alreadyRugged ? "watching" : "rugged";
-    } else if (currentLabel === label) {
+    } else if (
+      currentLabel === label ||
+      (label === "rising" && currentLabel === "potential")
+    ) {
       targetLabel = "watching";
     }
 
@@ -330,7 +333,7 @@ export default function LiveTab() {
           chain: network,
         }),
       });
-      if (targetLabel === "potential") {
+      if (targetLabel === "rising") {
         void queryClient.invalidateQueries({
           queryKey: ["signal-ohlc-labels"],
         });
@@ -1303,7 +1306,8 @@ export default function LiveTab() {
     const isOwned = ownedInfo && ownedInfo.balance > 0.001;
     const isKept = keptTokenIds.has(token.token_address);
     const currentLabel = tokenLabels[token.token_address];
-    const isPotential = currentLabel === "potential";
+    const isRising =
+      currentLabel === "rising" || currentLabel === "potential";
     const isRugged =
       isTokenRugged(token.token_address) || currentLabel === "rugged";
     const expectedTokens = quote
@@ -1316,7 +1320,7 @@ export default function LiveTab() {
         className={`bg-gray-800 rounded-xl p-6 border transition-all duration-500 hover:scale-105 ${
           isRugged
             ? "border-red-600 shadow-lg shadow-red-600/20 bg-red-900/10"
-            : isPotential
+            : isRising
               ? "border-green-400 shadow-lg shadow-green-400/20 bg-green-900/10"
               : isNewToken
                 ? "border-cyan-400 shadow-lg shadow-cyan-400/30 animate-bounce-in bg-gradient-to-br from-gray-800 to-cyan-900/20"
@@ -1335,13 +1339,13 @@ export default function LiveTab() {
         {/* Keep/Ignore Controls */}
         <div className="absolute top-2 right-2 flex gap-1 z-30">
           <button
-            onClick={(e) => handleLabelToken(token, "potential", e)}
+            onClick={(e) => handleLabelToken(token, "rising", e)}
             className={`p-1.5 rounded-lg border transition-all ${
-              isPotential
+              isRising
                 ? "bg-green-600 border-green-400 text-white shadow-[0_0_10px_rgba(34,197,94,0.5)]"
                 : "bg-gray-800/80 border-gray-600 text-gray-400 hover:text-green-400 hover:border-green-400"
             }`}
-            title={isPotential ? "Unmark Potential" : "Mark as Potential"}
+            title={isRising ? "Unmark Rising" : "Mark as Rising"}
           >
             🚀
           </button>

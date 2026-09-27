@@ -1,8 +1,11 @@
-/** Pure window math for Potential / Rug OHLC label capture. */
+import { isRisingTrackerLabel } from '@/utils/tracker-label'
+
+/** Pure window math for Rising / Rug OHLC label capture. */
 
 export const POTENTIAL_MAX_MS = 10 * 60 * 1000
 
-export type SignalOhlcLabelKind = 'potential' | 'rug'
+/** Corpus key for the kanban tag. Legacy store value `potential` maps here. */
+export type SignalOhlcLabelKind = 'rising' | 'rug'
 
 export type SignalOhlcEndReason =
   | 'peak'
@@ -154,7 +157,7 @@ export function resolveSignalOhlcWindow(params: {
     }
   }
 
-  // potential
+  // rising (kanban tag; legacy store value was `potential`)
   const capMs = startMs + POTENTIAL_MAX_MS
   const hardEnd = Math.min(nowMs, capMs)
 
@@ -203,11 +206,11 @@ export function resolveSignalOhlcWindow(params: {
   }
 }
 
-/** Map UI / API label to storage label. */
+/** Map UI / API label to storage label. Legacy kanban `potential` stores as `rising`. */
 export function toSignalOhlcStoreLabel(
   label: string,
 ): SignalOhlcLabelKind | null {
-  if (label === 'potential') return 'potential'
+  if (isRisingTrackerLabel(label)) return 'rising'
   if (label === 'rug' || label === 'rugged') return 'rug'
   return null
 }

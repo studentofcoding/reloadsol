@@ -21,6 +21,7 @@ function labelBadgeClass(label: string): string {
   switch (label) {
     case 'rugged':
       return 'bg-red-900/60 text-red-300'
+    case 'rising':
     case 'potential':
       return 'bg-amber-900/60 text-amber-300'
     case 'valid':

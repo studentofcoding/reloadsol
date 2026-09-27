@@ -1,11 +1,12 @@
--- OHLC snapshots captured when Signals labels Potential / Rugged
+-- OHLC snapshots captured when Signals labels Rising / Rugged.
+-- Corpus key `rising` is the kanban tag (legacy rows stored `potential`).
 
 CREATE TABLE IF NOT EXISTS signal_ohlc_labels (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   token_address TEXT NOT NULL,
   token_symbol TEXT NULL,
   label TEXT NOT NULL
-    CHECK (label IN ('potential', 'rug')),
+    CHECK (label IN ('rising', 'rug')),
   window_start TIMESTAMPTZ NOT NULL,
   window_end TIMESTAMPTZ NOT NULL,
   ohlc_interval TEXT NOT NULL DEFAULT '1m'

@@ -1,30 +1,37 @@
 import { NextRequest, NextResponse, connection } from 'next/server'
 import { query, queryOne } from '@/utils/db'
-import { captureManualMcapPotentialOhlc, TokenLabel } from '@/utils/mcap-tracker'
+import { captureManualMcapRisingOhlc, TokenLabel } from '@/utils/mcap-tracker'
 import { log } from '@/utils/unified-logger'
 import { markTokenRug } from '@/utils/rug-list/service'
 import { removeRugEntry } from '@/utils/rug-list/db'
+import {
+  TRACKER_WRITE_LABELS,
+  canonicalTrackerLabel,
+  coerceTrackerLabelWrite,
+} from '@/utils/tracker-label'
 
-// Valid label values
-const VALID_LABELS: TokenLabel[] = ['valid', 'traded_live', 'potential', 'rugged', 'watching']
+const VALID_LABELS: TokenLabel[] = [...TRACKER_WRITE_LABELS]
 
 export async function PUT(request: NextRequest) {
   try {
-    const { tokenAddress, label } = await request.json()
+    const body = await request.json()
+    const { tokenAddress } = body
+    const coerced = coerceTrackerLabelWrite(
+      body.label === undefined ? null : body.label,
+    )
+    if (!coerced.ok) {
+      return NextResponse.json({
+        success: false,
+        error: `Invalid label. Must be one of: ${VALID_LABELS.join(', ')}, or null to clear`
+      }, { status: 400 })
+    }
+    const label = coerced.label
 
     // Validate input
     if (!tokenAddress || typeof tokenAddress !== 'string') {
       return NextResponse.json({
         success: false,
         error: 'Token address is required and must be a string'
-      }, { status: 400 })
-    }
-
-    // Validate label (null is allowed to clear the label)
-    if (label !== null && label !== undefined && !VALID_LABELS.includes(label)) {
-      return NextResponse.json({
-        success: false,
-        error: `Invalid label. Must be one of: ${VALID_LABELS.join(', ')}, or null to clear`
       }, { status: 400 })
     }
 
@@ -66,8 +73,8 @@ export async function PUT(request: NextRequest) {
       await removeRugEntry(tokenAddress)
     }
 
-    if (label === 'potential') {
-      await captureManualMcapPotentialOhlc(tokenAddress, existingToken.token_symbol)
+    if (label === 'rising') {
+      await captureManualMcapRisingOhlc(tokenAddress, existingToken.token_symbol)
     }
 
     log.info('api_request', 'Successfully updated token label', {
@@ -126,13 +133,17 @@ export async function GET(request: NextRequest) {
 
       return NextResponse.json({
         success: true,
-        data
+        data: {
+          ...data,
+          label: canonicalTrackerLabel(data.label) ?? null,
+        },
       })
     }
 
     // Get tokens by label filter
     if (labelFilter) {
-      if (!VALID_LABELS.includes(labelFilter as TokenLabel)) {
+      const filter = coerceTrackerLabelWrite(labelFilter)
+      if (!filter.ok || filter.label == null) {
         return NextResponse.json({
           success: false,
           error: `Invalid label filter. Must be one of: ${VALID_LABELS.join(', ')}`
@@ -142,15 +153,22 @@ export async function GET(request: NextRequest) {
       const { rows: data } = await query(
         `SELECT token_address, token_symbol, label, mcap_growth_percent, last_updated_at
          FROM token_mcap_tracking
-         WHERE label = $1
+         WHERE label = $1 OR ($1 = 'rising' AND label = 'potential')
          ORDER BY last_updated_at DESC`,
-        [labelFilter],
+        [filter.label],
       )
+
+      const presented = data.map((row) => ({
+        ...row,
+        label: canonicalTrackerLabel(
+          (row as { label?: string | null }).label,
+        ) ?? null,
+      }))
 
       return NextResponse.json({
         success: true,
-        data,
-        count: data.length
+        data: presented,
+        count: presented.length
       })
     }
 
@@ -160,7 +178,7 @@ export async function GET(request: NextRequest) {
     )
 
     const labelStats = data.reduce((acc, token) => {
-      const tokenLabel = token.label || 'unlabeled'
+      const tokenLabel = canonicalTrackerLabel(token.label) || 'unlabeled'
       acc[tokenLabel] = (acc[tokenLabel] || 0) + 1
       return acc
     }, {} as Record<string, number>)

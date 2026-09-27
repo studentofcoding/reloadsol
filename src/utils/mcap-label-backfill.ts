@@ -3,11 +3,12 @@
  * Uses live applyAutoLabelsFromMilestones — does not copy the predicate
  * and does not write dlmm_potential_list / token_rug_list.
  */
+import { isRisingTrackerLabel } from '@/utils/tracker-label'
 import {
   applyAutoLabelsFromMilestones,
   reconcileMilestonesFromGrowth,
   type McapSnapshot,
-  type TokenLabel,
+  type TokenLabelStored,
 } from '@/utils/mcap-tracker'
 
 /**
@@ -115,7 +116,7 @@ export function planMcapOhlcCapture(
 export type McapLabelBackfillPlan = {
   /** Label, drop stamps, or peak fields differ from the loaded row. */
   persist: boolean
-  /** Current label is potential or rugged (changed or already). */
+  /** Current label is rising (or legacy potential) or rugged. */
   capture: boolean
   labelChanged: boolean
 }
@@ -152,12 +153,12 @@ function asIso(v: unknown): string | null {
   return null
 }
 
-function labelOf(v: TokenLabel | null | undefined): TokenLabel | null {
+function labelOf(v: TokenLabelStored | null | undefined): TokenLabelStored | null {
   return v ?? null
 }
 
 type Comparable = {
-  label: TokenLabel | null
+  label: TokenLabelStored | null
   when_drop_40pct: string | null
   when_drop_80pct: string | null
   peak_mcap: number | null
@@ -234,7 +235,7 @@ export function planMcapLabelBackfill(
   const label = labelOf(record.label)
   return {
     persist: !same(before, after),
-    capture: label === 'potential' || label === 'rugged',
+    capture: isRisingTrackerLabel(label) || label === 'rugged',
     labelChanged: before.label !== label,
   }
 }
