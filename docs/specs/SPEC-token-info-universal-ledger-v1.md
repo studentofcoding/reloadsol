@@ -2,7 +2,7 @@
 
 **Status:** to-spec (docs only; HITL locks closed)  
 **Date:** 2026-09-27  
-**Related:** [SPEC-sol-first-spine-4class-ohlc-v1.md](../SPEC-sol-first-spine-4class-ohlc-v1.md) (complement; sleeve rug SoT stays concentration soft score; this ledger feeds that soft path), [SPEC-ohlc-rug-spine-v1.md](../SPEC-ohlc-rug-spine-v1.md) (`token_detect_snapshots` stays OHLC), [SPEC-rug-filter-v1.md](./SPEC-rug-filter-v1.md) (Bubblemaps + Jupiter organic — separate, out of scope here)  
+**Related:** [SPEC-sol-first-spine-4class-ohlc-v1.md](../SPEC-sol-first-spine-4class-ohlc-v1.md) (complement; sleeve rug SoT stays concentration soft score; this ledger feeds that soft path), [SPEC-ohlc-rug-spine-v1.md](../SPEC-ohlc-rug-spine-v1.md) (`token_detect_snapshots` stays OHLC), [SPEC-rug-filter-v1.md](./SPEC-rug-filter-v1.md) (Bubblemaps + Jupiter organic — separate, out of scope here), [SPEC-gmgn-web-multi-token-info-v1.md](./SPEC-gmgn-web-multi-token-info-v1.md) (public web client; capture source when `GMGN_TOKEN_INFO_SOURCE=web`)  
 **Wayfinder context (do not reopen):** [map #79](https://github.com/studentofcoding/reloadsol/issues/79), concentration soft vs hard ban [#86](https://github.com/studentofcoding/reloadsol/issues/86). No separate Token Info ledger ticket exists.
 
 ## Goal
@@ -45,11 +45,17 @@ These facts are the current code. The ledger does not exist yet.
 
 `dexBoostLabel` is a display string computed at build time (`formatDexBoost`, relative age such as `Boost 3h`). The frozen value is that string. Readers do not recompute it.
 
+### As-built addendum (main moved after the first draft)
+
+`db/init/41-rename-tracking-label-rising.sql` now occupies 41. The ledger migration is **`db/init/42-token-info-detect.sql`**.
+
+Public web Token Info landed in `src/utils/gmgn-web-multi.ts` behind `GMGN_TOKEN_INFO_SOURCE` (default **openapi**). When the flag is `web`, Sol capture fetches the panel with `enqueueGmgnWebLedgerMints` and calls `markGmgnWebLedgerCaptured` only after this insert wins. `hasGmgnWebLedgerCapture` treats a `token_info_detect` row as already captured. OpenAPI still builds the panel from `getGmgnTokenSnapshotCached` or the info and security already in hand on the GMGN seam. Neither path changes the live hard ban.
+
 Route extras `holders`, `price_usd`, `isHoneypot`, `concentrationBanned`, and `concentrationReasons` are not part of `GmgnTokenSnapshot`. They are not ledger columns in v1.
 
 ## Persistence
 
-Next numbered migration after `db/init/40-index-hygiene.sql`: **`db/init/41-token-info-detect.sql`**, applied by `scripts/init-local-db.sh` the same way as the other numbered files. This docs PR does not add that file.
+Next numbered migration after `db/init/41-rename-tracking-label-rising.sql`: **`db/init/42-token-info-detect.sql`**, applied by `scripts/init-local-db.sh` the same way as the other numbered files. This docs PR does not add that file.
 
 Mirror `17-token-detect-snapshots.sql` for RLS: `ENABLE ROW LEVEL SECURITY`, no new policy.
 
@@ -85,7 +91,7 @@ Null tiles are valid. A panel with some nulls is still the official card. A late
 
 ### Write rules
 
-1. Build the panel with `buildGmgnTokenSnapshot(info, security)` from a payload that `getGmgnTokenSnapshotCached` would return (info or security non-empty).
+1. Build the panel with `buildGmgnTokenSnapshot(info, security)`. OpenAPI (default) uses a payload that `getGmgnTokenSnapshotCached` would return, or the info and security the GMGN seam already holds. When `GMGN_TOKEN_INFO_SOURCE=web`, the payload is the row from `enqueueGmgnWebLedgerMints` (info or security non-empty). Call `markGmgnWebLedgerCaptured` only after the insert wins.
 2. Insert with `ON CONFLICT (chain, token_address) DO NOTHING`, then read the existing row if this insert did not win.
 3. Both objects empty, or the cache returns undefined: **do not insert**. A later seam may still be the first writer.
 4. Concurrent losers are dropped. Do not copy the losing payload into history from the conflict handler.
@@ -219,7 +225,7 @@ Implementation (later PR):
 
 | File | Change |
 |------|--------|
-| `db/init/41-token-info-detect.sql` | Detect table + optional history DDL |
+| `db/init/42-token-info-detect.sql` | Detect table + optional history DDL |
 | New helper next to `src/strategies/` | Write-once insert + read. Only writer |
 | `src/app/api/mcap-tracking/sim-track/route.ts` | First-seen and @80 seams |
 | `src/app/api/social/sim-track/route.ts` | Social seam |
