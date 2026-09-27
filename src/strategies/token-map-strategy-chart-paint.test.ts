@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { TokenChartOutcomeSegment } from '@/strategies/token-map-chart'
 import type { TokenMapDomain } from '@/strategies/token-map-types'
 import {
+  CHART_TZ,
   domainAtTime,
   formatPriceLabel,
   meanPairwiseOverlapCorr,
@@ -9,6 +10,12 @@ import {
   paintCandles,
   priceFormatFor,
 } from '@/strategies/token-map-strategy-chart-paint'
+
+describe('CHART_TZ', () => {
+  it('defaults the chart wall clock to Asia/Jakarta', () => {
+    expect(CHART_TZ).toBe('Asia/Jakarta')
+  })
+})
 
 describe('priceFormatFor / formatPriceLabel', () => {
   it('uses high precision for tiny meme prices', () => {

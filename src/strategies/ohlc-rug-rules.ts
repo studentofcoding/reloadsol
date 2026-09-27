@@ -60,6 +60,35 @@ export function takeLastOhlcBars<T extends { t?: number; time?: number }>(
   return bars.slice(bars.length - n)
 }
 
+/**
+ * Last-N window for Freeview rug rules.
+ * Canonical 24h bars win. An empty canonical series may use own-1m storage
+ * only when `fallbackOwn1m` is set (Freeview). Entry shadow stays canonical.
+ */
+export function resolveOhlcRugWindow(input: {
+  cached: OhlcRugBar[]
+  cachedSource: string
+  own?: OhlcRugBar[]
+  n?: number
+  fallbackOwn1m?: boolean
+}): { bars: OhlcRugBar[]; source: string } {
+  const n = input.n ?? OHLC_RUG_MAX_BARS
+  if (input.cached.length > 0) {
+    return {
+      bars: takeLastOhlcBars(input.cached, n),
+      source: input.cachedSource || 'cached',
+    }
+  }
+  const own = input.own ?? []
+  if (input.fallbackOwn1m && own.length > 0) {
+    return { bars: takeLastOhlcBars(own, n), source: 'own-1m' }
+  }
+  return { bars: [], source: 'none' }
+}
+
+export const OHLC_RUG_EMPTY_STORAGE =
+  'No bars in the 24h OHLC cache or own-1m storage.'
+
 function upperWickRatio(bar: OhlcRugBar): number | null {
   const range = bar.h - bar.l
   if (!(range > EPS)) return null

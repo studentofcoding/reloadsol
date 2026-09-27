@@ -827,6 +827,16 @@ async function loadTrackerHistory(
   return fetchOutcomeMonitorPriceHistory(tokenAddress, chain)
 }
 
+/** Last `lookbackSec` of our own 1m series (`token_ohlc_bars`). */
+export async function loadOwn1mBars(
+  tokenAddress: string,
+  lookbackSec = OHLC_24H_SPAN_SEC,
+): Promise<TokenOhlcBar[]> {
+  const timeTo = Math.floor(Date.now() / 1000)
+  const sinceSec = timeTo - Math.max(0, lookbackSec)
+  return loadOwnOhlcBars(tokenAddress, sinceSec, timeTo)
+}
+
 /**
  * Our own 1m series (`token_ohlc_bars`), written by the 15s sampler. The
  * dependency-free source: it needs no upstream, so a chart still draws when

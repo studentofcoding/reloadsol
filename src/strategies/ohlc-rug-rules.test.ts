@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_OHLC_RUG_THRESHOLDS,
   evaluateOhlcRugRules,
+  resolveOhlcRugWindow,
   takeLastOhlcBars,
   type OhlcRugBar,
 } from '@/strategies/ohlc-rug-rules'
@@ -28,6 +29,58 @@ describe('takeLastOhlcBars', () => {
     const last = takeLastOhlcBars(bars, 10)
     expect(last).toHaveLength(10)
     expect(last[0]!.t).toBe(5)
+  })
+})
+
+describe('resolveOhlcRugWindow', () => {
+  const cached = [bar(1, 1, 1, 1, 1), bar(2, 1, 1, 1, 1)]
+  const own = Array.from({ length: 12 }, (_, i) => bar(100 + i, 2, 2, 2, 2))
+
+  it('prefers canonical bars over own-1m', () => {
+    const picked = resolveOhlcRugWindow({
+      cached,
+      cachedSource: 'gmgn',
+      own,
+      fallbackOwn1m: true,
+    })
+    expect(picked.source).toBe('gmgn')
+    expect(picked.bars).toHaveLength(2)
+    expect(picked.bars[0]!.t).toBe(1)
+  })
+
+  it('fills an empty canonical window from the last own-1m bars', () => {
+    const picked = resolveOhlcRugWindow({
+      cached: [],
+      cachedSource: 'none',
+      own,
+      n: 10,
+      fallbackOwn1m: true,
+    })
+    expect(picked.source).toBe('own-1m')
+    expect(picked.bars).toHaveLength(10)
+    expect(picked.bars[0]!.t).toBe(102)
+  })
+
+  it('stays empty when own-1m fallback is off', () => {
+    const picked = resolveOhlcRugWindow({
+      cached: [],
+      cachedSource: 'none',
+      own,
+      fallbackOwn1m: false,
+    })
+    expect(picked.bars).toHaveLength(0)
+    expect(picked.source).toBe('none')
+  })
+
+  it('stays empty when storage has no bars', () => {
+    const picked = resolveOhlcRugWindow({
+      cached: [],
+      cachedSource: 'none',
+      own: [],
+      fallbackOwn1m: true,
+    })
+    expect(picked.bars).toHaveLength(0)
+    expect(picked.source).toBe('none')
   })
 })
 

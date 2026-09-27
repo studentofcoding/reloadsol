@@ -69,14 +69,14 @@ function toUtc(sec: number): UTCTimestamp {
   return sec as UTCTimestamp
 }
 
-const bangkokTime = new Intl.DateTimeFormat('en-GB', {
+const chartTime = new Intl.DateTimeFormat('en-GB', {
   timeZone: CHART_TZ,
   hour: '2-digit',
   minute: '2-digit',
   hour12: false,
 })
 
-const bangkokDateTime = new Intl.DateTimeFormat('en-GB', {
+const chartDateTime = new Intl.DateTimeFormat('en-GB', {
   timeZone: CHART_TZ,
   day: '2-digit',
   month: 'short',
@@ -92,7 +92,7 @@ function formatTickMark(time: Time): string {
       : typeof time === 'string'
         ? Math.floor(new Date(time).getTime() / 1000)
         : Date.UTC(time.year, time.month - 1, time.day) / 1000
-  return bangkokTime.format(new Date(sec * 1000))
+  return chartTime.format(new Date(sec * 1000))
 }
 
 function formatCrosshairTime(time: Time): string {
@@ -102,7 +102,7 @@ function formatCrosshairTime(time: Time): string {
       : typeof time === 'string'
         ? Math.floor(new Date(time).getTime() / 1000)
         : Date.UTC(time.year, time.month - 1, time.day) / 1000
-  return bangkokDateTime.format(new Date(sec * 1000))
+  return chartDateTime.format(new Date(sec * 1000))
 }
 
 function buildPlaceholderPoints(

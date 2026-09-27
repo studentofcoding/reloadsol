@@ -1,13 +1,14 @@
 import { query, queryOne } from '@/utils/db'
 import {
   getCachedTokenOhlc24h1m,
+  loadOwn1mBars,
   tokenOhlcToRugBars,
 } from '@/strategies/token-map-chart'
 import {
   evaluateOhlcRugRules,
   OHLC_RUG_MAX_BARS,
   ohlcRugHitReasons,
-  takeLastOhlcBars,
+  resolveOhlcRugWindow,
   type OhlcRugBar,
   type OhlcRugEval,
 } from '@/strategies/ohlc-rug-rules'
@@ -70,14 +71,28 @@ export type DetectSnapshotRow = {
   updated_at: string
 }
 
-/** Last N 1m bars from the shared 24h cache (brain GET /ohlc when flag on). */
+/**
+ * Last N 1m bars from the shared 24h cache (brain GET /ohlc when flag on).
+ * Freeview passes `fallbackOwn1m` so an empty cache still reads `token_ohlc_bars`.
+ * Entry shadow leaves the flag off and stays on the canonical series.
+ */
 export async function fetchLastOhlcRugBars(
   tokenAddress: string,
   n = OHLC_RUG_MAX_BARS,
+  opts?: { fallbackOwn1m?: boolean },
 ): Promise<{ bars: OhlcRugBar[]; source: string }> {
-  const { candles, source } = await getCachedTokenOhlc24h1m(tokenAddress)
-  const mapped = tokenOhlcToRugBars(candles)
-  return { bars: takeLastOhlcBars(mapped, n), source }
+  const fallbackOwn1m = opts?.fallbackOwn1m === true
+  const [cached, ownCandles] = await Promise.all([
+    getCachedTokenOhlc24h1m(tokenAddress),
+    fallbackOwn1m ? loadOwn1mBars(tokenAddress) : Promise.resolve([]),
+  ])
+  return resolveOhlcRugWindow({
+    cached: tokenOhlcToRugBars(cached.candles),
+    cachedSource: cached.source,
+    own: tokenOhlcToRugBars(ownCandles),
+    n,
+    fallbackOwn1m,
+  })
 }
 
 export async function insertDetectSnapshot(params: {
