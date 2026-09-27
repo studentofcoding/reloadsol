@@ -20,6 +20,9 @@ jobs:
           node-version: "20"
           cache: npm
 
+      - name: Check migrations are idempotent
+        run: bash scripts/check-migrations-idempotent.sh
+
       - name: Deploy with Docker
         run: bash scripts/docker-deploy.sh --skip-pull
         env:

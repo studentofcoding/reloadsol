@@ -41,6 +41,7 @@
     "ml:pattern-daily": "bash scripts/ml-pattern-daily.sh",
     "test:watch": "vitest",
     "verify:no-raw-useeffect": "node scripts/verify-no-raw-useeffect.js",
+    "db:check-migrations": "bash scripts/check-migrations-idempotent.sh",
     "logs": "node scripts/tail-logs.js",
     "logs:follow": "node scripts/tail-logs.js -f",
     "logs:errors": "node scripts/tail-logs.js -l error",
