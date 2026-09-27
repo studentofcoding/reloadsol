@@ -830,6 +830,12 @@ export async function fetchGmgnWebMultiTokenInfo(
 }
 
 export async function hasGmgnWebLedgerCapture(address: string): Promise<boolean> {
+  try {
+    const { tokenInfoDetectRowExists } = await import('@/strategies/token-info-detect')
+    if (await tokenInfoDetectRowExists('sol', address)) return true
+  } catch {
+    // Table missing or db down: the interim Redis key still applies.
+  }
   const hit = await cacheGet<unknown>(gmgnWebLedgerSeenKey(address))
   return hit != null
 }

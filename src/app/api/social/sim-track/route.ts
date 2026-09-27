@@ -31,6 +31,7 @@ import {
   type StrategySimOpenPosition as OpenPosition,
 } from '@/strategies/open-strategy-sim-positions'
 import { appendSimPositionMonitorSnapshot } from '@/strategies/sim-monitor-snapshots'
+import { captureTokenInfoDetectBatch } from '@/strategies/token-info-detect'
 
 export const maxDuration = 120
 
@@ -321,6 +322,15 @@ async function runSimTrack(request: NextRequest) {
         closedMints,
         requiredMentionMints,
       })
+
+      await captureTokenInfoDetectBatch(
+        eligible.map((candidate) => ({
+          chain: SOCIAL_CHAIN,
+          tokenAddress: candidate.tokenAddress,
+          detectingStrategy: strategy.id,
+          source: 'social' as const,
+        })),
+      )
 
       const refreshedRecords = await fetchTradingRecordsForWallet(SOCIAL_SIM_WALLET)
       const currentOpen = getOpenPositionsForStrategy(refreshedRecords, strategy.id).length

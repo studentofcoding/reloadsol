@@ -28,6 +28,10 @@ import {
   trackSmartMoney,
 } from '@/utils/gmgn-cli'
 import { getGmgnTokenSnapshotCached } from '@/utils/gmgn-snapshot-cache'
+import {
+  captureTokenInfoDetectBatch,
+  type TokenInfoDetectCapture,
+} from '@/strategies/token-info-detect'
 import { evaluateGmgnSecurity } from './gmgn-security-gate'
 import { fetchJupiterMarketHints } from '@/utils/jupiter-metadata'
 
@@ -158,7 +162,9 @@ export async function gateGmgnCandidates(params: {
   const maxCheck = params.strategy.config.security.maxCandidatesPerTick
   const slice = params.candidates.slice(0, maxCheck)
   const gated: GmgnGatedCandidate[] = []
+  const tokenInfoCaptures: TokenInfoDetectCapture[] = []
 
+  try {
   for (const candidate of slice) {
     const chain = params.strategy.config.discovery.chain
     // Shared short-TTL cache (same key as the token-snapshot route) so cron
@@ -167,6 +173,16 @@ export async function gateGmgnCandidates(params: {
     const cached = await getGmgnTokenSnapshotCached(chain, candidate.tokenAddress)
     if (!cached) break
     const { info, security } = cached
+    if (chain === 'sol') {
+      tokenInfoCaptures.push({
+        chain: 'sol',
+        tokenAddress: candidate.tokenAddress,
+        detectingStrategy: params.strategy.id,
+        source: 'gmgn_pipeline',
+        info,
+        security,
+      })
+    }
 
     // OHLC rug shadow first-check; enforce later (does not change pass)
     const ohlcShadow = await attachOhlcRugShadow(
@@ -304,6 +320,9 @@ export async function gateGmgnCandidates(params: {
         domain: 'gmgn',
       },
     })
+  }
+  } finally {
+    await captureTokenInfoDetectBatch(tokenInfoCaptures)
   }
 
   return gated
