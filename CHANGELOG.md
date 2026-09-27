@@ -8,6 +8,11 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — mcap / signals kanban tag `potential` is now `rising`
+
+- The gold chip on `/dev/signals` is a tracking tag (auto when peak growth > 0), not a buy path. Stored label is `rising` on `token_mcap_tracking`, synced `trading_signals`, and OHLC cards keyed by that tag (`db/init/41-rename-tracking-label-rising.sql`). Reads still accept legacy `potential` for one release.
+- Unchanged: first-seen / ~80k buy sides, ML `v2-potential` / `ML_POTENTIAL_*`, detect-snapshot `rug_label`, and `dlmm_potential_list` membership.
+
 ### Fixed — three production bugs found by the /debug pass + log observability
 
 - **The Freeview sim-activity feed was silently dead.** [`token-map-activity.ts`](src/strategies/token-map-activity.ts) passed `$3` straight into `jsonb_build_object('mintAddress', $3)`; a parameter inside a function call has no inferable type, so the extended protocol rejected **every** call with `could not determine data type of parameter $3` and the `catch` returned an empty list. Now `$3::text`. Verified: `PREPARE` fails before and succeeds after, and the plan flips to `BitmapAnd(Bitmap Index Scan on idx_trading_records_tokens_gin, …)` at **3.24 ms** (was 159 ms with 66,161 rows removed by filter) — this is also what finally makes the index that replaced the 438 MB GIN usable by the app.

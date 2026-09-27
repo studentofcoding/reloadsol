@@ -13,7 +13,7 @@ type LabelRow = {
   id: string
   token_address: string
   token_symbol: string | null
-  label: 'potential' | 'rug'
+  label: 'rising' | 'rug'
   window_start: string
   window_end: string
   ohlc_source: string
@@ -23,11 +23,11 @@ type LabelRow = {
   created_at: string
 }
 
-function sessionKey(label: 'potential' | 'rug'): string {
+function sessionKey(label: 'rising' | 'rug'): string {
   return `signal-ohlc-labels:v2:${label}`
 }
 
-function readSession(label: 'potential' | 'rug'): LabelRow[] | undefined {
+function readSession(label: 'rising' | 'rug'): LabelRow[] | undefined {
   if (typeof window === 'undefined') return undefined
   try {
     const raw = sessionStorage.getItem(sessionKey(label))
@@ -46,7 +46,7 @@ function readSession(label: 'potential' | 'rug'): LabelRow[] | undefined {
   }
 }
 
-function writeSession(label: 'potential' | 'rug', entries: LabelRow[]): void {
+function writeSession(label: 'rising' | 'rug', entries: LabelRow[]): void {
   try {
     sessionStorage.setItem(
       sessionKey(label),
@@ -63,7 +63,7 @@ function Section({
   accent,
 }: {
   title: string
-  label: 'potential' | 'rug'
+  label: 'rising' | 'rug'
   accent: string
 }) {
   const initial = readSession(label)
@@ -108,7 +108,7 @@ function Section({
       ) : null}
       {!query.isLoading && (query.data?.length ?? 0) === 0 ? (
         <p className="text-sm text-gray-500">
-          No snapshots yet. Label tokens Potential / Rugged on Signals.
+          No snapshots yet. Label tokens Rising / Rugged on Signals.
         </p>
       ) : null}
       <div className="grid gap-4 md:grid-cols-2">
@@ -152,8 +152,8 @@ export default function OhlcLabelsGallery() {
   return (
     <div className="space-y-10">
       <Section
-        title="Potential"
-        label="potential"
+        title="Rising"
+        label="rising"
         accent="text-emerald-300"
       />
       <Section title="Rug" label="rug" accent="text-red-300" />

@@ -7,7 +7,7 @@ function emptyRow(overrides: Record<string, unknown> = {}) {
     id: 'row-1',
     token_address: MINT,
     token_symbol: 'TEST',
-    label: 'potential' as const,
+    label: 'rising' as const,
     window_start: new Date(1_700_000_000_000).toISOString(),
     window_end: new Date(1_700_000_600_000).toISOString(),
     ohlc_interval: '1m',
@@ -197,7 +197,7 @@ describe('captureSignalOhlcLabel empty / soft-overwrite', () => {
     const { captureSignalOhlcLabel } = await import('./signal-ohlc-labels')
     const id = await captureSignalOhlcLabel({
       tokenAddress: MINT,
-      label: 'potential',
+      label: 'rising',
       source: 'mcap_label_backfill',
     })
     expect(id).toBeNull()
@@ -269,7 +269,7 @@ describe('captureSignalOhlcLabel empty / soft-overwrite', () => {
 
     const id = await captureSignalOhlcLabel({
       tokenAddress: MINT,
-      label: 'potential',
+      label: 'rising',
       source: 'mcap_label_backfill',
     })
     expect(id).toBe('row-empty')

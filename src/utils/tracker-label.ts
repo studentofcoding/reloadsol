@@ -1,8 +1,28 @@
-/** Display + list-filter helpers for token_mcap_tracking.label. No I/O. */
+/**
+ * Display + list-filter helpers for token_mcap_tracking.label. No I/O.
+ *
+ * The kanban tag for peak growth is `rising`. `potential` is the previous
+ * stored string (one release): reads treat it as rising; writes store rising.
+ * Not the ML `v2-potential` model, detect-snapshot `rug_label`, or
+ * `dlmm_potential_list` membership.
+ */
+
+export const TRACKER_WRITE_LABELS = [
+  'valid',
+  'traded_live',
+  'rising',
+  'rugged',
+  'watching',
+] as const
+
+export type TrackerWriteLabel = (typeof TRACKER_WRITE_LABELS)[number]
+
+/** Previous kanban string. Read alias only — do not write it. */
+export const LEGACY_RISING_LABEL = 'potential'
 
 export const TRACKER_LIST_LABELS = [
   'all',
-  'potential',
+  'rising',
   'rugged',
   'watching',
   'traded_live',
@@ -14,7 +34,7 @@ export type TrackerListLabel = (typeof TRACKER_LIST_LABELS)[number]
 
 export const TRACKER_LABEL_CHIPS: { id: TrackerListLabel; label: string }[] = [
   { id: 'all', label: 'All' },
-  { id: 'potential', label: 'Potential' },
+  { id: 'rising', label: 'Rising' },
   { id: 'rugged', label: 'Rug' },
   { id: 'watching', label: 'Watching' },
   { id: 'traded_live', label: 'Traded live' },
@@ -23,18 +43,48 @@ export const TRACKER_LABEL_CHIPS: { id: TrackerListLabel; label: string }[] = [
 ]
 
 const STORED_LABELS = [
-  'potential',
+  'rising',
   'rugged',
   'watching',
   'traded_live',
   'valid',
 ] as const
 
+/** Map the legacy kanban string onto `rising`. Other values pass through. */
+export function canonicalTrackerLabel(
+  label: string | null | undefined,
+): string | null | undefined {
+  if (label === LEGACY_RISING_LABEL) return 'rising'
+  return label
+}
+
+export function isRisingTrackerLabel(
+  label: string | null | undefined,
+): boolean {
+  return label === 'rising' || label === LEGACY_RISING_LABEL
+}
+
+/**
+ * Accept a write. Legacy `potential` is stored as `rising`.
+ * `null` clears the label.
+ */
+export function coerceTrackerLabelWrite(
+  label: string | null | undefined,
+): { ok: true; label: TrackerWriteLabel | null } | { ok: false } {
+  if (label == null) return { ok: true, label: null }
+  if (label === LEGACY_RISING_LABEL) return { ok: true, label: 'rising' }
+  if ((TRACKER_WRITE_LABELS as readonly string[]).includes(label)) {
+    return { ok: true, label: label as TrackerWriteLabel }
+  }
+  return { ok: false }
+}
+
 export function normalizeTrackerListLabel(
   raw: string | null | undefined,
 ): TrackerListLabel {
-  if (raw && (TRACKER_LIST_LABELS as readonly string[]).includes(raw)) {
-    return raw as TrackerListLabel
+  const canon = canonicalTrackerLabel(raw)
+  if (canon && (TRACKER_LIST_LABELS as readonly string[]).includes(canon)) {
+    return canon as TrackerListLabel
   }
   return 'all'
 }
@@ -53,12 +103,18 @@ export function mcapLabelFilterSql(
   if (raw === 'unlabeled') {
     return { sql: 'label IS NULL', values: [] }
   }
+  if (raw === 'rising' || raw === LEGACY_RISING_LABEL) {
+    return {
+      sql: `(label = 'rising' OR label = 'potential')`,
+      values: [],
+    }
+  }
   if ((STORED_LABELS as readonly string[]).includes(raw)) {
     return { sql: `label = $${nextIndex}`, values: [raw] }
   }
   return {
     error:
-      'Invalid label filter. Must be one of: potential, rugged, watching, traded_live, valid, unlabeled',
+      'Invalid label filter. Must be one of: rising, rugged, watching, traded_live, valid, unlabeled',
   }
 }
 
@@ -67,7 +123,7 @@ export function trackerLabelDisplay(
   label: string | null | undefined,
 ): string | null {
   if (label === 'rugged') return 'Rug'
-  if (label === 'potential') return 'Potential'
+  if (isRisingTrackerLabel(label)) return 'Rising'
   if (label === 'watching') return 'Watching'
   if (label === 'traded_live') return 'Traded live'
   if (label === 'valid') return 'Valid'

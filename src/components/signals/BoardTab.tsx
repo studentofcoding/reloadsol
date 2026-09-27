@@ -49,7 +49,7 @@ import GlobalWatchlistButton from "@/components/GlobalWatchlistButton";
 import { useRugList } from "@/hooks/useRugList";
 import { parseAddresses } from "@/components/signals/shared/parseAddresses";
 
-type SectionType = "watching" | "potential" | "rugged" | "mcap_tracker";
+type SectionType = "watching" | "rising" | "rugged" | "mcap_tracker";
 
 interface SignalData {
   token_address: string;
@@ -66,7 +66,7 @@ interface SignalData {
 const SECTIONS: { id: SectionType; title: string; color: string }[] = [
   { id: "mcap_tracker", title: "Discovery (MCap)", color: "border-purple-600" },
   { id: "watching", title: "Unlabeled / Watching", color: "border-gray-600" },
-  { id: "potential", title: "Potential", color: "border-green-600" },
+  { id: "rising", title: "Rising", color: "border-green-600" },
   { id: "rugged", title: "Rugged", color: "border-red-600" },
 ];
 
@@ -372,9 +372,9 @@ const ChartItem = React.memo(
             <div className="mt-2 flex gap-2 pt-2 border-t border-gray-700">
               <button
                 className="flex-1 px-2 py-1 text-xs rounded text-white font-medium bg-green-700 hover:bg-green-600 border border-green-600"
-                onClick={() => onMove(addr, "potential")}
+                onClick={() => onMove(addr, "rising")}
               >
-                Potential
+                Rising
               </button>
               <button
                 className="flex-1 px-2 py-1 text-xs rounded text-white font-medium bg-red-900/50 hover:bg-red-900 border border-red-800 text-red-200"
@@ -409,7 +409,7 @@ function ChartsContent() {
   const [columns, setColumns] = useState<Record<SectionType, string[]>>({
     mcap_tracker: [],
     watching: [],
-    potential: [],
+    rising: [],
     rugged: [],
   });
   const [mcapFilters, setMcapFilters] =
@@ -503,7 +503,7 @@ function ChartsContent() {
 
     const existingSet = new Set([
       ...columns.watching,
-      ...columns.potential,
+      ...columns.rising,
       ...columns.rugged,
     ]);
 
@@ -526,9 +526,9 @@ function ChartsContent() {
   }, [columns, mcapData]);
 
   const handleBuyPotential = async () => {
-    const potentialTokens = displayColumns.potential;
+    const potentialTokens = displayColumns.rising;
     if (potentialTokens.length === 0) {
-      alert("No tokens in Potential category");
+      alert("No tokens in Rising category");
       return;
     }
 
@@ -552,7 +552,7 @@ function ChartsContent() {
     setStatus("Calculating weighted distribution...");
 
     try {
-      // 1. Refresh MCaps for potential tokens to ensure accuracy
+      // 1. Refresh MCaps for rising-column tokens to ensure accuracy
       // Use live data if available in signals map (populated by mcap_tracker or fetched DB data)
       const weightingInput = potentialTokens.map((addr) => ({
         address: addr,
@@ -653,7 +653,7 @@ function ChartsContent() {
         `Bulk buy complete. Success: ${successCount}, Failed: ${failCount}`,
       );
       if (successCount > 0) {
-        alert(`Successfully bought ${successCount} potential tokens!`);
+        alert(`Successfully bought ${successCount} rising tokens!`);
       }
     } catch (e: any) {
       console.error("Bulk buy error", e);
@@ -1393,7 +1393,7 @@ function ChartsContent() {
                 items={visibleColumnItems(section.id)}
                 renderItem={renderCard}
                 onBuyAll={
-                  section.id === "potential" ? handleBuyPotential : undefined
+                  section.id === "rising" ? handleBuyPotential : undefined
                 }
                 buyAmount={potentialSolAmount}
                 setBuyAmount={setPotentialSolAmount}

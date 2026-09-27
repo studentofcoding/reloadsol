@@ -7,6 +7,7 @@ import {
   markTokenPotential,
   unmarkTokenPotential,
 } from '@/utils/potential-list/service'
+import { canonicalTrackerLabel } from '@/utils/tracker-label'
 
 interface TradingSignalRow {
   token_address: string
@@ -27,7 +28,7 @@ export async function GET(request: NextRequest) {
     const chain = parseDbChain(request.nextUrl.searchParams.get('chain'))
     const { rows: data } = await query<TradingSignalRow>(
       `SELECT * FROM trading_signals
-       WHERE label IN ('watching', 'potential', 'rugged')
+       WHERE label IN ('watching', 'rising', 'potential', 'rugged')
          AND chain = $1
        ORDER BY updated_at DESC`,
       [chain],
@@ -69,7 +70,7 @@ export async function GET(request: NextRequest) {
       success: true,
       data: merged.map(d => ({
         token_address: d.token_address,
-        label: d.label,
+        label: canonicalTrackerLabel(d.label) ?? d.label,
         mcap: d.market_cap,
         token_symbol: d.token_symbol,
         last_updated_at: d.updated_at,
@@ -105,6 +106,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Token address required' }, { status: 400 })
     }
 
+    const storedLabel = label === 'potential' ? 'rising' : label
     const now = new Date().toISOString()
 
     const existing = await queryOne<TradingSignalRow>(
@@ -116,9 +118,9 @@ export async function POST(request: NextRequest) {
       const setClauses: string[] = ['updated_at = $3']
       const params: unknown[] = [tokenAddress, chain, now]
 
-      if (label) {
+      if (storedLabel) {
         setClauses.push(`label = $${params.length + 1}`)
-        params.push(label)
+        params.push(storedLabel)
       }
       if (tokenSymbol) {
         setClauses.push(`token_symbol = $${params.length + 1}`)
@@ -166,7 +168,7 @@ export async function POST(request: NextRequest) {
           price || 0,
           initialPrice || price || 0,
           now,
-          label || 'watching',
+          storedLabel || 'watching',
           result ? JSON.stringify(result) : null,
           imageReference || null,
           source || 'manual',
@@ -175,14 +177,14 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    if (label === 'rugged') {
+    if (storedLabel === 'rugged') {
       await markTokenRug({
         tokenAddress,
         tokenSymbol: tokenSymbol || existing?.token_symbol,
         source: 'board',
         chain,
       })
-    } else if (label === 'potential') {
+    } else if (storedLabel === 'rising') {
       await removeRugEntry(tokenAddress, chain)
       const potSource =
         source === 'mcap_tracker'
@@ -196,7 +198,7 @@ export async function POST(request: NextRequest) {
         source: potSource,
         chain,
       })
-    } else if (label) {
+    } else if (storedLabel) {
       await removeRugEntry(tokenAddress, chain)
       try {
         await unmarkTokenPotential(tokenAddress, chain)

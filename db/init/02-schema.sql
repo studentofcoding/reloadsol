@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS trading_signals (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   token_address TEXT NOT NULL UNIQUE,
   token_symbol TEXT,
-  label TEXT CHECK (label IN ('watching', 'potential', 'rugged')),
+  label TEXT CHECK (label IN ('watching', 'rising', 'rugged')),
   market_cap NUMERIC NOT NULL DEFAULT 0,
   price NUMERIC NOT NULL DEFAULT 0,
   initial_price NUMERIC NOT NULL DEFAULT 0,
@@ -255,7 +255,7 @@ CREATE TABLE IF NOT EXISTS token_mcap_tracking (
   peak_growth_percent NUMERIC,
   peak_seen_at TIMESTAMPTZ,
   is_tracking_stuck BOOLEAN NOT NULL DEFAULT false,
-  label TEXT CHECK (label IN ('valid', 'traded_live', 'potential', 'rugged', 'watching'))
+  label TEXT CHECK (label IN ('valid', 'traded_live', 'rising', 'rugged', 'watching'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_token_mcap_growth ON token_mcap_tracking(mcap_growth_percent DESC);

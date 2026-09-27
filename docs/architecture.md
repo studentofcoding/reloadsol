@@ -270,7 +270,7 @@ Live candles come from **Solana Tracker** (`fetchTokenOhlc` / `GET /api/gmgn/tok
 | Table | Purpose |
 |-------|---------|
 | `token_detect_snapshots` | Freeview / concentration last-10×1m bars + OHLC rug-rule eval |
-| `signal_ohlc_labels` | Potential / Rug training snapshots (gallery `/dev/ohlc-labels`) |
+| `signal_ohlc_labels` | Rising / Rug snapshots for the kanban tag (gallery `/dev/ohlc-labels`). Store key `rising` (legacy `potential` migrated). Not ML `v2-potential`. |
 
 ### Legacy / optional
 

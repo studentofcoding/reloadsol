@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  canonicalTrackerLabel,
+  isRisingTrackerLabel,
   isTrackedMcapPresence,
   mcapLabelFilterSql,
   mcapTrackedAlgoTesterHref,
+  normalizeTrackerListLabel,
   strategyPresenceTitle,
   trackerLabelDisplay,
 } from './tracker-label'
@@ -50,7 +53,8 @@ describe('tracked presence copy', () => {
 describe('trackerLabelDisplay', () => {
   it('maps rugged to Rug and hides null', () => {
     expect(trackerLabelDisplay('rugged')).toBe('Rug')
-    expect(trackerLabelDisplay('potential')).toBe('Potential')
+    expect(trackerLabelDisplay('rising')).toBe('Rising')
+    expect(trackerLabelDisplay('potential')).toBe('Rising')
     expect(trackerLabelDisplay('traded_live')).toBe('Traded live')
     expect(trackerLabelDisplay(null)).toBeNull()
     expect(trackerLabelDisplay('rug')).toBeNull()
@@ -60,5 +64,18 @@ describe('trackerLabelDisplay', () => {
 describe('mcapLabelFilterSql', () => {
   it('rejects rug', () => {
     expect(mcapLabelFilterSql('rug', 2)).toHaveProperty('error')
+  })
+
+  it('treats legacy potential as the rising tag', () => {
+    expect(canonicalTrackerLabel('potential')).toBe('rising')
+    expect(isRisingTrackerLabel('potential')).toBe(true)
+    expect(normalizeTrackerListLabel('potential')).toBe('rising')
+    const legacy = mcapLabelFilterSql('potential', 2)
+    const rising = mcapLabelFilterSql('rising', 2)
+    expect(legacy).toEqual(rising)
+    expect(rising).toEqual({
+      sql: `(label = 'rising' OR label = 'potential')`,
+      values: [],
+    })
   })
 })

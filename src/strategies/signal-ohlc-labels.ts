@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS signal_ohlc_labels (
   token_address TEXT NOT NULL,
   token_symbol TEXT NULL,
   label TEXT NOT NULL
-    CHECK (label IN ('potential', 'rug')),
+    CHECK (label IN ('rising', 'rug')),
   window_start TIMESTAMPTZ NOT NULL,
   window_end TIMESTAMPTZ NOT NULL,
   ohlc_interval TEXT NOT NULL DEFAULT '1m'
@@ -382,7 +382,7 @@ async function backfillEmptyRows(
  */
 export async function captureSignalOhlcLabel(params: {
   tokenAddress: string
-  /** UI label: potential | rugged | rug */
+  /** UI label: rising | potential (legacy) | rugged | rug */
   label: string
   source?: string
   tokenSymbol?: string | null
@@ -559,14 +559,16 @@ export async function upsertSignalOhlcLabelFromBars(params: {
     })
   }
 
-  const otherLabel: SignalOhlcLabelKind =
-    storeLabel === 'potential' ? 'rug' : 'potential'
+  const deleteLabels =
+    storeLabel === 'rug' ? ['rising', 'potential'] : ['rug']
   await query(
     `DELETE FROM signal_ohlc_labels
-     WHERE token_address = $1 AND label = $2`,
-    [params.tokenAddress, otherLabel],
+     WHERE token_address = $1 AND label = ANY($2::text[])`,
+    [params.tokenAddress, deleteLabels],
   )
-  await invalidateSignalOhlcLabelsCache(otherLabel)
+  await invalidateSignalOhlcLabelsCache('rising')
+  await invalidateSignalOhlcLabelsCache('rug')
+  await cacheDelByPrefix('signal-ohlc-labels:v1:potential')
 
   const sorted = [...params.bars].sort((a, b) => a.t - b.t)
   const windowStartIso = new Date(sorted[0]!.t * 1000).toISOString()
@@ -611,8 +613,9 @@ export async function removeSignalOhlcLabelsForToken(
   await query(`DELETE FROM signal_ohlc_labels WHERE token_address = $1`, [
     tokenAddress,
   ])
-  await invalidateSignalOhlcLabelsCache('potential')
+  await invalidateSignalOhlcLabelsCache('rising')
   await invalidateSignalOhlcLabelsCache('rug')
+  await cacheDelByPrefix('signal-ohlc-labels:v1:potential')
 }
 
 async function listFromDb(params: {
@@ -620,13 +623,14 @@ async function listFromDb(params: {
   limit: number
   offset: number
 }): Promise<SignalOhlcLabelRow[]> {
-  if (params.label === 'potential' || params.label === 'rug') {
+  if (params.label === 'rising' || params.label === 'rug') {
+    const labels = params.label === 'rising' ? ['rising', 'potential'] : ['rug']
     const { rows } = await query<SignalOhlcLabelRow>(
       `SELECT * FROM signal_ohlc_labels
-       WHERE label = $1
+       WHERE label = ANY($1::text[])
        ORDER BY created_at DESC
        LIMIT $2 OFFSET $3`,
-      [params.label, params.limit, params.offset],
+      [labels, params.limit, params.offset],
     )
     return rows
   }
@@ -707,7 +711,7 @@ export async function listSignalOhlcLabels(params: {
   const limit = Math.min(Math.max(params.limit ?? 50, 1), 200)
   const offset = Math.max(params.offset ?? 0, 0)
 
-  if (params.label === 'potential' || params.label === 'rug') {
+  if (params.label === 'rising' || params.label === 'rug') {
     const key = signalOhlcLabelsCacheKey(params.label, limit, offset)
     const cached = await cacheGet<SignalOhlcLabelRow[]>(key)
     if (cached && !cached.some(needsOhlcBackfill)) {

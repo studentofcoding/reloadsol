@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import type { AppNetwork } from "@/utils/app-network";
+import { canonicalTrackerLabel } from "@/utils/tracker-label";
 
-export type BoardSectionType = "mcap_tracker" | "watching" | "potential" | "rugged";
+export type BoardSectionType = "mcap_tracker" | "watching" | "rising" | "rugged";
 
 export type SignalData = {
   token_address: string;
@@ -34,7 +35,7 @@ async function fetchBoardInit(
   const columns: Record<BoardSectionType, string[]> = {
     mcap_tracker: [],
     watching: [],
-    potential: [],
+    rising: [],
     rugged: [],
   };
   const tokenMcaps: Record<string, number> = {};
@@ -42,7 +43,7 @@ async function fetchBoardInit(
   const seen = new Set<string>();
 
   dbTokens.forEach((t) => {
-    const label = (t.label || "watching") as BoardSectionType;
+    const label = (canonicalTrackerLabel(t.label) || "watching") as BoardSectionType;
     if (columns[label]) {
       columns[label].push(t.token_address);
       seen.add(t.token_address);

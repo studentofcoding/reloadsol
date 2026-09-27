@@ -2,7 +2,7 @@
 
 import React from "react";
 
-export type KanbanLabel = "watching" | "potential" | "rugged";
+export type KanbanLabel = "watching" | "rising" | "rugged";
 
 const LABELS: { id: KanbanLabel; label: string; active: string; idle: string }[] =
   [
@@ -13,8 +13,8 @@ const LABELS: { id: KanbanLabel; label: string; active: string; idle: string }[]
       idle: "bg-gray-800 text-gray-400 hover:bg-gray-700",
     },
     {
-      id: "potential",
-      label: "Potential",
+      id: "rising",
+      label: "Rising",
       active: "bg-green-600 text-white",
       idle: "bg-gray-800 text-gray-400 hover:bg-gray-700",
     },
@@ -33,7 +33,7 @@ type TokenLabelActionsProps = {
   size?: "sm" | "md";
 };
 
-/** Rugged / potential / watching label buttons (Signals kanban + live). */
+/** Rugged / rising / watching label buttons (Signals kanban + live). */
 export default function TokenLabelActions({
   currentLabel,
   onLabel,
@@ -51,7 +51,10 @@ export default function TokenLabelActions({
           disabled={disabled}
           onClick={() => onLabel(id)}
           className={`rounded font-medium transition-colors disabled:opacity-50 ${pad} ${
-            currentLabel === id ? active : idle
+            currentLabel === id ||
+            (id === "rising" && currentLabel === "potential")
+              ? active
+              : idle
           }`}
         >
           {label}

@@ -61,7 +61,7 @@ describe('planMcapLabelBackfill', () => {
     expect(plan.capture).toBe(true)
   })
 
-  it('sets a missing peak from positive growth and labels potential', () => {
+  it('sets a missing peak from positive growth and labels rising', () => {
     const record = row({
       label: null,
       peak_growth_percent: null,
@@ -73,7 +73,7 @@ describe('planMcapLabelBackfill', () => {
     const plan = planMcapLabelBackfill(record, NOW)
     expect(record.peak_growth_percent).toBe(10)
     expect(record.peak_mcap).toBe(110_000)
-    expect(record.label).toBe('potential')
+    expect(record.label).toBe('rising')
     expect(plan.persist).toBe(true)
     expect(plan.capture).toBe(true)
   })
@@ -93,14 +93,14 @@ describe('planMcapLabelBackfill', () => {
     expect(plan.labelChanged).toBe(false)
   })
 
-  it('leaves an existing potential label unwritten but still marks OHLC capture', () => {
+  it('leaves an existing rising label unwritten but still marks OHLC capture', () => {
     const record = row({
-      label: 'potential',
+      label: 'rising',
       peak_growth_percent: 40,
       mcap_growth_percent: 12,
     })
     const plan = planMcapLabelBackfill(record, NOW)
-    expect(record.label).toBe('potential')
+    expect(record.label).toBe('rising')
     expect(plan.labelChanged).toBe(false)
     expect(plan.persist).toBe(false)
     expect(plan.capture).toBe(true)
@@ -197,9 +197,9 @@ describe('runMcapLabelBackfill', () => {
     expect(record.label).toBe('rugged')
   })
 
-  it('does not UPDATE an unchanged potential row but still captures OHLC', async () => {
+  it('does not UPDATE an unchanged rising row but still captures OHLC', async () => {
     const record = row({
-      label: 'potential',
+      label: 'rising',
       peak_growth_percent: 40,
       mcap_growth_percent: 12,
     })
@@ -222,7 +222,7 @@ describe('runMcapLabelBackfill', () => {
   it('one OHLC failure does not abort the scan', async () => {
     const a = row({
       token_address: 'mintA',
-      label: 'potential',
+      label: 'rising',
       peak_growth_percent: 5,
       mcap_growth_percent: 1,
     })
@@ -245,7 +245,7 @@ describe('runMcapLabelBackfill', () => {
       captureOhlc,
     })
     expect(captureOhlc).toHaveBeenCalledTimes(2)
-    expect(a.label).toBe('potential')
+    expect(a.label).toBe('rising')
     expect(b.label).toBe('rugged')
     expect(counts.scanned).toBe(2)
     expect(counts.ohlc_failed).toBe(1)
@@ -255,7 +255,7 @@ describe('runMcapLabelBackfill', () => {
   it('counts refilled and skipped_evm outcomes', async () => {
     const a = row({
       token_address: 'mintA',
-      label: 'potential',
+      label: 'rising',
       peak_growth_percent: 5,
       mcap_growth_percent: 1,
     })

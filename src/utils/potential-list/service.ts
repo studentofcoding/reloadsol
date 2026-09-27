@@ -33,7 +33,7 @@ async function syncTradingSignalPotential(
 
   if (existing) {
     await query(
-      `UPDATE trading_signals SET label = 'potential', updated_at = $3
+      `UPDATE trading_signals SET label = 'rising', updated_at = $3
        WHERE token_address = $1 AND chain = $2`,
       [tokenAddress, chain, now],
     )
@@ -44,7 +44,7 @@ async function syncTradingSignalPotential(
     `INSERT INTO trading_signals (
        token_address, token_symbol, label, market_cap, price, initial_price,
        updated_at, source, chain
-     ) VALUES ($1, $2, 'potential', 0, 0, 0, $3, 'manual', $4)`,
+     ) VALUES ($1, $2, 'rising', 0, 0, 0, $3, 'manual', $4)`,
     [tokenAddress, tokenSymbol || 'UNKNOWN', now, chain],
   )
 }
@@ -57,7 +57,7 @@ async function revertTradingSignalPotential(
     `SELECT label FROM trading_signals WHERE token_address = $1 AND chain = $2 LIMIT 1`,
     [tokenAddress, chain],
   )
-  if (!existing || existing.label !== 'potential') return
+  if (!existing || (existing.label !== 'rising' && existing.label !== 'potential')) return
 
   await query(
     `UPDATE trading_signals SET label = 'watching', updated_at = $3
@@ -108,9 +108,9 @@ export async function markTokenPotential(input: MarkTokenPotentialInput) {
     )
     await captureSignalOhlcLabel({
       tokenAddress,
-      label: 'potential',
+      label: 'rising',
       tokenSymbol,
-      source: `potential_${source}`,
+      source: `rising_${source}`,
     })
   } catch (err) {
     console.warn('[potential-list] OHLC capture failed', {

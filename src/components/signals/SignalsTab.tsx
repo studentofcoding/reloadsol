@@ -2,7 +2,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { useIsClient } from "@/hooks/useIsClient";
-import { TokenLabel } from "@/utils/mcap-tracker";
+import { TokenLabel, type TokenLabelStored } from "@/utils/mcap-tracker";
 import ChartBuyModal from "@/components/ChartBuyModal";
 import { useConnection, useWallet } from "@/components/WalletProvider";
 import GmgnChartEmbed from "@/components/signals/shared/GmgnChartEmbed";
@@ -134,7 +134,7 @@ type FloatingChart = {
   isInGrid: boolean;
   isDraggable: boolean;
   gridOrder: number;
-  label?: TokenLabel | null;
+  label?: TokenLabelStored | null;
 };
 
 const numberFmt = (n?: number) => {
@@ -165,9 +165,9 @@ const labelBadge = (label?: string | null) => {
   if (label === "rugged") {
     return <span className={`${base} bg-red-100 text-red-700`}>rug</span>;
   }
-  if (label === "potential") {
+  if (label === "rising" || label === "potential") {
     return (
-      <span className={`${base} bg-amber-100 text-amber-800`}>potential</span>
+      <span className={`${base} bg-amber-100 text-amber-800`}>rising</span>
     );
   }
   return null;
@@ -557,12 +557,13 @@ export default function SignalsTab() {
     }
   };
 
-  const getLabelColor = (label?: TokenLabel | null) => {
+  const getLabelColor = (label?: string | null) => {
     switch (label) {
       case "valid":
         return "bg-green-100 text-green-800 border-green-300";
       case "traded_live":
         return "bg-blue-100 text-blue-800 border-blue-300";
+      case "rising":
       case "potential":
         return "bg-yellow-100 text-yellow-800 border-yellow-300";
       case "rugged":
@@ -1279,7 +1280,9 @@ export default function SignalsTab() {
                   {/* Label Dropdown */}
                   <div className="flex items-center gap-2">
                     <select
-                      value={chart.label || ""}
+                      value={
+                        chart.label === "potential" ? "rising" : chart.label || ""
+                      }
                       onChange={(e) => {
                         const value = e.target.value;
                         const label: TokenLabel | null =
@@ -1292,7 +1295,7 @@ export default function SignalsTab() {
                       <option value="">No Label</option>
                       <option value="valid">Valid</option>
                       <option value="traded_live">Traded Live</option>
-                      <option value="potential">Potential</option>
+                      <option value="rising">Rising</option>
                       <option value="rugged">Rugged</option>
                     </select>
                   </div>

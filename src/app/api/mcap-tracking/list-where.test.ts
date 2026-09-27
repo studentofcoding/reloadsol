@@ -56,10 +56,17 @@ describe('mcap list label filter', () => {
   })
 
   it('label ANDs with chain so pagination where matches the chip', () => {
-    const built = buildMcapListWhere({ chain: 'sol', label: 'potential' })
+    const built = buildMcapListWhere({ chain: 'sol', label: 'rising' })
     expect(built.sql).toContain('chain = $1')
-    expect(built.sql).toContain('label = $2')
-    expect(built.values).toEqual(['sol', 'potential'])
+    expect(built.sql).toContain(`(label = 'rising' OR label = 'potential')`)
+    expect(built.values).toEqual(['sol'])
     expect(built.sql).not.toContain(`stop_reason IS NULL`)
+  })
+
+  it('legacy potential chip matches the rising filter', () => {
+    const legacy = buildMcapListWhere({ chain: 'sol', label: 'potential' })
+    const rising = buildMcapListWhere({ chain: 'sol', label: 'rising' })
+    expect(legacy.sql).toBe(rising.sql)
+    expect(legacy.values).toEqual(rising.values)
   })
 })

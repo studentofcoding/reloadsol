@@ -8,10 +8,12 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const labelRaw = searchParams.get('label')?.trim()
-    const label =
-      labelRaw === 'potential' || labelRaw === 'rug'
-        ? (labelRaw as SignalOhlcLabelKind)
-        : null
+    const label: SignalOhlcLabelKind | null =
+      labelRaw === 'rising' || labelRaw === 'potential'
+        ? 'rising'
+        : labelRaw === 'rug'
+          ? 'rug'
+          : null
     const limit = Number(searchParams.get('limit') ?? 50)
     const offset = Number(searchParams.get('offset') ?? 0)
 

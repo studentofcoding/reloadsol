@@ -4,41 +4,37 @@ import { updateTag } from 'next/cache';
 import { requireActionSession } from './auth';
 import { CACHE_TAGS } from '@/lib/cache-tags';
 import { query, queryOne } from '@/utils/db';
-import { captureManualMcapPotentialOhlc, TokenLabel } from '@/utils/mcap-tracker';
+import { captureManualMcapRisingOhlc, TokenLabel } from '@/utils/mcap-tracker';
 import { log } from '@/utils/unified-logger';
 import { markTokenRug } from '@/utils/rug-list/service';
 import { removeRugEntry } from '@/utils/rug-list/db';
+import {
+  TRACKER_WRITE_LABELS,
+  coerceTrackerLabelWrite,
+} from '@/utils/tracker-label';
 
-const VALID_LABELS: TokenLabel[] = [
-  'valid',
-  'traded_live',
-  'potential',
-  'rugged',
-  'watching',
-];
+const VALID_LABELS: TokenLabel[] = [...TRACKER_WRITE_LABELS];
 
 export async function setMcapTokenLabel(
   tokenAddress: string,
-  label: TokenLabel | null,
+  label: TokenLabel | 'potential' | null,
 ) {
   const session = await requireActionSession();
 
   if (!tokenAddress || typeof tokenAddress !== 'string') {
     throw new Error('Token address is required and must be a string');
   }
-  if (
-    label !== null &&
-    label !== undefined &&
-    !VALID_LABELS.includes(label)
-  ) {
+  const coerced = coerceTrackerLabelWrite(label);
+  if (!coerced.ok) {
     throw new Error(
       `Invalid label. Must be one of: ${VALID_LABELS.join(', ')}, or null to clear`,
     );
   }
+  const storedLabel = coerced.label;
 
   log.info('api_request', 'Updating token label', {
     tokenAddress,
-    label: label || 'cleared',
+    label: storedLabel || 'cleared',
   });
 
   const existingToken = await queryOne<{
@@ -58,10 +54,10 @@ export async function setMcapTokenLabel(
 
   await query(
     `UPDATE token_mcap_tracking SET label = $2 WHERE token_address = $1`,
-    [tokenAddress, label || null],
+    [tokenAddress, storedLabel || null],
   );
 
-  if (label === 'rugged') {
+  if (storedLabel === 'rugged') {
     await markTokenRug({
       tokenAddress,
       tokenSymbol: existingToken.token_symbol,
@@ -71,15 +67,15 @@ export async function setMcapTokenLabel(
     await removeRugEntry(tokenAddress);
   }
 
-  if (label === 'potential') {
-    await captureManualMcapPotentialOhlc(tokenAddress, existingToken.token_symbol);
+  if (storedLabel === 'rising') {
+    await captureManualMcapRisingOhlc(tokenAddress, existingToken.token_symbol);
   }
 
   log.info('api_request', 'Successfully updated token label', {
     tokenAddress,
     tokenSymbol: existingToken.token_symbol,
     previousLabel: existingToken.label || 'none',
-    newLabel: label || 'cleared',
+    newLabel: storedLabel || 'cleared',
   });
 
   updateTag(CACHE_TAGS.mcapLabels(session.address));
@@ -92,7 +88,7 @@ export async function setMcapTokenLabel(
       tokenAddress,
       tokenSymbol: existingToken.token_symbol,
       previousLabel: existingToken.label,
-      newLabel: label,
+      newLabel: storedLabel,
     },
   };
 }
