@@ -51,6 +51,8 @@ type SnapshotResponse = {
   error?: string
   bars: OhlcRugBar[]
   barCount: number
+  ohlc_source?: string
+  empty_reason?: string | null
   rug_label: DetectRugLabel
   snapshot_id: string | null
   trip: boolean
@@ -169,6 +171,9 @@ export default function OhlcRugPanel({
       <div className="flex items-center justify-between gap-1">
         <p className="text-[11px] font-semibold text-gray-300">
           OHLC {n}/10m
+          {query.data.ohlc_source && query.data.ohlc_source !== 'none'
+            ? ` · ${query.data.ohlc_source}`
+            : ''}
         </p>
         <span
           className={`rounded px-1 text-[11px] font-semibold uppercase ${
@@ -180,6 +185,11 @@ export default function OhlcRugPanel({
           {live.trip ? 'trip' : 'ok'}
         </span>
       </div>
+      {n === 0 && query.data.empty_reason ? (
+        <p className="text-[11px] leading-tight text-amber-200/70">
+          {query.data.empty_reason}
+        </p>
+      ) : null}
 
       <MiniOhlcCandles bars={query.data.bars} trip={live.trip} />
 
