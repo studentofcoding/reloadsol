@@ -30,7 +30,7 @@ Default remains OpenAPI until an operator sets the flag.
 
 ## Endpoints (public, unofficial)
 
-Host `https://gmgn.ai` (override `GMGN_WEB_HOST`). Body for both POSTs: `{"chain":"sol","addresses":["<mint>",...]}`.
+Host `https://gmgn.ai` (override `GMGN_WEB_HOST`). On production (Singapore VPS) set `GMGN_WEB_HOST` to the `gmgn-web-proxy` Worker URL and `GMGN_WEB_PROXY_SECRET` to the Worker secret — direct VPS egress gets Cloudflare 403. Body for both POSTs: `{"chain":"sol","addresses":["<mint>",...]}`.
 
 | Call | Path | Used for |
 |------|------|----------|
@@ -42,7 +42,7 @@ Rows are adapted to `{ info, security }` and passed through the existing `buildG
 
 These routes are unofficial. A Cloudflare challenge or a shape change should fail soft (cooldown or empty panel), not spin.
 
-Light check from this environment on 2026-09-27: a POST with browser-minimal headers received **HTTP 403** Cloudflare HTML (`Attention Required`). The client treats that as `BLOCKED` and cools down. Do not add a browser or Playwright dependency to get past it.
+Light check on 2026-09-27: VPS / SIN egress POST receives **HTTP 403** Cloudflare HTML (`Attention Required`); US colo (PDX/LAX) and the `workers/gmgn-web-proxy` Durable Object (`locationHint: wnam`) receive **200**. The client treats 403 as `BLOCKED` and cools down. Do not add a browser or Playwright dependency. Production uses the Worker proxy (see `workers/gmgn-web-proxy/README.md`).
 
 ## Anti-spam
 
@@ -74,6 +74,9 @@ GMGN_WEB_POSITIVE_TTL_S=20          # clamped 10–30
 GMGN_WEB_NEGATIVE_COOLDOWN_S=60     # clamped 30–120
 GMGN_WEB_LEDGER_DEBOUNCE_MS=350     # clamped 200–500
 GMGN_WEB_HOST=https://gmgn.ai
+# Production (flowey-vps): route through CF Worker DO in wnam — direct VPS→gmgn is 403
+# GMGN_WEB_HOST=https://gmgn-web-proxy.yonathanevanchristy.workers.dev
+# GMGN_WEB_PROXY_SECRET=...
 ```
 
 `GET /api/gmgn/token-snapshot` on sol does **not** require `GMGN_API_KEY` when the flag is `web`. Robinhood and OpenAPI mode still require the key. The route still runs `evaluateConcentrationBan` on the live panel. The 65% threshold is not part of this flag.
@@ -97,6 +100,7 @@ Until then, `enqueueGmgnWebLedgerMints` / `markGmgnWebLedgerCaptured` are the ca
 | File | Role |
 |------|------|
 | `src/utils/gmgn-web-multi.ts` | Client, gate, caches, ledger debounce |
+| `workers/gmgn-web-proxy/` | CF Worker + wnam Durable Object reverse proxy |
 | `src/utils/gmgn-web-multi.fixtures.ts` | Minimal observed field names for tests |
 | `src/utils/gmgn-web-multi.test.ts` | Chunk, dedupe, coalesce, caches, tile map |
 | `src/utils/gmgn-snapshot-cache.ts` | Flag switches the live panel source |

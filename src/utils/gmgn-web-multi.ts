@@ -35,6 +35,18 @@ const WEB_HEADERS: Record<string, string> = {
   Referer: 'https://gmgn.ai/',
 }
 
+/**
+ * Optional shared-secret for `workers/gmgn-web-proxy` (or any reverse proxy).
+ * When `GMGN_WEB_PROXY_SECRET` is set, every upstream call adds
+ * `X-Gmgn-Proxy-Secret`. Pair with `GMGN_WEB_HOST` pointing at the Worker URL.
+ */
+function webHeaders(): Record<string, string> {
+  const headers = { ...WEB_HEADERS }
+  const secret = process.env.GMGN_WEB_PROXY_SECRET?.trim()
+  if (secret) headers['X-Gmgn-Proxy-Secret'] = secret
+  return headers
+}
+
 export type GmgnWebHolderStatMode = 'never' | 'if-missing' | 'always'
 
 export type FetchGmgnWebMultiOpts = {
@@ -509,7 +521,7 @@ async function webFetch(
     try {
       const response = await fetch(`${webHost()}${path}`, {
         method,
-        headers: WEB_HEADERS,
+        headers: webHeaders(),
         body: body ?? undefined,
         signal: controller.signal,
       })

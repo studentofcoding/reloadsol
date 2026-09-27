@@ -52,3 +52,8 @@ nginx/certs/
 nginx/conf.d/.htpasswd-*
 cloudflared/
 .env.bak.*
+
+# Local gmgn Worker proxy secret (never commit)
+.gmgn-proxy-secret.local
+workers/gmgn-web-proxy/.dev.vars
+workers/gmgn-web-proxy/.proxy-secret

@@ -151,6 +151,7 @@ describe('fetchGmgnWebMultiTokenInfo', () => {
     delete process.env.GMGN_WEB_MAX_POST_PER_SEC
     delete process.env.GMGN_WEB_LEDGER_DEBOUNCE_MS
     delete process.env.GMGN_WEB_HOST
+    delete process.env.GMGN_WEB_PROXY_SECRET
     delete process.env.GMGN_TOKEN_INFO_SOURCE
   })
 
@@ -184,7 +185,20 @@ describe('fetchGmgnWebMultiTokenInfo', () => {
     expect(headers.Referer).toBe('https://gmgn.ai/')
     expect(headers.Cookie).toBeUndefined()
     expect(headers['User-Agent']).toBeUndefined()
+    expect(headers['X-Gmgn-Proxy-Secret']).toBeUndefined()
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/mrwapi/v1/multi_token_full_info')
+  })
+
+  it('adds X-Gmgn-Proxy-Secret when GMGN_WEB_PROXY_SECRET is set', async () => {
+    process.env.GMGN_WEB_HOST = 'https://gmgn-web-proxy.example'
+    process.env.GMGN_WEB_PROXY_SECRET = 'test-proxy-secret'
+    await fetchGmgnWebMultiTokenInfo([MINT_A])
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit
+    const headers = init.headers as Record<string, string>
+    expect(headers['X-Gmgn-Proxy-Secret']).toBe('test-proxy-secret')
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      'https://gmgn-web-proxy.example/mrwapi/v1/multi_token_full_info',
+    )
   })
 
   it('coalesces an overlapping in-flight set onto one call per mint', async () => {

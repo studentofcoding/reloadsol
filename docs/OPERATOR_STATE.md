@@ -75,7 +75,7 @@ New domain — **sim_only by default**. See [GMGN_STRATEGY.md](./GMGN_STRATEGY.m
 
 | Step | Action |
 |------|--------|
-| Env | `GMGN_API_KEY=...` in web `.env` (HTTP default; CLI optional via `GMGN_TRANSPORT=cli`). Default process gate is **0.5 rps** (`GMGN_MAX_REQ_PER_SEC`); do not set `5` on AI-tier keys or Freeview 429s. See [SPEC-ohlc-rug-spine-v1.md](./SPEC-ohlc-rug-spine-v1.md). Token Info / Freeview can shadow the public web batch client with `GMGN_TOKEN_INFO_SOURCE=web` (default **openapi**; web gate `GMGN_WEB_MAX_POST_PER_SEC` default 0.4, max 8 mints). See [SPEC-gmgn-web-multi-token-info-v1.md](./specs/SPEC-gmgn-web-multi-token-info-v1.md). |
+| Env | `GMGN_API_KEY=...` in web `.env` (HTTP default; CLI optional via `GMGN_TRANSPORT=cli`). Default process gate is **0.5 rps** (`GMGN_MAX_REQ_PER_SEC`); do not set `5` on AI-tier keys or Freeview 429s. See [SPEC-ohlc-rug-spine-v1.md](./SPEC-ohlc-rug-spine-v1.md). Token Info / Freeview can shadow the public web batch client with `GMGN_TOKEN_INFO_SOURCE=web` (default **openapi**; web gate `GMGN_WEB_MAX_POST_PER_SEC` default 0.4, max 8 mints). Production VPS sets `GMGN_WEB_HOST` + `GMGN_WEB_PROXY_SECRET` to `workers/gmgn-web-proxy` (direct VPS→gmgn.ai is CF 403). See [SPEC-gmgn-web-multi-token-info-v1.md](./specs/SPEC-gmgn-web-multi-token-info-v1.md). |
 | DB | `psql -f db/init/10-gmgn-strategy-domain.sql` + `11-gmgn-sm-kol-combined.sql` + **`13-radar-alert-threads.sql`** on existing volume |
 | Deploy | Rebuild web + cron; workers `gmgn_sim_track` (120s) + `gmgn_activity_poll` (180s) + `gmgn_radar_digest` (86400s) |
 | Enable | `/dev/strategies` → activate `gmgn_sm_kol_combined` or `gmgn_smartmoney_default` (Radar Telegram follows: all GMGN off ⇒ no Radar cards) |
