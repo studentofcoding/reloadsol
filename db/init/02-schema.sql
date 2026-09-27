@@ -372,12 +372,12 @@ END $$;
 INSERT INTO token_rug_list (token_address, token_symbol, source, added_at)
 SELECT token_address, token_symbol, 'board', updated_at
 FROM trading_signals WHERE label = 'rugged'
-ON CONFLICT (token_address) DO NOTHING;
+ON CONFLICT DO NOTHING;
 
 INSERT INTO token_rug_list (token_address, token_symbol, source, added_at)
 SELECT token_address, token_symbol, 'tracker', last_updated_at
 FROM token_mcap_tracking WHERE label = 'rugged'
-ON CONFLICT (token_address) DO NOTHING;
+ON CONFLICT DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS dlmm_positions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
