@@ -85,6 +85,34 @@ On the VPS, `scripts/docker-deploy.sh` **skips** host `next build` when that sta
 
 Reuse a local build: `SKIP_LOCAL_BUILD=1 bash scripts/ship-standalone-to-vps.sh`.
 
+### Shipping while another workstream edits the tree
+
+`ship-standalone-to-vps.sh` runs `npm run build` against the **working tree**. If `git status`
+shows uncommitted changes you did not make (another agent/process is in the same checkout), that
+build embeds their in-flight code and the ship would push it to prod. Build from an isolated
+worktree at the exact commit instead — their files are never touched:
+
+```bash
+sha=$(git rev-parse origin/main)
+git worktree add --detach /tmp/clean-ship "$sha"
+cp -Rc node_modules /tmp/clean-ship/node_modules    # APFS clone; Turbopack REJECTS an out-of-root node_modules symlink
+ln -s "$PWD/.env" "$PWD/.env.local" /tmp/clean-ship/ # build-env parity (.env*, gitignored)
+rsync -a ml/artifacts/ /tmp/clean-ship/ml/artifacts/ # gitignored, traced into .next/standalone
+rsync -a ml/data/ /tmp/clean-ship/ml/data/
+(cd /tmp/clean-ship && SKIP_REMOTE_PULL=1 bash scripts/ship-standalone-to-vps.sh)
+git worktree remove --force /tmp/clean-ship && git worktree prune
+```
+
+`SKIP_REMOTE_PULL=1` because a detached worktree has no branch for the script's remote `git pull`.
+
+After shipping, confirm the stamp equals the VPS `HEAD` (`source scripts/standalone-git-stamp.sh;
+standalone_git_sha_matches_head`) and smoke `/api/health` with a real Host header. `main` moving
+again makes the stamp stale on the next commit — re-ship from the then-current `origin/main`;
+never hand-write the stamp to fake freshness.
+
+If the tree is clean you can ship straight from the repo root; only reach for the worktree when
+the checkout is dirty.
+
 ## Edge nginx (Cloudflare → `reloadsol-nginx` :80)
 
 Multi-app origin on this VPS: `reloadsol.app`, `terminal.reloadsol.app`, `flowey.space` / `vs.flowey.space`.
