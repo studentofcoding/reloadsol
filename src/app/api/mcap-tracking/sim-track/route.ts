@@ -729,27 +729,12 @@ async function closeLivePosition(params: {
   return pnlPct
 }
 
-// #region debug — mcap sim duplicate opens (session mcap-sim-duplicate-opens-a07754)
-function debugMcapOpen(msg: string, data: Record<string, unknown>): void {
-  // console.warn survives `removeConsole: { exclude: ['error','warn'] }` in production.
-  console.warn(`[debug-mcap-open] ${msg} ${JSON.stringify(data)}`)
-}
-// #endregion
-
 export async function POST(request: NextRequest) {
   const key = request.nextUrl.searchParams.get('key')
   if (!isAuthorizedRequest(key, getSimTrackSecret())) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
   }
   const { withJobLock } = await import('@/utils/bot-job-lock')
-  const phaseKey = request.nextUrl.searchParams.get('phase') ?? 'all'
-  // #region debug
-  debugMcapOpen('run-start', {
-    phase: phaseKey,
-    lock: `mcap_tracker_sim_${phaseKey}`,
-    at: new Date().toISOString(),
-  })
-  // #endregion
   // One lock for the whole sim, not one per phase: `phase=all` includes both the
   // open and manage passes, so per-phase names let two runs open the same mint
   // concurrently and each compute "not open yet" from records lacking the other's
@@ -1049,25 +1034,6 @@ async function runSimTrack(request: NextRequest) {
           }
           continue
         }
-        // #region debug
-        {
-          const { computeOpenTradeCycle } = await import('@/utils/simulation-trades')
-          const cyc = computeOpenTradeCycle(records, snapshot.token_address, 'sim')
-          debugMcapOpen('guard-probe', {
-            strategy: strategy.id,
-            mint: snapshot.token_address,
-            symbol: snapshot.token_symbol,
-            inOpenSet: openMintSet.has(snapshot.token_address),
-            inClosedKeys: closedOutcomeKeys.has(snapshot.token_address),
-            cycleRemaining: cyc?.remainingTokenAmount ?? null,
-            cycleSimType: cyc?.simulationType ?? null,
-            records: records.length,
-            currentOpen,
-            maxOpen,
-            openedSoFar: opened,
-          })
-        }
-        // #endregion
         if (!shouldOpenMcapSim(strategy, snapshot, openMintSet, closedOutcomeKeys)) {
           continue
         }
@@ -1295,29 +1261,10 @@ async function runSimTrack(request: NextRequest) {
 
         opened++
         openMintSet.add(snapshot.token_address)
-        // #region debug
-        debugMcapOpen('open', {
-          phase,
-          strategy: strategy.id,
-          mint: snapshot.token_address,
-          symbol: snapshot.token_symbol,
-        })
-        // #endregion
       }
       // REL-20: flush open-phase writes before the next strategy re-fetches
       // records. Open insert errors previously propagated (500), so throw.
       await flushPending('open')
-      // #region debug
-      debugMcapOpen('strategy-end', {
-        phase,
-        strategy: strategy.id,
-        opened,
-        closed,
-        openRows: openRows.length,
-        distinctMints: new Set(openRows.map((r) => r.token_address)).size,
-        at: new Date().toISOString(),
-      })
-      // #endregion
       }
 
       results.push({
