@@ -42,6 +42,8 @@ import {
 } from "@/utils/axiom";
 import { notifyTradingUpdate } from "@/utils/trading-notifications";
 import TradeOutcomeModal, { useTradeOutcome } from "@/components/TradeOutcomeModal";
+import { TrackerSocialLinks } from "@/components/signals/TrackerSocialLinks";
+import { useTokenPresence } from "@/hooks/useTokenPresence";
 
 interface TrendingToken {
   token_address: string;
@@ -155,6 +157,14 @@ export default function LiveTab() {
   const ownedTokenPrices = ownedPricesQuery.data ?? {};
 
   const [tokens, setTokens] = useState<TrendingToken[]>([]);
+
+  // Web/social presence for every rendered mint, fetched once for the whole tab
+  // (TokenCard closes over this — per-card useTokenPresence would fan out).
+  const presenceMints = useMemo(
+    () => [...tokens.map((t) => t.token_address), ...ownedMints],
+    [tokens, ownedMints],
+  );
+  const { presenceFor } = useTokenPresence(presenceMints);
   const [chartModalTokenAddress, setChartModalTokenAddress] = useState<
     string | null
   >(null);
@@ -1478,6 +1488,7 @@ export default function LiveTab() {
                 %
               </span>
             </div>
+            <TrackerSocialLinks social={presenceFor(token.token_address)} />
           </div>
         </div>
 
@@ -2096,6 +2107,7 @@ export default function LiveTab() {
                               {pnl.toFixed(2)}%
                             </span>
                           </div>
+                          <TrackerSocialLinks social={presenceFor(token.mintAddress)} />
                         </div>
                         <div className="flex flex-col items-end gap-1">
                           {sidebarHovered === token.mintAddress &&

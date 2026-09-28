@@ -21,6 +21,8 @@ import {
 } from "@/utils/priority-fee";
 import { floatingChartSolBuyLeg } from "@/utils/tracker-base-asset";
 import TokenSearchLink from "@/components/signals/shared/TokenSearchLink";
+import { TrackerSocialLinks } from "@/components/signals/TrackerSocialLinks";
+import { useTokenPresence } from "@/hooks/useTokenPresence";
 import DlmmChartActions from "@/components/dlmm/DlmmChartActions";
 import GlobalWatchlistButton from "@/components/GlobalWatchlistButton";
 import { RUG_LIST_QUERY_KEY } from "@/hooks/useRugList";
@@ -268,6 +270,10 @@ export default function SignalsTab() {
   const error = queryError ? queryError.message : "";
   const signals = apiResponse?.signals || [];
   const stats = apiResponse?.stats || {};
+
+  // Web/social presence for the rendered mints (live-only, self-nulls per row).
+  const { presenceFor } = useTokenPresence(signals.map((s) => s.token_address));
+
   const seeded = seedSignalsListPickerOptions(network);
   const strategyOptions: SignalsListPickerOption[] =
     strategiesResponse?.strategies?.length
@@ -1055,6 +1061,7 @@ export default function SignalsTab() {
                       >
                       <tr className="text-sm">
                         <td className="border-b p-2 relative">
+                          <div className="flex flex-col">
                           <div className="flex items-center gap-2">
                             <button
                               type="button"
@@ -1105,6 +1112,8 @@ export default function SignalsTab() {
                                 />
                               </svg>
                             </button>
+                          </div>
+                          <TrackerSocialLinks social={presenceFor(s.token_address)} />
                           </div>
                         </td>
                         <td className="border-b p-2">
