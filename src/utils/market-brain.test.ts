@@ -148,6 +148,49 @@ describe('parseBrainListPayload', () => {
     const fromMints = parseBrainListPayload('jupiter', { mints: ['MintC', 'MintC'] })
     expect(fromMints.mints).toEqual(['MintC'])
   })
+
+  it('reads the nested bubblemaps/jupiter block on live /union rows', () => {
+    // Shape copied from a live GET /union row (2026-09-28). Facts are nested, and
+    // missing liquidity makes the fail-closed gate reject every candidate.
+    const payload = parseBrainListPayload('union', {
+      tokens: [
+        {
+          chain: 'solana',
+          address: '2yu92oYzBWLAdVpu8BoaLzmM1oxPsHoboay2BXmeDDZr',
+          symbol: 'FROINK',
+          name: 'Froink',
+          jupiter: { organicScore: 71.8 },
+          bubblemaps: {
+            score100: 83.79,
+            top10AdjustedPct: 19,
+            freshWalletsPct: 20,
+            launchpad: 'pumpfun',
+            marketCap: 815_502,
+            liquidity: 54_528.18234576708,
+            volume24h: 3_374_919,
+          },
+        },
+      ],
+    })
+
+    expect(payload.tokens[0]).toMatchObject({
+      mint: '2yu92oYzBWLAdVpu8BoaLzmM1oxPsHoboay2BXmeDDZr',
+      marketCap: 815_502,
+      liquidity: 54_528.18234576708,
+      score100: 83.79,
+      top10AdjustedPct: 19,
+      freshWalletsPct: 20,
+    })
+  })
+
+  it('lets a flat value win over the nested block', () => {
+    const payload = parseBrainListPayload('union', {
+      tokens: [
+        { mint: 'MintFlat', marketCap: 1000, liquidity: 2000, bubblemaps: { marketCap: 9, liquidity: 9 } },
+      ],
+    })
+    expect(payload.tokens[0]).toMatchObject({ marketCap: 1000, liquidity: 2000 })
+  })
 })
 
 describe('parseRegimeParams / parseLegoRecipe', () => {

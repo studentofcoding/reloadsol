@@ -698,6 +698,18 @@ export function parseBrainListToken(value: unknown): BrainListToken | null {
   const obj = asObject(value) ?? { mint }
   const base = nestedBaseAsset(obj)
   const merged: Record<string, unknown> = { ...obj, ...(base ?? {}) }
+  // Live GET /union rows nest their facts instead of flattening them:
+  //   bubblemaps: { marketCap, liquidity, score100, top10AdjustedPct, freshWalletsPct, ... }
+  //   jupiter:    { organicScore }
+  // Without reading those blocks every union token parses to liquidity: null, and
+  // the fail-closed `liquidity` gate then rejects 100% of candidates. Nested values
+  // only fill keys the flat row left null, so existing payload shapes are unchanged.
+  for (const block of [asObject(obj.bubblemaps), asObject(obj.jupiter)]) {
+    if (!block) continue
+    for (const [key, nested] of Object.entries(block)) {
+      if (merged[key] == null && nested != null) merged[key] = nested
+    }
+  }
   return {
     mint,
     symbol: firstString(merged, ['symbol', 'token_symbol', 'tokenSymbol']),
