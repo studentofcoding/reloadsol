@@ -97,6 +97,26 @@ EOS
   printf '%s\n' "$found"
 }
 
+# The stamp only records the git SHA, so a standalone built from a dirty tree is
+# byte-different from HEAD yet still "matches" on the next run — which is exactly
+# how uncommitted work got shipped and then silently reused. Refuse instead.
+assert_clean_tree() {
+  if [[ "${SHIP_ALLOW_DIRTY:-0}" == "1" ]]; then
+    log "SHIP_ALLOW_DIRTY=1 — shipping from a dirty tree deliberately"
+    return 0
+  fi
+  local dirty
+  dirty="$(git status --porcelain --untracked-files=no 2>/dev/null || true)"
+  if [[ -n "$dirty" ]]; then
+    log "ERROR: tracked files are modified — refusing to ship."
+    log "$dirty"
+    log "A build from this tree would put uncommitted code in production while"
+    log "the git stamp still claims it matches HEAD. Commit or stash first, or"
+    log "set SHIP_ALLOW_DIRTY=1 when the deviation is intentional."
+    exit 1
+  fi
+}
+
 ensure_local_standalone() {
   if VERIFY_STANDALONE_QUIET=1 verify_standalone_build \
     && VERIFY_STANDALONE_QUIET=1 standalone_git_sha_matches_head; then
@@ -126,6 +146,7 @@ pkill -9 -f "sh -c next build" 2>/dev/null || true
 EOS
 }
 
+assert_clean_tree
 ensure_local_standalone
 
 VPS_DIR="$(detect_vps_dir)"

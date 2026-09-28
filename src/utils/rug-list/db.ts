@@ -66,6 +66,20 @@ export async function isTokenRugged(
   }
 }
 
+/** Real tickers are short. Seen junk: a 28k-char comma-joined market list, a
+ * 9.5k-char concatenated pair list, and a 280-char sentence. */
+const MAX_TOKEN_SYMBOL_LEN = 20;
+
+/** Drop anything that cannot be a ticker rather than storing it verbatim. */
+export function sanitizeTokenSymbol(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.length > MAX_TOKEN_SYMBOL_LEN) return null;
+  if (/[,\r\n]/.test(trimmed)) return null;
+  return trimmed;
+}
+
 export async function addRugEntry(input: {
   token_address: string;
   token_symbol?: string | null;
@@ -84,7 +98,7 @@ export async function addRugEntry(input: {
        RETURNING *`,
       [
         input.token_address,
-        input.token_symbol ?? null,
+        sanitizeTokenSymbol(input.token_symbol),
         input.source,
         new Date().toISOString(),
         chain,

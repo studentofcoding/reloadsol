@@ -131,7 +131,6 @@ export function computeScoreAndDecision(
       mentionTier3: w.socialMentionTier3,
       uniqueChannelBonus: w.socialUniqueChannelBonus,
       smartWalletBuyBonus: w.socialSmartWalletBuyBonus,
-      tier1WalletBonus: w.socialTier1WalletBonus,
     })
     score = socialResult.score
     socialBoost = socialResult.socialBoost

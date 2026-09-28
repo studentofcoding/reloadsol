@@ -119,7 +119,8 @@ describe('gmgn web multi pure helpers', () => {
     expect(snap.freezeAuthActive).toBe(true)
     expect(snap.mintAuthActive).toBe(false)
     expect(snap.proTradersPct).toBeCloseTo(11, 1)
-    expect(snap.insidersHoldPct).toBeCloseTo(4, 1)
+    // The API exposes no insider hold rate — only insider_count on holder-stat.
+    expect(snap.insidersHoldPct).toBeNull()
     expect(snap.bundlersHoldPct).toBeCloseTo(0.63, 1)
     expect(snap.dexBoostLabel).toMatch(/^Boost/)
     expect(row.security.burn_status).toBe('burn')
@@ -131,7 +132,9 @@ describe('gmgn web multi pure helpers', () => {
   it('still bans live concentration above 65% from a web-mapped row', () => {
     const row = mapGmgnWebTokenRow({
       address: MINT_A,
-      stat: { top_10_holder_rate: 0.8, creator_hold_rate: 0, top_bundler_trader_percentage: 0 },
+      top_10_holder_rate: 0.8,
+      creator_hold_rate: 0,
+      top_bundler_trader_percentage: 0,
       security: { renounced_mint: true, renounced_freeze_account: true },
     })
     const snap = buildGmgnTokenSnapshot(row.info, row.security)

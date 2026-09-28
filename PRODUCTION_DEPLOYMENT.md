@@ -113,6 +113,13 @@ never hand-write the stamp to fake freshness.
 If the tree is clean you can ship straight from the repo root; only reach for the worktree when
 the checkout is dirty.
 
+The script now **enforces** that: `assert_clean_tree` refuses to ship when any tracked file is
+modified (`git status --porcelain --untracked-files=no` non-empty). The reason is the stamp itself
+— it records only the commit SHA, so a build from a dirty tree is byte-different from HEAD yet
+still passes the "matches HEAD" check on the next run and gets silently reused. Commit or stash
+first, or set `SHIP_ALLOW_DIRTY=1` when the deviation is deliberate. Untracked files (e.g.
+`exports/`) never block a ship.
+
 ## Memory & swap (3.7G VPS)
 
 Measured on `flowey-vps`: RAM use ~1.2G/3.7G is fine; the alarming number was swap at 46 %. It is
@@ -335,6 +342,16 @@ Manual cron triggers (cron container port 8080):
 curl -X POST http://127.0.0.1:8080/trigger/trending
 curl -X POST http://127.0.0.1:8080/trigger/sltp
 ```
+
+### Server logs: `console.info`/`console.log` are stripped in production
+
+`next.config.js` sets `removeConsole: { exclude: ['error', 'warn'] }` for production builds, so
+**only `console.error` and `console.warn` reach `docker logs`** — a success-path `console.info`
+is compiled out (verifiable: count `console.info` vs `console.warn` in
+`.next/standalone/.next/server/chunks`). "No log lines" therefore does **not** mean the code did
+not run. Anything an operator must see on the happy path has to use `console.warn`, or a counter
+exposed on an API route. Example: the GMGN web client logs successes at `info` (invisible) and
+only surfaces failures — `windowMisses` on the metrics line is the visible signal by design.
 
 ## Security checklist
 

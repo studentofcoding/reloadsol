@@ -300,46 +300,41 @@ export function mapGmgnWebTokenRow(
   const windowDev = windowRow && isRecord(windowRow.dev) ? windowRow.dev : {}
   const dev = { ...fullDev, ...windowDev }
 
+  // `full.stat` is never present on the live row (verified 2026-09-28), so a
+  // `stat.*` candidate can never match — every rate is top-level or in security.
   const top10 = firstNumber([
     securityIn.top_10_holder_rate,
-    stat.top_10_holder_rate,
     full.top_10_holder_rate,
     dev.top_10_holder_rate,
   ])
   const creatorRate = firstNumber([
     securityIn.creator_balance_rate,
-    stat.creator_hold_rate,
     full.creator_hold_rate,
-    stat.dev_team_hold_rate,
     full.dev_team_hold_rate,
   ])
   const sniperRate = firstNumber([
     securityIn.sniper_hold_rate,
     securityIn.top_sniper_hold_rate,
-    stat.sniper_hold_rate,
     full.sniper_hold_rate,
-    // Live /mrwapi/v1/multi_token_full_info spells this `top70_`, not `top_70_`.
+    // Live spelling is `top70_`, not `top_70_`.
     full.top70_sniper_hold_rate,
     full.top_70_sniper_hold_rate,
   ])
+  // No insider hold *rate* exists in this API — only `insider_count` on the
+  // holder-stat endpoint. The tile stays null rather than inventing a value.
   const insiderRate = firstNumber([
     securityIn.suspected_insider_hold_rate,
-    stat.suspected_insider_hold_rate,
     full.suspected_insider_hold_rate,
   ])
   const bundlerRate = firstNumber([
     securityIn.bundler_trader_amount_rate,
-    stat.top_bundler_trader_percentage,
-    // The live payload has no `stat` object: this rate is top-level on the row.
     full.top_bundler_trader_percentage,
     full.bundler_trader_amount_rate,
     full.bundler_rate,
   ])
   const proRate = firstNumber([
     securityIn.pro_trader_hold_rate,
-    stat.pro_trader_hold_rate,
-    stat.smart_degen_hold_rate,
-    stat.bot_degen_rate,
+    full.pro_trader_hold_rate,
     full.bot_degen_rate,
   ])
 

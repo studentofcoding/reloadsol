@@ -105,7 +105,6 @@ export interface SignalsScoringWeights {
   socialMentionTier3?: number
   socialUniqueChannelBonus?: number
   socialSmartWalletBuyBonus?: number
-  socialTier1WalletBonus?: number
 }
 
 export interface SignalsStrategyConfig {

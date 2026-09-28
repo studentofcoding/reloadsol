@@ -455,7 +455,6 @@ export async function refreshSocialRollups(now = new Date()): Promise<{
     }
 
     const first = events[0]
-    const solSum = 0
 
     const fomoBuys = events.filter(isFomoBuy1h)
     const fomoEdge =
@@ -480,7 +479,9 @@ export async function refreshSocialRollups(now = new Date()): Promise<{
       mention_count_24h: mentions24.length,
       unique_channel_count_30m: channels30.size,
       smart_wallet_buy_count_1h: walletBuys1h.length,
-      smart_wallet_buy_sol_1h: solSum,
+      // Vestigial: social_token_events carries no per-trade SOL amount, so this
+      // is always 0. Nothing reads it since the tier-1 social gate was removed.
+      smart_wallet_buy_sol_1h: 0,
       top_source: topSource,
       last_event_at: lastEvent?.occurred_at ?? null,
       updated_at: nowIso,
