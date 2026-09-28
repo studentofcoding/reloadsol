@@ -36,6 +36,18 @@ function isUniqueViolation(error: unknown): boolean {
   )
 }
 
+/**
+ * node-postgres parses timestamptz columns into a JS Date, while the row types
+ * declare them as `string`. Comparing either form against an ISO-string cutoff
+ * is silently false (`Number('2026-…Z')` → NaN), which zeroed every
+ * time-windowed rollup metric. Normalize to epoch ms before comparing.
+ */
+export function occurredMs(value: unknown): number {
+  if (value instanceof Date) return value.getTime()
+  if (typeof value === 'string') return new Date(value).getTime()
+  return NaN
+}
+
 type RollupEventRow = Pick<
   SocialTokenEventRow,
   | 'token_address'
@@ -363,10 +375,13 @@ export async function refreshSocialRollups(now = new Date()): Promise<{
   }
 
   const nowIso = now.toISOString()
-  const t5 = new Date(now.getTime() - 5 * 60 * 1000).toISOString()
-  const t30 = new Date(now.getTime() - 30 * 60 * 1000).toISOString()
-  const t60 = new Date(now.getTime() - 60 * 60 * 1000).toISOString()
-  const t24 = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString()
+  const nowMs = now.getTime()
+  // t5/t30/t60 compare against JS-parsed event timestamps → epoch ms.
+  // t24 is only used as a SQL timestamptz param → ISO string.
+  const t5 = nowMs - 5 * 60 * 1000
+  const t30 = nowMs - 30 * 60 * 1000
+  const t60 = nowMs - 60 * 60 * 1000
+  const t24 = new Date(nowMs - 24 * 60 * 60 * 1000).toISOString()
 
   let recentEvents: RollupEventRow[]
   try {
@@ -386,7 +401,9 @@ export async function refreshSocialRollups(now = new Date()): Promise<{
   }
 
   const isFomoBuy1h = (e: RollupEventRow) =>
-    e.event_type === 'wallet_buy' && e.source === 'fomo_family' && e.occurred_at >= t60
+    e.event_type === 'wallet_buy' &&
+    e.source === 'fomo_family' &&
+    occurredMs(e.occurred_at) >= t60
   const fomoEdges = await loadFomoWalletEdges(
     Array.from(
       new Set(
@@ -407,14 +424,14 @@ export async function refreshSocialRollups(now = new Date()): Promise<{
 
   const rollups = Array.from(byToken.entries()).map(([tokenAddress, events]) => {
     const mentions30 = events.filter(
-      (e: RollupEventRow) => e.event_type === 'mention' && e.occurred_at >= t30,
+      (e: RollupEventRow) => e.event_type === 'mention' && occurredMs(e.occurred_at) >= t30,
     )
-    const mentions5 = mentions30.filter((e: RollupEventRow) => e.occurred_at >= t5)
+    const mentions5 = mentions30.filter((e: RollupEventRow) => occurredMs(e.occurred_at) >= t5)
     const mentions24 = events.filter((e: RollupEventRow) => e.event_type === 'mention')
     const walletBuys1h = events.filter(
       (e: RollupEventRow) =>
         e.event_type === 'wallet_buy' &&
-        e.occurred_at >= t60 &&
+        occurredMs(e.occurred_at) >= t60 &&
         (e.source.includes('wallet') ||
           e.source.includes('GMGN_copy') ||
           e.source.startsWith('gmgn_')),
