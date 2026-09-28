@@ -60,6 +60,30 @@ describe('toCanonicalEntryFeatures', () => {
     expect(out.ml_gate_p_bad).toBe(0.2)
   })
 
+  it('keeps OHLC rug features at top level, not buried in domain_features', () => {
+    const out = toCanonicalEntryFeatures(
+      {
+        entry_mcap: 1000,
+        ohlc_rug_n: 10,
+        ohlc_rug_dump_pct: 0.5,
+        ohlc_rug_trip: 1,
+        ohlc_rug_skipped: 'no_bars_or_error',
+        ohlc_source: 'own-1m',
+        other_flag: true,
+      },
+      'social',
+      { mintAddress: MINT },
+    )
+    expect(out.ohlc_rug_n).toBe(10)
+    expect(out.ohlc_rug_dump_pct).toBe(0.5)
+    expect(out.ohlc_rug_trip).toBe(1)
+    expect(out.ohlc_rug_skipped).toBe('no_bars_or_error')
+    expect(out.ohlc_source).toBe('own-1m')
+    const bag = out.domain_features as Record<string, unknown>
+    expect(bag.ohlc_rug_n).toBeUndefined()
+    expect(bag.other_flag).toBe(true)
+  })
+
   it('moves DLMM pool volume into domain_features.dlmm', () => {
     const out = toCanonicalEntryFeatures(
       {

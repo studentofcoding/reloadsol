@@ -35,6 +35,8 @@ import {
 } from '@/strategies/open-strategy-sim-positions'
 import { appendSimPositionMonitorSnapshot } from '@/strategies/sim-monitor-snapshots'
 import { captureTokenInfoDetectBatch } from '@/strategies/token-info-detect'
+import { attachOhlcRugShadow } from '@/strategies/ohlc-rug-shadow'
+import { insertDetectSnapshot } from '@/strategies/detect-snapshots'
 import {
   evaluateSocialFomoNoul,
   recordSocialFomoNoulShadowRow,
@@ -376,6 +378,27 @@ async function runSimTrack(request: NextRequest) {
         const symbol = candidate.tokenAddress.slice(0, 8)
         const entryAt = new Date().toISOString()
 
+        const fullFeatures = await buildFullEntryFeatureSnapshot(
+          candidate.tokenAddress,
+          { entryAt, tokenSymbol: symbol },
+          {
+            mention_count_30m: candidate.mentionCount30m,
+            telegram_mention_count_30m: candidate.mentionCount30m,
+            telegram_top_source: candidate.topSource,
+            top_source: candidate.topSource,
+            social_entry: 'social_only_fomo',
+          },
+        )
+
+        // Resolve the OHLC rug shadow once: it feeds the Noul candle arm, the
+        // spine, and its bars are persisted for the close chart.
+        const ohlc = await attachOhlcRugShadow(
+          candidate.tokenAddress,
+          fullFeatures,
+          { enforce: true, fallbackOwn1m: true },
+        )
+        const ohlcFeatures = ohlc.evalResult?.features ?? null
+
         const burst = burstByMint.get(candidate.tokenAddress)
         const noul = await evaluateSocialFomoNoul({
           chain: SOCIAL_CHAIN,
@@ -390,6 +413,13 @@ async function runSimTrack(request: NextRequest) {
           mcapGrowthPct: burst?.mcap_growth_percent ?? null,
           holdersPct: burst?.top_holders_pct ?? null,
           organicScore: burst?.organic_score ?? null,
+          ohlcN: ohlcFeatures?.n ?? 0,
+          ohlcSource: ohlc.source,
+          ohlcDumpPct: ohlcFeatures?.dumpPct ?? null,
+          ohlcAvgUpperWick: ohlcFeatures?.avgUpperWick ?? null,
+          ohlcUpOnlyCount: ohlcFeatures?.upOnlyCount ?? null,
+          ohlcVolDeathRatio: ohlcFeatures?.volDeathRatio ?? null,
+          ohlcRugTrip: ohlc.evalResult ? ohlc.evalResult.trip : null,
         })
         await recordSocialFomoNoulShadowRow({
           tokenAddress: candidate.tokenAddress,
@@ -411,23 +441,18 @@ async function runSimTrack(request: NextRequest) {
           band: noul.band,
           decisionShadow: noul.decision,
           mode: noul.mode,
+          organicNoul: noul.organic,
+          candlesNoul: noul.candles,
+          organicBand: noul.organicBand,
+          candlesBand: noul.candlesBand,
+          ohlcN: ohlcFeatures?.n ?? 0,
+          ohlcSource: ohlc.source,
         })
         if (socialFomoNoulSuppresses(noul)) {
           skipped.push(`${symbol}: noul_suppress`)
           continue
         }
 
-        const fullFeatures = await buildFullEntryFeatureSnapshot(
-          candidate.tokenAddress,
-          { entryAt, tokenSymbol: symbol },
-          {
-            mention_count_30m: candidate.mentionCount30m,
-            telegram_mention_count_30m: candidate.mentionCount30m,
-            telegram_top_source: candidate.topSource,
-            top_source: candidate.topSource,
-            social_entry: 'social_only_fomo',
-          },
-        )
         const { prepareTargetMachinePaperOpen } = await import(
           '@/strategies/prepare-target-machine-paper-open'
         )
@@ -443,6 +468,7 @@ async function runSimTrack(request: NextRequest) {
           priceUsd: entryPriceUsd,
           baseSol: strategy.config.execution.simBuySol,
           baseExit: strategy.config.exit,
+          precomputedOhlc: ohlc,
         })
         if (!spine.ok) {
           skipped.push(`${symbol}: ${spine.reason}`)
@@ -456,6 +482,15 @@ async function runSimTrack(request: NextRequest) {
             ),
           )
           continue
+        }
+
+        if (ohlc.bars.length > 0 && ohlc.evalResult) {
+          await insertDetectSnapshot({
+            tokenAddress: candidate.tokenAddress,
+            source: 'social',
+            bars: ohlc.bars,
+            evalResult: ohlc.evalResult,
+          })
         }
 
         await openSimPosition({

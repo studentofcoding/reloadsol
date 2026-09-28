@@ -41,6 +41,8 @@ describe('prepareTargetMachinePaperOpen', () => {
       reason: 'dump_10m',
       trip: true,
       evalResult: null,
+      bars: [],
+      source: 'none',
     })
     const missing = await prepareTargetMachinePaperOpen({
       ...base,
@@ -67,6 +69,8 @@ describe('prepareTargetMachinePaperOpen', () => {
       reason: null,
       trip: false,
       evalResult: null,
+      bars: [],
+      source: 'none',
     })
     const pass = await prepareTargetMachinePaperOpen({
       ...base,
@@ -79,6 +83,40 @@ describe('prepareTargetMachinePaperOpen', () => {
       expect(pass.effectiveExit.takeProfitPct).toBeGreaterThan(0)
       expect(pass.effectiveExit.stopLossPct).toBeLessThan(0)
       expect(pass.features.initial_price_usd).toBe(0.01)
+      expect(pass.ohlcBars).toEqual([])
+      expect(pass.ohlcSource).toBe('none')
+    }
+  })
+
+  it('reuses a precomputed OHLC snapshot instead of re-fetching', async () => {
+    vi.mocked(attachOhlcRugShadow).mockResolvedValue({
+      features: {},
+      reject: false,
+      reason: null,
+      trip: false,
+      evalResult: null,
+      bars: [],
+      source: 'none',
+    })
+    const pass = await prepareTargetMachinePaperOpen({
+      ...base,
+      priceUsd: 0.01,
+      precomputedOhlc: {
+        features: { entry_mcap: 1000, ohlc_rug_n: 10 },
+        reject: false,
+        reason: null,
+        trip: false,
+        evalResult: null,
+        bars: [{ t: 1, o: 1, h: 1, l: 1, c: 1 }],
+        source: 'own-1m',
+      },
+    })
+    expect(attachOhlcRugShadow).not.toHaveBeenCalled()
+    expect(pass.ok).toBe(true)
+    if (pass.ok) {
+      expect(pass.ohlcSource).toBe('own-1m')
+      expect(pass.ohlcBars).toHaveLength(1)
+      expect(pass.features.ohlc_rug_n).toBe(10)
     }
   })
 })

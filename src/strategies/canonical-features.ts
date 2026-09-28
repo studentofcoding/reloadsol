@@ -53,6 +53,24 @@ function readBool(features: Record<string, unknown>, key: string): boolean | nul
   return null
 }
 
+/**
+ * OHLC rug-shadow output. Kept top-level (not folded into `domain_features`) so
+ * the entry gate's candle read is queryable and visible to consumers.
+ */
+const OHLC_FEATURE_KEYS = [
+  'ohlc_rug_shadow_at',
+  'ohlc_rug_trip',
+  'ohlc_rug_would_reject',
+  'ohlc_rug_n',
+  'ohlc_rug_dump_pct',
+  'ohlc_rug_avg_upper_wick',
+  'ohlc_rug_vol_death',
+  'ohlc_rug_up_only_count',
+  'ohlc_rug_hits',
+  'ohlc_rug_skipped',
+  'ohlc_source',
+] as const
+
 const CORE_KEYS = new Set([
   'feature_schema_version',
   'mint_address',
@@ -84,6 +102,7 @@ const CORE_KEYS = new Set([
   'position_id',
   'amount_sol',
   'first_seen_at',
+  ...OHLC_FEATURE_KEYS,
 ])
 
 /**
@@ -176,8 +195,14 @@ export function toCanonicalEntryFeatures(
     if (k.startsWith('ml_')) mlTop[k] = v
   }
 
+  const ohlcTop: Record<string, unknown> = {}
+  for (const k of OHLC_FEATURE_KEYS) {
+    if (features[k] !== undefined) ohlcTop[k] = features[k]
+  }
+
   return {
     ...mlTop,
+    ...ohlcTop,
     feature_schema_version: FEATURE_SCHEMA_VERSION,
     mint_address: mint,
     pool_address: pool,

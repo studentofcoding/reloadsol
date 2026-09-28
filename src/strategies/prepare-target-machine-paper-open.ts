@@ -4,7 +4,10 @@
  * (brain size scale, overlay audit) after a pass.
  */
 import { attachMlEntryShadow } from '@/strategies/ml-entry-shadow'
-import { attachOhlcRugShadow } from '@/strategies/ohlc-rug-shadow'
+import {
+  attachOhlcRugShadow,
+  type AttachOhlcRugShadowResult,
+} from '@/strategies/ohlc-rug-shadow'
 import { loadTargetMachineClScore } from '@/strategies/target-machine-cl-score'
 import {
   applyClosedLoopExit,
@@ -28,6 +31,10 @@ export type PrepareTargetMachinePaperOpenInput = {
     maxHoldHours: number
   }
   entryMcap?: number | null
+  /** Also read our own 1m `token_ohlc_bars` when the 24h cache is empty. */
+  fallbackOwn1m?: boolean
+  /** Caller already resolved the OHLC shadow (e.g. for a Noul state) — reuse it. */
+  precomputedOhlc?: AttachOhlcRugShadowResult
 }
 
 export type PrepareTargetMachinePaperOpenResult =
@@ -44,6 +51,8 @@ export type PrepareTargetMachinePaperOpenResult =
       sized: SoftMlSize
       effectiveExit: McapEffectiveExit
       features: Record<string, unknown>
+      ohlcBars: AttachOhlcRugShadowResult['bars']
+      ohlcSource: string
     }
 
 export async function prepareTargetMachinePaperOpen(
@@ -54,9 +63,12 @@ export async function prepareTargetMachinePaperOpen(
     return { ok: false, stage: 'price', reason: 'missing_price' }
   }
 
-  const ohlc = await attachOhlcRugShadow(input.mint, input.features, {
-    enforce: true,
-  })
+  const ohlc =
+    input.precomputedOhlc ??
+    (await attachOhlcRugShadow(input.mint, input.features, {
+      enforce: true,
+      fallbackOwn1m: input.fallbackOwn1m === true,
+    }))
   if (ohlc.reject) {
     return {
       ok: false,
@@ -105,5 +117,7 @@ export async function prepareTargetMachinePaperOpen(
       ...features,
       initial_price_usd: priceUsd,
     },
+    ohlcBars: ohlc.bars,
+    ohlcSource: ohlc.source,
   }
 }

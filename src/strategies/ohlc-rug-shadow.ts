@@ -2,6 +2,8 @@ import { fetchLastOhlcRugBars } from '@/strategies/detect-snapshots'
 import {
   evaluateOhlcRugRules,
   ohlcRugHitReasons,
+  OHLC_RUG_MAX_BARS,
+  type OhlcRugBar,
   type OhlcRugEval,
 } from '@/strategies/ohlc-rug-rules'
 
@@ -11,6 +13,9 @@ export type AttachOhlcRugShadowResult = {
   reason: string | null
   trip: boolean
   evalResult: OhlcRugEval | null
+  /** Bars used, so the caller can persist them without a second fetch. */
+  bars: OhlcRugBar[]
+  source: string
 }
 
 export function mergeOhlcRugIntoEntryFeatures(
@@ -53,18 +58,25 @@ export function logOhlcRugCounterfactual(input: {
 /**
  * OHLC rug hard-rules as first-check shadow on entry features.
  * Bars come from getCachedTokenOhlc24h1m (brain 1m when MARKET_BRAIN_OHLC is on).
+ * `fallbackOwn1m` also reads our own `token_ohlc_bars` series when the cache is
+ * empty — opt-in, so gmgn/signals stay canonical (Freeview and social opt in).
  * Default enforce=false — never blocks. Flip enforce later to hard-reject.
  * Correlation / Freeview outcome paint stays on buy_bulk.
  */
 export async function attachOhlcRugShadow(
   tokenAddress: string,
   entryFeatures: Record<string, unknown>,
-  opts?: { enforce?: boolean },
+  opts?: { enforce?: boolean; fallbackOwn1m?: boolean },
 ): Promise<AttachOhlcRugShadowResult> {
   const enforce = opts?.enforce === true
+  const fallbackOwn1m = opts?.fallbackOwn1m === true
 
   try {
-    const { bars } = await fetchLastOhlcRugBars(tokenAddress)
+    const { bars, source } = await fetchLastOhlcRugBars(
+      tokenAddress,
+      OHLC_RUG_MAX_BARS,
+      { fallbackOwn1m },
+    )
     if (bars.length === 0) {
       return {
         features: {
@@ -76,6 +88,8 @@ export async function attachOhlcRugShadow(
         reason: null,
         trip: false,
         evalResult: null,
+        bars: [],
+        source: source || 'none',
       }
     }
 
@@ -101,6 +115,8 @@ export async function attachOhlcRugShadow(
       reason: reject ? reason : null,
       trip: evalResult.trip,
       evalResult,
+      bars,
+      source: source || 'none',
     }
   } catch {
     return {
@@ -113,6 +129,8 @@ export async function attachOhlcRugShadow(
       reason: null,
       trip: false,
       evalResult: null,
+      bars: [],
+      source: 'error',
     }
   }
 }

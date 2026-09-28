@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS token_detect_snapshots (
   token_address TEXT NOT NULL,
   detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   source TEXT NOT NULL
-    CHECK (source IN ('concentration', 'freeview')),
+    CHECK (source IN ('concentration', 'freeview', 'social')),
   ohlc_interval TEXT NOT NULL DEFAULT '1m'
     CHECK (ohlc_interval IN ('1m', '5m', '15m', '1h')),
   bars JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -39,6 +39,11 @@ DO $$ BEGIN
     CHECK (rug_label IN ('system', 'rug', 'potential'));
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
+ALTER TABLE token_detect_snapshots
+  DROP CONSTRAINT IF EXISTS token_detect_snapshots_source_check;
+ALTER TABLE token_detect_snapshots
+  ADD CONSTRAINT token_detect_snapshots_source_check
+  CHECK (source IN ('concentration', 'freeview', 'social'));
 `
 
 let ensurePromise: Promise<void> | null = null
@@ -55,7 +60,7 @@ export async function ensureDetectSnapshotsTable(): Promise<void> {
   await ensurePromise
 }
 
-export type DetectSnapshotSource = 'concentration' | 'freeview'
+export type DetectSnapshotSource = 'concentration' | 'freeview' | 'social'
 export type DetectRugLabel = 'system' | 'rug' | 'potential'
 
 export type DetectSnapshotRow = {

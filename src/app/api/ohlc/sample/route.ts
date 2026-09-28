@@ -12,12 +12,15 @@ import { log } from '@/utils/unified-logger'
  * current minute (open = first, high/low = extremes, close = latest, samples++).
  *
  * Volume stays NULL — no source in our stack exposes a genuine 1-minute volume.
+ * (Ceiling: `volume_death` in ohlc-rug-rules is therefore always skipped for this
+ * series. Upgrade path: write volume when a 1m-volume source lands.)
  */
 
 const DEFAULT_MAX_MINTS = 300
 const DEFAULT_RETENTION_HOURS = 48
 const DEFAULT_RANGE_MIN = 30_000
 const DEFAULT_RANGE_MAX = 2_000_000
+const DEFAULT_SOCIAL_WINDOW_MIN = 30
 
 function isServiceAuthorized(request: NextRequest): boolean {
   const { searchParams } = new URL(request.url)
@@ -38,7 +41,8 @@ function intEnv(name: string, fallback: number): number {
 /**
  * Watch set: mcap candidates in the tracking band + trending-tracker rows + mints
  * with a recent sim buy (a cheap proxy for "has an open position" — the full open
- * cycle reconstruction is too heavy for a 15s tick). Sol only: pricing is Jupiter.
+ * cycle reconstruction is too heavy for a 15s tick) + fresh FOMO mention mints (so
+ * a social open has its own 1m series from the first tick). Sol only: pricing is Jupiter.
  */
 const WATCH_SQL = `
 WITH watch AS (
@@ -58,6 +62,14 @@ WITH watch AS (
      AND COALESCE(r.chain, 'sol') = 'sol'
      AND r.created_at > now() - interval '24 hours'
      AND COALESCE(t->>'mintAddress', '') <> ''
+  UNION ALL
+  SELECT token_address, max(occurred_at) AS seen_at
+    FROM social_token_events
+   WHERE event_type = 'mention'
+     AND source = 'GMGN_Smart_Money_FOMO'
+     AND COALESCE(chain, 'sol') = 'sol'
+     AND occurred_at > now() - make_interval(mins => $4::int)
+   GROUP BY token_address
 )
 SELECT token_address
   FROM watch
@@ -97,11 +109,16 @@ export async function POST(request: NextRequest) {
   try {
     const maxMints = intEnv('OHLC_SAMPLE_MAX_MINTS', DEFAULT_MAX_MINTS)
     const retentionHours = intEnv('OHLC_BARS_RETENTION_HOURS', DEFAULT_RETENTION_HOURS)
+    const socialWindowMin = intEnv(
+      'OHLC_SAMPLE_SOCIAL_WINDOW_MIN',
+      DEFAULT_SOCIAL_WINDOW_MIN,
+    )
 
     const { rows } = await query<{ token_address: string }>(WATCH_SQL, [
       DEFAULT_RANGE_MIN,
       DEFAULT_RANGE_MAX,
       maxMints,
+      socialWindowMin,
     ])
     const mints = rows.map((r) => r.token_address).filter(Boolean)
 

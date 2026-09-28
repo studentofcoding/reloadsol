@@ -12,9 +12,25 @@ const DEFAULT_BASE = 'https://api.typesafe.ai/v1'
 const DEFAULT_MODEL = 'jev-latest'
 const DEFAULT_TIMEOUT_MS = 2500
 
+export type TypeSafeNoulFailReason =
+  | 'missing_creds'
+  | 'timeout'
+  | 'http'
+  | 'parse'
+  | 'exception'
+
 export type TypeSafeNoulCallResult =
   | { ok: true; noul: number; model: string | null }
-  | { ok: false; reason: 'missing_creds' | 'timeout' | 'http' | 'parse' | 'exception' }
+  | { ok: false; reason: TypeSafeNoulFailReason }
+
+export type TypeSafeNoulMultiResult =
+  | {
+      ok: true
+      model: string | null
+      /** Per question id: the noul value, or null when that answer was unusable. */
+      answers: Record<string, number | null>
+    }
+  | { ok: false; reason: TypeSafeNoulFailReason }
 
 export function getTypeSafeApiKey(
   env: NodeJS.ProcessEnv = process.env,
@@ -55,31 +71,44 @@ export const EARLY_ENTER_NOUL_INSTRUCTIONS =
 export type TypeSafeNoulQuestion = {
   questionKey: string
   instructions: string
-  criteria: { true: string; false: string }
+  criteria?: { true: string; false: string }
+}
+
+type TypeSafeNoulOpts = {
+  apiKey?: string | null
+  baseUrl?: string
+  model?: string
+  timeoutMs?: number
+  fetchImpl?: typeof fetch
 }
 
 /**
- * Generic Noul yes/no question. Callers own the state, wording, and thresholds.
- * Missing creds / timeout / http / parse → soft-fail, caller falls back to code.
+ * Many Noul questions in ONE request (docs: evaluated in parallel, ~free).
+ * Missing creds / timeout / http / parse → soft-fail. A single unusable answer
+ * is `null` for that key; the call still returns ok.
  */
-export async function callTypeSafeNoulQuestion(
+export async function callTypeSafeNoulQuestions(
   state: Record<string, unknown>,
-  question: TypeSafeNoulQuestion,
-  opts?: {
-    apiKey?: string | null
-    baseUrl?: string
-    model?: string
-    timeoutMs?: number
-    fetchImpl?: typeof fetch
-  },
-): Promise<TypeSafeNoulCallResult> {
+  questions: TypeSafeNoulQuestion[],
+  opts?: TypeSafeNoulOpts,
+): Promise<TypeSafeNoulMultiResult> {
   const apiKey = opts?.apiKey !== undefined ? opts.apiKey : getTypeSafeApiKey()
   if (!apiKey) return { ok: false, reason: 'missing_creds' }
+  if (questions.length === 0) return { ok: false, reason: 'parse' }
 
   const baseUrl = opts?.baseUrl ?? getTypeSafeBaseUrl()
   const model = opts?.model ?? getTypeSafeModel()
   const timeoutMs = opts?.timeoutMs ?? getTypeSafeNoulTimeoutMs()
   const fetchImpl = opts?.fetchImpl ?? fetch
+
+  const questionMap: Record<string, unknown> = {}
+  for (const q of questions) {
+    questionMap[q.questionKey] = {
+      type: 'noul',
+      instructions: q.instructions,
+      ...(q.criteria ? { criteria: q.criteria } : {}),
+    }
+  }
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -91,17 +120,7 @@ export async function callTypeSafeNoulQuestion(
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        model,
-        state,
-        questions: {
-          [question.questionKey]: {
-            type: 'noul',
-            instructions: question.instructions,
-            criteria: question.criteria,
-          },
-        },
-      }),
+      body: JSON.stringify({ model, state, questions: questionMap }),
       signal: controller.signal,
     })
 
@@ -109,14 +128,16 @@ export async function callTypeSafeNoulQuestion(
 
     const json = (await res.json()) as {
       model?: string
-      answers?: Record<string, { type?: string; noul?: number }>
+      answers?: Record<string, { type?: string; noul?: number } | undefined>
     }
-    const answer = json.answers?.[question.questionKey]
-    const noul = answer?.noul
-    if (typeof noul !== 'number' || !Number.isFinite(noul)) {
-      return { ok: false, reason: 'parse' }
+
+    const answers: Record<string, number | null> = {}
+    for (const q of questions) {
+      const raw = json.answers?.[q.questionKey]?.noul
+      answers[q.questionKey] =
+        typeof raw === 'number' && Number.isFinite(raw) ? raw : null
     }
-    return { ok: true, noul, model: json.model ?? model }
+    return { ok: true, model: json.model ?? model, answers }
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
       return { ok: false, reason: 'timeout' }
@@ -127,15 +148,24 @@ export async function callTypeSafeNoulQuestion(
   }
 }
 
+/** Single-question wrapper. Callers own the state, wording, and thresholds. */
+export async function callTypeSafeNoulQuestion(
+  state: Record<string, unknown>,
+  question: TypeSafeNoulQuestion,
+  opts?: TypeSafeNoulOpts,
+): Promise<TypeSafeNoulCallResult> {
+  const result = await callTypeSafeNoulQuestions(state, [question], opts)
+  if (!result.ok) return result
+  const noul = result.answers[question.questionKey]
+  if (typeof noul !== 'number' || !Number.isFinite(noul)) {
+    return { ok: false, reason: 'parse' }
+  }
+  return { ok: true, noul, model: result.model }
+}
+
 export async function callTypeSafeNoul(
   state: EarlyEnterNoulState,
-  opts?: {
-    apiKey?: string | null
-    baseUrl?: string
-    model?: string
-    timeoutMs?: number
-    fetchImpl?: typeof fetch
-  },
+  opts?: TypeSafeNoulOpts,
 ): Promise<TypeSafeNoulCallResult> {
   return callTypeSafeNoulQuestion(
     state as unknown as Record<string, unknown>,
