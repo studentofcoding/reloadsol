@@ -1039,6 +1039,25 @@ async function runSimTrack(request: NextRequest) {
           }
           continue
         }
+        // #region debug
+        {
+          const { computeOpenTradeCycle } = await import('@/utils/simulation-trades')
+          const cyc = computeOpenTradeCycle(records, snapshot.token_address, 'sim')
+          debugMcapOpen('guard-probe', {
+            strategy: strategy.id,
+            mint: snapshot.token_address,
+            symbol: snapshot.token_symbol,
+            inOpenSet: openMintSet.has(snapshot.token_address),
+            inClosedKeys: closedOutcomeKeys.has(snapshot.token_address),
+            cycleRemaining: cyc?.remainingTokenAmount ?? null,
+            cycleSimType: cyc?.simulationType ?? null,
+            records: records.length,
+            currentOpen,
+            maxOpen,
+            openedSoFar: opened,
+          })
+        }
+        // #endregion
         if (!shouldOpenMcapSim(strategy, snapshot, openMintSet, closedOutcomeKeys)) {
           continue
         }
