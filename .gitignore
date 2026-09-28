@@ -57,3 +57,7 @@ cloudflared/
 .gmgn-proxy-secret.local
 workers/gmgn-web-proxy/.dev.vars
 workers/gmgn-web-proxy/.proxy-secret
+
+# Social/token export tooling — the scripts are tracked, their outputs are not.
+exports/csv/
+exports/*.xlsx

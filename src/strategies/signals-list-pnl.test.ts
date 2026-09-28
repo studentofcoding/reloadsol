@@ -14,15 +14,16 @@ beforeEach(() => {
 })
 
 describe('seedSignalsListPickerOptions', () => {
-  it('seeds 4 sol and 3 robinhood options with n=0', () => {
+  it('seeds 5 sol and 3 robinhood options with n=0', () => {
     const sol = seedSignalsListPickerOptions('sol')
-    expect(sol).toHaveLength(4)
+    expect(sol).toHaveLength(5)
     expect(sol.every((o) => o.n === 0)).toBe(true)
     expect(sol.map((o) => o.strategyId)).toEqual([
       'signals_default',
       'signals_sell_over_100',
       'mcap_enter_first_seen',
       'mcap_enter_at_80',
+      'social_only_fomo_gt7',
     ])
 
     const rh = seedSignalsListPickerOptions('robinhood')
@@ -34,7 +35,7 @@ describe('seedSignalsListPickerOptions', () => {
 describe('seedSignalsListStrategies', () => {
   it('matches rank with empty breakdown', () => {
     const seeded = seedSignalsListStrategies('sol')
-    expect(seeded).toHaveLength(4)
+    expect(seeded).toHaveLength(5)
     expect(seeded.every((o) => o.n === 0)).toBe(true)
   })
 })

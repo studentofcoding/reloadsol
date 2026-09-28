@@ -69,6 +69,14 @@ Key tables (02-schema + migrations):
 | `social_token_events`, `social_token_rollups`, `tracked_wallets` | Social ingest + smart-wallet tracking (chain-stamped 27) |
 | `bot_job_locks`, `bot_trade_locks`, `bot_trading_state` | Locks + circuit breaker for bot cycles |
 
+**Social + Token Info are sol-only by design.** `social_token_events`, `social_token_rollups`,
+`tracked_wallets` and the `token_info_detect` Freeview ledger are written for `chain = 'sol'` only
+— the Robinhood twins are deliberately unwired (same "RH fog" as the macro/token-info work). The
+`chain` columns exist so a later wire needs no new table, but today a query filtered on
+`chain = 'robinhood'` against those tables returns nothing. The export's social sheets
+(`social_rollups`, `social_enriched`, `mention_top`, and the `ledger_*` columns) inherit that
+scope; only the mcap-pattern sheets carry RH rows.
+
 **Redis cache + invalidation**: `src/utils/redis-cache.ts` wraps ioredis with a
 memory fallback (keys like `records:<wallet>:<chain>:<limit>`, 10s TTL).
 Trading-record reads go through `src/utils/trading-records-cache.ts`
