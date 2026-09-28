@@ -112,6 +112,33 @@ export function isPatternModelReady(meta: PatternModelMeta | null | undefined): 
   return meta?.metrics?.pattern_ready === true
 }
 
+export type PatternRuntimeLoadStatus = {
+  runtime_loaded: boolean
+  pattern_ready: boolean
+  model_version: string | null
+  error: string | null
+}
+
+/**
+ * A loaded-but-not-ready model is a *successful* load — readiness is a separate
+ * axis. Conflating them made the daily pipeline log a phantom reload failure
+ * (`runtime_loaded=false` + "pattern model not loaded") for every model that
+ * had not yet cleared the macro-F1 bar.
+ */
+export function patternRuntimeStatus(params: {
+  meta: PatternModelMeta | null
+  loadError: string | null
+  modelVersion: string | null
+}): PatternRuntimeLoadStatus {
+  const loaded = params.meta != null
+  return {
+    runtime_loaded: loaded,
+    pattern_ready: isPatternModelReady(params.meta),
+    model_version: loaded ? params.modelVersion : null,
+    error: loaded ? null : (params.loadError ?? 'pattern model not loaded'),
+  }
+}
+
 export function defaultPatternFeatureColumns(): string[] {
   return [...PATTERN_FEATURE_KEYS]
 }
