@@ -308,6 +308,8 @@ export function mapGmgnWebTokenRow(
     securityIn.top_sniper_hold_rate,
     stat.sniper_hold_rate,
     full.sniper_hold_rate,
+    // Live /mrwapi/v1/multi_token_full_info spells this `top70_`, not `top_70_`.
+    full.top70_sniper_hold_rate,
     full.top_70_sniper_hold_rate,
   ])
   const insiderRate = firstNumber([
@@ -318,6 +320,8 @@ export function mapGmgnWebTokenRow(
   const bundlerRate = firstNumber([
     securityIn.bundler_trader_amount_rate,
     stat.top_bundler_trader_percentage,
+    // The live payload has no `stat` object: this rate is top-level on the row.
+    full.top_bundler_trader_percentage,
     full.bundler_trader_amount_rate,
     full.bundler_rate,
   ])

@@ -138,6 +138,32 @@ describe('gmgn web multi pure helpers', () => {
     expect(evaluateConcentrationBan(snap).ban).toBe(true)
     expect(snap.top10HoldPct).toBeCloseTo(80, 1)
   })
+
+  it('reads bundler + sniper rates from the live top-level payload keys', () => {
+    // Shape copied from a live /mrwapi/v1/multi_token_full_info row: there is no
+    // `stat` and no `dev` object, the bundler rate is top-level, and the sniper
+    // rate is spelled `top70_sniper_hold_rate`.
+    const row = mapGmgnWebTokenRow({
+      address: MINT_A,
+      top_10_holder_rate: 0.25,
+      creator_hold_rate: 0.02,
+      top_bundler_trader_percentage: 0.7,
+      top70_sniper_hold_rate: 0.05,
+      bot_degen_rate: 0.11,
+      security: { renounced_mint: false, renounced_freeze_account: false },
+    })
+    const snap = buildGmgnTokenSnapshot(row.info, row.security)
+
+    expect(snap.top10HoldPct).toBeCloseTo(25, 1)
+    expect(snap.bundlersHoldPct).toBeCloseTo(70, 1)
+    expect(snap.snipersHoldPct).toBeCloseTo(5, 1)
+    expect(snap.proTradersPct).toBeCloseTo(11, 1)
+
+    // Bundlers was silently outside the ban before this fix.
+    const evalResult = evaluateConcentrationBan(snap)
+    expect(evalResult.ban).toBe(true)
+    expect(evalResult.reasons.join(' | ')).toContain('Bundlers')
+  })
 })
 
 describe('fetchGmgnWebMultiTokenInfo', () => {
