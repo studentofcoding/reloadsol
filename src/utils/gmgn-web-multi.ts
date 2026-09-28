@@ -23,7 +23,12 @@ export const GMGN_WEB_MULTI_HARD_MAX_BATCH = 8
 const FULL_INFO_PATH = '/mrwapi/v1/multi_token_full_info'
 const WINDOW_INFO_PATH = '/api/v1/mutil_window_token_info'
 const POSITIVE_PREFIX = 'gmgn:web-multi:sol:'
-const NEGATIVE_KEY = 'gmgn:web-multi:negative'
+/**
+ * Per-endpoint cooldown prefix. A 429/403 on the secondary window endpoint must
+ * not starve the primary `multi_token_full_info` call, so the mark is keyed by
+ * pathname instead of being one global key.
+ */
+const NEGATIVE_KEY_PREFIX = 'gmgn:web-multi:negative'
 const LEDGER_SEEN_PREFIX = 'gmgn:web-ledger-seen:sol:'
 
 const SOL_MINT_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/
@@ -87,6 +92,8 @@ export type GmgnWebMultiMetrics = {
   coalesced: number
   negativeSkips: number
   ledgerSkips: number
+  /** Secondary window-endpoint calls that failed and were swallowed. */
+  windowMisses: number
 }
 
 type NegativeMark = { untilMs: number; reason: 'RATE_LIMIT' | 'BLOCKED' }
@@ -109,8 +116,10 @@ const gate: { chain: Promise<void>; lastAt: number } = {
   lastAt: 0,
 }
 
-const negativeMem: { untilMs: number; reason?: NegativeMark['reason'] } = {
-  untilMs: 0,
+const negativeMem = new Map<string, { untilMs: number; reason: NegativeMark['reason'] }>()
+
+function negativeKey(path: string): string {
+  return `${NEGATIVE_KEY_PREFIX}:${path}`
 }
 
 const inflight = new Map<string, Promise<GmgnWebTokenRow | undefined>>()
@@ -130,6 +139,7 @@ function emptyMetrics(): GmgnWebMultiMetrics {
     coalesced: 0,
     negativeSkips: 0,
     ledgerSkips: 0,
+    windowMisses: 0,
   }
 }
 
@@ -457,27 +467,25 @@ function isCloudflareChallenge(status: number, text: string): boolean {
   )
 }
 
-async function readNegative(): Promise<NegativeMark | null> {
-  if (negativeMem.untilMs > Date.now() && negativeMem.reason) {
-    return { untilMs: negativeMem.untilMs, reason: negativeMem.reason }
+async function readNegative(path: string): Promise<NegativeMark | null> {
+  const mem = negativeMem.get(path)
+  if (mem && mem.untilMs > Date.now()) {
+    return { untilMs: mem.untilMs, reason: mem.reason }
   }
-  const cached = await cacheGet<NegativeMark>(NEGATIVE_KEY)
+  const cached = await cacheGet<NegativeMark>(negativeKey(path))
   if (cached && cached.untilMs > Date.now() && (cached.reason === 'RATE_LIMIT' || cached.reason === 'BLOCKED')) {
-    negativeMem.untilMs = cached.untilMs
-    negativeMem.reason = cached.reason
+    negativeMem.set(path, { untilMs: cached.untilMs, reason: cached.reason })
     return cached
   }
   return null
 }
 
-async function markNegative(reason: NegativeMark['reason']): Promise<void> {
+async function markNegative(path: string, reason: NegativeMark['reason']): Promise<void> {
   const untilMs = Date.now() + gmgnWebNegativeCooldownMs()
-  if (untilMs > negativeMem.untilMs) {
-    negativeMem.untilMs = untilMs
-    negativeMem.reason = reason
-  }
+  const cur = negativeMem.get(path)
+  if (!cur || untilMs > cur.untilMs) negativeMem.set(path, { untilMs, reason })
   const ttlS = Math.max(1, Math.ceil(gmgnWebNegativeCooldownMs() / 1000))
-  await cacheSet(NEGATIVE_KEY, { untilMs: negativeMem.untilMs, reason }, ttlS)
+  await cacheSet(negativeKey(path), { untilMs: negativeMem.get(path)?.untilMs ?? untilMs, reason }, ttlS)
 }
 
 function throwCooling(mark: NegativeMark): never {
@@ -491,9 +499,17 @@ function throwCooling(mark: NegativeMark): never {
   )
 }
 
-async function assertNotCooling(): Promise<void> {
-  const mark = await readNegative()
+async function assertNotCooling(path: string): Promise<void> {
+  const mark = await readNegative(path)
   if (mark) throwCooling(mark)
+}
+
+/** A swallowed secondary-endpoint failure must still be visible: console.warn survives removeConsole. */
+function noteWindowMiss(path: string): void {
+  console.warn(
+    `[gmgn-web-multi] window miss ${path} windowMisses=${metrics.windowMisses}` +
+      ` calls=${metrics.upstreamCalls} http429=${metrics.http429} http403=${metrics.http403}`,
+  )
 }
 
 function noteUpstream(path: string, batch: number, status: number): void {
@@ -508,13 +524,23 @@ function noteUpstream(path: string, batch: number, status: number): void {
   else console.info(line)
 }
 
+type WebFetchOpts = {
+  /**
+   * Secondary enrichment call (the window endpoint). Its failures are counted
+   * as `windowMisses`, retried once on 429, and never arm the cooldown — the
+   * primary full_info call in the same chunk must still be able to run.
+   */
+  secondary?: boolean
+}
+
 async function webFetch(
   method: 'GET' | 'POST',
   path: string,
   batchSize: number,
   body: string | null,
+  opts: WebFetchOpts = {},
 ): Promise<unknown> {
-  await assertNotCooling()
+  await assertNotCooling(path)
   const maxAttempts = method === 'GET' ? 1 : 2
   let lastError: GmgnWebMultiError | null = null
 
@@ -545,11 +571,26 @@ async function webFetch(
       noteUpstream(path, batchSize, response.status)
 
       if (response.status === 429) {
-        await markNegative('RATE_LIMIT')
+        if (opts.secondary) {
+          metrics.windowMisses += 1
+          if (attempt < maxAttempts) {
+            const backoff = Math.min(BACKOFF_CAP_MS, BACKOFF_BASE_MS * 2 ** (attempt - 1))
+            await sleep(backoff + extraJitterMs(backoff))
+            continue
+          }
+          noteWindowMiss(path)
+          throw new GmgnWebMultiError('GMGN web window rate limited', 'RATE_LIMIT')
+        }
+        await markNegative(path, 'RATE_LIMIT')
         throw new GmgnWebMultiError('GMGN web rate limit exceeded', 'RATE_LIMIT')
       }
       if (challenge) {
-        await markNegative('BLOCKED')
+        if (opts.secondary) {
+          metrics.windowMisses += 1
+          noteWindowMiss(path)
+          throw new GmgnWebMultiError('GMGN web window blocked by Cloudflare challenge', 'BLOCKED')
+        }
+        await markNegative(path, 'BLOCKED')
         throw new GmgnWebMultiError('GMGN web blocked by Cloudflare challenge', 'BLOCKED')
       }
       if (response.status === 400) {
@@ -602,9 +643,13 @@ async function webFetch(
   throw lastError ?? new GmgnWebMultiError('GMGN web request failed', 'UPSTREAM')
 }
 
-async function postMulti(path: string, addresses: string[]): Promise<Record<string, unknown>[]> {
+async function postMulti(
+  path: string,
+  addresses: string[],
+  opts: WebFetchOpts = {},
+): Promise<Record<string, unknown>[]> {
   const body = JSON.stringify({ chain: 'sol', addresses })
-  const parsed = await webFetch('POST', path, addresses.length, body)
+  const parsed = await webFetch('POST', path, addresses.length, body, opts)
   return unwrapRows(parsed)
 }
 
@@ -632,10 +677,11 @@ async function fetchChunk(
   const fullRows = indexRows(await postMulti(FULL_INFO_PATH, mints), mints)
   let windowBy = new Map<string, Record<string, unknown>>()
   try {
-    windowBy = indexRows(await postMulti(WINDOW_INFO_PATH, mints), mints)
+    windowBy = indexRows(await postMulti(WINDOW_INFO_PATH, mints, { secondary: true }), mints)
   } catch (error) {
     if (error instanceof GmgnWebMultiError && (error.code === 'RATE_LIMIT' || error.code === 'BLOCKED')) {
-      // Full-info rows are still usable. Cooldown is already set for the next call.
+      // Full-info rows are still usable. The miss is already counted in
+      // `windowMisses` and does not arm the cooldown for the primary endpoint.
     } else if (!(error instanceof GmgnWebMultiError)) {
       throw error
     }
@@ -721,7 +767,9 @@ function settleReject(slot: Slot, err: unknown): void {
 async function fulfillFresh(mints: string[], slots: Slot[], opts: FetchGmgnWebMultiOpts | undefined): Promise<void> {
   const byMint = new Map(mints.map((mint, i) => [mint, slots[i]!]))
   try {
-    const cooling = await readNegative()
+    // Only the primary endpoint can arm a cooldown (the window path is soft),
+    // so the batch pre-flight checks full_info's mark.
+    const cooling = await readNegative(FULL_INFO_PATH)
     if (cooling) {
       const err = new GmgnWebMultiError(
         cooling.reason === 'BLOCKED'
@@ -941,8 +989,7 @@ export function enqueueGmgnWebLedgerMint(
 export function __resetGmgnWebMultiForTests(): void {
   gate.chain = Promise.resolve()
   gate.lastAt = 0
-  negativeMem.untilMs = 0
-  negativeMem.reason = undefined
+  negativeMem.clear()
   inflight.clear()
   metrics = emptyMetrics()
   if (ledgerTimer) clearTimeout(ledgerTimer)

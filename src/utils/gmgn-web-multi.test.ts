@@ -379,4 +379,36 @@ describe('fetchGmgnWebMultiTokenInfo', () => {
     expect(tokenInfoDetectRowExists).toHaveBeenCalledWith('sol', MINT_A)
     expect(getGmgnWebMultiMetrics().ledgerSkips).toBe(1)
   })
+
+  it('treats a window 429 as a soft miss and does not cool down the primary endpoint', async () => {
+    let windowCalls = 0
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      const href = String(url)
+      if (href.includes('mutil_window_token_info')) {
+        windowCalls += 1
+        return jsonRes({ error: 'rate limited' }, 429)
+      }
+      if (href.includes('multi_token_full_info')) {
+        const sent = JSON.parse(String(init?.body ?? '{}')) as { addresses?: string[] }
+        return jsonRes({ code: 0, data: [sampleGmgnWebFullInfo(sent.addresses?.[0] ?? MINT_A)] })
+      }
+      return jsonRes({ code: 0, data: [] })
+    })
+
+    const rows = await fetchGmgnWebMultiTokenInfo([MINT_A])
+
+    // The primary payload survives the secondary endpoint failing.
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.address).toBe(MINT_A)
+    // POST retries once, so the window 429 is attempted twice and counted.
+    expect(windowCalls).toBe(2)
+    expect(getGmgnWebMultiMetrics().windowMisses).toBe(2)
+
+    // Crucially, no cooldown was armed: the next mint still reaches full_info.
+    fetchMock.mockClear()
+    const again = await fetchGmgnWebMultiTokenInfo([MINT_B])
+    expect(again).toHaveLength(1)
+    expect(postBatches('multi_token_full_info').length).toBeGreaterThan(0)
+    expect(getGmgnWebMultiMetrics().negativeSkips).toBe(0)
+  })
 })
