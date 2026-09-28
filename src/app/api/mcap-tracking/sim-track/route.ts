@@ -723,13 +723,28 @@ async function closeLivePosition(params: {
   return pnlPct
 }
 
+// #region debug — mcap sim duplicate opens (session mcap-sim-duplicate-opens-a07754)
+function debugMcapOpen(msg: string, data: Record<string, unknown>): void {
+  // console.warn survives `removeConsole: { exclude: ['error','warn'] }` in production.
+  console.warn(`[debug-mcap-open] ${msg} ${JSON.stringify(data)}`)
+}
+// #endregion
+
 export async function POST(request: NextRequest) {
   const key = request.nextUrl.searchParams.get('key')
   if (!isAuthorizedRequest(key, getSimTrackSecret())) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
   }
   const { withJobLock } = await import('@/utils/bot-job-lock')
-  return withJobLock(`mcap_tracker_sim_${request.nextUrl.searchParams.get('phase') ?? 'all'}`, 300, () => runSimTrack(request))
+  const phaseKey = request.nextUrl.searchParams.get('phase') ?? 'all'
+  // #region debug
+  debugMcapOpen('run-start', {
+    phase: phaseKey,
+    lock: `mcap_tracker_sim_${phaseKey}`,
+    at: new Date().toISOString(),
+  })
+  // #endregion
+  return withJobLock(`mcap_tracker_sim_${phaseKey}`, 300, () => runSimTrack(request))
 }
 
 async function runSimTrack(request: NextRequest) {
@@ -1251,10 +1266,29 @@ async function runSimTrack(request: NextRequest) {
 
         opened++
         openMintSet.add(snapshot.token_address)
+        // #region debug
+        debugMcapOpen('open', {
+          phase,
+          strategy: strategy.id,
+          mint: snapshot.token_address,
+          symbol: snapshot.token_symbol,
+        })
+        // #endregion
       }
       // REL-20: flush open-phase writes before the next strategy re-fetches
       // records. Open insert errors previously propagated (500), so throw.
       await flushPending('open')
+      // #region debug
+      debugMcapOpen('strategy-end', {
+        phase,
+        strategy: strategy.id,
+        opened,
+        closed,
+        openRows: openRows.length,
+        distinctMints: new Set(openRows.map((r) => r.token_address)).size,
+        at: new Date().toISOString(),
+      })
+      // #endregion
       }
 
       results.push({
