@@ -398,7 +398,13 @@ async function closeSimPosition(params: {
   collect: (record: TrackingRecord) => void
 }): Promise<number> {
   const simWallet = simWalletForChain(MCAP_TRACKER_SIM_WALLET, params.chain)
-  const records = await fetchTradingRecordsForWallet(simWallet)
+  // Scope to this strategy: an unscoped cycle is mint-wide, so this close would
+  // sell tokens another strategy bought and book the proceeds here.
+  const { scopeRecordsToStrategy } = await import('@/utils/simulation-trades')
+  const records = scopeRecordsToStrategy(
+    await fetchTradingRecordsForWallet(simWallet),
+    params.strategyId,
+  )
   const cycle = computeOpenTradeCycle(records, params.mintAddress, 'sim')
   if (!cycle) return 0
 
@@ -744,7 +750,11 @@ export async function POST(request: NextRequest) {
     at: new Date().toISOString(),
   })
   // #endregion
-  return withJobLock(`mcap_tracker_sim_${phaseKey}`, 300, () => runSimTrack(request))
+  // One lock for the whole sim, not one per phase: `phase=all` includes both the
+  // open and manage passes, so per-phase names let two runs open the same mint
+  // concurrently and each compute "not open yet" from records lacking the other's
+  // in-flight buys.
+  return withJobLock('mcap_tracker_sim', 300, () => runSimTrack(request))
 }
 
 async function runSimTrack(request: NextRequest) {

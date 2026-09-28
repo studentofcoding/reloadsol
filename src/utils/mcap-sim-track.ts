@@ -1,6 +1,6 @@
 import type { McapTrackerStrategy } from '@/strategies/types'
 import { isInTrackingRange, type McapSnapshot } from '@/utils/mcap-tracker'
-import { computeOpenTradeCycle } from '@/utils/simulation-trades'
+import { computeOpenTradeCycle, scopeRecordsToStrategy } from '@/utils/simulation-trades'
 import type { TrackingRecord } from '@/utils/trading-tracker'
 
 export type McapEffectiveExit = {
@@ -59,12 +59,15 @@ export function getOpenMcapPositions(
   const isSim = mode === 'sim'
   const seen = new Set<string>()
   const open: McapSimOpenPosition[] = []
+  // Scope the cycle to this strategy, otherwise another strategy's close for the
+  // same mint zeroes the aggregate and this position reads as closed.
+  const scoped = scopeRecordsToStrategy(records, strategyId)
 
   for (const r of records) {
     if (r.is_simulation !== isSim || r.bot_strategy !== strategyId) continue
     for (const t of r.tokens ?? []) {
       if (seen.has(t.mintAddress)) continue
-      const cycle = computeOpenTradeCycle(records, t.mintAddress, mode)
+      const cycle = computeOpenTradeCycle(scoped, t.mintAddress, mode)
       if (!cycle || cycle.simulationType !== 'strategy') continue
       const buyRecord = records.find(
         (rec) =>

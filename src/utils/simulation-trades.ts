@@ -116,6 +116,23 @@ export function computeOpenSimCycles(
   return cycles
 }
 
+/**
+ * Restrict a wallet's records to one strategy's own trades.
+ *
+ * Sim positions must be scoped per (mint, strategy): the mint-level cycle nets
+ * every strategy's records for that mint, so an unscoped close sells tokens that
+ * another strategy bought and books the proceeds under one of them. The other
+ * strategy then has no record of ever selling, loses its tokens, and re-opens on
+ * every run. An empty strategyId keeps the old wallet-wide behaviour (manual reads).
+ */
+export function scopeRecordsToStrategy(
+  records: TrackingRecord[],
+  strategyId: string | null | undefined,
+): TrackingRecord[] {
+  if (!strategyId) return records
+  return records.filter((record) => record.bot_strategy === strategyId)
+}
+
 /** Compute open trade cycle for sim or live wallet records. */
 export function computeOpenTradeCycle(
   records: TrackingRecord[],
