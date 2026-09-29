@@ -8,6 +8,34 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — dev ban / profitable-dev lists + RugCheck risk features (shadow)
+
+- **Two shadow-first signals, nothing enforced.** A token's creator is scored from GMGN
+  `created_tokens` (graduation rate + per-coin ATH) into `dev_reputation`, and RugCheck's free
+  keyless report (`score_normalised`, named risks, insider graph, LP lock, creator balance) into
+  `token_risk_features`. One `RiskLabel` renders as a chip on **every surface** we already have —
+  Freeview tiles, OHLC/rug panel, tracker + signals rows (new bulk `GET /api/gmgn/risk-chips`),
+  sim-open toasts, radar reasons, `entryFeatures` — each suffixed `(shadow)` so nothing reads as
+  enforced. Spec: [docs/specs/SPEC-dev-reputation-rugcheck-v1.md](docs/specs/SPEC-dev-reputation-rugcheck-v1.md).
+- **New `/dev/dev-reputation`** — Profitable devs vs the Ban list, per-dev stats (created,
+  graduated %, ATH, reasons) and **top-10 tokens by ATH** (inline top-5 + expand), linking to GMGN.
+  `scripts/backfill-dev-tokens.mjs` fills the token list on rows that predate the column
+  (dry-run default, `--apply`; ran 48 devs / 0 failures on prod).
+- **Made to actually run under pressure.** Creator resolution now prefers **RugCheck's `creator`**
+  (free, already fetched) over Jupiter, which is rate-limited; the capture seam enqueues **before**
+  the GMGN panel lookup so RugCheck keeps writing while GMGN is throttled; dev lookups cache
+  24 h/creator with a 60 s GMGN backoff; RugCheck is capped at **3 rps** (~30 % of the measured
+  ~10 rps clean ceiling).
+- **Fixed while shipping:** `gmgn-api` stamped the request timestamp/signature **before** the serial
+  rate gate, so queued calls aged past GMGN's ~20 s window (`AUTH_TIMESTAMP_EXPIRED`, verified:
+  10 s accepted / 30 s rejected) and the whole GMGN pipeline failed — the gate now runs first. Also
+  found and cleared a silently-held mcap job lock that was starving every capture.
+- **Provider check (live):** Axiom cannot replace GMGN — concentration/risk only and the route is
+  dead (`425 Too Early` on stale hardcoded cookies); SolanaTracker is out of credits
+  (`Insufficient credits`); SolSniffer is key-gated and deferred. GMGN stays the only creator-history source.
+- **Correlation says no evidence yet** (`scripts/rugcheck-correlation.mjs`, n=16 — every bucket
+  `inconclusive`) → **enforcement stays off**; `ban → markTokenRug` and `good →` scoring are not wired.
+
 ### Added — realistic execution model + standardized PnL (spec + pure model)
 
 - **The problem, measured:** the sims fill at spot on both sides — `computeMcapSimPnlPct` is
