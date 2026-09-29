@@ -1675,11 +1675,23 @@ export async function loadConsensusTest(
 }
 
 const CONSENSUS_EVIDENCE_TTL_MS = 10 * 60 * 1000
-const consensusEvidenceCache = new Map<string, { at: number; value: { significant: boolean; reason: string } }>()
+/** Conservative while cold/stale: not significant → no_evidence → the gate is inert. */
+const CONSENSUS_EVIDENCE_COLD = {
+  significant: false,
+  reason: 'evidence not computed yet',
+}
+const consensusEvidenceCache = new Map<
+  string,
+  { at: number; value: { significant: boolean; reason: string }; refreshing: boolean }
+>()
 
 /**
- * Evidence for the (shadow) consensus gate. Memoized in-process for 10 minutes: the
- * test bootstraps 10k resamples, far too heavy to run per would-be open.
+ * Evidence for the (shadow) consensus gate.
+ *
+ * Never computes on the caller's path: the bootstrap is heavy (30 days of outcomes plus
+ * 10k resamples), so a cold or stale entry returns the conservative "not significant" —
+ * which makes the gate inert, exactly as it is today — and refreshes in the background.
+ * That keeps a heavy query out of the mcap sim open request.
  */
 export async function loadConsensusEvidence(
   chain: StrategyChain,
@@ -1690,16 +1702,41 @@ export async function loadConsensusEvidence(
   const hit = consensusEvidenceCache.get(key)
   if (hit && now - hit.at <= CONSENSUS_EVIDENCE_TTL_MS) return hit.value
 
-  const from = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString()
-  const result = await loadConsensusTest({ chain, from })
-  const lift =
-    result.lifts.find((l) => l.bucket_family_count === minFamilies) ??
-    result.lifts.find((l) => l.vs === '1')
-  const value = lift
-    ? { significant: lift.significant, reason: `${lift.bucket_label} families vs 1: ${lift.reason}` }
-    : { significant: false, reason: 'no lift computed' }
-  consensusEvidenceCache.set(key, { at: now, value })
-  return value
+  if (!hit?.refreshing) {
+    consensusEvidenceCache.set(key, {
+      at: hit?.at ?? 0,
+      value: hit?.value ?? CONSENSUS_EVIDENCE_COLD,
+      refreshing: true,
+    })
+    void (async () => {
+      try {
+        const from = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+        const result = await loadConsensusTest({ chain, from })
+        const lift =
+          result.lifts.find((l) => l.bucket_family_count === minFamilies) ??
+          result.lifts.find((l) => l.vs === '1')
+        const value = lift
+          ? {
+              significant: lift.significant,
+              reason: `${lift.bucket_label} families vs 1: ${lift.reason}`,
+            }
+          : CONSENSUS_EVIDENCE_COLD
+        consensusEvidenceCache.set(key, { at: Date.now(), value, refreshing: false })
+      } catch (error) {
+        console.warn(
+          '[strategies/db] consensus evidence refresh failed:',
+          errorMessage(error),
+        )
+        consensusEvidenceCache.set(key, {
+          at: hit?.at ?? 0,
+          value: hit?.value ?? CONSENSUS_EVIDENCE_COLD,
+          refreshing: false,
+        })
+      }
+    })()
+  }
+
+  return hit?.value ?? CONSENSUS_EVIDENCE_COLD
 }
 
 /**
