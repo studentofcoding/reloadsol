@@ -15,7 +15,12 @@ vi.mock('@/utils/gmgn-snapshot-cache', () => ({
   getGmgnTokenSnapshotCached: vi.fn(),
 }))
 
+vi.mock('@/strategies/risk-shadow-queue', () => ({
+  enqueueRiskShadow: vi.fn(),
+}))
+
 import { query } from '@/utils/db'
+import { enqueueRiskShadow } from '@/strategies/risk-shadow-queue'
 import {
   enqueueGmgnWebLedgerMints,
   markGmgnWebLedgerCaptured,
@@ -257,6 +262,36 @@ describe('token_info_detect', () => {
     ])
     expect(getGmgnTokenSnapshotCached).toHaveBeenCalledWith('sol', MINT)
     expect(stored).toBeNull()
+  })
+
+  it('shadows the token even when the GMGN panel is unavailable (decoupled)', async () => {
+    vi.mocked(usesGmgnWebTokenInfo).mockReturnValue(false)
+    vi.mocked(getGmgnTokenSnapshotCached).mockResolvedValue(undefined)
+    vi.mocked(enqueueRiskShadow).mockClear()
+
+    await captureTokenInfoDetectBatch([
+      {
+        chain: 'sol',
+        tokenAddress: MINT,
+        detectingStrategy: 'mcap_enter_first_seen',
+        source: 'mcap_first_seen',
+      },
+    ])
+    expect(enqueueRiskShadow).toHaveBeenCalledWith(
+      expect.objectContaining({ chain: 'sol', tokenAddress: MINT }),
+    )
+
+    // gmgn_pipeline attaches the shadow inline — not enqueued from here.
+    vi.mocked(enqueueRiskShadow).mockClear()
+    await captureTokenInfoDetectBatch([
+      {
+        chain: 'sol',
+        tokenAddress: MINT,
+        detectingStrategy: 'gmgn_smartmoney_default',
+        source: 'gmgn_pipeline',
+      },
+    ])
+    expect(enqueueRiskShadow).not.toHaveBeenCalled()
   })
 
   it('uses the web ledger queue and marks capture only when the insert wins', async () => {

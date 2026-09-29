@@ -7,7 +7,7 @@
  * failure returns `null` and never blocks a tick.
  */
 
-import { createdTokens } from '@/utils/gmgn-api'
+import { createdTokens, GmgnApiError } from '@/utils/gmgn-api'
 import { fetchJupiterV2SearchRaw } from '@/utils/jupiter-metadata'
 import { cacheGet, cacheSet } from '@/utils/redis-cache'
 import {
@@ -18,6 +18,10 @@ import {
 export type DevReputationMode = 'shadow' | 'enforce'
 
 const DEFAULT_TTL_S = 86_400
+/** After a GMGN rate limit, stop attempting dev lookups for this long. */
+const RATE_LIMIT_COOLDOWN_MS = 5 * 60 * 1000
+
+let gmgnRateLimitedUntil = 0
 
 function envFlag(key: string, fallback = false): boolean {
   const v = process.env[key]
@@ -95,7 +99,20 @@ export async function fetchDevReputation(params: {
   const cached = await cacheGet<DevReputation>(key)
   if (cached && typeof cached === 'object' && 'verdict' in cached) return cached
 
-  const data = await createdTokens({ chain: params.chain, wallet: creator })
+  // GMGN is rate-limited: skip (the token still gets a RugCheck-only row) so we
+  // do not burn the shared gate or extend the ban.
+  if (Date.now() < gmgnRateLimitedUntil) return null
+
+  let data: Awaited<ReturnType<typeof createdTokens>>
+  try {
+    data = await createdTokens({ chain: params.chain, wallet: creator })
+  } catch (error) {
+    if (error instanceof GmgnApiError && error.code === 'RATE_LIMIT') {
+      gmgnRateLimitedUntil = Date.now() + RATE_LIMIT_COOLDOWN_MS
+    }
+    return null
+  }
+
   const rep = scoreDevReputation({
     innerCount: toNum(data.inner_count) ?? 0,
     openCount: toNum(data.open_count) ?? 0,

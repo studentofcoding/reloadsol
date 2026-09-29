@@ -257,11 +257,6 @@ async function captureOpenApi(item: TokenInfoDetectCapture): Promise<void> {
     info,
     security,
   })
-  // Shadow risk for the broad discovery surfaces (mcap tracker / social /
-  // trending). The gmgn pipeline already attaches it inline.
-  if (item.source !== 'gmgn_pipeline') {
-    enqueueRiskShadow({ chain: 'sol', tokenAddress: item.tokenAddress, info })
-  }
 }
 
 async function captureWeb(items: TokenInfoDetectCapture[]): Promise<void> {
@@ -284,13 +279,6 @@ async function captureWeb(items: TokenInfoDetectCapture[]): Promise<void> {
       security: row.security,
     })
     if (result.inserted) await markGmgnWebLedgerCaptured(item.tokenAddress)
-    if (item.source !== 'gmgn_pipeline') {
-      enqueueRiskShadow({
-        chain: 'sol',
-        tokenAddress: item.tokenAddress,
-        info: row.info,
-      })
-    }
   }
 }
 
@@ -304,6 +292,17 @@ export async function captureTokenInfoDetectBatch(
 ): Promise<void> {
   const sol = firstByMint(items)
   if (sol.length === 0) return
+  // Shadow risk is independent of the GMGN panel: enqueue up front so RugCheck
+  // (free, keyless) still runs when GMGN is rate-limited. The dev verdict then
+  // degrades to 'inconclusive' instead of blocking the whole write.
+  for (const item of sol) {
+    if (item.source === 'gmgn_pipeline') continue
+    enqueueRiskShadow({
+      chain: 'sol',
+      tokenAddress: item.tokenAddress,
+      info: item.info,
+    })
+  }
   try {
     if (usesGmgnWebTokenInfo('sol')) {
       await captureWeb(sol)

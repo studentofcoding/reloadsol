@@ -244,22 +244,27 @@ export async function attachRiskShadow(params: {
 
   const label = composeRiskLabel({ rugcheck, dev, shadow: mode === 'shadow' })
 
-  try {
-    await ensureRiskTables()
-    await persist({
-      chain: params.chain,
-      tokenAddress: params.tokenAddress,
-      creator,
-      rugcheck,
-      dev,
-      label,
-      mode,
-    })
-    if (creator && dev) {
-      await persistDevReputation({ chain: params.chain, creator, dev, mode })
+  // Nothing to store when both upstreams were unavailable (e.g. GMGN rate
+  // limited AND RugCheck down) — avoid writing empty rows.
+  const hasSignal = Boolean(rugcheck?.available) || Boolean(dev)
+  if (hasSignal) {
+    try {
+      await ensureRiskTables()
+      await persist({
+        chain: params.chain,
+        tokenAddress: params.tokenAddress,
+        creator,
+        rugcheck,
+        dev,
+        label,
+        mode,
+      })
+      if (creator && dev) {
+        await persistDevReputation({ chain: params.chain, creator, dev, mode })
+      }
+    } catch {
+      // best-effort persistence — display still gets the in-memory label
     }
-  } catch {
-    // best-effort persistence — display still gets the in-memory label
   }
 
   return { label, rugcheck, dev, creator, mode }
