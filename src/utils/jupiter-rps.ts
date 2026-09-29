@@ -1,15 +1,22 @@
 /**
- * Target request rate for Jupiter, env-tunable (`JUPITER_MAX_RPS`, default 5).
+ * Target request rate for Jupiter, env-tunable (`JUPITER_MAX_RPS`, default 0.5).
  *
- * Measured on prod with the account key: 15 sequential order requests gave **8 OK then 429s**
- * (p50 259ms), and concurrency 4/8/12 gave **0 OK — 100% 429**, rejected in 11–40ms. So the quota
- * behaves like a small burst bucket, not a smooth per-second allowance: the only safe shape is
- * spaced-out single requests. Keep this cap low, and treat any concurrent fan-out to Jupiter as a
- * bug rather than a tuning problem.
+ * Measured on prod with the account key, while the app's own traffic shared it:
+ *
+ *   paced  0.5 rps — 10/10 ok, p50 260ms p95 388ms
+ *   paced  0.4 rps — 10/10 ok
+ *   paced  0.3 rps — 10/10 ok
+ *   burst  ~6 rps sequential — 8 ok then 429s
+ *   conc   4 / 8 / 12 — **0 ok, 100% 429**, rejected in 11-40ms
+ *
+ * So the quota is ~0.5 rps and the shape matters more than the number: spaced single requests are
+ * clean at the quota, while ANY concurrency is rejected outright. The default is therefore the
+ * measured-clean rate rather than a hopeful one — a missing env var must not reintroduce bursts —
+ * and any concurrent fan-out to Jupiter is a bug, not a tuning problem.
  */
-function resolveJupiterMaxRps(): number {
-  const parsed = Number(process.env.JUPITER_MAX_RPS)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 5
+export function resolveJupiterMaxRps(env: Record<string, string | undefined> = process.env): number {
+  const parsed = Number(env.JUPITER_MAX_RPS)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0.5
 }
 
 export const JUPITER_MAX_RPS = resolveJupiterMaxRps()
