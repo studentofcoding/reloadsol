@@ -433,7 +433,7 @@ func NewCronService() *CronService {
         FomoWsEnabled: envBool("FOMO_WS_ENABLED", true),
     }
 
-	c := cron.New(cron.WithSeconds())
+	c := newStaggeredCron()
 	
 	// Initialize Discord logger
 	logger := NewDiscordLogger(config.DiscordWebhook, "ReloadSol Cron Service")
@@ -488,7 +488,7 @@ func (cs *CronService) Start() {
 	cs.workers.BindEntry(unfilteredEntryID, "unfiltered_trending")
 
     // SL/TP monitor – every M seconds (default 60)
-    sltpSpec := fmt.Sprintf("@every %ds", cs.config.SLTPMonitorInterval)
+    sltpSpec := everySpec(cs.config.SLTPMonitorInterval)
     sltpEntryID, err := cs.cron.AddFunc(sltpSpec, cs.runSLTPMonitor)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add SL/TP monitor cron job: %v", err))
@@ -497,7 +497,7 @@ func (cs *CronService) Start() {
     cs.workers.BindEntry(sltpEntryID, "sltp_monitor")
 
     // Signals refresh – every K seconds (default 60)
-    sigSpec := fmt.Sprintf("@every %ds", cs.config.SignalRefreshInterval)
+    sigSpec := everySpec(cs.config.SignalRefreshInterval)
     sigRefreshEntryID, err := cs.cron.AddFunc(sigSpec, cs.runSignalRefresh)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add signals refresh cron job: %v", err))
@@ -507,7 +507,7 @@ func (cs *CronService) Start() {
 
     // Own 1m OHLC sampler – every N seconds (default 15, 0 = disabled)
     if cs.config.OhlcSampleInterval > 0 {
-        ohlcSpec := fmt.Sprintf("@every %ds", cs.config.OhlcSampleInterval)
+        ohlcSpec := everySpec(cs.config.OhlcSampleInterval)
         ohlcEntryID, err := cs.cron.AddFunc(ohlcSpec, cs.runOhlcSample)
         if err != nil {
             cs.logger.Error(fmt.Sprintf("Failed to add OHLC sampler cron job: %v", err))
@@ -517,7 +517,7 @@ func (cs *CronService) Start() {
     }
 
     // Signals sim track – every N seconds (default 120)
-    signalsSimSpec := fmt.Sprintf("@every %ds", cs.config.SignalsSimInterval)
+    signalsSimSpec := everySpec(cs.config.SignalsSimInterval)
     signalsSimEntryID, err := cs.cron.AddFunc(signalsSimSpec, cs.runSignalsSimTrack)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add signals sim track cron job: %v", err))
@@ -525,7 +525,7 @@ func (cs *CronService) Start() {
     }
     cs.workers.BindEntry(signalsSimEntryID, "signals_sim_track")
 
-    mcapTrackerSimOpenSpec := fmt.Sprintf("@every %ds", cs.config.McapTrackerSimOpenInterval)
+    mcapTrackerSimOpenSpec := everySpec(cs.config.McapTrackerSimOpenInterval)
     mcapTrackerSimOpenEntryID, err := cs.cron.AddFunc(mcapTrackerSimOpenSpec, cs.runMcapTrackerSimOpen)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add mcap tracker sim open cron job: %v", err))
@@ -533,7 +533,7 @@ func (cs *CronService) Start() {
     }
     cs.workers.BindEntry(mcapTrackerSimOpenEntryID, "mcap_tracker_sim_open")
 
-    mcapTrackerSimSpec := fmt.Sprintf("@every %ds", cs.config.McapTrackerSimInterval)
+    mcapTrackerSimSpec := everySpec(cs.config.McapTrackerSimInterval)
     mcapTrackerSimEntryID, err := cs.cron.AddFunc(mcapTrackerSimSpec, cs.runMcapTrackerSimTrack)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add mcap tracker sim track cron job: %v", err))
@@ -541,7 +541,7 @@ func (cs *CronService) Start() {
     }
     cs.workers.BindEntry(mcapTrackerSimEntryID, "mcap_tracker_sim_track")
 
-    gmgnSimSpec := fmt.Sprintf("@every %ds", cs.config.GmgnSimInterval)
+    gmgnSimSpec := everySpec(cs.config.GmgnSimInterval)
     gmgnSimEntryID, err := cs.cron.AddFunc(gmgnSimSpec, cs.runGmgnSimTrack)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add GMGN sim track cron job: %v", err))
@@ -549,7 +549,7 @@ func (cs *CronService) Start() {
     }
     cs.workers.BindEntry(gmgnSimEntryID, "gmgn_sim_track")
 
-    socialSimSpec := fmt.Sprintf("@every %ds", cs.config.SocialSimInterval)
+    socialSimSpec := everySpec(cs.config.SocialSimInterval)
     socialSimEntryID, err := cs.cron.AddFunc(socialSimSpec, cs.runSocialSimTrack)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add social sim track cron job: %v", err))
@@ -557,7 +557,7 @@ func (cs *CronService) Start() {
     }
     cs.workers.BindEntry(socialSimEntryID, "social_sim_track")
 
-    gmgnActivityPollSpec := fmt.Sprintf("@every %ds", cs.config.GmgnActivityPollInterval)
+    gmgnActivityPollSpec := everySpec(cs.config.GmgnActivityPollInterval)
     gmgnActivityPollEntryID, err := cs.cron.AddFunc(gmgnActivityPollSpec, cs.runGmgnActivityPoll)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add GMGN activity poll cron job: %v", err))
@@ -566,7 +566,7 @@ func (cs *CronService) Start() {
     cs.workers.BindEntry(gmgnActivityPollEntryID, "gmgn_activity_poll")
 
     if cs.config.GmgnRadarDigestInterval > 0 {
-        gmgnRadarDigestSpec := fmt.Sprintf("@every %ds", cs.config.GmgnRadarDigestInterval)
+        gmgnRadarDigestSpec := everySpec(cs.config.GmgnRadarDigestInterval)
         gmgnRadarDigestEntryID, err := cs.cron.AddFunc(gmgnRadarDigestSpec, cs.runGmgnRadarDigest)
         if err != nil {
             cs.logger.Error(fmt.Sprintf("Failed to add GMGN radar digest cron job: %v", err))
@@ -576,7 +576,7 @@ func (cs *CronService) Start() {
     }
 
     if cs.config.GmgnWalletDiggerInterval > 0 {
-        gmgnWalletDiggerSpec := fmt.Sprintf("@every %ds", cs.config.GmgnWalletDiggerInterval)
+        gmgnWalletDiggerSpec := everySpec(cs.config.GmgnWalletDiggerInterval)
         gmgnWalletDiggerEntryID, err := cs.cron.AddFunc(gmgnWalletDiggerSpec, cs.runGmgnWalletDigger)
         if err != nil {
             cs.logger.Error(fmt.Sprintf("Failed to add GMGN wallet digger cron job: %v", err))
@@ -586,7 +586,7 @@ func (cs *CronService) Start() {
     }
 
     if cs.config.GmgnRosterWatchInterval > 0 {
-        gmgnRosterWatchSpec := fmt.Sprintf("@every %ds", cs.config.GmgnRosterWatchInterval)
+        gmgnRosterWatchSpec := everySpec(cs.config.GmgnRosterWatchInterval)
         gmgnRosterWatchEntryID, err := cs.cron.AddFunc(gmgnRosterWatchSpec, cs.runGmgnRosterWatch)
         if err != nil {
             cs.logger.Error(fmt.Sprintf("Failed to add GMGN roster watch cron job: %v", err))
@@ -617,7 +617,7 @@ func (cs *CronService) Start() {
     cs.workers.BindEntry(socialCleanupEntryID, "social_cleanup")
 
     if cs.config.StrategyReportInterval > 0 {
-        reportSpec := fmt.Sprintf("@every %ds", cs.config.StrategyReportInterval)
+        reportSpec := everySpec(cs.config.StrategyReportInterval)
         reportEntryID, err := cs.cron.AddFunc(reportSpec, cs.runStrategyReportDigest)
         if err != nil {
             cs.logger.Error(fmt.Sprintf("Failed to add strategy report digest cron job: %v", err))
@@ -627,7 +627,7 @@ func (cs *CronService) Start() {
     }
 
     // DLMM screen – every N seconds (default 300)
-    dlmmScreenSpec := fmt.Sprintf("@every %ds", cs.config.DLMMScreenInterval)
+    dlmmScreenSpec := everySpec(cs.config.DLMMScreenInterval)
     dlmmScreenEntryID, err := cs.cron.AddFunc(dlmmScreenSpec, cs.runDLMMScreen)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add DLMM screen cron job: %v", err))
@@ -635,7 +635,7 @@ func (cs *CronService) Start() {
     }
     cs.workers.BindEntry(dlmmScreenEntryID, "dlmm_screen")
 
-    dlmmSimTrackSpec := fmt.Sprintf("@every %ds", cs.config.DLMMSimTrackInterval)
+    dlmmSimTrackSpec := everySpec(cs.config.DLMMSimTrackInterval)
     dlmmSimTrackEntryID, err := cs.cron.AddFunc(dlmmSimTrackSpec, cs.runDLMMSimTrack)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add DLMM sim track cron job: %v", err))
@@ -644,7 +644,7 @@ func (cs *CronService) Start() {
     cs.workers.BindEntry(dlmmSimTrackEntryID, "dlmm_sim_track")
 
     // DLMM manage – every M seconds (default 60)
-    dlmmManageSpec := fmt.Sprintf("@every %ds", cs.config.DLMMManageInterval)
+    dlmmManageSpec := everySpec(cs.config.DLMMManageInterval)
     dlmmManageEntryID, err := cs.cron.AddFunc(dlmmManageSpec, cs.runDLMMManage)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add DLMM manage cron job: %v", err))
@@ -653,7 +653,7 @@ func (cs *CronService) Start() {
     cs.workers.BindEntry(dlmmManageEntryID, "dlmm_manage")
 
     // RH CLMM manage (alert-only) – every N seconds (default 300)
-    rhClmmManageSpec := fmt.Sprintf("@every %ds", cs.config.RhClmmManageInterval)
+    rhClmmManageSpec := everySpec(cs.config.RhClmmManageInterval)
     rhClmmManageEntryID, err := cs.cron.AddFunc(rhClmmManageSpec, cs.runRhClmmManage)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add RH CLMM manage cron job: %v", err))
@@ -663,7 +663,7 @@ func (cs *CronService) Start() {
 
     // RH LP screen (paper) – every N seconds (default 300; 0 disables)
     if cs.config.RhLpScreenInterval > 0 {
-        rhLpScreenSpec := fmt.Sprintf("@every %ds", cs.config.RhLpScreenInterval)
+        rhLpScreenSpec := everySpec(cs.config.RhLpScreenInterval)
         rhLpScreenEntryID, err := cs.cron.AddFunc(rhLpScreenSpec, cs.runRhLpScreen)
         if err != nil {
             cs.logger.Error(fmt.Sprintf("Failed to add RH LP screen cron job: %v", err))
@@ -673,7 +673,7 @@ func (cs *CronService) Start() {
     }
 
     if cs.config.StrategySearchInterval > 0 {
-        searchSpec := fmt.Sprintf("@every %ds", cs.config.StrategySearchInterval)
+        searchSpec := everySpec(cs.config.StrategySearchInterval)
         searchEntryID, err := cs.cron.AddFunc(searchSpec, cs.runStrategySearch)
         if err != nil {
             cs.logger.Error(fmt.Sprintf("Failed to add strategy search cron job: %v", err))
@@ -683,7 +683,7 @@ func (cs *CronService) Start() {
     }
 
     if cs.config.SolArbScanInterval > 0 {
-        solArbSpec := fmt.Sprintf("@every %ds", cs.config.SolArbScanInterval)
+        solArbSpec := everySpec(cs.config.SolArbScanInterval)
         solArbEntryID, err := cs.cron.AddFunc(solArbSpec, cs.runSolArbScan)
         if err != nil {
             cs.logger.Error(fmt.Sprintf("Failed to add sol-arb scan cron job: %v", err))
