@@ -344,15 +344,18 @@ async function gmgnFetch(
   body: unknown = null,
 ): Promise<unknown> {
   const apiKey = getApiKey()
+  const bodyStr = body != null ? JSON.stringify(body) : null
+  // Read-only GETs skip upstream while a rate-limit window is open.
+  if (method === 'GET') await checkRateLimitCooldown()
+  // Gate BEFORE stamping: GMGN rejects a timestamp older than ~20s
+  // (AUTH_TIMESTAMP_EXPIRED), and the serial gate can hold a request behind a
+  // queue of weight-2 calls from several concurrent workers.
+  await gmgnRateGate()
   const params = {
     ...query,
     timestamp: String(Math.floor(Date.now() / 1000)),
     client_id: randomUUID(),
   }
-  const bodyStr = body != null ? JSON.stringify(body) : null
-  // Read-only GETs skip upstream while a rate-limit window is open.
-  if (method === 'GET') await checkRateLimitCooldown()
-  await gmgnRateGate()
   return gmgnHttp(
     method,
     path,
@@ -375,19 +378,21 @@ async function gmgnSignedFetch(
 ): Promise<unknown> {
   const apiKey = getApiKey()
   const privateKeyPem = getPrivateKeyPem()
+  // Signed POST includes JSON body in the message; GET uses empty body string.
+  const bodyStr = body != null ? JSON.stringify(body) : ''
+  // Never auto-retry POSTs that spend (swap) on 429.
+  const autoRetry = method !== 'POST'
+  // Gate BEFORE stamping/signing: the signature covers the timestamp, and GMGN
+  // rejects a timestamp older than ~20s (AUTH_TIMESTAMP_EXPIRED).
+  await gmgnRateGate()
   const timestamp = Math.floor(Date.now() / 1000)
   const params = {
     ...query,
     timestamp: String(timestamp),
     client_id: randomUUID(),
   }
-  // Signed POST includes JSON body in the message; GET uses empty body string.
-  const bodyStr = body != null ? JSON.stringify(body) : ''
   const message = buildGmgnSignMessage(path, params, bodyStr, timestamp)
   const signature = signGmgnMessage(message, privateKeyPem)
-  // Never auto-retry POSTs that spend (swap) on 429.
-  const autoRetry = method !== 'POST'
-  await gmgnRateGate()
   return gmgnHttp(
     method,
     path,
