@@ -54,10 +54,10 @@ function installCapitalDb(fixtures: {
 }) {
   mockQuery.mockImplementation(async (sql: string) => {
     const text = String(sql)
-    if (text.includes('notional > 0')) {
+    if (text.includes('count(*)::int AS buys')) {
       return { rows: fixtures.flow, rowCount: fixtures.flow.length } as never
     }
-    if (text.includes('max(total_open)')) {
+    if (text.includes('max(open_now)::int AS peak_open')) {
       return { rows: fixtures.peak, rowCount: fixtures.peak.length } as never
     }
     if (text.includes(`ORDER BY (data->>'solAmount')`)) {

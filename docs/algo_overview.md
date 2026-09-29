@@ -262,8 +262,13 @@ to hold), **peak simultaneous exposure × the observed clip** (the binding capit
 profit factor / R:R / expectancy mean + median. Profit factor is the headline because the expectancy
 mean is right-tail driven; the median is shown beside it. Amounts are in the chain's native unit
 (SOL vs ETH — the RH twin sizes in ETH) and are never summed across chains. The observed clip sits
-below the configured one because `scaleOpenSize(…, brainRisk)` scales it down (2026-09-29: ~0.001
+below the configured one because `scaleOpenSize(…, brainRisk)` scales it down (2026-09-29: 0.00097
 SOL/trade against a 0.01 config).
+
+Peak open is an **interval-overlap sweep over `strategy_outcomes`' own `[entry_at, exit_at)`
+intervals** (open positions counted to `now()`). Do not compute it from buy/sell records: a position
+whose close record never landed then never decrements and the running count grows without bound
+(that version reported 1674 "open" positions on a day with ~330 buys, vs 83 real).
 
 ---
 

@@ -1834,59 +1834,45 @@ export async function loadPaperCapital(params: {
   })
 
   try {
-    // Deployment + peak simultaneous exposure. The cumulative walk is per wallet (each
-    // strategy has its own sim wallet), then summed per instant: peaks do not necessarily
-    // coincide, so summing per-wallet peaks would overstate the capital needed.
+    // Throughput: how much notional the system moved, not what it must hold.
     const { rows: flowRows } = await query<{
       day: string
       buys: number
       deployed: string | null
-      clip: string | null
     }>(
-      `WITH ev AS (
-         SELECT to_char(date_trunc('day', timestamp AT TIME ZONE $3), 'YYYY-MM-DD') AS day,
-                wallet_address, timestamp,
-                CASE WHEN data->>'operationType' = 'buy' THEN 1
-                     WHEN data->>'close_position' = 'true' THEN -1 ELSE 0 END AS d,
-                CASE WHEN data->>'operationType' = 'buy'
-                     THEN coalesce((data->>'solAmount')::numeric, 0) ELSE 0 END AS notional
-           FROM trading_records
-          WHERE data->>'is_simulation' = 'true'
-            AND coalesce(data->>'chain', 'sol') = $1
-            AND timestamp >= $2
-       ), cum AS (
-         SELECT day, timestamp, notional,
-                sum(d) OVER (PARTITION BY wallet_address ORDER BY timestamp) AS open_now
-           FROM ev
-       ), snap AS (
-         SELECT day, timestamp, sum(open_now) AS total_open,
-                sum(notional) AS notional
-           FROM cum GROUP BY day, timestamp
-       )
-       SELECT day,
-              count(*) FILTER (WHERE notional > 0)::int AS buys,
-              sum(notional) AS deployed,
-              NULL::numeric AS clip
-         FROM snap GROUP BY day ORDER BY day`,
+      `SELECT to_char(date_trunc('day', timestamp AT TIME ZONE $3), 'YYYY-MM-DD') AS day,
+              count(*)::int AS buys,
+              sum(coalesce((data->>'solAmount')::numeric, 0)) AS deployed
+         FROM trading_records
+        WHERE data->>'is_simulation' = 'true'
+          AND data->>'operationType' = 'buy'
+          AND coalesce(data->>'chain', 'sol') = $1
+          AND timestamp >= $2
+        GROUP BY day ORDER BY day`,
       [params.chain, from, timeZone],
     )
 
+    // Peak simultaneous exposure, as a proper interval-overlap sweep over the CLOSED trade
+    // intervals (one row per position since the identity fix). Counting buy/sell records
+    // instead overstates it badly: a position whose close record never landed never
+    // decrements, so the running count grows without bound (measured 1674 "open" positions
+    // on a day with ~330 buys). Currently-open positions are counted to now().
     const { rows: peakRows } = await query<{ day: string; peak_open: number }>(
       `WITH ev AS (
-         SELECT to_char(date_trunc('day', timestamp AT TIME ZONE $3), 'YYYY-MM-DD') AS day,
-                wallet_address, timestamp,
-                CASE WHEN data->>'operationType' = 'buy' THEN 1
-                     WHEN data->>'close_position' = 'true' THEN -1 ELSE 0 END AS d
-           FROM trading_records
-          WHERE data->>'is_simulation' = 'true'
-            AND coalesce(data->>'chain', 'sol') = $1
-            AND timestamp >= $2
+         SELECT entry_at AS ts, 1 AS d
+           FROM strategy_outcomes
+          WHERE chain = $1 AND is_simulated AND entry_at >= $2
+         UNION ALL
+         SELECT coalesce(exit_at, NOW()) AS ts, -1 AS d
+           FROM strategy_outcomes
+          WHERE chain = $1 AND is_simulated AND entry_at >= $2
        ), cum AS (
-         SELECT day, timestamp,
-                sum(d) OVER (PARTITION BY wallet_address ORDER BY timestamp) AS open_now
-           FROM ev
-       ), snap AS (SELECT day, timestamp, sum(open_now) AS total_open FROM cum GROUP BY day, timestamp)
-       SELECT day, max(total_open)::int AS peak_open FROM snap GROUP BY day ORDER BY day`,
+         SELECT ts, sum(sum(d)) OVER (ORDER BY ts) AS open_now
+           FROM ev GROUP BY ts
+       )
+       SELECT to_char(date_trunc('day', ts AT TIME ZONE $3), 'YYYY-MM-DD') AS day,
+              max(open_now)::int AS peak_open
+         FROM cum GROUP BY day ORDER BY day`,
       [params.chain, from, timeZone],
     )
 
