@@ -5,6 +5,7 @@ import { countOpenMcapSimPositions, getOpenMcapSimPositions } from '@/utils/mcap
 import { readTokenSymbol, readTrainingClass } from './outcome-features'
 import { dedupeStrategyOutcomeRows } from './outcome-dedupe'
 import { resolveStrategyFamily } from './strategy-family'
+import { toNum, type TokenPnlRow } from './token-pnl-export'
 import { runConsensusTest, type ConsensusTestResult } from './consensus-test'
 import {
   consensusGateMode,
@@ -1789,6 +1790,179 @@ export async function evaluateConsensusGateForOpen(params: {
 }
 
 /**
+ * Token-level PnL for an inclusive day range, for the spreadsheet export.
+ *
+ * `from`/`to` are YYYY-MM-DD in `timeZone`, and the window is built in SQL
+ * (`date::timestamp AT TIME ZONE tz`) rather than in JS — comparing a pg timestamptz against a
+ * locally-formatted string is how a time filter silently matches nothing.
+ *
+ * `chain` is intentionally optional: passing 'sol' (which `parseStrategyChain` coerces every
+ * unknown value to) drops the whole Robinhood twin — measured 261 of the 627 sim rows over
+ * three days — so "all chains" has to be reachable.
+ */
+export async function aggregateTokenPnlByToken(params: {
+  chain?: StrategyChain
+  isSimulated: boolean
+  from: string
+  to: string
+  timeZone: string
+  limit?: number
+}): Promise<{
+  tokens: TokenPnlRow[]
+  totals: {
+    trades: number
+    won: number
+    lost: number
+    priced: number
+    avgPnlPct: number
+    medianPnlPct: number
+    grossWinPct: number
+    grossLossPct: number
+  }
+  /** Chains actually present in the window, so the caller can flag a mixed-unit export. */
+  chains: string[]
+  peakConcurrent: number
+  truncated: boolean
+}> {
+  const timeZone = resolveReportTimeZone(params.timeZone)
+  const limit = params.limit ?? 5000
+  const chain = params.chain ?? null
+  const windowArgs = [chain, params.isSimulated, params.from, params.to, timeZone]
+
+  const { rows: tokenRows } = await query<{
+    token_address: string
+    symbol: string | null
+    strategies: string[] | null
+    trades: number
+    won: number
+    lost: number
+    priced: number
+    sum_pnl_pct: string | null
+    avg_pnl_pct: string | null
+    median_pnl_pct: string | null
+    first_entry: Date | null
+    last_exit: Date | null
+  }>(
+    `SELECT token_address,
+            COALESCE(NULLIF(max(features->>'token_symbol'), ''), NULLIF(max(features->>'symbol'), ''), '') AS symbol,
+            array_agg(DISTINCT strategy_id) AS strategies,
+            count(*)::int AS trades,
+            count(*) FILTER (WHERE status = 'won')::int AS won,
+            count(*) FILTER (WHERE status = 'lost')::int AS lost,
+            count(pnl_pct)::int AS priced,
+            sum(pnl_pct) AS sum_pnl_pct,
+            avg(pnl_pct) AS avg_pnl_pct,
+            percentile_cont(0.5) WITHIN GROUP (ORDER BY pnl_pct) AS median_pnl_pct,
+            min(entry_at) AS first_entry,
+            max(exit_at) AS last_exit
+       FROM strategy_outcomes
+      WHERE ($1::text IS NULL OR chain = $1)
+        AND is_simulated = $2
+        AND entry_at >= ($3::date::timestamp AT TIME ZONE $4)
+        AND entry_at <  (($5::date + 1)::timestamp AT TIME ZONE $4)
+      GROUP BY token_address
+      ORDER BY sum(pnl_pct) DESC NULLS LAST
+      LIMIT $6`,
+    [...windowArgs, limit + 1],
+  )
+
+  // A per-token median cannot be re-aggregated into a trade median, so the trade-level stats
+  // come from their own pass over the same window.
+  const { rows: totalRows } = await query<{
+    trades: number
+    won: number
+    lost: number
+    priced: number
+    avg_pnl_pct: string | null
+    median_pnl_pct: string | null
+    gross_win_pct: string | null
+    gross_loss_pct: string | null
+  }>(
+    `SELECT count(*)::int AS trades,
+            count(*) FILTER (WHERE status = 'won')::int AS won,
+            count(*) FILTER (WHERE status = 'lost')::int AS lost,
+            count(pnl_pct)::int AS priced,
+            avg(pnl_pct) AS avg_pnl_pct,
+            percentile_cont(0.5) WITHIN GROUP (ORDER BY pnl_pct) AS median_pnl_pct,
+            sum(pnl_pct) FILTER (WHERE pnl_pct > 0) AS gross_win_pct,
+            sum(pnl_pct) FILTER (WHERE pnl_pct < 0) AS gross_loss_pct
+       FROM strategy_outcomes
+      WHERE ($1::text IS NULL OR chain = $1)
+        AND is_simulated = $2
+        AND entry_at >= ($3::date::timestamp AT TIME ZONE $4)
+        AND entry_at <  (($5::date + 1)::timestamp AT TIME ZONE $4)`,
+    windowArgs,
+  )
+
+  // Peak simultaneous exposure over the window, same interval-overlap sweep (and same reason for
+  // it) as loadPaperCapital's per-day peak: buy/sell record counting overstates it badly, because
+  // a position whose close record never landed never decrements.
+  const { rows: peakRows } = await query<{ peak_open: number | null }>(
+    `WITH ev AS (
+       SELECT entry_at AS ts, 1 AS d
+         FROM strategy_outcomes
+        WHERE ($1::text IS NULL OR chain = $1) AND is_simulated = $2
+          AND entry_at >= ($3::date::timestamp AT TIME ZONE $4)
+          AND entry_at <  (($5::date + 1)::timestamp AT TIME ZONE $4)
+       UNION ALL
+       SELECT coalesce(exit_at, NOW()) AS ts, -1 AS d
+         FROM strategy_outcomes
+        WHERE ($1::text IS NULL OR chain = $1) AND is_simulated = $2
+          AND entry_at >= ($3::date::timestamp AT TIME ZONE $4)
+          AND entry_at <  (($5::date + 1)::timestamp AT TIME ZONE $4)
+     ), cum AS (
+       SELECT ts, sum(sum(d)) OVER (ORDER BY ts) AS open_now
+         FROM ev GROUP BY ts
+     )
+     SELECT max(open_now)::int AS peak_open FROM cum`,
+    windowArgs,
+  )
+
+  const { rows: chainRows } = await query<{ chain: string | null }>(
+    `SELECT DISTINCT chain
+       FROM strategy_outcomes
+      WHERE ($1::text IS NULL OR chain = $1)
+        AND is_simulated = $2
+        AND entry_at >= ($3::date::timestamp AT TIME ZONE $4)
+        AND entry_at <  (($5::date + 1)::timestamp AT TIME ZONE $4)
+      ORDER BY chain`,
+    windowArgs,
+  )
+
+  const totals = totalRows[0]
+  const truncated = tokenRows.length > limit
+  return {
+    chains: chainRows.map((c) => c.chain).filter((c): c is string => !!c),
+    truncated,
+    peakConcurrent: toNum(peakRows[0]?.peak_open),
+    tokens: tokenRows.slice(0, limit).map((r) => ({
+      tokenAddress: r.token_address,
+      symbol: r.symbol ?? '',
+      strategies: r.strategies ?? [],
+      trades: toNum(r.trades),
+      won: toNum(r.won),
+      lost: toNum(r.lost),
+      priced: toNum(r.priced),
+      sumPnlPct: toNum(r.sum_pnl_pct),
+      avgPnlPct: toNum(r.avg_pnl_pct),
+      medianPnlPct: toNum(r.median_pnl_pct),
+      firstEntry: r.first_entry ? r.first_entry.toISOString() : null,
+      lastExit: r.last_exit ? r.last_exit.toISOString() : null,
+    })),
+    totals: {
+      trades: toNum(totals?.trades),
+      won: toNum(totals?.won),
+      lost: toNum(totals?.lost),
+      priced: toNum(totals?.priced),
+      avgPnlPct: toNum(totals?.avg_pnl_pct),
+      medianPnlPct: toNum(totals?.median_pnl_pct),
+      grossWinPct: toNum(totals?.gross_win_pct),
+      grossLossPct: toNum(totals?.gross_loss_pct),
+    },
+  }
+}
+
+/**
  * What the paper system needs to spend, and what it returned — per day, per chain.
  *
  * Three numbers, deliberately kept separate because they answer different questions:
@@ -1801,6 +1975,7 @@ export async function evaluateConsensusGateForOpen(params: {
  * Amounts are in the chain's native unit (SOL vs ETH — the RH twin sizes in ETH), so the
  * caller must render them with `currency` and never sum them across chains.
  */
+
 export async function loadPaperCapital(params: {
   chain: StrategyChain
   days?: number

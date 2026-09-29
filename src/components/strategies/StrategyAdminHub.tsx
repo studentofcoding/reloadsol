@@ -546,6 +546,27 @@ function buildCsvHref(params: {
   return `/api/strategies/outcomes?${q.toString()}`;
 }
 
+/**
+ * Token-level PnL spreadsheet for the selected range: top 10 winners, top 10 losers, full list.
+ * Deliberately no chain filter — the panel is chain-scoped, but a PnL export that silently
+ * dropped the Robinhood twin (261 of 627 sim rows over three days) would misreport the range.
+ */
+function buildPnlExportHref(params: {
+  reportFrom: string;
+  reportTo: string;
+  reportTz: string;
+  reportSimulated: string;
+  positionSizeSol: string;
+}) {
+  const q = new URLSearchParams();
+  if (params.reportFrom) q.set("from", params.reportFrom);
+  if (params.reportTo) q.set("to", params.reportTo);
+  q.set("tz", params.reportTz);
+  if (params.reportSimulated) q.set("is_simulated", params.reportSimulated);
+  q.set("position_size", params.positionSizeSol || "0.005");
+  return `/api/strategies/pnl-export?${q.toString()}`;
+}
+
 export default function StrategyAdminHub({
   embedded,
 }: {
@@ -570,6 +591,7 @@ export default function StrategyAdminHub({
   const [reportDomain, setReportDomain] = useState("");
   const [reportStrategyId, setReportStrategyId] = useState("");
   const [reportSimulated, setReportSimulated] = useState("");
+  const [exportPositionSize, setExportPositionSize] = useState("0.005");
   const [reportMlLabel, setReportMlLabel] = useState("");
   const [reportMlCondition, setReportMlCondition] = useState("");
   const [reportStatus, setReportStatus] = useState("");
@@ -1455,6 +1477,30 @@ export default function StrategyAdminHub({
                 className="self-end px-3 py-1.5 bg-gray-700 rounded text-white text-xs"
               >
                 Export CSV
+              </a>
+              <label className="text-gray-400">
+                Position size (SOL)
+                <input
+                  type="number"
+                  min="0"
+                  step="0.001"
+                  className="block mt-1 w-24 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white"
+                  value={exportPositionSize}
+                  onChange={(e) => setExportPositionSize(e.target.value)}
+                />
+              </label>
+              <a
+                href={buildPnlExportHref({
+                  reportFrom,
+                  reportTo,
+                  reportTz,
+                  reportSimulated,
+                  positionSizeSol: exportPositionSize,
+                })}
+                className="self-end px-3 py-1.5 bg-emerald-800 hover:bg-emerald-700 rounded text-white text-xs"
+                title="Token-level PnL for the selected range: top 10 winners, top 10 losers and the full list"
+              >
+                Export token PnL spreadsheet
               </a>
             </div>
 
