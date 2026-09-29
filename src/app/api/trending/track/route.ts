@@ -358,10 +358,17 @@ export const POST = withUnifiedLogging(async (request: NextRequest, logger) => {
   try {
     logger.info('api_request', 'Starting trending token tracking...')
 
-    // Run wallet diagnostics to help troubleshoot balance issues
+    // #region debug-trending-cycle-timing (TEMPORARY — remove once the phase profile is captured)
+    const dbgRouteT = Date.now()
     await diagnoseTradingWallet()
-
-    return await internalTrackPost(request, logger)
+    console.warn(`[dbg-trending-timing] route:diagnoseTradingWallet +${Date.now() - dbgRouteT}ms`) // dbg-trending-timing
+    const dbgCycleT = Date.now()
+    const dbgRes = await internalTrackPost(request, logger)
+    console.warn(
+      `[dbg-trending-timing] route:internalTrackPost +${Date.now() - dbgCycleT}ms total=${Date.now() - dbgRouteT}ms`,
+    ) // dbg-trending-timing
+    return dbgRes
+    // #endregion debug-trending-cycle-timing
   } catch (error) {
     logger.critical('api_request', 'Error in POST handler', error as Error)
     return NextResponse.json({
