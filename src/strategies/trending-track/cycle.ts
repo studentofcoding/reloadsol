@@ -84,18 +84,42 @@ async function simBrainBuyPlan(
   return { skip: false, buyAmountSol: sized, risk }
 }
 
+
+/**
+ * Runs the Robinhood sim cycle without blocking the request that triggered it.
+ *
+ * Its own in-process flag plus a DB lock: the Solana cycle's `trending_track` lock is released
+ * when the request returns, so it cannot be what serialises this work any more.
+ */
+let rhSimCycleRunning = false
+
+async function runTrendingBotRhSimDetached(logger: any): Promise<void> {
+  if (rhSimCycleRunning) {
+    console.warn('⏭️ Robinhood sim cycle already running — not starting another')
+    return
+  }
+  const { acquireJobLock, releaseJobLock } = await import('@/utils/bot-job-lock')
+  const lock = await acquireJobLock('trending_rh_sim', 1800)
+  if (!lock.acquired) {
+    console.warn(`⏭️ Robinhood sim cycle skipped: ${lock.reason}`)
+    return
+  }
+  rhSimCycleRunning = true
+  const started = Date.now()
+  try {
+    await runTrendingBotRhSimCycle()
+    console.warn(`✅ Robinhood sim cycle finished in ${Date.now() - started}ms`)
+  } catch (rhError) {
+    logger.error('api_request', 'Robinhood trending sim cycle failed', rhError as Error)
+  } finally {
+    rhSimCycleRunning = false
+    await releaseJobLock('trending_rh_sim')
+  }
+}
+
 export async function internalTrackPost(request: NextRequest, logger: any) {
   const requestStartTime = Date.now()
   const requestId = Math.random().toString(36).substring(7)
-  // #region debug-trending-cycle-timing (TEMPORARY — remove once the phase profile is captured)
-  const dbgT0 = Date.now()
-  let dbgPrev = dbgT0
-  const dbgMark = (label: string) => {
-    const t = Date.now()
-    console.warn(`[dbg-trending-timing] ${label} +${t - dbgPrev}ms total=${t - dbgT0}ms`)
-    dbgPrev = t
-  }
-  // #endregion debug-trending-cycle-timing
 
   const { acquireJobLock, releaseJobLock } = await import('@/utils/bot-job-lock')
   const tokenInfoCaptures: TokenInfoDetectCapture[] = []
@@ -107,11 +131,9 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
       { status: 409 },
     )
   }
-    dbgMark('lock') // dbg-trending-timing
 
   try {
     await refreshTrackStrategyCache()
-    dbgMark('strategy-cache') // dbg-trending-timing
 
     // Validate authentication (server-side only)
     const { searchParams } = new URL(request.url)
@@ -131,13 +153,13 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Robinhood twin runs on GMGN market rank; a failure there must not stop Solana.
-    try {
-      await runTrendingBotRhSimCycle()
-    } catch (rhError) {
-      logger.error('api_request', 'Robinhood trending sim cycle failed', rhError as Error)
-    }
-    dbgMark('rh-sim') // dbg-trending-timing
+    // Robinhood twin runs on GMGN market rank; a failure there must not stop Solana — and it must
+    // not delay it either. Measured while awaited inline: one cycle held the lock 4m12s and was
+    // still going, which blew this request's own deadline and starved every other request in the
+    // shared Node process (the sims' 30s timeouts were the same starvation). Detached, with its own
+    // guard so it cannot overlap itself; the standalone web server is long-lived, so the work
+    // continues after this response is sent.
+    void runTrendingBotRhSimDetached(logger)
 
     // Log incoming request
     logger.info('api_request', 'Tracking Request Started', {
@@ -151,7 +173,6 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
     console.log(`  ✅ Active (${strategyStatus.is_active.length}): ${strategyStatus.is_active.join(', ') || 'none'}`)
     console.log(`  ❌ Inactive (${strategyStatus.is_inactive.length}): ${strategyStatus.is_inactive.join(', ') || 'none'}`)
     console.log(`  📊 Total: ${strategyStatus.total} strategies`)
-    dbgMark('strategy-status') // dbg-trending-timing
 
     // Get active strategies with their configurations
     const { strategies: activeStrategies, configs: activeConfigs, allocation } = getActiveStrategiesSync()
@@ -215,7 +236,6 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
     logger.info('api_request', `Trading allowed at ${timeCheck.currentTime ?? ''}`)
 
     logger.info('api_request', 'Starting 5-minute trending token tracking')
-    dbgMark('pre-feed') // dbg-trending-timing
 
     // Discovery source: GMGN market rank when TRENDING_FEED=gmgn (the same
     // cached snapshot the UI list reads), else the Jupiter toptrending list.
@@ -274,7 +294,6 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
 
       pools = data.pools
     }
-    dbgMark('feed|brain|union-filter') // dbg-trending-timing
 
     // Opt-in: intersect Jupiter toptrending with market-brain /union (membership).
     // Off by default; skipped when MARKET_BRAIN_TOKEN is missing. Does not change execute.
@@ -1822,7 +1841,6 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
       message: `Tracked ${filteredTokens.length} tokens: ${newTokensAdded} new, ${tokensUpdated} updated, ${tokensLost} lost`
     }
 
-    dbgMark('candidate-loop') // dbg-trending-timing
     if (DEBUG_LOG) {
       console.debug('✅ 5-minute tracking completed:', summary)
     } else {

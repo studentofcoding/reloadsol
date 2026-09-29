@@ -17,7 +17,6 @@ import {
   parseCustomFilterConfig,
 } from '@/strategies/trending-track/filtering'
 import { setTradingMode } from '@/strategies/trending-track/trading-mode'
-import { diagnoseTradingWallet } from '@/strategies/trending-track/wallet'
 import { internalTrackPost } from '@/strategies/trending-track/cycle'
 
 // ====================================================================================================
@@ -358,17 +357,9 @@ export const POST = withUnifiedLogging(async (request: NextRequest, logger) => {
   try {
     logger.info('api_request', 'Starting trending token tracking...')
 
-    // #region debug-trending-cycle-timing (TEMPORARY — remove once the phase profile is captured)
-    const dbgRouteT = Date.now()
-    await diagnoseTradingWallet()
-    console.warn(`[dbg-trending-timing] route:diagnoseTradingWallet +${Date.now() - dbgRouteT}ms`) // dbg-trending-timing
-    const dbgCycleT = Date.now()
-    const dbgRes = await internalTrackPost(request, logger)
-    console.warn(
-      `[dbg-trending-timing] route:internalTrackPost +${Date.now() - dbgCycleT}ms total=${Date.now() - dbgRouteT}ms`,
-    ) // dbg-trending-timing
-    return dbgRes
-    // #endregion debug-trending-cycle-timing
+    // No wallet diagnostics here: it spent ~1.8s per tick on RPC round-trips whose only output
+    // was console.log, which production's removeConsole strips — cost with no reader.
+    return await internalTrackPost(request, logger)
   } catch (error) {
     logger.critical('api_request', 'Error in POST handler', error as Error)
     return NextResponse.json({
