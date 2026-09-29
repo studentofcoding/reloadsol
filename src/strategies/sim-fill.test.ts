@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { fillFromQuote, fillSourceLabel, quoteImpactFraction } from './sim-fill'
-import { resolveExecutionParams } from './execution-model'
+import {
+  fillFromQuote,
+  fillSourceLabel,
+  implyDepthFromQuote,
+  quoteImpactFraction,
+  resolveSimFill,
+  simQuoteFillsEnabled,
+} from './sim-fill'
+import { computeBuyFill, resolveExecutionParams } from './execution-model'
 
 const PARAMS = resolveExecutionParams({
   SIM_FEE_BPS: '100',
@@ -111,5 +118,87 @@ describe('fillSourceLabel', () => {
   it('keeps a quoted fill distinguishable from a modelled one', () => {
     expect(fillSourceLabel('jupiter')).toBe('jupiter-quote')
     expect(fillSourceLabel('model')).toBe('model')
+  })
+})
+
+describe('implyDepthFromQuote', () => {
+  it('recovers the depth that produced the impact (impact = notional/depth)', () => {
+    expect(implyDepthFromQuote({ notionalQuote: 1, priceImpactFraction: -0.01 })).toBeCloseTo(100, 8)
+    expect(implyDepthFromQuote({ notionalQuote: 0.005, priceImpactFraction: -0.00005 })).toBeCloseTo(100, 8)
+  })
+
+  it('inverts the model exactly: the modelled impact at the implied depth equals the quote', () => {
+    const quoting = resolveExecutionParams({ SIM_IMPACT_COEFF: '1', SIM_IMPACT_EXPONENT: '1' })
+    const notional = 0.05
+    const quotedImpact = -0.004
+    const depth = implyDepthFromQuote({ notionalQuote: notional, priceImpactFraction: quotedImpact })!
+    const filled = computeBuyFill({
+      side: 'buy',
+      spotPrice: 1,
+      notionalQuote: notional,
+      depth: { depthQuote: depth, depthSource: 'liquidity' },
+      params: quoting,
+    })
+    expect(filled.impactBps / 10_000).toBeCloseTo(Math.abs(quotedImpact), 10)
+  })
+
+  it('returns null rather than inventing a depth', () => {
+    expect(implyDepthFromQuote({ notionalQuote: 1, priceImpactFraction: 0 })).toBeNull()
+    expect(implyDepthFromQuote({ notionalQuote: 1, priceImpactFraction: Number.NaN })).toBeNull()
+    expect(implyDepthFromQuote({ notionalQuote: 0, priceImpactFraction: -0.01 })).toBeNull()
+    expect(implyDepthFromQuote({ notionalQuote: -1, priceImpactFraction: -0.01 })).toBeNull()
+  })
+
+  it('treats a sub-floor impact as noise, not as bottomless liquidity', () => {
+    // 1 SOL with 1e-9 impact would imply a 1e9 SOL pool; that is rounding, not depth.
+    expect(implyDepthFromQuote({ notionalQuote: 1, priceImpactFraction: -1e-9 })).toBeNull()
+  })
+
+  it('caps an absurd implied depth', () => {
+    const depth = implyDepthFromQuote({
+      notionalQuote: 1,
+      priceImpactFraction: -1e-6,
+      maxDepthQuote: 10_000,
+    })
+    expect(depth).toBe(10_000)
+  })
+})
+
+describe('resolveSimFill', () => {
+  it('uses the model with the caller depth when the chain cannot be quoted', async () => {
+    // Jupiter is Solana-only: the Robinhood/ETH twin must never reach it.
+    const result = await resolveSimFill({
+      chain: 'robinhood',
+      mint: '0xabc',
+      side: 'buy',
+      notionalQuote: 0.005,
+      params: PARAMS,
+      fallbackDepth: { depthQuote: 40, depthSource: 'assumed' },
+    })
+    expect(result.source).toBe('model')
+    expect(result.fill.depthSource).toBe('assumed')
+    expect(result.fill.costQuote).toBeCloseTo(0.005 + PARAMS.priorityFeeQuote, 10)
+  })
+
+  it('is switchable off without touching the fills', async () => {
+    const previous = process.env.SIM_QUOTE_FILLS
+    process.env.SIM_QUOTE_FILLS = 'off'
+    try {
+      expect(simQuoteFillsEnabled()).toBe(false)
+      const result = await resolveSimFill({
+        chain: 'sol',
+        mint: 'So11111111111111111111111111111111111111112',
+        side: 'sell',
+        notionalQuote: 0.005,
+        spotPrice: 1,
+        tokenAmountUi: 0.005,
+        params: PARAMS,
+        fallbackDepth: { depthQuote: 30, depthSource: 'assumed' },
+      })
+      expect(result.source).toBe('model')
+    } finally {
+      if (previous === undefined) delete process.env.SIM_QUOTE_FILLS
+      else process.env.SIM_QUOTE_FILLS = previous
+    }
   })
 })
