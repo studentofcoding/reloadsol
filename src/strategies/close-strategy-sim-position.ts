@@ -6,7 +6,6 @@ import {
   recordSocialOutcome,
 } from '@/strategies/outcomes'
 import { mergeEntryFeaturesForOutcome } from '@/strategies/entry-feature-snapshot'
-import { buildShadowExecutionRecord } from '@/strategies/sim-fill'
 import { ensureCompleteBuyFeaturesForOutcome } from '@/strategies/resolve-entry-snapshot'
 import {
   GMGN_SIM_WALLET,
@@ -231,14 +230,8 @@ export async function closeMcapStrategySimPositions(
             token_symbol: pos.symbol,
           }
 
-      // How the close would really have filled, recorded beside pnlPct (SHADOW: pnlPct unchanged).
-      const execRecord = await buildShadowExecutionRecord({
-        chain,
-        mint: pos.mintAddress,
-        exitSolValue: solReceived,
-        priceRatio: 1 + pnlPct / 100,
-        tokenAmountUi: remaining,
-      })
+      // Entry size for the shadow execution record; the writer builds it (pnlPct unchanged).
+      const entryCostSol = pnlPct > -100 ? solReceived / (1 + pnlPct / 100) : 0
 
       await recordMcapTrackerOutcome({
         strategyId,
@@ -248,9 +241,9 @@ export async function closeMcapStrategySimPositions(
         pnlPct,
         status: closeOutcomeStatusFromPnl(pnlPct),
         isSimulated: true,
+        solAmount: entryCostSol,
         features: mergeEntryFeaturesForOutcome(pos.entryFeatures, {
           ...closeFeatures,
-          ...(execRecord ? { exec: execRecord } : {}),
         }),
       })
       closed++

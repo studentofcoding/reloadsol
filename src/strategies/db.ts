@@ -6,7 +6,7 @@ import { readTokenSymbol, readTrainingClass } from './outcome-features'
 import { dedupeStrategyOutcomeRows } from './outcome-dedupe'
 import { resolveStrategyFamily } from './strategy-family'
 import { toNum, type TokenPnlRow } from './token-pnl-export'
-import { buildShadowExecutionRecordForCost, readEntryCostSol } from './sim-fill'
+import { buildShadowExecutionRecordForCost } from './sim-fill'
 import { runConsensusTest, type ConsensusTestResult } from './consensus-test'
 import {
   consensusGateMode,
@@ -509,6 +509,8 @@ export async function insertStrategyOutcome(params: {
   status?: string | null
   is_simulated?: boolean
   features?: Record<string, unknown> | null
+  /** Entry size for the shadow execution record; omit to skip it. */
+  sol_amount?: number | null
 }): Promise<boolean> {
   const chain = params.chain ?? 'sol'
   const entryAt = coerceIsoTimestamp(params.entry_at)
@@ -540,10 +542,13 @@ export async function insertStrategyOutcome(params: {
   // Shadow execution record: how this close would really have filled. Sims only — the live path
   // (is_simulated: false) must never wait on a quote. Omits the record when the entry size is not
   // in the features, rather than inventing one.
-  if (params.is_simulated && exitProvided && params.pnl_pct != null) {
+  if (params.is_simulated && exitProvided && params.pnl_pct != null && params.sol_amount != null) {
     const priceRatio = 1 + Number(params.pnl_pct) / 100
-    const costSol = readEntryCostSol(features)
-    if (costSol > 0 && priceRatio > 0) {
+    // The entry size, passed by the caller. It is NOT in the features: measured over two days,
+    // 763 sim closes carry an `amount_sol` key with a usable value on zero of them, and no entry
+    // rows exist at all — so a derivation here would be dead code pretending to be a fallback.
+    const costSol = Number(params.sol_amount)
+    if (Number.isFinite(costSol) && costSol > 0 && priceRatio > 0) {
       const exec = await buildShadowExecutionRecordForCost({
         chain,
         mint: params.token_address,

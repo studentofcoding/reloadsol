@@ -77,7 +77,6 @@ import { toClimateChipPayload } from '@/utils/climateDisplay'
 import { fetchClimate } from '@/utils/climateGate'
 import { log } from '@/utils/unified-logger'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
-import { buildShadowExecutionRecord } from '@/strategies/sim-fill'
 import {
   buildMcapOutcomeFeatures,
   computeMcapSimPnlPct,
@@ -492,14 +491,9 @@ async function closeSimPosition(params: {
     },
   )
 
-  // How the close would really have filled, recorded beside pnlPct (SHADOW: pnlPct unchanged).
-  const execRecord = await buildShadowExecutionRecord({
-    chain: params.chain,
-    mint: params.mintAddress,
-    exitSolValue: solReceived,
-    priceRatio: 1 + pnlPct / 100,
-    tokenAmountUi: cycle.remainingTokenAmount,
-  })
+  // The writer records how this close would really have filled (SHADOW: pnlPct unchanged); it
+  // needs the entry size, which is derived from the exit proceeds and the price ratio.
+  const entryCostSol = pnlPct > -100 ? solReceived / (1 + pnlPct / 100) : 0
 
   await recordMcapTrackerOutcome({
     strategyId: params.strategyId,
@@ -510,10 +504,10 @@ async function closeSimPosition(params: {
     pnlPct,
     status: closeOutcomeStatusFromPnl(pnlPct),
     isSimulated: true,
+    solAmount: entryCostSol,
     features: mergeEntryFeaturesForOutcome(buyFeatures, {
       ...closeFeatures,
       monitor_snapshots: monitorSnapshots,
-      ...(execRecord ? { exec: execRecord } : {}),
     }),
   })
 

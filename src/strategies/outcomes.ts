@@ -141,6 +141,8 @@ export async function recordMcapTrackerOutcome(params: {
   status?: string | null
   isSimulated?: boolean
   features?: Record<string, unknown> | null
+  /** Entry size, for the shadow execution record. */
+  solAmount?: number | null
 }): Promise<void> {
   await insertStrategyOutcome({
     strategy_id: params.strategyId,
@@ -153,6 +155,7 @@ export async function recordMcapTrackerOutcome(params: {
     status: params.status ?? null,
     is_simulated: params.isSimulated ?? true,
     features: params.features ?? null,
+    sol_amount: params.solAmount ?? null,
   })
 
   if (params.pnlPct != null) {

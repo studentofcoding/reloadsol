@@ -386,18 +386,3 @@ export async function buildShadowExecutionRecordForCost(input: {
     return null
   }
 }
-
-/**
- * Read the entry size out of an outcome's features. Presence-checked, because `Number(null)` and
- * `Number('')` are both 0 — a missing amount must not read as a free position.
- */
-export function readEntryCostSol(features: Record<string, unknown> | null | undefined): number {
-  if (!features) return 0
-  for (const key of ['amount_sol', 'entry_sol', 'entry_amount_sol', 'sol_amount', 'size_sol']) {
-    const raw = features[key]
-    if (raw === undefined || raw === null || raw === '') continue
-    const value = Number(raw)
-    if (Number.isFinite(value) && value > 0) return value
-  }
-  return 0
-}
