@@ -523,9 +523,11 @@ async function closeSimPosition(params: {
     },
   )
 
-  // The writer records how this close would really have filled (SHADOW: pnlPct unchanged); it
-  // needs the entry size, which is derived from the exit proceeds and the price ratio.
-  const entryCostSol = pnlPct > -100 ? solReceived / (1 + pnlPct / 100) : 0
+  // The writer records how this close would really have filled (SHADOW: pnlPct unchanged).
+  // The cost basis must be the position's real stake: `solReceived` is a NOMINAL figure in this sim
+  // (sellPriceUsd is a placeholder), so deriving the stake from it yields ~0 and the record is
+  // skipped as unusable — silently, which is how this looked like "not wired".
+  const entryCostSol = cycle.totalSolBought
 
   await recordMcapTrackerOutcome({
     strategyId: params.strategyId,

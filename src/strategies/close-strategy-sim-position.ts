@@ -231,7 +231,8 @@ export async function closeMcapStrategySimPositions(
           }
 
       // Entry size for the shadow execution record; the writer builds it (pnlPct unchanged).
-      const entryCostSol = pnlPct > -100 ? solReceived / (1 + pnlPct / 100) : 0
+      // The real stake, not a value derived from the nominal solReceived.
+      const entryCostSol = cycle.totalSolBought
 
       await recordMcapTrackerOutcome({
         strategyId,
