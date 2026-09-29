@@ -228,7 +228,7 @@ type Config struct {
     SignalRefreshInterval int   // seconds
     SignalsSimInterval   int    // seconds
     McapTrackerSimInterval int  // seconds — manage/close path
-    McapTrackerSimOpenInterval int // seconds — open hot path
+    McapTrackerSimOpenInterval int // seconds — open hot path; no longer scheduled separately (the open phase runs inside the phase=all job)
     GmgnSimInterval      int    // seconds
     GmgnActivityPollInterval int // seconds
     GmgnRadarDigestInterval int // seconds (0 = disabled)
@@ -525,19 +525,17 @@ func (cs *CronService) Start() {
     }
     cs.workers.BindEntry(signalsSimEntryID, "signals_sim_track")
 
-    mcapTrackerSimOpenSpec := everySpec(cs.config.McapTrackerSimOpenInterval)
-    mcapTrackerSimOpenEntryID, err := cs.cron.AddFunc(mcapTrackerSimOpenSpec, cs.runMcapTrackerSimOpen)
-    if err != nil {
-        cs.logger.Error(fmt.Sprintf("Failed to add mcap tracker sim open cron job: %v", err))
-        log.Fatal("Failed to add mcap tracker sim open cron job:", err)
-    }
-    cs.workers.BindEntry(mcapTrackerSimOpenEntryID, "mcap_tracker_sim_open")
-
+    // MCap tracker sim: ONE job per interval running both phases (phase=all) instead of separate
+    // open and manage jobs. They share the single `mcap_tracker_sim` lock, and a real open run
+    // holds it for longer than any sane start offset (measured live: open at 11:12:20, manage at
+    // 11:12:35 still skipped), so two jobs could never both run per tick. phase=all runs manage
+    // then open inside one request, under one lock acquisition, in the order the route requires
+    // (the manage pass must flush its records before open re-fetches them).
     mcapTrackerSimSpec := everySpec(cs.config.McapTrackerSimInterval)
-    mcapTrackerSimEntryID, err := cs.cron.AddFunc(mcapTrackerSimSpec, cs.runMcapTrackerSimTrack)
+    mcapTrackerSimEntryID, err := cs.cron.AddFunc(mcapTrackerSimSpec, cs.runMcapTrackerSimAll)
     if err != nil {
-        cs.logger.Error(fmt.Sprintf("Failed to add mcap tracker sim track cron job: %v", err))
-        log.Fatal("Failed to add mcap tracker sim track cron job:", err)
+        cs.logger.Error(fmt.Sprintf("Failed to add mcap tracker sim cron job: %v", err))
+        log.Fatal("Failed to add mcap tracker sim cron job:", err)
     }
     cs.workers.BindEntry(mcapTrackerSimEntryID, "mcap_tracker_sim_track")
 
@@ -753,8 +751,7 @@ func (cs *CronService) Start() {
         cs.logger.Info(fmt.Sprintf("🕯️ OHLC 1m sampler: every %d seconds", cs.config.OhlcSampleInterval))
     }
     cs.logger.Info(fmt.Sprintf("🧪 Signals sim track: every %d seconds", cs.config.SignalsSimInterval))
-    cs.logger.Info(fmt.Sprintf("📈 MCap tracker sim open: every %d seconds", cs.config.McapTrackerSimOpenInterval))
-    cs.logger.Info(fmt.Sprintf("📈 MCap tracker sim manage: every %d seconds", cs.config.McapTrackerSimInterval))
+    cs.logger.Info(fmt.Sprintf("📈 MCap tracker sim (manage+open, phase=all): every %d seconds", cs.config.McapTrackerSimInterval))
     cs.logger.Info(fmt.Sprintf("🐋 GMGN sim track: every %d seconds", cs.config.GmgnSimInterval))
     cs.logger.Info(fmt.Sprintf("📣 Social sim track: every %d seconds", cs.config.SocialSimInterval))
     cs.logger.Info(fmt.Sprintf("🔥 GMGN activity poll: every %d seconds", cs.config.GmgnActivityPollInterval))
@@ -880,7 +877,9 @@ func (cs *CronService) runSignalsSimTrack() {
     cs.workers.Begin("signals_sim_track")
     cs.logger.Info("🧪 Running signals sim track...")
     url := fmt.Sprintf("%s/api/signals/sim-track?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
-    resp, err := cs.makeRequest("POST", url, nil)
+    // 180s like the gmgn/social sims: at the 30s default this was killed with
+    // `context deadline exceeded` on every tick even when the work was healthy.
+    resp, err := cs.makeRequest("POST", url, nil, 180)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ Signals sim track failed: %v", err))
         cs.workers.Fail("signals_sim_track", err.Error())
@@ -912,29 +911,9 @@ func (cs *CronService) runMcapTrackerSimOpen() {
     }
 }
 
-func (cs *CronService) runMcapTrackerSimTrack() {
-    if !cs.mcapSimManageMu.TryLock() {
-        cs.logger.Info("⏭️ MCap tracker sim manage skipped (still running)")
-        return
-    }
-    defer cs.mcapSimManageMu.Unlock()
-
-    cs.workers.Begin("mcap_tracker_sim_track")
-    cs.logger.Info("📈 Running mcap tracker sim manage (phase=manage)...")
-    url := fmt.Sprintf("%s/api/mcap-tracking/sim-track?key=%s&phase=manage", cs.config.APIBaseURL, cs.config.TrendingSecret)
-    resp, err := cs.makeRequest("POST", url, nil, 120)
-    if err != nil {
-        cs.logger.Error(fmt.Sprintf("❌ MCap tracker sim manage failed: %v", err))
-        cs.workers.Fail("mcap_tracker_sim_track", err.Error())
-        return
-    }
-    if cs.finishSimJob("MCap tracker sim manage", "mcap_tracker_sim_track", resp) {
-        return
-    }
-}
-
 func (cs *CronService) runMcapTrackerSimAll() {
-    // Manual full cycle: take manage lock so we do not overlap scheduled manage.
+    // Scheduled once per interval and also the manual full cycle: take the manage lock so we do
+    // not overlap another full run.
     if !cs.mcapSimManageMu.TryLock() {
         cs.logger.Info("⏭️ MCap tracker sim all skipped (manage still running)")
         return
