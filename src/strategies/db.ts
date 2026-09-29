@@ -1858,8 +1858,8 @@ export async function aggregateTokenPnlByToken(params: {
        FROM strategy_outcomes
       WHERE ($1::text IS NULL OR chain = $1)
         AND is_simulated = $2
-        AND entry_at >= ($3::date::timestamp AT TIME ZONE $4)
-        AND entry_at <  (($5::date + 1)::timestamp AT TIME ZONE $4)
+        AND entry_at >= ($3::date::timestamp AT TIME ZONE $5)
+        AND entry_at <  (($4::date + 1)::timestamp AT TIME ZONE $5)
       GROUP BY token_address
       ORDER BY sum(pnl_pct) DESC NULLS LAST
       LIMIT $6`,
@@ -1889,8 +1889,8 @@ export async function aggregateTokenPnlByToken(params: {
        FROM strategy_outcomes
       WHERE ($1::text IS NULL OR chain = $1)
         AND is_simulated = $2
-        AND entry_at >= ($3::date::timestamp AT TIME ZONE $4)
-        AND entry_at <  (($5::date + 1)::timestamp AT TIME ZONE $4)`,
+        AND entry_at >= ($3::date::timestamp AT TIME ZONE $5)
+        AND entry_at <  (($4::date + 1)::timestamp AT TIME ZONE $5)`,
     windowArgs,
   )
 
@@ -1902,14 +1902,14 @@ export async function aggregateTokenPnlByToken(params: {
        SELECT entry_at AS ts, 1 AS d
          FROM strategy_outcomes
         WHERE ($1::text IS NULL OR chain = $1) AND is_simulated = $2
-          AND entry_at >= ($3::date::timestamp AT TIME ZONE $4)
-          AND entry_at <  (($5::date + 1)::timestamp AT TIME ZONE $4)
+          AND entry_at >= ($3::date::timestamp AT TIME ZONE $5)
+          AND entry_at <  (($4::date + 1)::timestamp AT TIME ZONE $5)
        UNION ALL
        SELECT coalesce(exit_at, NOW()) AS ts, -1 AS d
          FROM strategy_outcomes
         WHERE ($1::text IS NULL OR chain = $1) AND is_simulated = $2
-          AND entry_at >= ($3::date::timestamp AT TIME ZONE $4)
-          AND entry_at <  (($5::date + 1)::timestamp AT TIME ZONE $4)
+          AND entry_at >= ($3::date::timestamp AT TIME ZONE $5)
+          AND entry_at <  (($4::date + 1)::timestamp AT TIME ZONE $5)
      ), cum AS (
        SELECT ts, sum(sum(d)) OVER (ORDER BY ts) AS open_now
          FROM ev GROUP BY ts
@@ -1923,8 +1923,8 @@ export async function aggregateTokenPnlByToken(params: {
        FROM strategy_outcomes
       WHERE ($1::text IS NULL OR chain = $1)
         AND is_simulated = $2
-        AND entry_at >= ($3::date::timestamp AT TIME ZONE $4)
-        AND entry_at <  (($5::date + 1)::timestamp AT TIME ZONE $4)
+        AND entry_at >= ($3::date::timestamp AT TIME ZONE $5)
+        AND entry_at <  (($4::date + 1)::timestamp AT TIME ZONE $5)
       ORDER BY chain`,
     windowArgs,
   )
