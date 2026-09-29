@@ -19,8 +19,10 @@ import {
 export type DevReputationMode = 'shadow' | 'enforce'
 
 const DEFAULT_TTL_S = 86_400
-/** After a GMGN rate limit, stop attempting dev lookups for this long. */
-const RATE_LIMIT_COOLDOWN_MS = 5 * 60 * 1000
+/** After a GMGN rate limit, pause dev lookups briefly (not minutes — GMGN 429s
+ * are intermittent, and a long window starves the dev half while RugCheck keeps
+ * writing rows). */
+const RATE_LIMIT_COOLDOWN_MS = 60 * 1000
 
 let gmgnRateLimitedUntil = 0
 
