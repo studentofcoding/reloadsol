@@ -8,6 +8,34 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — realistic execution model + standardized PnL (spec + pure model)
+
+- **The problem, measured:** the sims fill at spot on both sides — `computeMcapSimPnlPct` is
+  `(exit − entry)/entry × 100`, and the Robinhood sim fills at `nativeAmount × nativeUsd / priceUsd`
+  with `gainPct = (price − entryPriceUsd)/entryPriceUsd`. So a position that round-trips at an
+  unchanged price reports **0%**: no spread, no pool impact, no DEX fee, no priority fee. That
+  flatters short-hold, high-turnover strategies hardest, and leaves each writer with its own idea of
+  what a fill is.
+- **`src/strategies/execution-model.ts`** — one pure model: AMM impact (`coeff × (notional/depth)^exp`,
+  where coeff=exp=1 is the exact constant-product average-price impact `notional/depth`), a spread
+  allowance, a per-side DEX fee, and a per-side fixed priority/tip cost. Buys and sells both pay it,
+  so a round trip at an unchanged price is a **loss** — the property the old formula could not
+  express — and breaking even requires a real move. One standardized PnL:
+  `pnlQuote = proceeds − cost`, `pnlPct = pnlQuote/cost × 100`, recomputable from the fills stored in
+  `features.exec` (`model: exec-v1`). All knobs are env-tunable with defaults, and zeroing them
+  reproduces the legacy spot-fill number exactly (pinned by a test).
+- **Depth is the honest blocker, and it is already in flight data:** the model prefers measured pool
+  liquidity, then a labelled volume proxy, then an assumed floor — and every stored fill carries
+  `depthSource` so an assumed depth can never pass for a measured one. Checked on prod: outcomes
+  carry no liquidity at all (0 of 516 in 2 days) and `token_mcap_tracking` has no liquidity column
+  (only `volume_5m`), **but `gmgn-api.ts` already receives `pool_liquidity` and
+  `dexscreener-volume.ts` already reads `liquidity.usd`** and picks pairs by it — the sim path simply
+  never reads either. So v1 lands as **computation, not enforcement**: record the modelled fill
+  beside the legacy `pnl_pct`, measure the drag per strategy, and flip `SIM_EXECUTION_MODEL` once
+  depth is carried through from the payloads already being fetched.
+- Spec: `docs/specs/SPEC-sim-execution-model-v1.md`. 18 tests, including the CPMM identity, the
+  round-trip-is-a-loss property, the legacy-equivalence case, and degenerate input (no NaN/Infinity).
+
 ### Fixed — the trending cycle ran for minutes and starved the whole process
 
 - **Measured profile of `/api/trending/track`** (temporary `console.warn` marks — 91% of this path's instrumentation is `console.log`, which production's `removeConsole` strips, so the cycle looked silent): `diagnoseTradingWallet` **1.8 s**, then the cycle sat in `runTrendingBotRhSimCycle()` — one run held the lock **4 m 12 s** and was still going. With the Solana phases instrumented separately: `feed pools=42` 144 ms, `filters` **8,695 ms** (≈1.7 s per candidate), candidate loop 87 ms.
