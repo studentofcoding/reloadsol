@@ -886,8 +886,9 @@ func (cs *CronService) runSignalsSimTrack() {
         cs.workers.Fail("signals_sim_track", err.Error())
         return
     }
-    cs.logger.Success(fmt.Sprintf("✅ Signals sim track completed (%d bytes)", len(resp)))
-    cs.workers.Success("signals_sim_track")
+    if cs.finishSimJob("Signals sim track", "signals_sim_track", resp) {
+        return
+    }
 }
 
 func (cs *CronService) runMcapTrackerSimOpen() {
@@ -900,14 +901,15 @@ func (cs *CronService) runMcapTrackerSimOpen() {
     cs.workers.Begin("mcap_tracker_sim_open")
     cs.logger.Info("📈 Running mcap tracker sim open (phase=open)...")
     url := fmt.Sprintf("%s/api/mcap-tracking/sim-track?key=%s&phase=open", cs.config.APIBaseURL, cs.config.TrendingSecret)
-    resp, err := cs.makeRequest("POST", url, nil)
+    resp, err := cs.makeRequest("POST", url, nil, 120)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ MCap tracker sim open failed: %v", err))
         cs.workers.Fail("mcap_tracker_sim_open", err.Error())
         return
     }
-    cs.logger.Success(fmt.Sprintf("✅ MCap tracker sim open completed (%d bytes)", len(resp)))
-    cs.workers.Success("mcap_tracker_sim_open")
+    if cs.finishSimJob("MCap tracker sim open", "mcap_tracker_sim_open", resp) {
+        return
+    }
 }
 
 func (cs *CronService) runMcapTrackerSimTrack() {
@@ -920,14 +922,15 @@ func (cs *CronService) runMcapTrackerSimTrack() {
     cs.workers.Begin("mcap_tracker_sim_track")
     cs.logger.Info("📈 Running mcap tracker sim manage (phase=manage)...")
     url := fmt.Sprintf("%s/api/mcap-tracking/sim-track?key=%s&phase=manage", cs.config.APIBaseURL, cs.config.TrendingSecret)
-    resp, err := cs.makeRequest("POST", url, nil)
+    resp, err := cs.makeRequest("POST", url, nil, 120)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ MCap tracker sim manage failed: %v", err))
         cs.workers.Fail("mcap_tracker_sim_track", err.Error())
         return
     }
-    cs.logger.Success(fmt.Sprintf("✅ MCap tracker sim manage completed (%d bytes)", len(resp)))
-    cs.workers.Success("mcap_tracker_sim_track")
+    if cs.finishSimJob("MCap tracker sim manage", "mcap_tracker_sim_track", resp) {
+        return
+    }
 }
 
 func (cs *CronService) runMcapTrackerSimAll() {
@@ -941,14 +944,15 @@ func (cs *CronService) runMcapTrackerSimAll() {
     cs.workers.Begin("mcap_tracker_sim_track")
     cs.logger.Info("📈 Running mcap tracker sim track (phase=all)...")
     url := fmt.Sprintf("%s/api/mcap-tracking/sim-track?key=%s&phase=all", cs.config.APIBaseURL, cs.config.TrendingSecret)
-    resp, err := cs.makeRequest("POST", url, nil)
+    resp, err := cs.makeRequest("POST", url, nil, 120)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ MCap tracker sim track failed: %v", err))
         cs.workers.Fail("mcap_tracker_sim_track", err.Error())
         return
     }
-    cs.logger.Success(fmt.Sprintf("✅ MCap tracker sim track completed (%d bytes)", len(resp)))
-    cs.workers.Success("mcap_tracker_sim_track")
+    if cs.finishSimJob("MCap tracker sim track", "mcap_tracker_sim_track", resp) {
+        return
+    }
 }
 
 func (cs *CronService) runGmgnSimTrack() {
@@ -961,8 +965,9 @@ func (cs *CronService) runGmgnSimTrack() {
         cs.workers.Fail("gmgn_sim_track", err.Error())
         return
     }
-    cs.logger.Success(fmt.Sprintf("✅ GMGN sim track completed (%d bytes)", len(resp)))
-    cs.workers.Success("gmgn_sim_track")
+    if cs.finishSimJob("GMGN sim track", "gmgn_sim_track", resp) {
+        return
+    }
 }
 
 func (cs *CronService) runSocialSimTrack() {
@@ -975,8 +980,9 @@ func (cs *CronService) runSocialSimTrack() {
         cs.workers.Fail("social_sim_track", err.Error())
         return
     }
-    cs.logger.Success(fmt.Sprintf("✅ Social sim track completed (%d bytes)", len(resp)))
-    cs.workers.Success("social_sim_track")
+    if cs.finishSimJob("Social sim track", "social_sim_track", resp) {
+        return
+    }
 }
 
 func (cs *CronService) runGmgnActivityPoll() {
@@ -1294,6 +1300,12 @@ func (cs *CronService) runTrendingTracker() {
 		return
 	}
 	
+	if isSkippedBody(resp) {
+		cs.logger.Info("⏭️ Trending tracker skipped (job lock held)")
+		cs.workers.Skipped("trending_tracker")
+		return
+	}
+
 	cs.logger.Success(fmt.Sprintf("✅ Trending tracker completed: %s", resp))
 	cs.workers.Success("trending_tracker")
 }
@@ -1860,6 +1872,32 @@ func (cs *CronService) persistWorkerRuntimeEvent(workerID, event, msg string) {
 			resp.StatusCode, workerID, event,
 		))
 	}
+}
+
+// isSkippedBody reports whether a response body is a withJobLock 409 skip
+// (`{"success":false,"skipped":true,...}`). makeRequest already returns such a body with a
+// nil error, so without this check every caller logs it as a success.
+func isSkippedBody(body string) bool {
+	var parsed map[string]interface{}
+	if json.Unmarshal([]byte(body), &parsed) != nil {
+		return false
+	}
+	skipped, ok := parsed["skipped"].(bool)
+	return ok && skipped
+}
+
+// finishSimJob reports the outcome of a sim-track call. Returns true when the tick was
+// skipped (the caller should stop); a skip is neither a success nor a failure, and marking
+// it a success is what hid the mcap sim's stalls.
+func (cs *CronService) finishSimJob(label, workerID, resp string) bool {
+	if isSkippedBody(resp) {
+		cs.logger.Info(fmt.Sprintf("⏭️ %s skipped (job lock held)", label))
+		cs.workers.Skipped(workerID)
+		return true
+	}
+	cs.logger.Success(fmt.Sprintf("✅ %s completed (%d bytes)", label, len(resp)))
+	cs.workers.Success(workerID)
+	return false
 }
 
 func (cs *CronService) makeRequest(method, url string, params map[string]string, timeoutSec ...int) (string, error) {

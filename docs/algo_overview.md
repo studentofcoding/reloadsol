@@ -233,6 +233,36 @@ API: `PATCH /api/strategies/outcomes/[id]`. List filters: `GET /api/strategies/o
 
 Sim wallet for signals: `SIGNALS_SIM_WALLET_ADDRESS` (default `signals-strategy-sim`). MCap sim: `mcap-tracker-sim`.
 
+**Bounded reads.** `fetchTradingRecordsForWallet(walletAddress, opts?)` is unbounded by default
+(historical behaviour) but takes `{ strategies, sinceDays }`. Use them: the Robinhood trending sim
+wallet holds ~155k rows / 151 MB and hydrating all of it measured **19–78 s** inside the shared
+Node process — long enough to starve the mcap sim past its 30 s cron deadline. `sinceDays` is a
+*cycle* bound: a position whose opening buy falls outside the window can no longer be reconstructed
+and reads as closed, so the window must exceed the oldest **open** position (the check is documented
+on the function; on 2026-09-29 the oldest open att_rh position was 10 days, so 7 d was unsafe and
+14 d was not). Env: `RH_SIM_RECORD_WINDOW_DAYS` (default 14).
+
+**Cron outcome reporting.** A tick that loses the job lock gets `409 {"skipped":true}`;
+`makeRequest` returns that body with a nil error, so callers must distinguish it — `isSkippedBody`
++ `workers.Skipped` (which touches neither `lastSuccessAt` nor `lastErrorAt`). Treating a skip as a
+success is what made the ops view report the mcap sim healthy while it was almost never running.
+
+**Pool.** `DATABASE_POOL_MAX` (10), `DATABASE_POOL_CONN_TIMEOUT_MS` (5 s) and
+`DATABASE_STATEMENT_TIMEOUT_MS` (30 s). Without the acquisition timeout a query that cannot get a
+client queues indefinitely, so pool contention surfaces as the caller's HTTP deadline expiring
+rather than as a specific error.
+
+### Paper-trade capital
+
+`loadPaperCapital` (`GET /api/strategies/reports` → `capital[]`, "Paper-trade capital & R:R" panel)
+reports, per chain: deployed notional per day (**throughput** — it recycles, so it is not the amount
+to hold), **peak simultaneous exposure × the observed clip** (the binding capital number), and
+profit factor / R:R / expectancy mean + median. Profit factor is the headline because the expectancy
+mean is right-tail driven; the median is shown beside it. Amounts are in the chain's native unit
+(SOL vs ETH — the RH twin sizes in ETH) and are never summed across chains. The observed clip sits
+below the configured one because `scaleOpenSize(…, brainRisk)` scales it down (2026-09-29: ~0.001
+SOL/trade against a 0.01 config).
+
 ---
 
 ## Flow by domain

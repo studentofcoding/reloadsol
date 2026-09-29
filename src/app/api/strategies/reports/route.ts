@@ -54,6 +54,7 @@ export async function GET(request: NextRequest) {
       overlap,
       pairs,
       consensus,
+      capital,
       timezone,
     } = await aggregateStrategyReports({
       domain: domain ?? undefined,
@@ -103,6 +104,8 @@ export async function GET(request: NextRequest) {
       pairs,
       // Is agreement predictive? Carries CIs and an explicit inconclusive state.
       consensus,
+      // Paper-trade capital + R:R per chain (native units differ — never summed).
+      capital,
       timezone,
       filters: {
         domain,

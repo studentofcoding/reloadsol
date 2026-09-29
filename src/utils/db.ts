@@ -12,6 +12,21 @@ import {
 let pool: Pool | null = null;
 
 const POOL_MAX = parseInt(process.env.DATABASE_POOL_MAX || '10', 10);
+/**
+ * How long a query may wait for a free client before failing. Without this, a query that
+ * cannot get a client queues indefinitely and the only thing that ends it is the caller's
+ * own HTTP deadline — which is how the mcap sim's 30 s cron timeout turned pool contention
+ * into "context deadline exceeded" instead of a specific error.
+ */
+const POOL_CONN_TIMEOUT_MS = parseInt(
+  process.env.DATABASE_POOL_CONN_TIMEOUT_MS || '5000',
+  10,
+);
+/** Server-side ceiling so a pathological query cannot hold a client forever. */
+const POOL_STATEMENT_TIMEOUT_MS = parseInt(
+  process.env.DATABASE_STATEMENT_TIMEOUT_MS || '30000',
+  10,
+);
 
 export function getPool(): Pool {
   if (!pool) {
@@ -22,6 +37,8 @@ export function getPool(): Pool {
     pool = new Pool({
       connectionString: url,
       max: POOL_MAX,
+      connectionTimeoutMillis: POOL_CONN_TIMEOUT_MS,
+      statement_timeout: POOL_STATEMENT_TIMEOUT_MS,
       // ponytail: PgBouncer transaction pool rejects prepared statements
       prepare: false,
     } as ConstructorParameters<typeof Pool>[0]);

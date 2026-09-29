@@ -255,6 +255,35 @@ type ConsensusResult = {
   samples: number;
 };
 
+/** Paper-trade capital + R:R. Amounts are in the chain's native unit (SOL vs ETH). */
+type PaperCapitalDay = {
+  day: string;
+  buys: number;
+  deployed: number;
+  peak_open: number;
+  peak_capital: number;
+  trades: number;
+  wins: number;
+  losses: number;
+  win_rate: number;
+  profit_factor: number | null;
+  expectancy_pct: number;
+  median_pct: number;
+  avg_win_pct: number | null;
+  avg_loss_pct: number | null;
+  rr_ratio: number | null;
+};
+
+type PaperCapitalSummary = {
+  chain: string;
+  currency: string;
+  days: PaperCapitalDay[];
+  window_days: number;
+  totals: PaperCapitalDay & { trades: number };
+  observed_clip: number;
+  timezone: string;
+};
+
 const fmtPct = (v: number | null | undefined): string =>
   v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
 
@@ -343,6 +372,7 @@ type StrategyAdminQueryData = {
     overlap: OverlapRow[];
     pairs: PairOverlapRow[];
     consensus: ConsensusResult | null;
+    capital: PaperCapitalSummary[];
     timezone: string;
   } | null;
 };
@@ -785,6 +815,7 @@ export default function StrategyAdminHub({
               overlap: (repJson.overlap ?? []) as OverlapRow[],
               pairs: (repJson.pairs ?? []) as PairOverlapRow[],
               consensus: (repJson.consensus ?? null) as ConsensusResult | null,
+              capital: (repJson.capital ?? []) as PaperCapitalSummary[],
               timezone: (repJson.timezone as string) ?? reportTz,
             }
           : null,
@@ -1979,6 +2010,84 @@ export default function StrategyAdminHub({
                 </div>
               );
             })()}
+
+            <h3 className="text-lg font-semibold text-white mb-2">
+              Paper-trade capital &amp; R:R (last {reports?.capital?.[0]?.window_days ?? 3} days)
+            </h3>
+            {(reports?.capital ?? []).length === 0 ? (
+              <p className="text-gray-500 text-sm mb-6">
+                No simulated activity in this window.
+              </p>
+            ) : (
+              (reports?.capital ?? []).map((c: PaperCapitalSummary) => (
+                <div key={c.chain} className="mb-6">
+                  <p className="text-sm text-gray-300 mb-1">
+                    <span className="font-semibold text-white uppercase">{c.chain}</span>{" "}
+                    ({c.currency}) · needs{" "}
+                    <span className="text-cyan-300">
+                      {c.totals.peak_capital.toFixed(4)} {c.currency}
+                    </span>{" "}
+                    peak capital ({c.totals.peak_open} positions ×{" "}
+                    {c.observed_clip.toFixed(5)} {c.currency}/trade) · throughput{" "}
+                    {c.totals.deployed.toFixed(4)} {c.currency} · PF{" "}
+                    {c.totals.profit_factor == null
+                      ? "—"
+                      : c.totals.profit_factor.toFixed(2)}{" "}
+                    · R:R{" "}
+                    {c.totals.rr_ratio == null
+                      ? "—"
+                      : `${c.totals.rr_ratio.toFixed(1)}:1`}{" "}
+                    · win {(c.totals.win_rate * 100).toFixed(1)}%
+                  </p>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-gray-300">
+                      <thead className="text-gray-400 text-xs uppercase">
+                        <tr>
+                          <th className="p-2 text-left">Day</th>
+                          <th className="p-2 text-center">Buys</th>
+                          <th className="p-2 text-center">Deployed</th>
+                          <th className="p-2 text-center">Peak open</th>
+                          <th className="p-2 text-center">Capital</th>
+                          <th className="p-2 text-center">Trades</th>
+                          <th className="p-2 text-center">Win %</th>
+                          <th className="p-2 text-center">PF</th>
+                          <th className="p-2 text-center">R:R</th>
+                          <th className="p-2 text-center">Median</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {c.days.map((d: PaperCapitalDay) => (
+                          <tr key={d.day} className="border-t border-gray-700">
+                            <td className="p-2">{d.day}</td>
+                            <td className="p-2 text-center">{d.buys}</td>
+                            <td className="p-2 text-center">{d.deployed.toFixed(4)}</td>
+                            <td className="p-2 text-center">{d.peak_open}</td>
+                            <td className="p-2 text-center">{d.peak_capital.toFixed(4)}</td>
+                            <td className="p-2 text-center">{d.trades}</td>
+                            <td className="p-2 text-center">
+                              {(d.win_rate * 100).toFixed(1)}%
+                            </td>
+                            <td className="p-2 text-center">
+                              {d.profit_factor == null ? "—" : d.profit_factor.toFixed(2)}
+                            </td>
+                            <td className="p-2 text-center">
+                              {d.rr_ratio == null ? "—" : `${d.rr_ratio.toFixed(1)}:1`}
+                            </td>
+                            <td className="p-2 text-center">{fmtPct(d.median_pct)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))
+            )}
+            <p className="text-xs text-gray-500 mb-6">
+              The capital need is peak <em>simultaneous</em> exposure × the clip actually
+              used; the deployed total is throughput and recycles, so it is not the amount to
+              hold. Profit factor (Σ wins / |Σ losses|) is the robust headline — the mean is
+              right-tailed, so the median sits beside it. SOL and ETH are never summed.
+            </p>
 
             <h3 className="text-lg font-semibold text-white mb-2">
               Best trade windows ({reports?.timezone ?? reportTz})

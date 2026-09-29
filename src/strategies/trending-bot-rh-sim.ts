@@ -36,6 +36,17 @@ const CHAIN = 'robinhood' as const
 
 const SIM_WALLET = simWalletForChain(TRENDING_BOT_SIM_WALLET, CHAIN)
 
+/**
+ * How much of the sim wallet's history to hydrate. Must exceed the oldest OPEN position
+ * (an opening buy outside the window makes the position read as closed), and is the main
+ * lever on this cycle's cost. See fetchTradingRecordsForWallet for the check to run before
+ * changing it.
+ */
+const RH_SIM_RECORD_WINDOW_DAYS = (() => {
+  const raw = Number(process.env.RH_SIM_RECORD_WINDOW_DAYS)
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 14
+})()
+
 type OpenPosition = {
   mintAddress: string
   symbol: string
@@ -325,7 +336,14 @@ export async function runTrendingBotRhSimCycle(): Promise<RhTrendingSimResult[]>
   if (strategies.length === 0) return []
 
   const { tokens } = await getFilteredGmgnTrending(CHAIN)
-  const records = await fetchTradingRecordsForWallet(SIM_WALLET)
+  // Bounded fetch: this wallet holds ~155k rows / 151 MB and hydrating all of it took
+  // 19-78 s inside the shared process, starving the mcap sim past its 30 s cron deadline.
+  // The window must exceed the oldest OPEN position (see fetchTradingRecordsForWallet):
+  // 2026-09-29 the oldest att_rh position was 10 days, so 7 d would have been unsafe.
+  const records = await fetchTradingRecordsForWallet(SIM_WALLET, {
+    strategies,
+    sinceDays: RH_SIM_RECORD_WINDOW_DAYS,
+  })
   // Durable re-entry guard: never reopen a (strategy, mint) already closed
   // inside the cooldown, or past its lifetime open cap.
   const blocked = trendingBlockedKeys(

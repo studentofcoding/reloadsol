@@ -128,6 +128,17 @@ func (wt *WorkerTracker) Fail(id string, msg string) {
 	wt.emitChange(id, "fail", msg)
 }
 
+// Skipped records that the tick did not run because another one held the job lock
+// (HTTP 409 from withJobLock). It deliberately touches neither lastSuccessAt nor
+// lastErrorAt: a skip is neither, and marking it a success is what made the ops view
+// report a healthy worker while the mcap sim was mostly not running.
+func (wt *WorkerTracker) Skipped(id string) {
+	wt.mu.Lock()
+	defer wt.mu.Unlock()
+	wt.ensureRuntime(id)
+	wt.emitChange(id, "skipped", "")
+}
+
 func (wt *WorkerTracker) Hydrate(id string, h WorkerRuntimeHydrate) {
 	wt.mu.Lock()
 	defer wt.mu.Unlock()

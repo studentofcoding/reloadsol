@@ -590,6 +590,60 @@ export interface StrategyPairOverlapRow {
   same_family: boolean
 }
 
+/**
+ * What the paper (sim) system needs to keep running, and what it returned.
+ *
+ * Amounts are in the CHAIN'S NATIVE unit — SOL for `sol`, ETH for `robinhood` (the RH
+ * trending twin sizes in ETH) — so the two must never be summed together.
+ */
+export interface PaperCapitalDay {
+  /** YYYY-MM-DD in the report timezone. */
+  day: string
+  buys: number
+  /** Sum of buy notional — throughput, not capital need (capital recycles). */
+  deployed: number
+  /** Peak simultaneous open positions across all sim wallets of the chain. */
+  peak_open: number
+  /** peak_open × observed_clip — the binding number for "how much we must hold". */
+  peak_capital: number
+  trades: number
+  wins: number
+  losses: number
+  win_rate: number
+  /** Σ wins / |Σ losses| — the robust headline (a mean is tail-driven here). */
+  profit_factor: number | null
+  expectancy_pct: number
+  median_pct: number
+  avg_win_pct: number | null
+  avg_loss_pct: number | null
+  /** avg win / |avg loss|. */
+  rr_ratio: number | null
+}
+
+export interface PaperCapitalSummary {
+  chain: string
+  /** Native unit of every amount in this block. */
+  currency: string
+  days: PaperCapitalDay[]
+  window_days: number
+  totals: {
+    trades: number
+    deployed: number
+    peak_open: number
+    peak_capital: number
+    win_rate: number
+    profit_factor: number | null
+    expectancy_pct: number
+    median_pct: number
+    avg_win_pct: number | null
+    avg_loss_pct: number | null
+    rr_ratio: number | null
+  }
+  /** Median buy notional actually used (brain-risk scaling shrinks the configured size). */
+  observed_clip: number
+  timezone: string
+}
+
 export interface StrategyHourBucket {
   hour: number
   trade_count: number

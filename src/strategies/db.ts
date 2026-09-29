@@ -61,6 +61,7 @@ import type {
   StrategyBestTradeWindows,
   StrategyOverlapRow,
   StrategyPairOverlapRow,
+  PaperCapitalSummary,
 } from './types'
 
 function errorMessage(error: unknown): string {
@@ -1787,6 +1788,239 @@ export async function evaluateConsensusGateForOpen(params: {
   }
 }
 
+/**
+ * What the paper system needs to spend, and what it returned — per day, per chain.
+ *
+ * Three numbers, deliberately kept separate because they answer different questions:
+ * - `deployed` = throughput (sum of buy notional). NOT the capital need: it recycles.
+ * - `peak_open` / `peak_capital` = the binding number (peak SIMULTANEOUS exposure across
+ *   the chain's sim wallets × the clip actually used).
+ * - `profit_factor` / `rr_ratio` = outcome quality. Profit factor is the robust headline
+ *   because the expectancy mean is right-tail driven (median is reported beside it).
+ *
+ * Amounts are in the chain's native unit (SOL vs ETH — the RH twin sizes in ETH), so the
+ * caller must render them with `currency` and never sum them across chains.
+ */
+export async function loadPaperCapital(params: {
+  chain: StrategyChain
+  days?: number
+  timeZone?: string
+}): Promise<PaperCapitalSummary> {
+  const days = Math.min(Math.max(params.days ?? 3, 1), 30)
+  const timeZone = resolveReportTimeZone(params.timeZone ?? DEFAULT_REPORT_TIMEZONE)
+  const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
+  const currency = params.chain === 'robinhood' ? 'ETH' : 'SOL'
+
+  const empty = (): PaperCapitalSummary => ({
+    chain: params.chain,
+    currency,
+    days: [],
+    window_days: days,
+    totals: {
+      trades: 0,
+      deployed: 0,
+      peak_open: 0,
+      peak_capital: 0,
+      win_rate: 0,
+      profit_factor: null,
+      expectancy_pct: 0,
+      median_pct: 0,
+      avg_win_pct: null,
+      avg_loss_pct: null,
+      rr_ratio: null,
+    },
+    observed_clip: 0,
+    timezone: timeZone,
+  })
+
+  try {
+    // Deployment + peak simultaneous exposure. The cumulative walk is per wallet (each
+    // strategy has its own sim wallet), then summed per instant: peaks do not necessarily
+    // coincide, so summing per-wallet peaks would overstate the capital needed.
+    const { rows: flowRows } = await query<{
+      day: string
+      buys: number
+      deployed: string | null
+      clip: string | null
+    }>(
+      `WITH ev AS (
+         SELECT to_char(date_trunc('day', timestamp AT TIME ZONE $3), 'YYYY-MM-DD') AS day,
+                wallet_address, timestamp,
+                CASE WHEN data->>'operationType' = 'buy' THEN 1
+                     WHEN data->>'close_position' = 'true' THEN -1 ELSE 0 END AS d,
+                CASE WHEN data->>'operationType' = 'buy'
+                     THEN coalesce((data->>'solAmount')::numeric, 0) ELSE 0 END AS notional
+           FROM trading_records
+          WHERE data->>'is_simulation' = 'true'
+            AND coalesce(data->>'chain', 'sol') = $1
+            AND timestamp >= $2
+       ), cum AS (
+         SELECT day, timestamp, notional,
+                sum(d) OVER (PARTITION BY wallet_address ORDER BY timestamp) AS open_now
+           FROM ev
+       ), snap AS (
+         SELECT day, timestamp, sum(open_now) AS total_open,
+                sum(notional) AS notional
+           FROM cum GROUP BY day, timestamp
+       )
+       SELECT day,
+              count(*) FILTER (WHERE notional > 0)::int AS buys,
+              sum(notional) AS deployed,
+              NULL::numeric AS clip
+         FROM snap GROUP BY day ORDER BY day`,
+      [params.chain, from, timeZone],
+    )
+
+    const { rows: peakRows } = await query<{ day: string; peak_open: number }>(
+      `WITH ev AS (
+         SELECT to_char(date_trunc('day', timestamp AT TIME ZONE $3), 'YYYY-MM-DD') AS day,
+                wallet_address, timestamp,
+                CASE WHEN data->>'operationType' = 'buy' THEN 1
+                     WHEN data->>'close_position' = 'true' THEN -1 ELSE 0 END AS d
+           FROM trading_records
+          WHERE data->>'is_simulation' = 'true'
+            AND coalesce(data->>'chain', 'sol') = $1
+            AND timestamp >= $2
+       ), cum AS (
+         SELECT day, timestamp,
+                sum(d) OVER (PARTITION BY wallet_address ORDER BY timestamp) AS open_now
+           FROM ev
+       ), snap AS (SELECT day, timestamp, sum(open_now) AS total_open FROM cum GROUP BY day, timestamp)
+       SELECT day, max(total_open)::int AS peak_open FROM snap GROUP BY day ORDER BY day`,
+      [params.chain, from, timeZone],
+    )
+
+    const { rows: clipRows } = await query<{ clip: string | null }>(
+      `SELECT (percentile_cont(0.5) WITHIN GROUP (ORDER BY (data->>'solAmount')::numeric)) AS clip
+         FROM trading_records
+        WHERE data->>'is_simulation' = 'true'
+          AND data->>'operationType' = 'buy'
+          AND coalesce(data->>'chain', 'sol') = $1
+          AND timestamp >= $2
+          AND (data->>'solAmount') IS NOT NULL`,
+      [params.chain, from],
+    )
+    const observedClip = clipRows[0]?.clip == null ? 0 : Number(clipRows[0].clip)
+
+    const { rows: pnlRows } = await query<{
+      day: string
+      trades: number
+      wins: number
+      losses: number
+      sum_wins: string | null
+      sum_losses: string | null
+      expectation: string | null
+      median: string | null
+      avg_win: string | null
+      avg_loss: string | null
+    }>(
+      `SELECT to_char(date_trunc('day', exit_at AT TIME ZONE $3), 'YYYY-MM-DD') AS day,
+              count(*)::int AS trades,
+              count(*) FILTER (WHERE pnl_pct > 1e-6)::int AS wins,
+              count(*) FILTER (WHERE pnl_pct < -1e-6)::int AS losses,
+              sum(pnl_pct) FILTER (WHERE pnl_pct > 1e-6) AS sum_wins,
+              sum(pnl_pct) FILTER (WHERE pnl_pct < -1e-6) AS sum_losses,
+              avg(pnl_pct) AS expectation,
+              percentile_cont(0.5) WITHIN GROUP (ORDER BY pnl_pct) AS median,
+              avg(pnl_pct) FILTER (WHERE pnl_pct > 1e-6) AS avg_win,
+              avg(pnl_pct) FILTER (WHERE pnl_pct < -1e-6) AS avg_loss
+         FROM strategy_outcomes
+        WHERE chain = $1 AND is_simulated AND exit_at >= $2
+        GROUP BY day ORDER BY day`,
+      [params.chain, from, timeZone],
+    )
+
+    const num = (v: string | null | undefined): number | null =>
+      v == null ? null : Number(v)
+    const peakByDay = new Map(peakRows.map((r) => [r.day, Number(r.peak_open)]))
+    const pnlByDay = new Map(pnlRows.map((r) => [r.day, r]))
+
+    const allDays = [...new Set([...flowRows.map((r) => r.day), ...pnlRows.map((r) => r.day)])]
+      .sort()
+      .map((day) => {
+        const flow = flowRows.find((r) => r.day === day)
+        const pnl = pnlByDay.get(day)
+        const sumWins = num(pnl?.sum_wins)
+        const sumLosses = num(pnl?.sum_losses)
+        const avgWin = num(pnl?.avg_win)
+        const avgLoss = num(pnl?.avg_loss)
+        const peakOpen = peakByDay.get(day) ?? 0
+        const trades = pnl?.trades ?? 0
+        const wins = pnl?.wins ?? 0
+        return {
+          day,
+          buys: flow?.buys ?? 0,
+          deployed: num(flow?.deployed) ?? 0,
+          peak_open: peakOpen,
+          peak_capital: peakOpen * observedClip,
+          trades,
+          wins,
+          losses: pnl?.losses ?? 0,
+          win_rate: trades > 0 ? wins / trades : 0,
+          profit_factor:
+            sumWins != null && sumLosses != null && sumLosses !== 0
+              ? sumWins / Math.abs(sumLosses)
+              : null,
+          expectancy_pct: num(pnl?.expectation) ?? 0,
+          median_pct: num(pnl?.median) ?? 0,
+          avg_win_pct: avgWin,
+          avg_loss_pct: avgLoss,
+          rr_ratio:
+            avgWin != null && avgLoss != null && avgLoss !== 0
+              ? avgWin / Math.abs(avgLoss)
+              : null,
+        }
+      })
+
+    // Totals come from the raw per-day sums, not from avg × count: the averages are
+    // rounded by the aggregate and reconstructing the sums from them loses precision.
+    const totalTrades = pnlRows.reduce((s, r) => s + r.trades, 0)
+    const winTrades = pnlRows.reduce((s, r) => s + r.wins, 0)
+    const lossTrades = pnlRows.reduce((s, r) => s + r.losses, 0)
+    const sumWins = pnlRows.reduce((s, r) => s + (num(r.sum_wins) ?? 0), 0)
+    const sumLosses = pnlRows.reduce((s, r) => s + (num(r.sum_losses) ?? 0), 0)
+    const peakOpen = allDays.reduce((s, d) => Math.max(s, d.peak_open), 0)
+
+    return {
+      chain: params.chain,
+      currency,
+      days: allDays,
+      window_days: days,
+      totals: {
+        trades: totalTrades,
+        deployed: allDays.reduce((s, d) => s + d.deployed, 0),
+        peak_open: peakOpen,
+        peak_capital: peakOpen * observedClip,
+        win_rate: totalTrades > 0 ? winTrades / totalTrades : 0,
+        profit_factor:
+          sumLosses !== 0 && winTrades > 0
+            ? sumWins / Math.abs(sumLosses)
+            : null,
+        expectancy_pct:
+          totalTrades > 0
+            ? allDays.reduce((s, d) => s + d.expectancy_pct * d.trades, 0) / totalTrades
+            : 0,
+        median_pct:
+          allDays.length > 0
+            ? allDays.reduce((s, d) => s + d.median_pct, 0) / allDays.length
+            : 0,
+        avg_win_pct: winTrades > 0 ? sumWins / winTrades : null,
+        avg_loss_pct: lossTrades > 0 ? sumLosses / lossTrades : null,
+        rr_ratio:
+          winTrades > 0 && lossTrades > 0 && sumLosses !== 0
+            ? sumWins / winTrades / Math.abs(sumLosses / lossTrades)
+            : null,
+      },
+      observed_clip: observedClip,
+      timezone: timeZone,
+    }
+  } catch (error) {
+    if (isMissingSchemaError(error)) return empty()
+    console.warn('[strategies/db] paper capital failed:', errorMessage(error))
+    return empty()
+  }
+}
+
 export async function aggregateStrategyReports(params: {
   domain?: StrategyDomain
   chain?: StrategyChain
@@ -1807,6 +2041,8 @@ export async function aggregateStrategyReports(params: {
   overlap: StrategyOverlapRow[]
   pairs: StrategyPairOverlapRow[]
   consensus: ConsensusTestResult
+  /** One entry per chain (native units differ, so they are never summed together). */
+  capital: PaperCapitalSummary[]
   timezone: string
 }> {
   const timeZone = resolveReportTimeZone(params.timeZone ?? DEFAULT_REPORT_TIMEZONE)
@@ -1841,6 +2077,7 @@ export async function aggregateStrategyReports(params: {
         overlap: [],
         pairs: [],
         consensus: runConsensusTest([]),
+        capital: [],
         timezone: timeZone,
       }
     }
@@ -2035,10 +2272,16 @@ export async function aggregateStrategyReports(params: {
   const mcapTrackerStats = await buildMcapTrackerReportStats(rows, breakdown)
   const bestTradeWindows = computeBestTradeWindows(rows, { timeZone })
 
-  const [overlap, pairs, consensus] = await Promise.all([
+  const [overlap, pairs, consensus, capital] = await Promise.all([
     loadTokenStrategyOverlap(params),
     loadStrategyPairOverlap(params),
     loadConsensusTest(params),
+    // Both chains unless the caller filtered to one — the units differ (SOL vs ETH).
+    Promise.all(
+      (params.chain ? [params.chain] : (['sol', 'robinhood'] as const)).map((chain) =>
+        loadPaperCapital({ chain, days: 3, timeZone }),
+      ),
+    ),
   ])
 
   return {
@@ -2053,6 +2296,7 @@ export async function aggregateStrategyReports(params: {
     overlap,
     pairs,
     consensus,
+    capital,
     timezone: timeZone,
   }
 }
@@ -2248,15 +2492,50 @@ export async function getStrategyDomainHeartbeats(params?: {
   return results
 }
 
+/**
+ * Every trading record for a wallet, ascending (callers depend on the order:
+ * `openPositionsFor` and `computeOpenSimCycles` both walk by time).
+ *
+ * Unbounded by default — historical behaviour. Pass `opts` to bound it: the Robinhood
+ * trending sim wallet holds ~155k rows / 151 MB, and hydrating all of it measured
+ * 19-78 s inside the same Node process that serves every other cron job, which is what
+ * starved the mcap sim past its 30 s deadline.
+ *
+ * `sinceDays` is a *cycle* bound, not a convenience: an open position whose opening buy
+ * falls outside the window can no longer be reconstructed, so it reads as closed. The
+ * window must therefore exceed the oldest open position — verify with
+ *   WITH r AS (SELECT data->'tokens'->0->>'mintAddress' AS mint,
+ *       min(timestamp) FILTER (WHERE data->>'operationType'='buy') AS first_buy,
+ *       count(*) FILTER (WHERE data->>'operationType'='buy') AS b,
+ *       count(*) FILTER (WHERE data->>'operationType'='sell'
+ *                         AND data->>'close_position'='true') AS c
+ *     FROM trading_records WHERE wallet_address = $1 GROUP BY 1)
+ *   SELECT count(*) FILTER (WHERE first_buy < now() - interval '<window>') FROM r WHERE b > c;
+ * (2026-09-29: oldest open att_rh position was 10 days, so 7 d would have been unsafe and
+ * 14 d was not.)
+ */
 export async function fetchTradingRecordsForWallet(
   walletAddress: string,
+  opts?: { strategies?: string[]; sinceDays?: number },
 ): Promise<import('@/utils/trading-tracker').TrackingRecord[]> {
   try {
+    const conditions = ['wallet_address = $1']
+    const values: unknown[] = [walletAddress]
+
+    if (opts?.strategies && opts.strategies.length > 0) {
+      values.push(opts.strategies)
+      conditions.push(`data->>'bot_strategy' = ANY($${values.length}::text[])`)
+    }
+    if (opts?.sinceDays != null && opts.sinceDays > 0) {
+      values.push(opts.sinceDays)
+      conditions.push(`timestamp >= NOW() - make_interval(days => $${values.length}::int)`)
+    }
+
     const { rows } = await query<{ data: import('@/utils/trading-tracker').TrackingRecord }>(
       `SELECT data FROM trading_records
-       WHERE wallet_address = $1
+       WHERE ${conditions.join(' AND ')}
        ORDER BY timestamp ASC`,
-      [walletAddress],
+      values,
     )
     return rows.map((r) =>
       typeof r.data === 'string'
