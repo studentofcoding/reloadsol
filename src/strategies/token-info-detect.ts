@@ -5,6 +5,7 @@ import {
   usesGmgnWebTokenInfo,
 } from '@/utils/gmgn-web-multi'
 import { getGmgnTokenSnapshotCached } from '@/utils/gmgn-snapshot-cache'
+import { enqueueRiskShadow } from '@/strategies/risk-shadow-queue'
 import { log } from '@/utils/unified-logger'
 import {
   buildGmgnTokenSnapshot,
@@ -256,6 +257,11 @@ async function captureOpenApi(item: TokenInfoDetectCapture): Promise<void> {
     info,
     security,
   })
+  // Shadow risk for the broad discovery surfaces (mcap tracker / social /
+  // trending). The gmgn pipeline already attaches it inline.
+  if (item.source !== 'gmgn_pipeline') {
+    enqueueRiskShadow({ chain: 'sol', tokenAddress: item.tokenAddress, info })
+  }
 }
 
 async function captureWeb(items: TokenInfoDetectCapture[]): Promise<void> {
@@ -278,6 +284,13 @@ async function captureWeb(items: TokenInfoDetectCapture[]): Promise<void> {
       security: row.security,
     })
     if (result.inserted) await markGmgnWebLedgerCaptured(item.tokenAddress)
+    if (item.source !== 'gmgn_pipeline') {
+      enqueueRiskShadow({
+        chain: 'sol',
+        tokenAddress: item.tokenAddress,
+        info: row.info,
+      })
+    }
   }
 }
 
