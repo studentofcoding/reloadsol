@@ -243,6 +243,8 @@ export async function attachRiskShadow(params: {
       chain: params.chain,
       info: params.info,
       mint: params.tokenAddress,
+      // RugCheck's creator is free and already fetched — avoids the Jupiter hop.
+      rugcheckCreator: rugcheck?.creator ?? null,
     }).catch(() => null)
     if (creator) {
       dev = await fetchDevReputation({ chain: params.chain, creator }).catch(

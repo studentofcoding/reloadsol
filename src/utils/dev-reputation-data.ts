@@ -51,17 +51,26 @@ export function devReputationMode(): DevReputationMode {
     : 'shadow'
 }
 
-/** Creator address: GMGN `info.dev.creator_address`, else Jupiter `dev` (sol). */
+/**
+ * Creator address, in preference order:
+ *   1. the GMGN token info we already have (free),
+ *   2. RugCheck's `creator` (free, already fetched for the same token),
+ *   3. Jupiter `dev` (last resort — rate-limited).
+ */
 export async function resolveCreatorAddress(params: {
   chain: string
   info: Record<string, unknown>
   mint: string
+  rugcheckCreator?: string | null
 }): Promise<string | null> {
   const dev = params.info?.dev
   if (dev && typeof dev === 'object') {
     const addr = (dev as Record<string, unknown>).creator_address
     if (typeof addr === 'string' && addr.trim()) return addr.trim()
   }
+
+  const fromRugcheck = params.rugcheckCreator?.trim()
+  if (fromRugcheck) return fromRugcheck
 
   if (params.chain !== 'sol') return null
 
