@@ -433,15 +433,7 @@ func NewCronService() *CronService {
         FomoWsEnabled: envBool("FOMO_WS_ENABLED", true),
     }
 
-	// Second-resolution parser (so second-level specs work) wrapped so the ~25 jobs do not
-	// all start on the same instant (see cron_stagger.go: the mcap open/manage pair share
-	// one job lock and were colliding on every 120s boundary).
-	c := cron.New(
-		cron.WithParser(newStaggerParser(cron.NewParser(
-			// Descriptor is required: every job here is registered as `@every Ns`.
-			cron.Second|cron.Minute|cron.Hour|cron.Dom|cron.Month|cron.Dow|cron.Descriptor,
-		))),
-	)
+	c := cron.New(cron.WithSeconds())
 	
 	// Initialize Discord logger
 	logger := NewDiscordLogger(config.DiscordWebhook, "ReloadSol Cron Service")
