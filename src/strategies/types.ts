@@ -550,6 +550,25 @@ export interface StrategyAbPair {
   live: StrategyReportBreakdown | null
 }
 
+/**
+ * A token entered by more than one strategy. Same token under ONE strategy is a
+ * defect (enforced by db/init/45-strategy-outcomes-identity.sql); the same token
+ * under different strategies is agreement/overlap and is the signal here.
+ */
+export interface StrategyOverlapRow {
+  chain: string
+  token_address: string
+  strategy_count: number
+  strategies: string[]
+  trades: number
+  wins: number
+  losses: number
+  /** Median, not mean: the mean is dominated by the right tail. */
+  median_pnl_pct: number | null
+  first_entry: string | null
+  last_exit: string | null
+}
+
 export interface StrategyHourBucket {
   hour: number
   trade_count: number

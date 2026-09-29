@@ -219,6 +219,15 @@ export function toCanonicalEntryFeatures(
     entry_template: readStr(features, 'entry_template') ?? entryTrigger,
     pnl_basis: readStr(features, 'pnl_basis'),
     first_seen_at: readStr(features, 'first_seen_at'),
+    // CORE_KEYS above are "handled explicitly", but these five were listed there
+    // and then never emitted, so they were silently dropped (the dlmm outcome
+    // dedupe keys on position_id, so every manage cycle re-inserted the same
+    // closed position).
+    pool_name: readStr(features, 'pool_name'),
+    position_id: readStr(features, 'position_id'),
+    amount_sol: readNum(features, 'amount_sol'),
+    pool_volume: readNum(features, 'pool_volume'),
+    fee_tvl_ratio_24h: readNum(features, 'fee_tvl_ratio_24h'),
     // Dual-write social aliases for gate + pattern extractors
     mention_count_30m: mentionCount,
     telegram_mention_count_30m: mentionCount,

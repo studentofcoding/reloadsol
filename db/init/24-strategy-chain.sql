@@ -21,7 +21,9 @@ ALTER TABLE token_mcap_tracking
 CREATE INDEX IF NOT EXISTS idx_token_mcap_tracking_chain_updated
   ON token_mcap_tracking (chain, last_updated_at DESC);
 
--- Same token address can legitimately exist on both chains, so the
--- duplicate-outcome guard has to include the chain.
+-- Same token address can legitimately exist on both chains, so any duplicate-outcome
+-- guard has to include the chain. Superseded by the unique index in
+-- 45-strategy-outcomes-identity.sql, which enforces the identity at write time;
+-- this non-unique index was only a lookup aid for the old exists-check.
 CREATE INDEX IF NOT EXISTS idx_strategy_outcomes_dedupe
   ON strategy_outcomes (chain, strategy_id, token_address, entry_at);

@@ -163,6 +163,25 @@ Written **only when a position fully closes** (not on open/hold):
 
 Columns: `strategy_id`, `domain`, `token_address`, `entry_at`, `exit_at`, `pnl_pct`, `status`, `is_simulated`, `features`.
 
+**Trade identity is `(chain, strategy_id, token_address, entry_at)` and is enforced** by the
+partial unique index `idx_strategy_outcomes_identity` (`db/init/45-strategy-outcomes-identity.sql`).
+`insertStrategyOutcome` is idempotent (update-else-insert), so a re-close or re-mark **updates**
+the existing row instead of appending another. The same token under one strategy is therefore a
+defect; the same token under **different** strategies is agreement — see
+`token_strategy_overlap` (`db/init/46-token-strategy-overlap-view.sql`) and the Reports
+"Strategy overlap" table.
+
+Two historical defects this closed (both fixed in the writers; history repaired by
+`scripts/backfill-strategy-outcome-entry-at-standalone.mjs`):
+
+- `entry_at` was taken from the mint's **first-ever** buy in the Robinhood trending sim, so every
+  later trade of a mint shared one entry stamp (att_rh: 77,319 trades → 1,331 keys) and the
+  read-side dedupe silently dropped the rest.
+- DLMM re-inserted the same closed position every manage cycle (~34 rows/position) because
+  `toCanonicalEntryFeatures` dropped `position_id`, so the dedupe guard never matched.
+
+`dedupeStrategyOutcomeRows` (read-side) is now a safety net rather than load-bearing.
+
 **Sim-outcome ML labeling (Reports → Outcomes):** click a row to open the review modal. Labels persist in `features`:
 
 - `ml_label`: `skip` | `interesting` | `anomaly`

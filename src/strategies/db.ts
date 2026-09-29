@@ -50,6 +50,7 @@ import type {
   McapOpenSimReportRow,
   McapTrackerReportStats,
   StrategyBestTradeWindows,
+  StrategyOverlapRow,
 } from './types'
 
 function errorMessage(error: unknown): string {
@@ -484,40 +485,6 @@ export async function listMarketRegimeTags(limit = 30): Promise<
   }
 }
 
-async function strategyOutcomeExists(params: {
-  strategy_id: string
-  domain: StrategyDomain
-  chain: StrategyChain
-  token_address: string
-  entry_at: string
-}): Promise<boolean> {
-  try {
-    const row = await queryOne<{ id: string }>(
-      `SELECT id FROM strategy_outcomes
-       WHERE strategy_id = $1
-         AND domain = $2
-         AND token_address = $3
-         AND entry_at = $4
-         AND chain = $5
-       LIMIT 1`,
-      [
-        params.strategy_id,
-        params.domain,
-        params.token_address,
-        params.entry_at,
-        params.chain,
-      ],
-    )
-    return !!row
-  } catch (error) {
-    if (isMissingSchemaError(error)) {
-      return false
-    }
-    console.warn('[strategies/db] strategyOutcomeExists failed:', errorMessage(error))
-    return false
-  }
-}
-
 export async function insertStrategyOutcome(params: {
   strategy_id: string
   domain: StrategyDomain
@@ -539,17 +506,6 @@ export async function insertStrategyOutcome(params: {
     return false
   }
   const exitAt = coercedExit ?? new Date().toISOString()
-
-  if (params.domain === 'mcap_tracker' && params.token_address && entryAt) {
-    const exists = await strategyOutcomeExists({
-      strategy_id: params.strategy_id,
-      domain: params.domain,
-      chain,
-      token_address: params.token_address,
-      entry_at: entryAt,
-    })
-    if (exists) return true
-  }
 
   let features = params.features ?? {}
 
@@ -584,12 +540,32 @@ export async function insertStrategyOutcome(params: {
 
   try {
     await ensureStrategyChainColumns()
-    const { rows: inserted } = await query<{ id: string }>(
-      `INSERT INTO strategy_outcomes (
-         strategy_id, domain, token_address, entry_at, exit_at,
-         pnl_pct, status, is_simulated, features, chain
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       RETURNING id`,
+    // One row per (chain, strategy_id, token_address, entry_at): a re-close or a
+    // re-mark updates the existing outcome instead of appending another. Written
+    // as update-else-insert rather than ON CONFLICT so it is idempotent on its own
+    // — it does not need db/init/45-strategy-outcomes-identity.sql applied first,
+    // so deploy order cannot turn writes into errors. The unique index stays a
+    // backstop against a concurrent race.
+    const { rows: written } = await query<{ id: string; op: string }>(
+      `WITH updated AS (
+         UPDATE strategy_outcomes
+            SET exit_at = $5, pnl_pct = $6, status = $7,
+                is_simulated = $8, features = $9
+          WHERE chain = $10 AND strategy_id = $1
+            AND token_address = $3 AND entry_at = $4
+        RETURNING id
+       ), ins AS (
+         INSERT INTO strategy_outcomes (
+           strategy_id, domain, token_address, entry_at, exit_at,
+           pnl_pct, status, is_simulated, features, chain
+         )
+         SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+          WHERE NOT EXISTS (SELECT 1 FROM updated)
+        RETURNING id
+       )
+       SELECT id, 'inserted' AS op FROM ins
+       UNION ALL
+       SELECT id, 'updated'  AS op FROM updated`,
       [
         params.strategy_id,
         params.domain,
@@ -603,8 +579,11 @@ export async function insertStrategyOutcome(params: {
         chain,
       ],
     )
-    const outcomeId = inserted[0]?.id ?? null
-    if (params.token_address && outcomeId) {
+    const outcomeId = written[0]?.id ?? null
+    // Side effects describe a newly closed trade; a re-mark of the same identity
+    // has already fired them.
+    const isNewOutcome = written[0]?.op === 'inserted'
+    if (isNewOutcome && params.token_address && outcomeId) {
       const { scheduleEpisodeFinalize } = await import('@/strategies/strategy-episodes')
       scheduleEpisodeFinalize(params.token_address, outcomeId)
       try {
@@ -1453,6 +1432,71 @@ export async function listTopPnlByActiveStrategy(
   }))
 }
 
+/**
+ * Tokens entered by more than one strategy within the report filters. Windowed
+ * variant of db/init/46-token-strategy-overlap-view.sql (which is whole-table per
+ * chain, for ad-hoc reads) — same aggregation, applied to the same where clause
+ * the rest of the report uses so the numbers line up with `breakdown`.
+ */
+export async function loadTokenStrategyOverlap(
+  params: OutcomeFilterParams & { limit?: number },
+): Promise<StrategyOverlapRow[]> {
+  const limit = params.limit ?? 50
+  const { sql: whereSql, values } = buildOutcomeWhereClause(params)
+  const where = whereSql ? `${whereSql} AND` : 'WHERE'
+  const limitIdx = values.length + 1
+
+  try {
+    const { rows } = await query<{
+      chain: string
+      token_address: string
+      strategy_count: number
+      strategies: string[]
+      trades: number
+      wins: number
+      losses: number
+      median_pnl_pct: string | number | null
+      first_entry: string | null
+      last_exit: string | null
+    }>(
+      `SELECT chain,
+              token_address,
+              count(DISTINCT strategy_id)::int AS strategy_count,
+              array_agg(DISTINCT strategy_id) AS strategies,
+              count(*)::int AS trades,
+              count(*) FILTER (WHERE pnl_pct > 1e-6)::int AS wins,
+              count(*) FILTER (WHERE pnl_pct < -1e-6)::int AS losses,
+              percentile_cont(0.5) WITHIN GROUP (ORDER BY pnl_pct) AS median_pnl_pct,
+              min(entry_at) AS first_entry,
+              max(exit_at) AS last_exit
+         FROM strategy_outcomes
+         ${where} token_address IS NOT NULL
+        GROUP BY chain, token_address
+       HAVING count(DISTINCT strategy_id) > 1
+        ORDER BY strategy_count DESC, trades DESC
+        LIMIT $${limitIdx}`,
+      [...values, limit],
+    )
+    return rows.map((row) => ({
+      chain: row.chain,
+      token_address: row.token_address,
+      strategy_count: Number(row.strategy_count),
+      strategies: row.strategies ?? [],
+      trades: Number(row.trades),
+      wins: Number(row.wins),
+      losses: Number(row.losses),
+      median_pnl_pct:
+        row.median_pnl_pct == null ? null : Number(row.median_pnl_pct),
+      first_entry: coerceIsoTimestamp(row.first_entry),
+      last_exit: coerceIsoTimestamp(row.last_exit),
+    }))
+  } catch (error) {
+    if (isMissingSchemaError(error)) return []
+    console.warn('[strategies/db] token strategy overlap failed:', errorMessage(error))
+    return []
+  }
+}
+
 export async function aggregateStrategyReports(params: {
   domain?: StrategyDomain
   chain?: StrategyChain
@@ -1470,6 +1514,7 @@ export async function aggregateStrategyReports(params: {
   mlStats: MlLabelStats
   mcapTrackerStats: McapTrackerReportStats
   bestTradeWindows: StrategyBestTradeWindows[]
+  overlap: StrategyOverlapRow[]
   timezone: string
 }> {
   const timeZone = resolveReportTimeZone(params.timeZone ?? DEFAULT_REPORT_TIMEZONE)
@@ -1501,6 +1546,7 @@ export async function aggregateStrategyReports(params: {
         mlStats: { total: 0, unlabeled: 0, by_label: {}, by_condition: {} },
         mcapTrackerStats: emptyMcapStats,
         bestTradeWindows: [],
+        overlap: [],
         timezone: timeZone,
       }
     }
@@ -1704,6 +1750,7 @@ export async function aggregateStrategyReports(params: {
     mlStats,
     mcapTrackerStats,
     bestTradeWindows,
+    overlap: await loadTokenStrategyOverlap(params),
     timezone: timeZone,
   }
 }

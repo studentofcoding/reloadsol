@@ -51,6 +51,7 @@ export async function GET(request: NextRequest) {
       mlStats,
       mcapTrackerStats,
       bestTradeWindows,
+      overlap,
       timezone,
     } = await aggregateStrategyReports({
       domain: domain ?? undefined,
@@ -94,6 +95,8 @@ export async function GET(request: NextRequest) {
       ml_stats: mlStats,
       mcap_tracker_stats: mcapTrackerStats,
       best_trade_windows: bestTradeWindows,
+      // Tokens entered by more than one strategy (agreement, not a defect).
+      overlap,
       timezone,
       filters: {
         domain,

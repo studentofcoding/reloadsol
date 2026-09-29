@@ -196,6 +196,20 @@ type ReportBreakdown = {
   last_exit_at?: string | null;
 };
 
+/** Tokens entered by more than one strategy — agreement, not a defect. */
+type OverlapRow = {
+  chain: string;
+  token_address: string;
+  strategy_count: number;
+  strategies: string[];
+  trades: number;
+  wins: number;
+  losses: number;
+  median_pnl_pct: number | null;
+  first_entry: string | null;
+  last_exit: string | null;
+};
+
 type CoverageRow = {
   strategy_id: string;
   domain: string;
@@ -278,6 +292,7 @@ type StrategyAdminQueryData = {
     ml_stats: MlLabelStats;
     mcap_tracker_stats: McapTrackerReportStats | null;
     best_trade_windows: BestTradeWindowRow[];
+    overlap: OverlapRow[];
     timezone: string;
   } | null;
 };
@@ -717,6 +732,7 @@ export default function StrategyAdminHub({
               mcap_tracker_stats: repJson.mcap_tracker_stats ?? null,
               best_trade_windows: (repJson.best_trade_windows ??
                 []) as BestTradeWindowRow[],
+              overlap: (repJson.overlap ?? []) as OverlapRow[],
               timezone: (repJson.timezone as string) ?? reportTz,
             }
           : null,
@@ -1689,6 +1705,67 @@ export default function StrategyAdminHub({
                 </li>
               ))}
             </ul>
+
+            <h3 className="text-lg font-semibold text-white mb-2">
+              Strategy overlap — tokens entered by &gt;1 strategy
+            </h3>
+            {(reports?.overlap ?? []).length > 0 ? (
+              <div className="overflow-x-auto mb-6">
+                <table className="w-full text-sm text-gray-300">
+                  <thead className="text-gray-400 text-xs uppercase">
+                    <tr>
+                      <th className="p-2 text-left">Token</th>
+                      <th className="p-2 text-left">Strategies</th>
+                      <th className="p-2 text-center">Trades</th>
+                      <th className="p-2 text-center">W/L</th>
+                      <th className="p-2 text-center">Median PnL</th>
+                      <th className="p-2 text-center">Last exit</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(reports?.overlap ?? []).slice(0, 20).map((o: OverlapRow) => (
+                      <tr
+                        key={`${o.chain}-${o.token_address}`}
+                        className="border-t border-gray-700"
+                      >
+                        <td className="p-2 font-mono text-xs">
+                          {o.token_address.slice(0, 10)}…
+                        </td>
+                        <td className="p-2">
+                          <span className="text-xs text-cyan-300">
+                            {o.strategy_count}×
+                          </span>{" "}
+                          {o.strategies.join(", ")}
+                        </td>
+                        <td className="p-2 text-center">{o.trades}</td>
+                        <td className="p-2 text-center">
+                          {o.wins}/{o.losses}
+                        </td>
+                        <td className="p-2 text-center">
+                          {o.median_pnl_pct == null
+                            ? "—"
+                            : `${o.median_pnl_pct.toFixed(2)}%`}
+                        </td>
+                        <td className="p-2 text-center text-xs text-gray-400">
+                          {o.last_exit
+                            ? o.last_exit.slice(0, 16).replace("T", " ")
+                            : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="text-xs text-gray-500 mt-1">
+                  Agreement, not a defect: one strategy per token is the invariant, the
+                  same token under different strategies is consensus. Median, never a
+                  summed % — that would double-count one token&apos;s move.
+                </p>
+              </div>
+            ) : (
+              <p className="text-gray-500 text-sm mb-6">
+                No token entered by more than one strategy in this window.
+              </p>
+            )}
 
             <h3 className="text-lg font-semibold text-white mb-2">
               Best trade windows ({reports?.timezone ?? reportTz})

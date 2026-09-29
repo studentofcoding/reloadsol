@@ -273,14 +273,30 @@ function mapDlmmPositionRow(row: Record<string, unknown>): DlmmPosition {
   }
 }
 
-async function dlmmOutcomeExistsForPosition(positionId: string): Promise<boolean> {
+/**
+ * Has this closed DLMM position already been recorded?
+ *
+ * Keyed on the position identity, not on `features->>'position_id'` alone: that
+ * field used to be dropped by `toCanonicalEntryFeatures`, so the guard never
+ * matched and every `/api/dlmm/manage` cycle re-inserted the same closed position
+ * (~34 rows per position) and re-fired its close notification. `entry_at` +
+ * `pool_address` are always persisted, so the second clause covers rows written
+ * before the field was emitted.
+ */
+async function dlmmOutcomeExistsForPosition(position: {
+  id: string
+  entryAt: string | null
+  poolAddress: string | null
+}): Promise<boolean> {
   try {
     const row = await queryOne<{ id: string }>(
       `SELECT id FROM strategy_outcomes
        WHERE domain = 'dlmm'
-         AND features->>'position_id' = $1
+         AND (features->>'position_id' = $1
+              OR ($2::timestamptz IS NOT NULL AND entry_at = $2
+                  AND features->>'pool_address' = $3))
        LIMIT 1`,
-      [positionId],
+      [position.id, position.entryAt, position.poolAddress],
     )
     return !!row
   } catch (error) {
@@ -449,7 +465,15 @@ export async function syncMissingDlmmOutcomesFromPositions(
 
   for (const position of positions) {
     if (dlmmOutcomeSyncSkipIds.has(position.id)) continue
-    if (await dlmmOutcomeExistsForPosition(position.id)) continue
+    if (
+      await dlmmOutcomeExistsForPosition({
+        id: position.id,
+        entryAt: coerceIsoTimestamp(position.created_at),
+        poolAddress: position.pool_address ?? null,
+      })
+    ) {
+      continue
+    }
 
     const entryAt = coerceIsoTimestamp(position.created_at)
     const exitAt = coerceIsoTimestamp(position.closed_at)

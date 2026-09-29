@@ -62,21 +62,26 @@ export type RhTrendingSimResult = {
  * discovery, first buy record, tp1-marker sells), then compute all open sim
  * cycles in one sorted walk instead of re-scanning records per position.
  */
-function openPositionsFor(records: Records, strategyId: string): OpenPosition[] {
+export function openPositionsFor(records: Records, strategyId: string): OpenPosition[] {
   const candidateMints = new Set<string>()
   const candidateOrder: string[] = []
   const candidateToken = new Map<string, { symbol?: string }>()
-  const buyByMint = new Map<string, Records[number]>()
+  const buysByMint = new Map<string, TrackingRecord[]>()
+  const lastCloseTsByMint = new Map<string, number>()
   const tp1Mints = new Set<string>()
 
   for (const r of records) {
     const isCandidate = r.is_simulation === true && r.bot_strategy === strategyId
     const isBuy = r.operationType === 'buy' && r.bot_strategy === strategyId
+    const isFullClose =
+      r.operationType === 'sell' &&
+      r.bot_strategy === strategyId &&
+      r.close_position === true
     const isTp1Sell =
       r.operationType === 'sell' &&
       r.bot_strategy === strategyId &&
       !r.close_position
-    if (!isCandidate && !isBuy && !isTp1Sell) continue
+    if (!isCandidate && !isBuy && !isFullClose && !isTp1Sell) continue
 
     for (const t of r.tokens ?? []) {
       const mint = t.mintAddress
@@ -85,9 +90,36 @@ function openPositionsFor(records: Records, strategyId: string): OpenPosition[] 
         candidateOrder.push(mint)
         candidateToken.set(mint, t)
       }
-      if (isBuy && !buyByMint.has(mint)) buyByMint.set(mint, r)
+      if (isBuy) {
+        const buys = buysByMint.get(mint)
+        if (buys) buys.push(r)
+        else buysByMint.set(mint, [r])
+      }
+      if (isFullClose) {
+        lastCloseTsByMint.set(
+          mint,
+          Math.max(lastCloseTsByMint.get(mint) ?? 0, r.timestamp),
+        )
+      }
       if (isTp1Sell) tp1Mints.add(mint)
     }
+  }
+
+  /**
+   * Entry metadata belongs to the buy that opened the mint's *current* cycle:
+   * the earliest buy at/after the most recent full close. Taking the first-ever
+   * buy instead stamps every later re-entry with the same `entry_at`, so
+   * `(strategy, mint, entry_at)` stops identifying a trade and the read-side
+   * dedupe silently collapses all of a mint's trades into one (att_rh: 77,319
+   * distinct trades sharing 1,331 entry stamps). Records arrive ascending
+   * (`fetchTradingRecordsForWallet` orders by timestamp ASC).
+   */
+  const entryBuyFor = (mint: string): TrackingRecord | undefined => {
+    const buys = buysByMint.get(mint)
+    if (!buys || buys.length === 0) return undefined
+    const lastCloseTs = lastCloseTsByMint.get(mint)
+    if (lastCloseTs == null) return buys[0]
+    return buys.find((b) => b.timestamp >= lastCloseTs) ?? buys[buys.length - 1]
   }
 
   const cycles = computeOpenSimCycles(records, candidateMints)
@@ -97,7 +129,7 @@ function openPositionsFor(records: Records, strategyId: string): OpenPosition[] 
     const cycle = cycles.get(mint)
     if (!cycle || cycle.simulationType !== 'strategy') continue
 
-    const buy = buyByMint.get(mint)
+    const buy = entryBuyFor(mint)
     const sim = (buy?.trading_simulation ?? {}) as Record<string, unknown>
     const t = candidateToken.get(mint)
 

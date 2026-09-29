@@ -39,6 +39,27 @@ describe('toCanonicalEntryFeatures', () => {
     expect((out.domain_features as Record<string, unknown>).custom_flag).toBe(true)
   })
 
+  it('preserves the dlmm core keys the outcome dedupe reads', () => {
+    // These were listed in CORE_KEYS (so excluded from domain_features) but never
+    // emitted, so they vanished. position_id is the dlmm outcome dedupe key.
+    const out = toCanonicalEntryFeatures(
+      {
+        position_id: 'p-1',
+        pool_name: 'TOK-SOL',
+        amount_sol: 1.5,
+        pool_volume: 900,
+        fee_tvl_ratio_24h: 0.4,
+      },
+      'dlmm',
+      { mintAddress: MINT, poolAddress: 'Pool111' },
+    )
+    expect(out.position_id).toBe('p-1')
+    expect(out.pool_name).toBe('TOK-SOL')
+    expect(out.amount_sol).toBe(1.5)
+    expect(out.pool_volume).toBe(900)
+    expect(out.fee_tvl_ratio_24h).toBe(0.4)
+  })
+
   it('derives token_age_hours when missing', () => {
     const out = toCanonicalEntryFeatures(
       {
