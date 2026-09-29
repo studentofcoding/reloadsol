@@ -22,11 +22,9 @@ const POOL_CONN_TIMEOUT_MS = parseInt(
   process.env.DATABASE_POOL_CONN_TIMEOUT_MS || '5000',
   10,
 );
-/** Server-side ceiling so a pathological query cannot hold a client forever. */
-const POOL_STATEMENT_TIMEOUT_MS = parseInt(
-  process.env.DATABASE_STATEMENT_TIMEOUT_MS || '30000',
-  10,
-);
+// NOT statement_timeout: pg sends it as a *startup parameter* and PgBouncer rejects
+// unknown ones (`unsupported startup parameter: statement_timeout`), which breaks every
+// query in the app. connectionTimeoutMillis is client-side only, so it is safe.
 
 export function getPool(): Pool {
   if (!pool) {
@@ -38,7 +36,6 @@ export function getPool(): Pool {
       connectionString: url,
       max: POOL_MAX,
       connectionTimeoutMillis: POOL_CONN_TIMEOUT_MS,
-      statement_timeout: POOL_STATEMENT_TIMEOUT_MS,
       // ponytail: PgBouncer transaction pool rejects prepared statements
       prepare: false,
     } as ConstructorParameters<typeof Pool>[0]);

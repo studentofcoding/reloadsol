@@ -247,10 +247,12 @@ on the function; on 2026-09-29 the oldest open att_rh position was 10 days, so 7
 + `workers.Skipped` (which touches neither `lastSuccessAt` nor `lastErrorAt`). Treating a skip as a
 success is what made the ops view report the mcap sim healthy while it was almost never running.
 
-**Pool.** `DATABASE_POOL_MAX` (10), `DATABASE_POOL_CONN_TIMEOUT_MS` (5 s) and
-`DATABASE_STATEMENT_TIMEOUT_MS` (30 s). Without the acquisition timeout a query that cannot get a
-client queues indefinitely, so pool contention surfaces as the caller's HTTP deadline expiring
-rather than as a specific error.
+**Pool.** `DATABASE_POOL_MAX` (10) and `DATABASE_POOL_CONN_TIMEOUT_MS` (5 s). Without the
+acquisition timeout a query that cannot get a client queues indefinitely, so pool contention
+surfaces as the caller's HTTP deadline expiring rather than as a specific error. Do **not** add
+`statement_timeout` to the Pool: pg sends it as a *startup parameter* and PgBouncer rejects it
+(`unsupported startup parameter: statement_timeout`), which breaks every query in the app
+(`connectionTimeoutMillis` is client-side only, so it is safe).
 
 ### Paper-trade capital
 
