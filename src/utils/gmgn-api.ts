@@ -484,6 +484,52 @@ export async function tokenSecurity(params: {
   return data ?? {}
 }
 
+export type GmgnCreatedTokenRow = Record<string, unknown> & {
+  token_address?: string
+  symbol?: string
+  chain?: string
+  create_timestamp?: number
+  is_open?: boolean
+  market_cap?: string
+  token_ath_mc?: string
+  pool_liquidity?: string
+  holders?: number
+  launchpad_platform?: string
+  bundler_rate?: number
+  cto_flag?: boolean
+}
+
+export type GmgnCreatedTokens = {
+  last_create_timestamp?: number
+  inner_count?: number
+  open_count?: number
+  open_ratio?: string
+  creator_ath_info?: {
+    creator?: string
+    ath_token?: string
+    ath_mc?: string
+    token_symbol?: string
+    token_name?: string
+  }
+  tokens?: GmgnCreatedTokenRow[]
+}
+
+/** Dev coin history (`GET /v1/user/created_tokens`) — exist-auth, weight 2. */
+export async function createdTokens(params: {
+  chain: string
+  wallet: string
+}): Promise<GmgnCreatedTokens> {
+  const wallet =
+    params.chain === 'sol' ? params.wallet : params.wallet.toLowerCase()
+  const data = unwrapApiData<GmgnCreatedTokens>(
+    await gmgnFetch('/v1/user/created_tokens', {
+      chain: params.chain,
+      wallet_address: wallet,
+    }),
+  )
+  return data ?? {}
+}
+
 export type GmgnMarketRankRow = Record<string, unknown> & {
   address?: string
   symbol?: string

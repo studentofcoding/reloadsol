@@ -94,7 +94,11 @@ async function fetchTokensFromJupiterV2(mintAddresses: string[], retryCount = 0)
             organicScore: typeof token.organicScore === 'number' ? token.organicScore : null,
             audit: token.audit ? { topHoldersPercentage: typeof token.audit.topHoldersPercentage === 'number' ? token.audit.topHoldersPercentage : null } : undefined,
             graduatedAt: token.graduatedAt ? Number(token.graduatedAt) : null,
-            launchpad: token.launchpad
+            launchpad: token.launchpad,
+            // Creator wallet address (plain base58 string) + mint count. Jupiter has
+            // no coin history/performance — that's GMGN created_tokens.
+            dev: typeof token.dev === 'string' ? token.dev : (token.dev?.address ?? null),
+            devMints: typeof token.audit?.devMints === 'number' ? token.audit.devMints : null
           }
         }
       })

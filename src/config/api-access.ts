@@ -53,6 +53,7 @@ export const DEV_API_PREFIXES = [
   '/api/workers',
   '/api/fomo',
   '/api/social',
+  '/api/dev/reputation',
 ] as const;
 
 /** Cron / webhook / bearer routes that bypass wallet sessions. */

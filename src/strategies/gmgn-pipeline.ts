@@ -33,6 +33,8 @@ import {
   type TokenInfoDetectCapture,
 } from '@/strategies/token-info-detect'
 import { evaluateGmgnSecurity } from './gmgn-security-gate'
+import { attachRiskShadow } from './risk-store'
+import { riskLabelLines } from './risk-label'
 import { fetchJupiterMarketHints } from '@/utils/jupiter-metadata'
 
 function positive(v: unknown): number | null {
@@ -206,6 +208,15 @@ export async function gateGmgnCandidates(params: {
       config: params.strategy.config.security,
     })
 
+    // Shadow risk (RugCheck + dev reputation). Env-gated; never throws; never
+    // changes pass/banned — it only labels + records for later correlation.
+    const riskShadow = await attachRiskShadow({
+      chain,
+      tokenAddress: candidate.tokenAddress,
+      info,
+    })
+    const riskLines = riskLabelLines(riskShadow.label)
+
     const since = new Date(Date.now() - RADAR_ACCUMULATE_WINDOW_MS).toISOString()
     const priorEvents = await fetchSocialEventsForTokenSince(
       candidate.tokenAddress,
@@ -262,7 +273,7 @@ export async function gateGmgnCandidates(params: {
 
     const action = priceRules.action
     const banned = priceRules.banned
-    const reasonParts = [...priceRules.reasons]
+    const reasonParts = [...priceRules.reasons, ...riskLines]
 
     if (banned) {
       void killAndBanRadarDump({
@@ -316,6 +327,16 @@ export async function gateGmgnCandidates(params: {
         radar_watch_baseline_usd: priceRules.stickyBaselineUsd,
         radar_sticky_since_iso: priceRules.stickySinceIso,
         radar_dump_banned: banned ? 1 : 0,
+        // Shadow risk label (display + correlation). Never a gate input in shadow.
+        risk_verdict: riskShadow.label?.verdict ?? 'unknown',
+        risk_shadow: riskShadow.mode === 'shadow' ? 1 : 0,
+        risk_dev_sample: riskShadow.dev?.sample ?? null,
+        risk_dev_graduation_ratio: riskShadow.dev?.graduationRatio ?? null,
+        risk_dev_ath_mc: riskShadow.dev?.athMc ?? null,
+        risk_rugcheck_score_norm: riskShadow.rugcheck?.scoreNormalised ?? null,
+        risk_rugcheck_risks: riskShadow.rugcheck?.riskNames ?? [],
+        risk_creator_address: riskShadow.creator,
+        risk_reasons: riskShadow.label?.reasons ?? [],
         strategy_id: params.strategy.id,
         domain: 'gmgn',
       },

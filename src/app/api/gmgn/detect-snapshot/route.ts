@@ -13,6 +13,7 @@ import {
   OHLC_RUG_MAX_BARS,
 } from '@/strategies/ohlc-rug-rules'
 import { isValidMintAddress } from '@/utils/jupiter'
+import { readRiskChip } from '@/strategies/risk-store'
 
 
 export async function GET(request: NextRequest) {
@@ -67,6 +68,10 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // Stored shadow risk chip (RugCheck + dev reputation); null until the
+    // strategy pipeline has evaluated this token.
+    const riskChip = await readRiskChip('sol', address)
+
     return NextResponse.json(
       {
         success: true,
@@ -84,6 +89,7 @@ export async function GET(request: NextRequest) {
         source: snapSource,
         frozen_features: existing?.features ?? null,
         frozen_rule_hits: existing?.rule_hits ?? null,
+        riskChip,
       },
       { headers: { 'Cache-Control': 'no-store' } },
     )

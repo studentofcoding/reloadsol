@@ -1,0 +1,110 @@
+/**
+ * Dev-reputation data plumbing: resolve the creator address (GMGN info first, then
+ * Jupiter), fetch GMGN created_tokens, score it, cache by creator.
+ *
+ * Env: DEV_REPUTATION_ENABLED (kill switch), DEV_REPUTATION_MODE=shadow|enforce,
+ * DEV_REPUTATION_TTL_S. Best-effort callers must catch — a rate limit or network
+ * failure returns `null` and never blocks a tick.
+ */
+
+import { createdTokens } from '@/utils/gmgn-api'
+import { fetchJupiterV2SearchRaw } from '@/utils/jupiter-metadata'
+import { cacheGet, cacheSet } from '@/utils/redis-cache'
+import {
+  scoreDevReputation,
+  type DevReputation,
+} from '@/strategies/dev-reputation'
+
+export type DevReputationMode = 'shadow' | 'enforce'
+
+const DEFAULT_TTL_S = 86_400
+
+function envFlag(key: string, fallback = false): boolean {
+  const v = process.env[key]
+  if (v === undefined || v === '') return fallback
+  return v === '1' || v === 'true'
+}
+
+function toNum(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() !== '') {
+    const n = Number(value)
+    return Number.isFinite(n) ? n : null
+  }
+  return null
+}
+
+export function isDevReputationEnabled(): boolean {
+  return envFlag('DEV_REPUTATION_ENABLED', false)
+}
+
+/** Kill switch forces shadow; `off`/`0` never happens here (use the enabled flag). */
+export function devReputationMode(): DevReputationMode {
+  if (envFlag('DEV_REPUTATION_KILL_SWITCH', false)) return 'shadow'
+  return process.env.DEV_REPUTATION_MODE?.trim().toLowerCase() === 'enforce'
+    ? 'enforce'
+    : 'shadow'
+}
+
+/** Creator address: GMGN `info.dev.creator_address`, else Jupiter `dev` (sol). */
+export async function resolveCreatorAddress(params: {
+  chain: string
+  info: Record<string, unknown>
+  mint: string
+}): Promise<string | null> {
+  const dev = params.info?.dev
+  if (dev && typeof dev === 'object') {
+    const addr = (dev as Record<string, unknown>).creator_address
+    if (typeof addr === 'string' && addr.trim()) return addr.trim()
+  }
+
+  if (params.chain !== 'sol') return null
+
+  try {
+    const raw = await fetchJupiterV2SearchRaw(params.mint)
+    const arr = Array.isArray(raw) ? raw : [raw]
+    const token =
+      arr.find(
+        (t) =>
+          t &&
+          typeof t === 'object' &&
+          (t as { id?: string }).id === params.mint,
+      ) ?? arr[0]
+    const d = (token as { dev?: unknown } | undefined)?.dev
+    if (typeof d === 'string' && d.trim()) return d.trim()
+    if (d && typeof d === 'object') {
+      const addr = (d as { address?: unknown }).address
+      if (typeof addr === 'string' && addr.trim()) return addr.trim()
+    }
+  } catch {
+    // fall through — no creator known
+  }
+  return null
+}
+
+/** Cached, scored dev reputation. Returns `null` when GMGN is unavailable. */
+export async function fetchDevReputation(params: {
+  chain: string
+  creator: string
+  mintedCount?: number | null
+}): Promise<DevReputation | null> {
+  const creator = params.creator.trim()
+  if (!creator) return null
+
+  const key = `devrep:${params.chain}:${creator.toLowerCase()}`
+  const cached = await cacheGet<DevReputation>(key)
+  if (cached && typeof cached === 'object' && 'verdict' in cached) return cached
+
+  const data = await createdTokens({ chain: params.chain, wallet: creator })
+  const rep = scoreDevReputation({
+    innerCount: toNum(data.inner_count) ?? 0,
+    openCount: toNum(data.open_count) ?? 0,
+    athMc: toNum(data.creator_ath_info?.ath_mc),
+    mintedCount: params.mintedCount ?? null,
+    tokenAthMcs: (data.tokens ?? []).map((t) => toNum(t.token_ath_mc)),
+  })
+
+  const ttl = Number(process.env.DEV_REPUTATION_TTL_S)
+  void cacheSet(key, rep, Number.isFinite(ttl) && ttl > 0 ? ttl : DEFAULT_TTL_S)
+  return rep
+}
