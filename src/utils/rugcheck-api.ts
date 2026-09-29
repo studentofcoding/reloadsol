@@ -1,10 +1,13 @@
 /**
  * RugCheck keyless client + short cache.
  *
- * Free and keyless (verified: 6 rapid calls → all 200). No SDK, plain fetch.
- * Best-effort: any failure → `null` so a tick never breaks. A process-wide
- * min-interval gate mirrors gmgn-api's gate because RugCheck's keyless limits
- * are undocumented.
+ * Free and keyless. No SDK, plain fetch. Best-effort: any failure → `null` so a
+ * tick never breaks.
+ *
+ * Rate: measured ceiling (bounded probe, 2026-09-30) is clean up to ~10.4 rps
+ * (5 concurrent, 0×429) and throttles from ~16 rps attempted (8/10 concurrent
+ * → 429). We target ~3 rps (≈30% of the conservative 10 rps ceiling) — well
+ * inside the requested 20–40% band — with a serial min-interval gate.
  */
 
 import { cacheGet, cacheSet } from '@/utils/redis-cache'
@@ -17,7 +20,8 @@ import {
 const DEFAULT_HOST = 'https://api.rugcheck.xyz'
 const DEFAULT_TIMEOUT_MS = 12_000
 const DEFAULT_TTL_S = 900
-const DEFAULT_MIN_INTERVAL_MS = 250
+/** Target req/s (≈30% of the measured ~10 rps clean ceiling). */
+const DEFAULT_MAX_REQ_PER_SEC = 3
 
 function envFlag(key: string, fallback = false): boolean {
   const v = process.env[key]
@@ -32,6 +36,17 @@ function envInt(key: string, fallback: number, min = 0): number {
 
 export function isRugcheckEnabled(): boolean {
   return envFlag('RUGCHECK_ENABLED', false)
+}
+
+/** Effective target requests/second (env-tunable). */
+export function rugcheckMaxReqPerSec(): number {
+  const n = Number(process.env.RUGCHECK_MAX_REQ_PER_SEC ?? DEFAULT_MAX_REQ_PER_SEC)
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_REQ_PER_SEC
+}
+
+/** Effective min gap between RugCheck requests (ms). Exported for the self-check. */
+export function rugcheckMinIntervalMs(): number {
+  return Math.ceil(1000 / rugcheckMaxReqPerSec())
 }
 
 function host(): string {
@@ -49,7 +64,7 @@ function sleep(ms: number): Promise<void> {
 
 /** Min-interval gate for keyless RugCheck reads (serial, env-tunable). */
 function rugcheckGate(): Promise<void> {
-  const minIntervalMs = envInt('RUGCHECK_MIN_INTERVAL_MS', DEFAULT_MIN_INTERVAL_MS, 0)
+  const minIntervalMs = rugcheckMinIntervalMs()
   const next = gate.chain.then(async () => {
     const now = Date.now()
     const wait = Math.max(0, gate.lastAt + minIntervalMs - now)
