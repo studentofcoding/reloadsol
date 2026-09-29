@@ -77,13 +77,7 @@ import { toClimateChipPayload } from '@/utils/climateDisplay'
 import { fetchClimate } from '@/utils/climateGate'
 import { log } from '@/utils/unified-logger'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
-import {
-  buildExecutionRecord,
-  computeBuyFill,
-  resolveDepth,
-  resolveExecutionParams,
-} from '@/strategies/execution-model'
-import { fillSourceLabel, resolveSimFill } from '@/strategies/sim-fill'
+import { buildShadowExecutionRecord } from '@/strategies/sim-fill'
 import {
   buildMcapOutcomeFeatures,
   computeMcapSimPnlPct,
@@ -498,51 +492,14 @@ async function closeSimPosition(params: {
     },
   )
 
-  // Standardized execution record (SHADOW): the legacy pnlPct above is untouched, so nothing about
-  // today's reported PnL moves until the modelled drag has been reviewed. The exit is quoted (the
-  // pool's own impact, which also reveals the depth); the entry is priced at that same observed
-  // depth, because only the fill at hand can be quoted — and which side was quoted is stored.
-  let execRecord: Record<string, unknown> | null = null
-  try {
-    const execParams = resolveExecutionParams()
-    const tokens = cycle.remainingTokenAmount
-    const exitSpot = tokens > 0 ? solReceived / tokens : 0
-    const priceRatio = 1 + pnlPct / 100
-    const entrySpot = exitSpot > 0 && priceRatio > 0 ? exitSpot / priceRatio : 0
-    if (entrySpot > 0 && solReceived > 0 && cycle.totalSolBought > 0) {
-      const fallbackDepth = resolveDepth({}, execParams)
-      const resolved = await resolveSimFill({
-        chain: params.chain,
-        mint: params.mintAddress,
-        side: 'sell',
-        notionalQuote: solReceived,
-        spotPrice: exitSpot,
-        tokenAmountUi: tokens,
-        params: execParams,
-        fallbackDepth,
-      })
-      const entryDepth = resolved.quotedDepthQuote
-        ? { depthQuote: resolved.quotedDepthQuote, depthSource: 'liquidity' as const }
-        : fallbackDepth
-      const entryFill = computeBuyFill({
-        side: 'buy',
-        spotPrice: entrySpot,
-        notionalQuote: cycle.totalSolBought,
-        depth: entryDepth,
-        params: execParams,
-      })
-      execRecord = {
-        ...buildExecutionRecord(entryFill, resolved.fill, execParams),
-        entry_source: fillSourceLabel('model'),
-        exit_source: fillSourceLabel(resolved.source),
-      }
-    }
-  } catch (error) {
-    console.warn(
-      '[sim-exec] execution record skipped:',
-      error instanceof Error ? error.message : error,
-    )
-  }
+  // How the close would really have filled, recorded beside pnlPct (SHADOW: pnlPct unchanged).
+  const execRecord = await buildShadowExecutionRecord({
+    chain: params.chain,
+    mint: params.mintAddress,
+    exitSolValue: solReceived,
+    priceRatio: 1 + pnlPct / 100,
+    tokenAmountUi: cycle.remainingTokenAmount,
+  })
 
   await recordMcapTrackerOutcome({
     strategyId: params.strategyId,

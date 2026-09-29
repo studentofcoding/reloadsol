@@ -13,8 +13,11 @@
  * ~0.002 rps. Everything here therefore goes through the shared serial gate and fails soft.
  */
 import {
+  buildExecutionRecord,
   computeBuyFill,
   computeSellFill,
+  resolveDepth,
+  resolveExecutionParams,
   type DepthSource,
   type ExecutionParams,
   type Fill,
@@ -247,5 +250,72 @@ export async function resolveSimFill(request: SimFillRequest): Promise<SimFillRe
     }
   } catch {
     return { fill: fallback, source: 'model' }
+  }
+}
+
+export interface ShadowExecInput {
+  chain?: string
+  mint: string
+  /** SOL received for the position at the close. */
+  exitSolValue: number
+  /** 1 + pnlPct/100 — the price ratio every close path already computes. */
+  priceRatio: number
+  /** Token amount in UI units. */
+  tokenAmountUi: number
+  params?: ExecutionParams
+}
+
+/**
+ * The one place a close records how the trade would really have filled.
+ *
+ * The cost basis is derived from the close's own numbers (`cost = exitValue / priceRatio`), so any
+ * close path can call this without threading extra state through. The exit is quoted; the entry is
+ * priced at the depth that quote revealed. Returns null when the numbers cannot support a record —
+ * never a fabricated one — and never throws, so a close can never fail because of telemetry.
+ */
+export async function buildShadowExecutionRecord(
+  input: ShadowExecInput,
+): Promise<Record<string, unknown> | null> {
+  try {
+    const params = input.params ?? resolveExecutionParams()
+    const tokens = input.tokenAmountUi
+    if (!(input.exitSolValue > 0) || !(input.priceRatio > 0) || !(tokens > 0)) return null
+    const costSol = input.exitSolValue / input.priceRatio
+    const exitSpot = input.exitSolValue / tokens
+    const entrySpot = exitSpot / input.priceRatio
+    if (!(costSol > 0) || !(entrySpot > 0)) return null
+
+    const fallbackDepth = resolveDepth({}, params)
+    const resolved = await resolveSimFill({
+      chain: input.chain,
+      mint: input.mint,
+      side: 'sell',
+      notionalQuote: input.exitSolValue,
+      spotPrice: exitSpot,
+      tokenAmountUi: tokens,
+      params,
+      fallbackDepth,
+    })
+    const entryDepth = resolved.quotedDepthQuote
+      ? { depthQuote: resolved.quotedDepthQuote, depthSource: 'liquidity' as const }
+      : fallbackDepth
+    const entryFill = computeBuyFill({
+      side: 'buy',
+      spotPrice: entrySpot,
+      notionalQuote: costSol,
+      depth: entryDepth,
+      params,
+    })
+    return {
+      ...buildExecutionRecord(entryFill, resolved.fill, params),
+      entry_source: fillSourceLabel('model'),
+      exit_source: fillSourceLabel(resolved.source),
+    }
+  } catch (error) {
+    console.warn(
+      '[sim-exec] execution record skipped:',
+      error instanceof Error ? error.message : error,
+    )
+    return null
   }
 }
