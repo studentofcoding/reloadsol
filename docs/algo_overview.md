@@ -171,6 +171,28 @@ defect; the same token under **different** strategies is agreement — see
 `token_strategy_overlap` (`db/init/46-token-strategy-overlap-view.sql`) and the Reports
 "Strategy overlap" table.
 
+**Agreement is counted in FAMILIES, not strategy rows.** `resolveStrategyFamily`
+(`src/strategies/strategy-family.ts`) collapses `_rh` twins onto their sol sibling and search
+variants onto their canonical slot by entry template — because the search spawner
+(`MAX_CONCURRENT_SEARCH = 3`, `strategy-search-bandit.ts`) fills its slots with grid neighbours
+that share the entry filter and differ only in take-profit. Measured Jaccard between
+`search_mcap_first_seen_sl_30_tp150/tp200/tp300_h48` is **0.37–0.66**; every cross-family pair is
+**0.01–0.05**. So raw `count(DISTINCT strategy_id)` (what view 46 reports) overstates agreement —
+measured 2026-09-29: 8 strategy rows → 5 families, 138 tokens clone-inflated / 199 phantom
+strategies, e.g. `HGN8K3x5…` reads 5 strategy rows but **3** independent bets. The Reports overlap
+table shows `families / strategies` side by side, and `loadStrategyPairOverlap` labels each pair
+redundant (same family) or genuine agreement.
+
+**The consensus signal is NOT established and does not gate anything.** The first measurement
+looked like median PnL rising with breadth (+25.6 % at 1 → +210.8 % at 5 raw strategies), but by
+independent family it is **+120 % at 1 family (n=238), +255 % at 2 (n=18), +157 % at 3 (n=3)** —
+up then down, on 18 and 3 tokens. `loadConsensusTest` (`src/strategies/consensus-test.ts`) buckets
+by family count and reports a seeded bootstrap 95 % CI on the median (right-tailed outcomes: att_rh
+mean +83 % vs median −39 % on first entries) plus a Wilson CI on the token win rate, and prints
+`inconclusive` below 30 tokens per side. Read it as "no result yet", not "no effect". A gate would
+only follow a significant lift, shadow-first, mirroring the wallet-digger concurrence shape
+(`alpha_concurrence_signals`).
+
 Two historical defects this closed (both fixed in the writers; history repaired by
 `scripts/backfill-strategy-outcome-entry-at-standalone.mjs`):
 

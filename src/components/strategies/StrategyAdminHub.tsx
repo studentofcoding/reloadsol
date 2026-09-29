@@ -200,8 +200,12 @@ type ReportBreakdown = {
 type OverlapRow = {
   chain: string;
   token_address: string;
+  /** Raw distinct strategies; includes grid clones, so it overstates agreement. */
   strategy_count: number;
   strategies: string[];
+  /** Independent bets (see resolveStrategyFamily). "5 rows, 2 bets". */
+  family_count: number;
+  families: string[];
   trades: number;
   wins: number;
   losses: number;
@@ -209,6 +213,50 @@ type OverlapRow = {
   first_entry: string | null;
   last_exit: string | null;
 };
+
+/** Pairwise token-set overlap. same_family = the spawner produced a clone. */
+type PairOverlapRow = {
+  strategy_a: string;
+  strategy_b: string;
+  shared: number;
+  a_tokens: number;
+  b_tokens: number;
+  jaccard: number;
+  family_a: string;
+  family_b: string;
+  same_family: boolean;
+};
+
+type ConsensusBucket = {
+  family_count: number;
+  label: string;
+  tokens: number;
+  trades: number;
+  median_pnl_pct: number | null;
+  mean_pnl_pct: number | null;
+  win_rate: number | null;
+  median_ci: [number, number] | null;
+  win_rate_ci: [number, number] | null;
+};
+
+type ConsensusLift = {
+  vs: string;
+  delta_median_pct: number | null;
+  delta_ci: [number, number] | null;
+  significant: boolean;
+  inconclusive: boolean;
+  reason: string;
+};
+
+type ConsensusResult = {
+  buckets: ConsensusBucket[];
+  lifts: ConsensusLift[];
+  min_tokens_per_bucket: number;
+  samples: number;
+};
+
+const fmtPct = (v: number | null | undefined): string =>
+  v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
 
 type CoverageRow = {
   strategy_id: string;
@@ -293,6 +341,8 @@ type StrategyAdminQueryData = {
     mcap_tracker_stats: McapTrackerReportStats | null;
     best_trade_windows: BestTradeWindowRow[];
     overlap: OverlapRow[];
+    pairs: PairOverlapRow[];
+    consensus: ConsensusResult | null;
     timezone: string;
   } | null;
 };
@@ -733,6 +783,8 @@ export default function StrategyAdminHub({
               best_trade_windows: (repJson.best_trade_windows ??
                 []) as BestTradeWindowRow[],
               overlap: (repJson.overlap ?? []) as OverlapRow[],
+              pairs: (repJson.pairs ?? []) as PairOverlapRow[],
+              consensus: (repJson.consensus ?? null) as ConsensusResult | null,
               timezone: (repJson.timezone as string) ?? reportTz,
             }
           : null,
@@ -1715,6 +1767,9 @@ export default function StrategyAdminHub({
                   <thead className="text-gray-400 text-xs uppercase">
                     <tr>
                       <th className="p-2 text-left">Token</th>
+                      <th className="p-2 text-center" title="independent bets / raw strategy rows">
+                        Bets
+                      </th>
                       <th className="p-2 text-left">Strategies</th>
                       <th className="p-2 text-center">Trades</th>
                       <th className="p-2 text-center">W/L</th>
@@ -1731,11 +1786,31 @@ export default function StrategyAdminHub({
                         <td className="p-2 font-mono text-xs">
                           {o.token_address.slice(0, 10)}…
                         </td>
+                        <td
+                          className="p-2 text-center"
+                          title={`${o.family_count} independent bet(s) across ${o.strategy_count} strategy row(s)`}
+                        >
+                          <span
+                            className={
+                              o.family_count > 1 ? "text-cyan-300" : "text-gray-400"
+                            }
+                          >
+                            {o.family_count}
+                          </span>
+                          <span className="text-xs text-gray-500">
+                            /{o.strategy_count}
+                          </span>
+                        </td>
                         <td className="p-2">
-                          <span className="text-xs text-cyan-300">
-                            {o.strategy_count}×
-                          </span>{" "}
-                          {o.strategies.join(", ")}
+                          {o.family_count > 1 && (
+                            <span className="text-xs text-cyan-300">
+                              {o.families.join(" + ")}
+                            </span>
+                          )}
+                          {o.family_count > 1 && " · "}
+                          <span className="text-xs text-gray-500">
+                            {o.strategies.join(", ")}
+                          </span>
                         </td>
                         <td className="p-2 text-center">{o.trades}</td>
                         <td className="p-2 text-center">
@@ -1756,9 +1831,11 @@ export default function StrategyAdminHub({
                   </tbody>
                 </table>
                 <p className="text-xs text-gray-500 mt-1">
-                  Agreement, not a defect: one strategy per token is the invariant, the
-                  same token under different strategies is consensus. Median, never a
-                  summed % — that would double-count one token&apos;s move.
+                  Bets = independent families (see strategy-family.ts); the number after
+                  the slash is the raw strategy rows. The search spawner fills its slots
+                  with near-identical grid neighbours, so raw breadth overstates
+                  agreement: &quot;5 rows, 2 bets&quot;. Median, never a summed % — that
+                  would double-count one token&apos;s move.
                 </p>
               </div>
             ) : (
@@ -1766,6 +1843,142 @@ export default function StrategyAdminHub({
                 No token entered by more than one strategy in this window.
               </p>
             )}
+
+            <h3 className="text-lg font-semibold text-white mb-2">
+              Pairwise overlap — clones vs real agreement
+            </h3>
+            {(reports?.pairs ?? []).length > 0 ? (
+              <div className="overflow-x-auto mb-6">
+                <table className="w-full text-sm text-gray-300">
+                  <thead className="text-gray-400 text-xs uppercase">
+                    <tr>
+                      <th className="p-2 text-left">Strategy pair</th>
+                      <th className="p-2 text-center">Shared</th>
+                      <th className="p-2 text-center">Jaccard</th>
+                      <th className="p-2 text-left">Verdict</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(reports?.pairs ?? []).slice(0, 15).map((p: PairOverlapRow) => (
+                      <tr
+                        key={`${p.strategy_a}-${p.strategy_b}`}
+                        className="border-t border-gray-700"
+                      >
+                        <td className="p-2 text-xs">
+                          {p.strategy_a} ↔ {p.strategy_b}
+                        </td>
+                        <td className="p-2 text-center">
+                          {p.shared}/{p.a_tokens}·{p.b_tokens}
+                        </td>
+                        <td className="p-2 text-center">{p.jaccard.toFixed(2)}</td>
+                        <td className="p-2 text-xs">
+                          {p.same_family ? (
+                            <span className="text-amber-300">
+                              redundant — same family ({p.family_a})
+                            </span>
+                          ) : (
+                            <span className="text-emerald-300">
+                              agreement across families
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-gray-500 text-sm mb-6">
+                No strategy pair shares 2+ tokens in this window.
+              </p>
+            )}
+
+            <h3 className="text-lg font-semibold text-white mb-2">
+              Does agreement predict the outcome?
+            </h3>
+            {(() => {
+              const c = reports?.consensus;
+              if (!c || c.buckets.length === 0) {
+                return (
+                  <p className="text-gray-500 text-sm mb-6">
+                    No closed outcomes in this window yet.
+                  </p>
+                );
+              }
+              return (
+                <div className="mb-6">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-gray-300">
+                      <thead className="text-gray-400 text-xs uppercase">
+                        <tr>
+                          <th className="p-2 text-left">Bets</th>
+                          <th className="p-2 text-center">Tokens</th>
+                          <th className="p-2 text-center">Trades</th>
+                          <th className="p-2 text-center">Median PnL</th>
+                          <th className="p-2 text-center">95% CI</th>
+                          <th className="p-2 text-center">Token win %</th>
+                          <th className="p-2 text-center">95% CI</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {c.buckets.map((b: ConsensusBucket) => (
+                          <tr key={b.label} className="border-t border-gray-700">
+                            <td className="p-2">{b.label}</td>
+                            <td className="p-2 text-center">{b.tokens}</td>
+                            <td className="p-2 text-center">{b.trades}</td>
+                            <td className="p-2 text-center">
+                              {fmtPct(b.median_pnl_pct)}
+                            </td>
+                            <td className="p-2 text-center text-xs text-gray-400">
+                              {b.median_ci
+                                ? `[${fmtPct(b.median_ci[0])}, ${fmtPct(b.median_ci[1])}]`
+                                : "—"}
+                            </td>
+                            <td className="p-2 text-center">
+                              {b.win_rate == null
+                                ? "—"
+                                : `${(b.win_rate * 100).toFixed(1)}%`}
+                            </td>
+                            <td className="p-2 text-center text-xs text-gray-400">
+                              {b.win_rate_ci
+                                ? `[${(b.win_rate_ci[0] * 100).toFixed(1)}%, ${(b.win_rate_ci[1] * 100).toFixed(1)}%]`
+                                : "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="mt-2 space-y-1">
+                    {c.lifts.map((l: ConsensusLift, i: number) => (
+                      <p
+                        key={`${l.vs}-${i}`}
+                        className={
+                          l.significant
+                            ? "text-xs text-emerald-300"
+                            : "text-xs text-amber-300"
+                        }
+                      >
+                        {l.vs} bet → more bets: {fmtPct(l.delta_median_pct)}
+                        {l.delta_ci
+                          ? ` (95% CI [${fmtPct(l.delta_ci[0])}, ${fmtPct(l.delta_ci[1])}])`
+                          : ""}{" "}
+                        —{" "}
+                        {l.significant
+                          ? "significant"
+                          : `inconclusive: ${l.reason}`}{" "}
+                        · floor {c.min_tokens_per_bucket} tokens/side
+                      </p>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Breadth counts independent families, not strategy rows. Median with
+                    a bootstrap CI because the outcome distribution is right-tailed — a
+                    mean would report the tail. Nothing here gates trading.
+                  </p>
+                </div>
+              );
+            })()}
 
             <h3 className="text-lg font-semibold text-white mb-2">
               Best trade windows ({reports?.timezone ?? reportTz})

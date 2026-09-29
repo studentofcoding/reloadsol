@@ -558,8 +558,12 @@ export interface StrategyAbPair {
 export interface StrategyOverlapRow {
   chain: string
   token_address: string
+  /** Raw distinct strategies — includes grid clones, so it overstates agreement. */
   strategy_count: number
   strategies: string[]
+  /** Independent bets (see resolveStrategyFamily). "5 rows, 2 bets". */
+  family_count: number
+  families: string[]
   trades: number
   wins: number
   losses: number
@@ -567,6 +571,23 @@ export interface StrategyOverlapRow {
   median_pnl_pct: number | null
   first_entry: string | null
   last_exit: string | null
+}
+
+/**
+ * Pairwise token-set overlap between two strategies. A high Jaccard means one of two
+ * very different things: `same_family` → the spawner produced a clone (redundancy,
+ * a defect); different families → the strategies genuinely agree on the token.
+ */
+export interface StrategyPairOverlapRow {
+  strategy_a: string
+  strategy_b: string
+  shared: number
+  a_tokens: number
+  b_tokens: number
+  jaccard: number
+  family_a: string
+  family_b: string
+  same_family: boolean
 }
 
 export interface StrategyHourBucket {

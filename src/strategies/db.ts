@@ -4,6 +4,8 @@ import { getTrackingHealthStats, computeMcapSimPnlPct } from '@/utils/mcap-track
 import { countOpenMcapSimPositions, getOpenMcapSimPositions } from '@/utils/mcap-sim-track'
 import { readTokenSymbol, readTrainingClass } from './outcome-features'
 import { dedupeStrategyOutcomeRows } from './outcome-dedupe'
+import { resolveStrategyFamily } from './strategy-family'
+import { runConsensusTest, type ConsensusTestResult } from './consensus-test'
 import { applyAutoOutcomeLabels } from './outcome-labeling'
 import { matchesTrainingClassFilter } from './ml-training-features'
 import {
@@ -51,6 +53,7 @@ import type {
   McapTrackerReportStats,
   StrategyBestTradeWindows,
   StrategyOverlapRow,
+  StrategyPairOverlapRow,
 } from './types'
 
 function errorMessage(error: unknown): string {
@@ -1433,10 +1436,44 @@ export async function listTopPnlByActiveStrategy(
 }
 
 /**
- * Tokens entered by more than one strategy within the report filters. Windowed
- * variant of db/init/46-token-strategy-overlap-view.sql (which is whole-table per
- * chain, for ad-hoc reads) — same aggregation, applied to the same where clause
- * the rest of the report uses so the numbers line up with `breakdown`.
+ * strategy_id -> family (independent bet). Definitions are a few dozen rows, so this
+ * is fetched whole rather than resolved per id; ids with no definition row fall back
+ * to themselves via the LEFT JOIN in the callers.
+ */
+async function loadStrategyFamilyMap(): Promise<Map<string, string>> {
+  const map = new Map<string, string>()
+  try {
+    const { rows } = await query<{ id: string; domain: string; config: unknown }>(
+      `SELECT id, domain, config FROM strategy_definitions`,
+    )
+    for (const row of rows) {
+      map.set(
+        row.id,
+        resolveStrategyFamily({
+          strategyId: row.id,
+          domain: row.domain as StrategyDomain,
+          config: (row.config ?? {}) as Record<string, unknown>,
+        }),
+      )
+    }
+  } catch (error) {
+    if (!isMissingSchemaError(error)) {
+      console.warn('[strategies/db] strategy family map failed:', errorMessage(error))
+    }
+  }
+  return map
+}
+
+/**
+ * Tokens entered by more than one strategy within the report filters.
+ *
+ * Reports both the raw count and the count of independent FAMILIES, because the
+ * search spawner fills its slots with grid neighbours (same entry rule, different
+ * take profit) — measured Jaccard 0.37-0.66 among them. `strategy_count` is kept so
+ * the clone inflation is visible rather than hidden: "5 rows, 2 bets".
+ *
+ * Windowed equivalent of db/init/46-token-strategy-overlap-view.sql, which stays a
+ * whole-table raw count (a view cannot resolve families).
  */
 export async function loadTokenStrategyOverlap(
   params: OutcomeFilterParams & { limit?: number },
@@ -1447,11 +1484,19 @@ export async function loadTokenStrategyOverlap(
   const limitIdx = values.length + 1
 
   try {
+    const familyMap = await loadStrategyFamilyMap()
+    const famIds = [...familyMap.keys()]
+    const famVals = famIds.map((id) => familyMap.get(id)!)
+    const idsIdx = limitIdx + 1
+    const valsIdx = idsIdx + 1
+
     const { rows } = await query<{
       chain: string
       token_address: string
       strategy_count: number
       strategies: string[]
+      family_count: number
+      families: string[]
       trades: number
       wins: number
       losses: number
@@ -1459,29 +1504,35 @@ export async function loadTokenStrategyOverlap(
       first_entry: string | null
       last_exit: string | null
     }>(
-      `SELECT chain,
-              token_address,
-              count(DISTINCT strategy_id)::int AS strategy_count,
-              array_agg(DISTINCT strategy_id) AS strategies,
+      `SELECT o.chain,
+              o.token_address,
+              count(DISTINCT o.strategy_id)::int AS strategy_count,
+              array_agg(DISTINCT o.strategy_id) AS strategies,
+              count(DISTINCT coalesce(fam.family, o.strategy_id))::int AS family_count,
+              array_agg(DISTINCT coalesce(fam.family, o.strategy_id)) AS families,
               count(*)::int AS trades,
-              count(*) FILTER (WHERE pnl_pct > 1e-6)::int AS wins,
-              count(*) FILTER (WHERE pnl_pct < -1e-6)::int AS losses,
-              percentile_cont(0.5) WITHIN GROUP (ORDER BY pnl_pct) AS median_pnl_pct,
-              min(entry_at) AS first_entry,
-              max(exit_at) AS last_exit
-         FROM strategy_outcomes
-         ${where} token_address IS NOT NULL
-        GROUP BY chain, token_address
-       HAVING count(DISTINCT strategy_id) > 1
+              count(*) FILTER (WHERE o.pnl_pct > 1e-6)::int AS wins,
+              count(*) FILTER (WHERE o.pnl_pct < -1e-6)::int AS losses,
+              percentile_cont(0.5) WITHIN GROUP (ORDER BY o.pnl_pct) AS median_pnl_pct,
+              min(o.entry_at) AS first_entry,
+              max(o.exit_at) AS last_exit
+         FROM strategy_outcomes o
+         LEFT JOIN unnest($${idsIdx}::text[], $${valsIdx}::text[]) AS fam(strategy_id, family)
+                ON fam.strategy_id = o.strategy_id
+         ${where} o.token_address IS NOT NULL
+        GROUP BY o.chain, o.token_address
+       HAVING count(DISTINCT o.strategy_id) > 1
         ORDER BY strategy_count DESC, trades DESC
         LIMIT $${limitIdx}`,
-      [...values, limit],
+      [...values, limit, famIds, famVals],
     )
     return rows.map((row) => ({
       chain: row.chain,
       token_address: row.token_address,
       strategy_count: Number(row.strategy_count),
       strategies: row.strategies ?? [],
+      family_count: Number(row.family_count),
+      families: row.families ?? [],
       trades: Number(row.trades),
       wins: Number(row.wins),
       losses: Number(row.losses),
@@ -1494,6 +1545,125 @@ export async function loadTokenStrategyOverlap(
     if (isMissingSchemaError(error)) return []
     console.warn('[strategies/db] token strategy overlap failed:', errorMessage(error))
     return []
+  }
+}
+
+/**
+ * Pairwise token-set overlap (Jaccard) between strategies over the report filters.
+ *
+ * Separates the two things a high number can mean: `same_family` pairs are the
+ * spawner's redundant clones (a defect), different-family pairs are genuine
+ * agreement — the only ones worth testing as a signal.
+ */
+export async function loadStrategyPairOverlap(
+  params: OutcomeFilterParams & { limit?: number },
+): Promise<StrategyPairOverlapRow[]> {
+  const limit = params.limit ?? 25
+  const { sql: whereSql, values } = buildOutcomeWhereClause(params)
+  const where = whereSql ? `${whereSql} AND` : 'WHERE'
+  const limitIdx = values.length + 1
+
+  try {
+    const { rows } = await query<{
+      strategy_a: string
+      strategy_b: string
+      shared: number
+      a_tokens: number
+      b_tokens: number
+      jaccard: string | number
+    }>(
+      `WITH s AS (
+         SELECT DISTINCT chain, token_address, strategy_id
+           FROM strategy_outcomes
+           ${where} token_address IS NOT NULL
+       ), sz AS (
+         SELECT strategy_id, count(*)::int AS n FROM s GROUP BY 1
+       )
+       SELECT a.strategy_id AS strategy_a,
+              b.strategy_id AS strategy_b,
+              count(*)::int AS shared,
+              sa.n AS a_tokens,
+              sb.n AS b_tokens,
+              count(*)::numeric / (sa.n + sb.n - count(*)) AS jaccard
+         FROM s a
+         JOIN s b ON a.token_address = b.token_address
+                 AND a.chain = b.chain
+                 AND a.strategy_id < b.strategy_id
+         JOIN sz sa ON sa.strategy_id = a.strategy_id
+         JOIN sz sb ON sb.strategy_id = b.strategy_id
+        GROUP BY 1, 2, sa.n, sb.n
+       HAVING count(*) >= 2
+        ORDER BY jaccard DESC, shared DESC
+        LIMIT $${limitIdx}`,
+      [...values, limit],
+    )
+    const familyMap = await loadStrategyFamilyMap()
+    return rows.map((row) => {
+      const famA = familyMap.get(row.strategy_a) ?? row.strategy_a
+      const famB = familyMap.get(row.strategy_b) ?? row.strategy_b
+      return {
+        strategy_a: row.strategy_a,
+        strategy_b: row.strategy_b,
+        shared: Number(row.shared),
+        a_tokens: Number(row.a_tokens),
+        b_tokens: Number(row.b_tokens),
+        jaccard: Number(row.jaccard),
+        family_a: famA,
+        family_b: famB,
+        same_family: famA === famB,
+      }
+    })
+  } catch (error) {
+    if (isMissingSchemaError(error)) return []
+    console.warn('[strategies/db] strategy pair overlap failed:', errorMessage(error))
+    return []
+  }
+}
+
+/**
+ * Does strategy agreement predict the outcome? Breadth is counted in independent
+ * families and the result carries confidence intervals plus an explicit
+ * `inconclusive` state — see src/strategies/consensus-test.ts for the choices.
+ */
+export async function loadConsensusTest(
+  params: OutcomeFilterParams & { limit?: number; samples?: number },
+): Promise<ConsensusTestResult> {
+  const limit = params.limit ?? 5000
+  const { sql: whereSql, values } = buildOutcomeWhereClause(params)
+  const where = whereSql ? `${whereSql} AND` : 'WHERE'
+  const limitIdx = values.length + 1
+
+  try {
+    const { rows } = await query<{
+      token_address: string
+      strategies: string[]
+      pnls: (number | string)[]
+    }>(
+      `SELECT token_address,
+              array_agg(DISTINCT strategy_id) AS strategies,
+              array_agg(pnl_pct) FILTER (WHERE pnl_pct IS NOT NULL) AS pnls
+         FROM strategy_outcomes
+         ${where} token_address IS NOT NULL
+        GROUP BY token_address
+        LIMIT $${limitIdx}`,
+      [...values, limit],
+    )
+    const familyMap = await loadStrategyFamilyMap()
+    return runConsensusTest(
+      rows.map((row) => ({
+        families: (row.strategies ?? []).map((id) => familyMap.get(id) ?? id),
+        pnls: (row.pnls ?? [])
+          .map((p) => Number(p))
+          .filter((p) => Number.isFinite(p)),
+      })),
+      params.samples == null ? {} : { samples: params.samples },
+    )
+  } catch (error) {
+    if (isMissingSchemaError(error)) {
+      return runConsensusTest([])
+    }
+    console.warn('[strategies/db] consensus test failed:', errorMessage(error))
+    return runConsensusTest([])
   }
 }
 
@@ -1515,6 +1685,8 @@ export async function aggregateStrategyReports(params: {
   mcapTrackerStats: McapTrackerReportStats
   bestTradeWindows: StrategyBestTradeWindows[]
   overlap: StrategyOverlapRow[]
+  pairs: StrategyPairOverlapRow[]
+  consensus: ConsensusTestResult
   timezone: string
 }> {
   const timeZone = resolveReportTimeZone(params.timeZone ?? DEFAULT_REPORT_TIMEZONE)
@@ -1547,6 +1719,8 @@ export async function aggregateStrategyReports(params: {
         mcapTrackerStats: emptyMcapStats,
         bestTradeWindows: [],
         overlap: [],
+        pairs: [],
+        consensus: runConsensusTest([]),
         timezone: timeZone,
       }
     }
@@ -1741,6 +1915,12 @@ export async function aggregateStrategyReports(params: {
   const mcapTrackerStats = await buildMcapTrackerReportStats(rows, breakdown)
   const bestTradeWindows = computeBestTradeWindows(rows, { timeZone })
 
+  const [overlap, pairs, consensus] = await Promise.all([
+    loadTokenStrategyOverlap(params),
+    loadStrategyPairOverlap(params),
+    loadConsensusTest(params),
+  ])
+
   return {
     breakdown,
     abPairs,
@@ -1750,7 +1930,9 @@ export async function aggregateStrategyReports(params: {
     mlStats,
     mcapTrackerStats,
     bestTradeWindows,
-    overlap: await loadTokenStrategyOverlap(params),
+    overlap,
+    pairs,
+    consensus,
     timezone: timeZone,
   }
 }

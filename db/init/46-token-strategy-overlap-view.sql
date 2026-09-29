@@ -16,6 +16,14 @@
 -- one token's move and is not a portfolio return) and must prefer median_pnl_pct
 -- over a mean, which is dominated by the right tail (2026-09-29: mean +119.7% vs
 -- median +2.2%, with the top 10 trades = 57% of the day's total).
+--
+-- NOTE: strategy_count here is RAW count(DISTINCT strategy_id), and it overstates
+-- agreement: the search spawner fills its slots with grid neighbours that differ only
+-- in take profit (measured Jaccard 0.37-0.66 between them). This view cannot resolve
+-- families (a view cannot call the TS rule), so the family-counted breadth, the
+-- pairwise Jaccard and the consensus test live in src/strategies/db.ts
+-- (loadTokenStrategyOverlap / loadStrategyPairOverlap / loadConsensusTest) on top of
+-- src/strategies/strategy-family.ts. Use this view for raw ad-hoc reads only.
 
 CREATE OR REPLACE VIEW token_strategy_overlap AS
 SELECT chain,

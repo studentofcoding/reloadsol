@@ -52,6 +52,8 @@ export async function GET(request: NextRequest) {
       mcapTrackerStats,
       bestTradeWindows,
       overlap,
+      pairs,
+      consensus,
       timezone,
     } = await aggregateStrategyReports({
       domain: domain ?? undefined,
@@ -97,6 +99,10 @@ export async function GET(request: NextRequest) {
       best_trade_windows: bestTradeWindows,
       // Tokens entered by more than one strategy (agreement, not a defect).
       overlap,
+      // Redundant pairs (same family) vs genuinely agreeing pairs.
+      pairs,
+      // Is agreement predictive? Carries CIs and an explicit inconclusive state.
+      consensus,
       timezone,
       filters: {
         domain,
