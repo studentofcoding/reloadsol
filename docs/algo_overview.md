@@ -390,6 +390,7 @@ Legacy `/dev/strategies` redirects here (tab mapping in `proxy.ts`).
 - `GET /api/strategies/reports` — breakdown + `coverage[]` + `best_trade_windows` (default tz `Asia/Bangkok`, `?tz=`), ranking by avg PnL, top/worst 8 trades
 - `GET /api/strategies/outcomes` — paginated outcomes
 - `PATCH /api/strategies/outcomes/[id]` — ML label merge
+- `GET /api/strategies/pnl-export` — token-level PnL spreadsheet for an inclusive day range (`?from=&to=&tz=`, `position_size` default `0.005`, `chain` optional and **omitted means all chains** because `parseStrategyChain` coerces to `sol` and would drop the Robinhood twin). CSV: `#` metadata block (range, timezone, chains, trades, won/lost, avg/median `pnl_pct`, gross win/loss, profit factor, `pnl_sol`, peak concurrent, peak capital, top-10 concentration) then one table with a `section` column — rank 1-10 winners, rank 1-10 losers, then every token. `format=json` for the same payload. Notional counts only per-position percentages, so it is never a portfolio return; when the range spans chains the CSV flags that the notional column mixes native units.
 - `GET /api/mcap-patterns/stats` — 24h cohort counts + pattern model readiness
 - `GET /api/workers/status` — cron + DB heartbeat
 - `POST /api/workers/trigger` — run worker now (dev only)

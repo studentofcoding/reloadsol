@@ -8,6 +8,27 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — range-selectable token PnL spreadsheet
+
+- **`GET /api/strategies/pnl-export`** takes an inclusive day range (`from`/`to` in `tz`, default
+  the last 3 days), a `position_size` (default `0.005`) and an optional `chain`, and returns a CSV
+  with a `#` metadata block (range, timezone, chains, trades, won/lost, avg/median `pnl_pct`,
+  gross win/loss, profit factor, `pnl_sol`, peak concurrent positions, peak capital, top-10
+  concentration) followed by one table with a `section` column: **rank 1-10 winners, rank 1-10
+  losers, then every token in the range**. `format=json` returns the same payload, plus the
+  winners/losers arrays. Surfaced in the Reports tab as “Export token PnL spreadsheet” beside the
+  existing outcomes CSV, reusing the range picker already there.
+- `exports/build_token_pnl_workbook.py` assembles that CSV into a 5-sheet workbook
+  (`README`, `summary`, `winners_top10`, `losers_top10`, `all_tokens`), mirroring
+  `exports/build_workbook.py`.
+- Two traps the export had to route around, both found while verifying against prod:
+  **`chain` must be optional** (`parseStrategyChain` coerces anything unrecognised to `sol`, which
+  silently drops the Robinhood twin — 261 of the 627 sim rows over 2026-09-27..29), and
+  **symbols do not live in outcome features** (the only symbol-ish key there is `pool_name`; the
+  `strategy_outcomes.token_symbol` column the repo reads first does not exist, behind a
+  `.catch(() => [])`). Symbols now resolve from `token_mcap_tracking` — 289 of 311 tokens over the
+  three-day window, address-prefix fallback for the rest.
+
 ### Fixed — the mcap sim was mostly not running, and the cron called that success
 
 - **A lock-held tick was logged as `✅ completed` and marked the worker healthy.** `withJobLock` answers an overlapping tick with `409 {"success":false,"skipped":true,…}`, and `makeRequest` returned that body with a **nil** error — so every caller treated it as a run. Measured over 6 h: **16/16 `open` and 9/11 `manage` "completions" were exactly 84 bytes** (the skip body) while the only two real payloads were 834 bytes. The real runs were failing instead, always at exactly **30.0 s** — the cron's default client deadline, which the three mcap calls never overrode (the GMGN sim passes 180 s). Cron callers now detect a skip (`isSkippedBody`), log `⏭️ … skipped (job lock held)` and call a new `workers.Skipped` that touches neither `lastSuccessAt` nor `lastErrorAt`; the mcap calls get a realistic 120 s deadline. Applied to the mcap (×3), signals, gmgn, social and trending-track jobs.
