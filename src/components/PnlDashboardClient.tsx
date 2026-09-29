@@ -187,7 +187,7 @@ export default function PnlDashboardClient() {
             <h1 className="text-2xl font-semibold">Paper PnL progress</h1>
             <p className="text-gray-400 text-sm mt-1">
               {data?.range
-                ? `${data.range.from === data.range.to ? 'Single day' : 'Range'} ${data.range.from} → ${data.range.to} (${data.range.timezone}) · `
+                ? `${data.range.from === data.range.to ? 'Single day' : 'Range'} ${data.range.from}${data.range.from === data.range.to ? '' : ` → ${data.range.to}`} (${data.range.timezone}) · `
                 : ''}
               budget per day {sol(summary?.budgetSol ?? 0, 2)} SOL · velocity = peak concurrent
               capital × stake, which is the binding number because capital recycles.
@@ -220,6 +220,32 @@ export default function PnlDashboardClient() {
                 className="block mt-0.5 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-white"
               />
             </label>
+            <div className="flex rounded border border-gray-700 overflow-hidden">
+              <button
+                onClick={() => {
+                  setFrom(shiftDays(from, -1))
+                  setTo(shiftDays(to, -1))
+                }}
+                disabled={!from || !to}
+                title="Previous day"
+                aria-label="Previous day"
+                className="px-3 py-1.5 text-sm bg-gray-900 text-gray-300 hover:bg-gray-800 disabled:opacity-40"
+              >
+                ◀
+              </button>
+              <button
+                onClick={() => {
+                  setFrom(shiftDays(from, 1))
+                  setTo(shiftDays(to, 1))
+                }}
+                disabled={!from || !to || to >= todayIso()}
+                title="Next day"
+                aria-label="Next day"
+                className="px-3 py-1.5 text-sm bg-gray-900 text-gray-300 hover:bg-gray-800 disabled:opacity-40"
+              >
+                ▶
+              </button>
+            </div>
             <button
               onClick={() => {
                 const anchor = todayIso()
