@@ -164,6 +164,28 @@ function DevList({ verdict, title, blurb }: { verdict: 'good' | 'ban'; title: st
               {dev.reasons && dev.reasons.length > 0 ? (
                 <p className="px-2 pb-1 text-[11px] text-gray-500">{dev.reasons.join(' · ')}</p>
               ) : null}
+              {dev.tokens && dev.tokens.length > 0 ? (
+                <div className="flex flex-wrap gap-1 px-2 pb-1.5">
+                  {dev.tokens.slice(0, 5).map((t) => (
+                    <a
+                      key={t.address}
+                      href={`https://gmgn.ai/sol/token/${t.address}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={`ATH ${fmtUsd(t.athMc)} · holders ${t.holders ?? '—'}`}
+                      className="rounded border border-gray-700 bg-gray-900/70 px-1 py-0.5 text-[10px] text-gray-300 hover:text-white"
+                    >
+                      {t.symbol ?? short(t.address)}{' '}
+                      <span className="text-gray-500">{fmtUsd(t.athMc)}</span>
+                    </a>
+                  ))}
+                  {dev.tokens.length > 5 ? (
+                    <span className="px-1 py-0.5 text-[10px] text-gray-500">
+                      +{dev.tokens.length - 5} more
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
               {open ? (
                 <div className="overflow-x-auto border-t border-gray-800 bg-black/20">
                   <DevTokens tokens={dev.tokens ?? []} />
