@@ -51,7 +51,11 @@ import {
   resolveTokenMonitorSnapshot,
 } from '@/strategies/sim-monitor-snapshots'
 import { checkGmgnLiveBoostForOpenPosition } from '@/strategies/gmgn-live-boost'
-import { fetchTradingRecordsForWallet, loadMcapSimClosedOutcomeKeys } from '@/strategies/db'
+import {
+  fetchTradingRecordsForWallet,
+  loadMcapSimClosedOutcomeKeys,
+  upsertMarketRegimeTag,
+} from '@/strategies/db'
 import {
   acquireTradeLock,
   isRealTradingHalted,
@@ -383,6 +387,34 @@ async function openSimPosition(params: {
       topHoldersPct: params.snapshot.top_holders_pct,
       features: scoredEntryFeatures,
     })
+  }
+}
+
+/** Writes today's regime tag at most once per process per (day, state); failures may retry. */
+let lastRegimeTagWrite = ''
+async function persistDailyRegimeTag(climate: { state?: string | null } | null): Promise<void> {
+  const state = typeof climate?.state === 'string' ? climate.state.trim() : ''
+  if (!state) return
+  const tagDate = new Date().toISOString().slice(0, 10)
+  const key = `${tagDate}:${state}`
+  if (lastRegimeTagWrite === key) return
+  try {
+    const res = await upsertMarketRegimeTag({
+      tagDate,
+      regimeTag: state,
+      notes: 'brain climate (auto, mcap sim)',
+    })
+    if (!res.ok) {
+      console.warn('[mcap-sim] regime tag write failed:', res.error)
+      return
+    }
+    lastRegimeTagWrite = key
+    console.warn(`[mcap-sim] regime tag persisted: ${tagDate} → ${state}`)
+  } catch (error) {
+    console.warn(
+      '[mcap-sim] regime tag write threw:',
+      error instanceof Error ? error.message : error,
+    )
   }
 }
 
@@ -800,6 +832,13 @@ async function runSimTrack(request: NextRequest) {
     const brainClimate = brainUniverse.applied
       ? toClimateChipPayload(await fetchClimate())
       : null
+
+    // Persist the day's regime. `insertStrategyOutcome` already stamps `regime_tag_at_exit` from
+    // market_regime_tags, so writing the brain's climate there is all it takes for every outcome to
+    // carry the day's regime as context — that table has had no rows since 2026-07-10, which is why
+    // the column is empty on recent closes. Keyed on the UTC day, the same expression the stamping
+    // uses, so the lookup lines up.
+    await persistDailyRegimeTag(brainClimate)
 
     for (const strategy of strategies) {
       // Robinhood has no live execution path yet — every RH definition stays paper.

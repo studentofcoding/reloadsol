@@ -46,6 +46,12 @@ export interface DailyPnlRow {
   capacity: number
   /** Capacity once the day's median multiplier is applied. */
   sizedCapacity: number
+  /** Peak simultaneous capital — the most the budget was spending at one instant. */
+  velocityMaxSol: number
+  /** That peak as a share of the budget. */
+  velocityMaxPct: number
+  /** Smallest budget that would have covered this day, with headroom applied. */
+  optimalBudgetSol: number
 }
 
 export interface SizingBucket {
@@ -81,6 +87,13 @@ export interface PnlBudgetSummary {
   peakBudgetUsedPct: number
   bestDay: { day: string; pnlSol: number } | null
   worstDay: { day: string; pnlSol: number } | null
+  /** Peak simultaneous capital over the range (the binding number). */
+  velocityMaxSol: number
+  /** The largest day's optimal budget: what the daily budget should have been. */
+  suggestedDailyBudgetSol: number
+  budgetHeadroom: number
+  /** Is the configured budget at least the suggested one? */
+  budgetAdequate: boolean
 }
 
 function num(value: unknown): number {
@@ -102,6 +115,11 @@ export function resolveBasePositionSizeSol(
   env: Record<string, string | undefined> = process.env,
 ): number {
   return positiveNumber(env.SIM_BASE_POSITION_SOL) ?? 0.005
+}
+
+/** Headroom multiplier for the suggested budget: sizing at exactly the observed peak is brittle. */
+export function resolveBudgetHeadroom(env: Record<string, string | undefined> = process.env): number {
+  return positiveNumber(env.SIM_BUDGET_HEADROOM) ?? 1.25
 }
 
 export function capacityForBudget(budgetSol: number, positionSizeSol: number): number {
@@ -138,6 +156,7 @@ export function buildDailyRows(params: {
   regimeByDay?: Map<string, string | null>
   basePositionSizeSol: number
   budgetSol: number
+  budgetHeadroom?: number
 }): DailyPnlRow[] {
   const peakByDay = new Map(params.peaks.map((p) => [p.day, num(p.peak_open)]))
   return params.daily.map((row) => {
@@ -167,6 +186,9 @@ export function buildDailyRows(params: {
       capitalSol,
       budgetUsedPct: params.budgetSol > 0 ? (capitalSol / params.budgetSol) * 100 : 0,
       capacity: capacityForBudget(params.budgetSol, params.basePositionSizeSol),
+      velocityMaxSol: capitalSol,
+      velocityMaxPct: params.budgetSol > 0 ? (capitalSol / params.budgetSol) * 100 : 0,
+      optimalBudgetSol: capitalSol * (params.budgetHeadroom ?? 1.25),
       sizedCapacity: capacityForBudget(
         params.budgetSol,
         params.basePositionSizeSol * mult,
@@ -206,6 +228,7 @@ export function summarizeDailyPnl(params: {
   rows: DailyPnlRow[]
   budgetSol: number
   basePositionSizeSol: number
+  budgetHeadroom?: number
 }): PnlBudgetSummary {
   const { rows, budgetSol, basePositionSizeSol } = params
   const trades = rows.reduce((s, r) => s + r.trades, 0)
@@ -246,5 +269,44 @@ export function summarizeDailyPnl(params: {
     worstDay: ranked[ranked.length - 1]
       ? { day: ranked[ranked.length - 1].day, pnlSol: ranked[ranked.length - 1].pnlSolSized }
       : null,
+    velocityMaxSol: peakCapitalSol,
+    suggestedDailyBudgetSol: rows.reduce((m, r) => Math.max(m, r.optimalBudgetSol), 0),
+    budgetHeadroom: params.budgetHeadroom ?? 1.25,
+    budgetAdequate: budgetSol >= rows.reduce((m, r) => Math.max(m, r.optimalBudgetSol), 0),
   }
+}
+
+export interface RegimePnlBucket {
+  regimeTag: string | null
+  trades: number
+  won: number
+  lost: number
+  sumPnlPct: number
+  pnlSolFlat: number
+}
+
+/** PnL per regime tag — the context the regime persistence exists to provide. */
+export function buildRegimeBuckets(params: {
+  byRegimeTag: Array<{
+    regime: string | null
+    trades: number
+    won: number
+    lost: number
+    sum_pnl_pct: string | number | null
+  }>
+  basePositionSizeSol: number
+}): RegimePnlBucket[] {
+  return params.byRegimeTag
+    .map((row) => {
+      const sumPnlPct = num(row.sum_pnl_pct)
+      return {
+        regimeTag: row.regime && row.regime.trim() ? row.regime : null,
+        trades: num(row.trades),
+        won: num(row.won),
+        lost: num(row.lost),
+        sumPnlPct,
+        pnlSolFlat: pnlSolFor(sumPnlPct, params.basePositionSizeSol),
+      }
+    })
+    .sort((a, b) => b.trades - a.trades)
 }

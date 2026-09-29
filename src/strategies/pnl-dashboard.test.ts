@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildDailyRows,
+  buildRegimeBuckets,
+  resolveBudgetHeadroom,
   buildSizingBuckets,
   capacityForBudget,
   pnlSolFor,
@@ -53,6 +55,9 @@ function dayRow(over: Partial<DailyPnlRow> = {}): DailyPnlRow {
     budgetUsedPct: 64,
     capacity: 100,
     sizedCapacity: 200,
+    velocityMaxSol: 0.32,
+    velocityMaxPct: 64,
+    optimalBudgetSol: 0.4,
     ...over,
   }
 }
@@ -207,5 +212,57 @@ describe('summarizeDailyPnl', () => {
     expect(s.sizingEffectPct).toBe(0)
     expect(s.medianSizeMult).toBeNull()
     expect(s.bestDay).toBeNull()
+  })
+})
+
+describe('velocity and the optimal daily budget', () => {
+  it('headroom is env-tunable with a 1.25 default', () => {
+    expect(resolveBudgetHeadroom({})).toBe(1.25)
+    expect(resolveBudgetHeadroom({ SIM_BUDGET_HEADROOM: '2' })).toBe(2)
+    for (const raw of ['', 'abc', '0', '-1']) {
+      expect(resolveBudgetHeadroom({ SIM_BUDGET_HEADROOM: raw })).toBe(1.25)
+    }
+  })
+
+  it('velocity is the peak simultaneous capital, and the optimal budget adds headroom', () => {
+    const rows = buildDailyRows({
+      daily: [rawDay()],
+      peaks: [{ day: '2026-09-29', peak_open: 64 }],
+      basePositionSizeSol: BASE,
+      budgetSol: BUDGET,
+      budgetHeadroom: 1.25,
+    })
+    expect(rows[0].velocityMaxSol).toBeCloseTo(0.32, 8) // 64 × 0.005
+    expect(rows[0].velocityMaxPct).toBeCloseTo(64, 6)
+    expect(rows[0].optimalBudgetSol).toBeCloseTo(0.4, 8) // 0.32 × 1.25
+  })
+
+  it('the range suggests the largest day, and says whether the budget covers it', () => {
+    const rows = [
+      dayRow({ day: 'a', velocityMaxSol: 0.32, optimalBudgetSol: 0.4 }),
+      dayRow({ day: 'b', velocityMaxSol: 0.45, optimalBudgetSol: 0.5625 }),
+    ]
+    const tight = summarizeDailyPnl({ rows, budgetSol: 0.5, basePositionSizeSol: BASE, budgetHeadroom: 1.25 })
+    expect(tight.suggestedDailyBudgetSol).toBeCloseTo(0.5625, 8)
+    expect(tight.budgetAdequate).toBe(false) // 0.5 does not cover a 0.5625 need
+
+    const roomy = summarizeDailyPnl({ rows, budgetSol: 0.6, basePositionSizeSol: BASE, budgetHeadroom: 1.25 })
+    expect(roomy.budgetAdequate).toBe(true)
+  })
+})
+
+describe('buildRegimeBuckets', () => {
+  it('groups PnL by the stamped regime tag, and keeps untagged visible', () => {
+    const buckets = buildRegimeBuckets({
+      byRegimeTag: [
+        { regime: 'Hype', trades: 40, won: 24, lost: 16, sum_pnl_pct: '120' },
+        { regime: null, trades: 10, won: 4, lost: 6, sum_pnl_pct: '-30' },
+      ],
+      basePositionSizeSol: BASE,
+    })
+    expect(buckets[0].regimeTag).toBe('Hype')
+    expect(buckets[0].pnlSolFlat).toBeCloseTo(0.006, 8) // 120% of 0.005
+    expect(buckets[1].regimeTag).toBeNull()
+    expect(buckets[1].pnlSolFlat).toBeCloseTo(-0.0015, 8)
   })
 })

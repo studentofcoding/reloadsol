@@ -7,8 +7,10 @@ import {
 import { dayInTimeZone, isValidDayString } from '@/strategies/token-pnl-export'
 import {
   buildDailyRows,
+  buildRegimeBuckets,
   buildSizingBuckets,
   resolveBasePositionSizeSol,
+  resolveBudgetHeadroom,
   resolveDailyBudgetSol,
   summarizeDailyPnl,
 } from '@/strategies/pnl-dashboard'
@@ -43,27 +45,33 @@ export async function GET(request: NextRequest) {
     const budgetSol = resolveDailyBudgetSol()
     const basePositionSizeSol = resolveBasePositionSizeSol()
 
-    const { daily, peaks, byRegime, regimeByDay } = await aggregateDailyPnl({
+    const { daily, peaks, bySizeMult, byRegimeTag, regimeByDay } = await aggregateDailyPnl({
       from,
       to,
       timeZone,
     })
 
+    const budgetHeadroom = resolveBudgetHeadroom()
     const rows = buildDailyRows({
       daily,
       peaks,
       regimeByDay: new Map(regimeByDay.map((r) => [r.day, r.regime_tag])),
       basePositionSizeSol,
       budgetSol,
+      budgetHeadroom,
     })
-    const summary = summarizeDailyPnl({ rows, budgetSol, basePositionSizeSol })
-    // The `byRegime` rows are keyed by the stamped multiplier, which is the sizing axis that exists.
-    const sizing = buildSizingBuckets({ bySizeMult: byRegime, basePositionSizeSol })
+    const summary = summarizeDailyPnl({ rows, budgetSol, basePositionSizeSol, budgetHeadroom })
+    const sizing = buildSizingBuckets({
+      bySizeMult: bySizeMult.map((r) => ({ ...r, regime: r.size_mult })),
+      basePositionSizeSol,
+    })
+    const regimes = buildRegimeBuckets({ byRegimeTag, basePositionSizeSol })
 
     return NextResponse.json({
       success: true,
       range: { from, to, timezone: timeZone },
-      config: { budgetSol, basePositionSizeSol },
+      config: { budgetSol, basePositionSizeSol, budgetHeadroom },
+      regimes,
       daily: rows,
       sizing,
       summary,

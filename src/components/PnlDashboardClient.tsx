@@ -31,6 +31,9 @@ interface DailyRow {
   budgetUsedPct: number
   capacity: number
   sizedCapacity: number
+  velocityMaxSol: number
+  velocityMaxPct: number
+  optimalBudgetSol: number
 }
 
 interface SizingRow {
@@ -64,11 +67,25 @@ interface Summary {
   peakBudgetUsedPct: number
   bestDay: { day: string; pnlSol: number } | null
   worstDay: { day: string; pnlSol: number } | null
+  velocityMaxSol: number
+  suggestedDailyBudgetSol: number
+  budgetHeadroom: number
+  budgetAdequate: boolean
+}
+
+interface RegimeRow {
+  regimeTag: string | null
+  trades: number
+  won: number
+  lost: number
+  sumPnlPct: number
+  pnlSolFlat: number
 }
 
 interface Payload {
   success: boolean
   daily?: DailyRow[]
+  regimes?: RegimeRow[]
   sizing?: SizingRow[]
   summary?: Summary
   config?: { budgetSol: number; basePositionSizeSol: number }
@@ -130,6 +147,7 @@ export default function PnlDashboardClient() {
   const summary = data?.summary
   const rows = data?.daily ?? []
   const sizing = data?.sizing ?? []
+  const regimes = data?.regimes ?? []
   const maxAbs = useMemo(() => Math.max(0.0001, ...rows.map((r) => Math.abs(r.pnlSolSized))), [rows])
 
   return (
@@ -178,7 +196,12 @@ export default function PnlDashboardClient() {
         ) : null}
 
         <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <Stat label="Budget / day" value={`${sol(summary?.budgetSol ?? 0, 3)} SOL`} sub={`base stake ${sol(summary?.basePositionSizeSol ?? 0, 4)} · capacity ${summary?.capacity ?? 0}`} />
+          <Stat
+            label="Budget / day"
+            value={`${sol(summary?.budgetSol ?? 0, 3)} SOL`}
+            sub={`base ${sol(summary?.basePositionSizeSol ?? 0, 4)} · capacity ${summary?.capacity ?? 0} · suggested ${sol(summary?.suggestedDailyBudgetSol ?? 0, 3)} (${summary?.budgetHeadroom ?? 1.25}× headroom)`}
+            tone={(summary?.budgetAdequate ?? true) ? 'text-gray-200' : 'text-amber-400'}
+          />
           <Stat
             label="PnL (sized)"
             value={`${sol(summary?.pnlSolSized ?? 0)} SOL`}
@@ -186,9 +209,9 @@ export default function PnlDashboardClient() {
             tone={tone(summary?.pnlSolSized ?? 0)}
           />
           <Stat
-            label="Peak capital"
-            value={`${sol(summary?.peakCapitalSol ?? 0, 3)} SOL`}
-            sub={`${summary?.peakConcurrent ?? 0} open · ${pct(summary?.peakBudgetUsedPct ?? 0, 0)} of budget`}
+            label="Velocity max"
+            value={`${sol(summary?.velocityMaxSol ?? 0, 3)} SOL`}
+            sub={`${summary?.peakConcurrent ?? 0} open at once · ${pct(summary?.peakBudgetUsedPct ?? 0, 0)} of budget`}
             tone={(summary?.peakBudgetUsedPct ?? 0) > 100 ? 'text-amber-400' : 'text-gray-200'}
           />
           <Stat
@@ -196,6 +219,56 @@ export default function PnlDashboardClient() {
             value={`${summary?.trades ?? 0}`}
             sub={`${summary?.won ?? 0}W / ${summary?.lost ?? 0}L · ${pct(summary?.winRatePct ?? 0)} win · sized ${summary?.tradesWithSizeMult ?? 0}`}
           />
+        </section>
+
+        {/* Regime context — populated once market_regime_tags has rows */}
+        <section className="rounded border border-gray-800 bg-gray-900 p-4">
+          <div className="flex items-baseline justify-between">
+            <h2 className="font-semibold">PnL by regime</h2>
+            <span className="text-xs text-gray-500">
+              {regimes.filter((r) => r.regimeTag).length} tag(s) with data
+            </span>
+          </div>
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-gray-400 text-left border-b border-gray-800">
+                  <th className="py-1.5 pr-4">Regime</th>
+                  <th className="py-1.5 pr-4">Trades</th>
+                  <th className="py-1.5 pr-4">W / L</th>
+                  <th className="py-1.5 pr-4">PnL %</th>
+                  <th className="py-1.5">PnL SOL (flat)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {regimes.map((r) => (
+                  <tr key={r.regimeTag ?? '(untagged)'} className="border-b border-gray-800/50">
+                    <td className="py-1.5 pr-4 text-gray-300">
+                      {r.regimeTag ?? <span className="text-gray-500">(untagged)</span>}
+                    </td>
+                    <td className="py-1.5 pr-4 text-gray-300">{r.trades}</td>
+                    <td className="py-1.5 pr-4 text-gray-300">
+                      {r.won} / {r.lost}
+                    </td>
+                    <td className={`py-1.5 pr-4 ${tone(r.sumPnlPct)}`}>{pct(r.sumPnlPct, 0)}</td>
+                    <td className={`py-1.5 ${tone(r.pnlSolFlat)}`}>{sol(r.pnlSolFlat)}</td>
+                  </tr>
+                ))}
+                {regimes.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="py-3 text-gray-500">
+                      No regime tags yet for this range.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-gray-500 mt-3">
+            The brain&apos;s climate is now persisted daily into <code>market_regime_tags</code>, and
+            outcomes are stamped with the day&apos;s tag at insert, so this table fills in as new
+            closes land. Tags before that are absent — the table had no rows since 2026-07-10.
+          </p>
         </section>
 
         {/* The sizing the system actually applied */}
@@ -268,8 +341,9 @@ export default function PnlDashboardClient() {
                   <th className="py-1.5 pr-4">Flat</th>
                   <th className="py-1.5 pr-4">Median ×</th>
                   <th className="py-1.5 pr-4">Open</th>
-                  <th className="py-1.5 pr-4">Capital</th>
-                  <th className="py-1.5">Budget</th>
+                  <th className="py-1.5 pr-4">Velocity</th>
+                  <th className="py-1.5 pr-4">Budget</th>
+                  <th className="py-1.5">Optimal</th>
                 </tr>
               </thead>
               <tbody>
@@ -295,15 +369,16 @@ export default function PnlDashboardClient() {
                       {r.medianSizeMult != null ? `${r.medianSizeMult.toFixed(2)}×` : '—'}
                     </td>
                     <td className="py-1.5 pr-4 text-gray-300">{r.peakConcurrent}</td>
-                    <td className="py-1.5 pr-4 text-gray-300">{sol(r.capitalSol, 3)}</td>
-                    <td className={`py-1.5 ${r.budgetUsedPct > 100 ? 'text-amber-400' : 'text-gray-300'}`}>
+                    <td className="py-1.5 pr-4 text-gray-300">{sol(r.velocityMaxSol, 3)}</td>
+                    <td className={`py-1.5 pr-4 ${r.budgetUsedPct > 100 ? 'text-amber-400' : 'text-gray-300'}`}>
                       {pct(r.budgetUsedPct, 0)}
                     </td>
+                    <td className="py-1.5 text-gray-400">{sol(r.optimalBudgetSol, 3)}</td>
                   </tr>
                 ))}
                 {rows.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="py-3 text-gray-500">
+                    <td colSpan={12} className="py-3 text-gray-500">
                       Nothing closed in this range.
                     </td>
                   </tr>

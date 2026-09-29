@@ -1852,7 +1852,15 @@ export async function aggregateDailyPnl(params: {
     exec_pnl_quote: string | null
   }>
   peaks: Array<{ day: string; peak_open: number }>
-  byRegime: Array<{
+  bySizeMult: Array<{
+    size_mult: string | null
+    trades: number
+    won: number
+    lost: number
+    sum_pnl_pct: string | null
+  }>
+  /** Grouped by the regime tag stamped at exit — populated once market_regime_tags has rows. */
+  byRegimeTag: Array<{
     regime: string | null
     trades: number
     won: number
@@ -1937,14 +1945,14 @@ export async function aggregateDailyPnl(params: {
   // Grouped by the stamped size multiplier rather than by a regime tag: the multiplier is what the
   // sizing system actually applied (and what the outcomes record), while `market_regime_tags` holds
   // a separate vocabulary that has been dormant since 2026-07-10 and is stamped on no recent close.
-  const { rows: byRegime } = await query<{
-    regime: string | null
+  const { rows: bySizeMult } = await query<{
+    size_mult: string | null
     trades: number
     won: number
     lost: number
     sum_pnl_pct: string | null
   }>(
-    `SELECT to_char(coalesce((features->>'ml_size_mult')::numeric, 1), 'FM0.000') AS regime,
+    `SELECT to_char(coalesce((features->>'ml_size_mult')::numeric, 1), 'FM0.000') AS size_mult,
             count(*)::int AS trades,
             count(*) FILTER (WHERE status = 'won')::int AS won,
             count(*) FILTER (WHERE status = 'lost')::int AS lost,
@@ -1968,7 +1976,30 @@ export async function aggregateDailyPnl(params: {
     [params.from, params.to],
   ).catch(() => ({ rows: [] as Array<{ day: string; regime_tag: string | null }> }))
 
-  return { daily, peaks, byRegime, regimeByDay }
+  const { rows: byRegimeTag } = await query<{
+    regime: string | null
+    trades: number
+    won: number
+    lost: number
+    sum_pnl_pct: string | null
+  }>(
+    `SELECT features->>'regime_tag_at_exit' AS regime,
+            count(*)::int AS trades,
+            count(*) FILTER (WHERE status = 'won')::int AS won,
+            count(*) FILTER (WHERE status = 'lost')::int AS lost,
+            sum(pnl_pct) AS sum_pnl_pct
+       FROM strategy_outcomes
+      WHERE is_simulated
+        AND exit_at IS NOT NULL
+        AND exit_at >= ($1::date::timestamp AT TIME ZONE $3)
+        AND exit_at <  (($2::date + 1)::timestamp AT TIME ZONE $3)
+      GROUP BY 1
+      ORDER BY trades DESC
+      LIMIT 12`,
+    args,
+  ).catch(() => ({ rows: [] as Array<{ regime: string | null; trades: number; won: number; lost: number; sum_pnl_pct: string | null }> }))
+
+  return { daily, peaks, bySizeMult, byRegimeTag, regimeByDay }
 }
 
 export async function aggregateTokenPnlByToken(params: {
