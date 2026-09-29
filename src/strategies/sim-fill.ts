@@ -319,3 +319,85 @@ export async function buildShadowExecutionRecord(
     return null
   }
 }
+
+/**
+ * The version every outcome writer can use: no token count, no mint decimals.
+ *
+ * `costSol` is the position's entry size (the writers already record it) and `priceRatio` is
+ * `1 + pnlPct/100`, which every close path computes. The BUY side is what gets quoted — at the
+ * position's actual entry size, which is exactly the trade — and the depth it reveals prices the
+ * exit. Prices are kept scale-free (entry spot 1, exit spot = ratio) so no token amount is needed
+ * anywhere: only notionals matter to the impact.
+ *
+ * Returns null rather than a fabricated record when the numbers cannot support one, and never
+ * throws, so a close can never fail because of telemetry.
+ */
+export async function buildShadowExecutionRecordForCost(input: {
+  chain?: string
+  mint: string
+  costSol: number
+  priceRatio: number
+  params?: ExecutionParams
+}): Promise<Record<string, unknown> | null> {
+  try {
+    const params = input.params ?? resolveExecutionParams()
+    if (!(input.costSol > 0) || !(input.priceRatio > 0)) return null
+
+    const fallbackDepth = resolveDepth({}, params)
+    const entryResolved = await resolveSimFill({
+      chain: input.chain,
+      mint: input.mint,
+      side: 'buy',
+      notionalQuote: input.costSol,
+      spotPrice: 1,
+      params,
+      fallbackDepth,
+    })
+    const depth = entryResolved.quotedDepthQuote
+      ? { depthQuote: entryResolved.quotedDepthQuote, depthSource: 'liquidity' as const }
+      : fallbackDepth
+
+    const entryFill = computeBuyFill({
+      side: 'buy',
+      spotPrice: 1,
+      notionalQuote: input.costSol,
+      depth,
+      params,
+    })
+    const exitFill = computeSellFill({
+      side: 'sell',
+      spotPrice: input.priceRatio,
+      notionalQuote: 0,
+      depth,
+      params,
+      tokenAmount: input.costSol,
+    })
+
+    return {
+      ...buildExecutionRecord(entryFill, exitFill, params),
+      entry_source: fillSourceLabel(entryResolved.source),
+      exit_source: fillSourceLabel('model'),
+    }
+  } catch (error) {
+    console.warn(
+      '[sim-exec] execution record skipped:',
+      error instanceof Error ? error.message : error,
+    )
+    return null
+  }
+}
+
+/**
+ * Read the entry size out of an outcome's features. Presence-checked, because `Number(null)` and
+ * `Number('')` are both 0 — a missing amount must not read as a free position.
+ */
+export function readEntryCostSol(features: Record<string, unknown> | null | undefined): number {
+  if (!features) return 0
+  for (const key of ['amount_sol', 'entry_sol', 'entry_amount_sol', 'sol_amount', 'size_sol']) {
+    const raw = features[key]
+    if (raw === undefined || raw === null || raw === '') continue
+    const value = Number(raw)
+    if (Number.isFinite(value) && value > 0) return value
+  }
+  return 0
+}

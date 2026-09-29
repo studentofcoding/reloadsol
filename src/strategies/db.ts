@@ -6,6 +6,7 @@ import { readTokenSymbol, readTrainingClass } from './outcome-features'
 import { dedupeStrategyOutcomeRows } from './outcome-dedupe'
 import { resolveStrategyFamily } from './strategy-family'
 import { toNum, type TokenPnlRow } from './token-pnl-export'
+import { buildShadowExecutionRecordForCost, readEntryCostSol } from './sim-fill'
 import { runConsensusTest, type ConsensusTestResult } from './consensus-test'
 import {
   consensusGateMode,
@@ -535,6 +536,23 @@ export async function insertStrategyOutcome(params: {
     features = { ...features, regime_tag_at_exit: regimeTag }
   }
   features = applyAutoOutcomeLabels(features, params.pnl_pct, params.status)
+
+  // Shadow execution record: how this close would really have filled. Sims only — the live path
+  // (is_simulated: false) must never wait on a quote. Omits the record when the entry size is not
+  // in the features, rather than inventing one.
+  if (params.is_simulated && exitProvided && params.pnl_pct != null) {
+    const priceRatio = 1 + Number(params.pnl_pct) / 100
+    const costSol = readEntryCostSol(features)
+    if (costSol > 0 && priceRatio > 0) {
+      const exec = await buildShadowExecutionRecordForCost({
+        chain,
+        mint: params.token_address,
+        costSol,
+        priceRatio,
+      })
+      if (exec) features = { ...features, exec }
+    }
+  }
 
   const { toCanonicalEntryFeatures } = await import('./canonical-features')
   const mintFromFeatures =

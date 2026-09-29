@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildShadowExecutionRecordForCost,
   fillFromQuote,
   fillSourceLabel,
   implyDepthFromQuote,
   quoteImpactFraction,
+  readEntryCostSol,
   resolveSimFill,
   simQuoteFillsEnabled,
 } from './sim-fill'
@@ -200,5 +202,51 @@ describe('resolveSimFill', () => {
       if (previous === undefined) delete process.env.SIM_QUOTE_FILLS
       else process.env.SIM_QUOTE_FILLS = previous
     }
+  })
+})
+
+describe('readEntryCostSol', () => {
+  it('reads the entry size the writers already record', () => {
+    expect(readEntryCostSol({ amount_sol: 0.005 })).toBeCloseTo(0.005, 10)
+    expect(readEntryCostSol({ entry_sol: '0.02' })).toBeCloseTo(0.02, 10)
+    expect(readEntryCostSol({ entry_amount_sol: 0.01 })).toBeCloseTo(0.01, 10)
+  })
+
+  it('treats missing, null and junk as no size — never as a free position', () => {
+    for (const features of [{}, { amount_sol: null }, { amount_sol: '' }, { amount_sol: 'abc' }, { amount_sol: 0 }, { amount_sol: -1 }]) {
+      expect(readEntryCostSol(features)).toBe(0)
+    }
+    expect(readEntryCostSol(null)).toBe(0)
+    expect(readEntryCostSol(undefined)).toBe(0)
+  })
+})
+
+describe('buildShadowExecutionRecordForCost', () => {
+  // An unquotable chain keeps this on the model path, so the test needs no network.
+  const request = { chain: 'robinhood', mint: '0xabc', costSol: 0.05, priceRatio: 1.4, params: PARAMS }
+
+  it('produces a recomputable record with both fills', async () => {
+    const record = await buildShadowExecutionRecordForCost(request)
+    expect(record).not.toBeNull()
+    expect(record!.model).toBe('exec-v1')
+    expect((record!.entry as Record<string, unknown>).side).toBe('buy')
+    expect((record!.exit as Record<string, unknown>).side).toBe('sell')
+    expect(typeof record!.pnlQuote).toBe('number')
+  })
+
+  it('a flat close is a modelled LOSS — the point of the whole exercise', async () => {
+    const record = await buildShadowExecutionRecordForCost({ ...request, priceRatio: 1 })
+    expect(record!.pnlQuote as number).toBeLessThan(0)
+  })
+
+  it('a real move can still win', async () => {
+    const record = await buildShadowExecutionRecordForCost({ ...request, priceRatio: 1.5 })
+    expect(record!.pnlQuote as number).toBeGreaterThan(0)
+  })
+
+  it('returns null instead of a record for degenerate input', async () => {
+    expect(await buildShadowExecutionRecordForCost({ ...request, costSol: 0 })).toBeNull()
+    expect(await buildShadowExecutionRecordForCost({ ...request, priceRatio: 0 })).toBeNull()
+    expect(await buildShadowExecutionRecordForCost({ ...request, priceRatio: -1 })).toBeNull()
   })
 })
