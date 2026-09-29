@@ -48,6 +48,8 @@ async function fetchSlTpWalletTokens(
 }
 
 export interface SLTPPosition {
+  /** Paper position: tracked, never executed on-chain (see isSimulatedPosition). */
+  is_simulation?: boolean | null
     id: string
     wallet_address: string
     token_address: string
@@ -419,6 +421,18 @@ export async function syncExistingOpenPositions(walletAddress: string, options?:
 }
 
 // Function to add a new SL/TP position
+/**
+ * THE invariant that keeps a paper stop-loss from spending real money.
+ *
+ * `executeSellOrder` runs a REAL swap — it hardcodes isSimulated: false — so every path that could
+ * reach it must first ask this. A simulated position is evaluated and recorded, never executed
+ * on-chain, and never balance-reconciled either: paper tokens do not exist on-chain, so the wallet
+ * lookup reads zero and reconciliation would prune the position on its first pass.
+ */
+export function isSimulatedPosition(position: { is_simulation?: boolean | null } | null | undefined): boolean {
+  return position?.is_simulation === true
+}
+
 export async function addSLTPPosition(params: {
     walletAddress: string
     tokenAddress: string
@@ -429,6 +443,8 @@ export async function addSLTPPosition(params: {
     takeProfitPercentage: number
     positionType: 'manual' | 'bot'
     strategyId?: string
+    /** Paper position: tracked and triggered, never executed on-chain. */
+    isSimulation?: boolean
     // Bot-specific TP levels
     tp1Percentage?: number
     tp1SellPercentage?: number
@@ -493,10 +509,11 @@ export async function addSLTPPosition(params: {
                strategy_id, created_at, updated_at, is_active,
                tp1_percentage, tp1_sell_percentage, tp2_percentage,
                tp3_percentage, tp3_enabled,
-               tp1_executed, tp2_executed, tp3_executed, sl_executed
+               tp1_executed, tp2_executed, tp3_executed, sl_executed,
+               is_simulation
              ) VALUES (
                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-               $16, $17, $18, $19, $20, $21, $22, $23, $24
+               $16, $17, $18, $19, $20, $21, $22, $23, $24, $25
              ) RETURNING id`,
             [
                 position.wallet_address,
@@ -523,6 +540,7 @@ export async function addSLTPPosition(params: {
                 position.tp2_executed ?? false,
                 position.tp3_executed ?? false,
                 position.sl_executed ?? false,
+                params.isSimulation ?? false,
             ],
         )
 
@@ -682,6 +700,12 @@ async function reconcileClosedPositions(positions: SLTPPosition[]): Promise<{ fi
         const tokenMap = await getWalletTokenMap(wallet)
 
         for (const pos of walletPositions) {
+            if (isSimulatedPosition(pos)) {
+                // Paper tokens are not on-chain: the balance reads zero and this would prune the
+                // position immediately. Keep it; the sims close their own positions.
+                keep.push(pos)
+                continue
+            }
             const tokenInfo = tokenMap.get(pos.token_address)
             const hasBalance = tokenInfo && tokenInfo.uiAmount > ZERO_BALANCE_THRESHOLD
 
@@ -737,6 +761,29 @@ export async function forceCloseSLTPPositionForDeactivate(
     gain_percentage: 0,
     reason: 'strategy_deactivated',
   })
+}
+
+/** Marks a simulated position closed on trigger. Deliberately DB-only: no chain, no wallet. */
+async function markSimulatedPositionClosed(
+  position: SLTPPosition,
+  triggerResult: SLTPTriggerResult,
+): Promise<void> {
+  try {
+    const isStop = triggerResult.trigger_type === 'stop_loss'
+    await query(
+      `UPDATE sl_tp_positions SET
+         is_active = false,
+         sl_executed = CASE WHEN $2 THEN true ELSE sl_executed END,
+         tp1_executed = CASE WHEN $2 THEN tp1_executed ELSE true END,
+         updated_at = $3
+       WHERE id = $1`,
+      [position.id, isStop, new Date().toISOString()],
+    )
+  } catch (error) {
+    log.error('price_tracking', 'Failed to close simulated SL/TP position', error as Error, {
+      positionId: position.id,
+    })
+  }
 }
 
 async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTriggerResult): Promise<boolean> {
@@ -1206,8 +1253,19 @@ export async function monitorSLTPPositions(returnSummary: boolean = false): Prom
                     reason: triggerResult.reason
                 })
 
-                // Execute sell order
-                await executeSellOrder(position, triggerResult)
+                if (isSimulatedPosition(position)) {
+                    // Paper: record the trigger and close it in the bookkeeping. Touching the chain
+                    // here would sell real tokens for a simulated stop.
+                    log.info('deviation_alert', 'Simulated SL/TP trigger recorded (no on-chain sell)', {
+                        positionId: position.id,
+                        tokenSymbol: position.token_symbol,
+                        triggerType: triggerResult.trigger_type,
+                    })
+                    await markSimulatedPositionClosed(position, triggerResult)
+                } else {
+                    // Execute sell order
+                    await executeSellOrder(position, triggerResult)
+                }
             }
         })
 
@@ -1292,8 +1350,19 @@ export async function runSLTPMonitorAndSummarize(): Promise<SLTPTrackingSummary>
                     reason: triggerResult.reason
                 })
 
-                // Execute sell order
-                await executeSellOrder(position, triggerResult)
+                if (isSimulatedPosition(position)) {
+                    // Paper: record the trigger and close it in the bookkeeping. Touching the chain
+                    // here would sell real tokens for a simulated stop.
+                    log.info('deviation_alert', 'Simulated SL/TP trigger recorded (no on-chain sell)', {
+                        positionId: position.id,
+                        tokenSymbol: position.token_symbol,
+                        triggerType: triggerResult.trigger_type,
+                    })
+                    await markSimulatedPositionClosed(position, triggerResult)
+                } else {
+                    // Execute sell order
+                    await executeSellOrder(position, triggerResult)
+                }
             }
         })
 
