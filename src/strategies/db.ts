@@ -1843,25 +1843,35 @@ export async function aggregateTokenPnlByToken(params: {
     first_entry: Date | null
     last_exit: Date | null
   }>(
-    `SELECT token_address,
-            COALESCE(NULLIF(max(features->>'token_symbol'), ''), NULLIF(max(features->>'symbol'), ''), '') AS symbol,
-            array_agg(DISTINCT strategy_id) AS strategies,
+    `SELECT o.token_address,
+            COALESCE(
+              NULLIF(max(m.token_symbol), ''),
+              NULLIF(max(o.features->>'token_symbol'), ''),
+              left(o.token_address, 6)
+            ) AS symbol,
+            array_agg(DISTINCT o.strategy_id) AS strategies,
             count(*)::int AS trades,
-            count(*) FILTER (WHERE status = 'won')::int AS won,
-            count(*) FILTER (WHERE status = 'lost')::int AS lost,
-            count(pnl_pct)::int AS priced,
-            sum(pnl_pct) AS sum_pnl_pct,
-            avg(pnl_pct) AS avg_pnl_pct,
-            percentile_cont(0.5) WITHIN GROUP (ORDER BY pnl_pct) AS median_pnl_pct,
-            min(entry_at) AS first_entry,
-            max(exit_at) AS last_exit
-       FROM strategy_outcomes
-      WHERE ($1::text IS NULL OR chain = $1)
-        AND is_simulated = $2
-        AND entry_at >= ($3::date::timestamp AT TIME ZONE $5)
-        AND entry_at <  (($4::date + 1)::timestamp AT TIME ZONE $5)
-      GROUP BY token_address
-      ORDER BY sum(pnl_pct) DESC NULLS LAST
+            count(*) FILTER (WHERE o.status = 'won')::int AS won,
+            count(*) FILTER (WHERE o.status = 'lost')::int AS lost,
+            count(o.pnl_pct)::int AS priced,
+            sum(o.pnl_pct) AS sum_pnl_pct,
+            avg(o.pnl_pct) AS avg_pnl_pct,
+            percentile_cont(0.5) WITHIN GROUP (ORDER BY o.pnl_pct) AS median_pnl_pct,
+            min(o.entry_at) AS first_entry,
+            max(o.exit_at) AS last_exit
+       FROM strategy_outcomes o
+       LEFT JOIN (
+         SELECT DISTINCT ON (token_address) token_address, token_symbol
+           FROM token_mcap_tracking
+          WHERE token_symbol IS NOT NULL AND token_symbol <> ''
+          ORDER BY token_address, last_updated_at DESC NULLS LAST
+       ) m ON m.token_address = o.token_address
+      WHERE ($1::text IS NULL OR o.chain = $1)
+        AND o.is_simulated = $2
+        AND o.entry_at >= ($3::date::timestamp AT TIME ZONE $5)
+        AND o.entry_at <  (($4::date + 1)::timestamp AT TIME ZONE $5)
+      GROUP BY o.token_address
+      ORDER BY sum(o.pnl_pct) DESC NULLS LAST
       LIMIT $6`,
     [...windowArgs, limit + 1],
   )
