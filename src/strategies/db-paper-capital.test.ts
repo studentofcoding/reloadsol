@@ -43,6 +43,22 @@ describe('fetchTradingRecordsForWallet bounds', () => {
     await fetchTradingRecordsForWallet('w', { sinceDays: 0 })
     expect(String(mockQuery.mock.calls[0]![0])).not.toContain('make_interval')
   })
+
+  it('sinceLastClose returns only rows from each mint last full close onward', async () => {
+    await fetchTradingRecordsForWallet('trending-bot-sim-rh', {
+      strategies: ['att_rh'],
+      sinceLastClose: true,
+    })
+    const [sql, params] = mockQuery.mock.calls[0]!
+    const text = String(sql)
+    // The last-close CTE, the join that applies it, and no time window at all.
+    expect(text).toContain('last_close AS')
+    expect(text).toContain(`close_position' = 'true'`)
+    expect(text).toContain('t.timestamp >= coalesce(lc.ts, to_timestamp(0))')
+    expect(text).not.toContain('make_interval')
+    expect(text).toContain('ORDER BY t.timestamp ASC')
+    expect(params).toEqual(['trending-bot-sim-rh', ['att_rh']])
+  })
 })
 
 /** Routes the four loadPaperCapital queries to fixtures by a distinctive fragment. */

@@ -36,17 +36,6 @@ const CHAIN = 'robinhood' as const
 
 const SIM_WALLET = simWalletForChain(TRENDING_BOT_SIM_WALLET, CHAIN)
 
-/**
- * How much of the sim wallet's history to hydrate. Must exceed the oldest OPEN position
- * (an opening buy outside the window makes the position read as closed), and is the main
- * lever on this cycle's cost. See fetchTradingRecordsForWallet for the check to run before
- * changing it.
- */
-const RH_SIM_RECORD_WINDOW_DAYS = (() => {
-  const raw = Number(process.env.RH_SIM_RECORD_WINDOW_DAYS)
-  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 14
-})()
-
 type OpenPosition = {
   mintAddress: string
   symbol: string
@@ -336,13 +325,15 @@ export async function runTrendingBotRhSimCycle(): Promise<RhTrendingSimResult[]>
   if (strategies.length === 0) return []
 
   const { tokens } = await getFilteredGmgnTrending(CHAIN)
-  // Bounded fetch: this wallet holds ~155k rows / 151 MB and hydrating all of it took
-  // 19-78 s inside the shared process, starving the mcap sim past its 30 s cron deadline.
-  // The window must exceed the oldest OPEN position (see fetchTradingRecordsForWallet):
-  // 2026-09-29 the oldest att_rh position was 10 days, so 7 d would have been unsafe.
+  // Only the rows the reconstruction needs: from each mint's last full close onward. The
+  // full wallet is 154,930 rows / 151 MB and hydrating it measured 19-78 s inside the shared
+  // Node process — long enough to starve the mcap sim past its 30 s cron deadline. A cycle
+  // that ended before the last close cannot be open, so the tail is sufficient; validated on
+  // prod (2026-09-29): 6 open positions from the full history and 6 from the tail, 0 lost,
+  // 1,340 rows / 1.1 MB instead of 154,930 / 151 MB.
   const records = await fetchTradingRecordsForWallet(SIM_WALLET, {
     strategies,
-    sinceDays: RH_SIM_RECORD_WINDOW_DAYS,
+    sinceLastClose: true,
   })
   // Durable re-entry guard: never reopen a (strategy, mint) already closed
   // inside the cooldown, or past its lifetime open cap.

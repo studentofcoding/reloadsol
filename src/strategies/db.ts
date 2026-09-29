@@ -2502,9 +2502,44 @@ export async function getStrategyDomainHeartbeats(params?: {
  */
 export async function fetchTradingRecordsForWallet(
   walletAddress: string,
-  opts?: { strategies?: string[]; sinceDays?: number },
+  opts?: { strategies?: string[]; sinceDays?: number; sinceLastClose?: boolean },
 ): Promise<import('@/utils/trading-tracker').TrackingRecord[]> {
   try {
+    // `sinceLastClose` returns only the rows the position reconstruction actually needs:
+    // from each mint's most recent full close onward (never-closed mints keep everything).
+    // A cycle that ended before the last close cannot be open, so the tail is sufficient —
+    // and it avoids hydrating tens of MB of closed history in Node on every cycle.
+    if (opts?.sinceLastClose) {
+      const strategyCondition = opts.strategies?.length
+        ? `AND data->>'bot_strategy' = ANY($2::text[])`
+        : ''
+      const strategyValues = opts.strategies?.length ? [opts.strategies] : []
+      const { rows } = await query<{ data: import('@/utils/trading-tracker').TrackingRecord }>(
+        `WITH last_close AS (
+           SELECT data->'tokens'->0->>'mintAddress' AS mint, max(timestamp) AS ts
+             FROM trading_records
+            WHERE wallet_address = $1
+              AND data->>'operationType' = 'sell'
+              AND data->>'close_position' = 'true'
+              ${strategyCondition}
+            GROUP BY 1
+         )
+         SELECT t.data FROM trading_records t
+           LEFT JOIN last_close lc
+             ON lc.mint = t.data->'tokens'->0->>'mintAddress'
+          WHERE t.wallet_address = $1
+            ${strategyCondition.replace('data->>', 't.data->>')}
+            AND t.timestamp >= coalesce(lc.ts, to_timestamp(0))
+          ORDER BY t.timestamp ASC`,
+        [walletAddress, ...strategyValues],
+      )
+      return rows.map((r) =>
+        typeof r.data === 'string'
+          ? (JSON.parse(r.data) as import('@/utils/trading-tracker').TrackingRecord)
+          : r.data,
+      )
+    }
+
     const conditions = ['wallet_address = $1']
     const values: unknown[] = [walletAddress]
 
