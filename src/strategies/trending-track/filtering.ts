@@ -6,33 +6,67 @@ import { resolveTradingStrategy } from '@/strategies/load-strategy'
 import { mapPoolToTrackedToken } from './mappers'
 import type { TokenFilterResult, FilteringSummary, RejectionDetail } from './types'
 
-export async function checkManualTradingHistoryBatch(tokenAddresses: string[]): Promise<Set<string>> {
-  try {
-    const manuallyTradedTokens = new Set<string>()
+/**
+ * Manual-trade lookup for the duplicate guard.
+ *
+ * The previous version ran `SELECT data FROM trading_records` for every non-bot row and matched in
+ * JS. Measured on prod: 161,931 rows / **162 MB of JSON** selected, transferred and JSON.parsed on
+ * every 5-minute cycle (~8.7s of the trending cycle) to answer a question about ~40 mints — while
+ * the database side was only 205ms. It now asks the database for the mints and nothing else, and
+ * memoises the answer, because a human buy is rare and a few minutes of staleness cannot matter for
+ * a duplicate guard.
+ */
+const MANUAL_TRADE_CACHE_TTL_MS =
+  Number(process.env.MANUAL_TRADE_CACHE_TTL_S || 600) * 1000
 
-    // Query trading_records table for any manual trades (is_bot_operation = false or null)
-    const { rows: data } = await query<{ data: Record<string, unknown> }>(
-      `SELECT data FROM trading_records
-       WHERE (data->>'is_bot_operation' IS NULL OR data->>'is_bot_operation' = 'false')`,
+type ManualTradeCache = { at: number; queried: Set<string>; mints: Set<string> }
+
+let manualTradeCache: ManualTradeCache | null = null
+
+/**
+ * The cached answer is only reusable when it actually covered every mint being asked about —
+ * otherwise a mint that happened to miss an earlier query would be reported as "never traded
+ * manually". Pure, so the rule is testable.
+ */
+export function selectCachedManualMints(
+  cache: ManualTradeCache | null,
+  tokenAddresses: string[],
+  ttlMs: number,
+  nowMs: number,
+): Set<string> | null {
+  if (!cache) return null
+  if (nowMs - cache.at >= ttlMs) return null
+  if (!tokenAddresses.every((address) => cache.queried.has(address))) return null
+  const wanted = new Set(tokenAddresses)
+  return new Set([...cache.mints].filter((mint) => wanted.has(mint)))
+}
+
+export async function checkManualTradingHistoryBatch(tokenAddresses: string[]): Promise<Set<string>> {
+  if (tokenAddresses.length === 0) return new Set<string>()
+
+  const cached = selectCachedManualMints(
+    manualTradeCache,
+    tokenAddresses,
+    MANUAL_TRADE_CACHE_TTL_MS,
+    Date.now(),
+  )
+  if (cached) return cached
+
+  try {
+    const { rows } = await query<{ mint: string | null }>(
+      `SELECT DISTINCT t->>'mintAddress' AS mint
+         FROM trading_records,
+              LATERAL jsonb_array_elements(
+                CASE WHEN jsonb_typeof(data->'tokens') = 'array' THEN data->'tokens' ELSE '[]'::jsonb END
+              ) AS t
+        WHERE (data->>'is_bot_operation' IS NULL OR data->>'is_bot_operation' = 'false')
+          AND t->>'mintAddress' = ANY($1::text[])`,
+      [tokenAddresses],
     )
 
-    if (!data || data.length === 0) {
-      return manuallyTradedTokens // No manual trades found
-    }
-
-    // Check each record for tokens that match our list
-    for (const record of data) {
-      const recordData = record.data
-      if (recordData && recordData.tokens && Array.isArray(recordData.tokens)) {
-        recordData.tokens.forEach((token: any) => {
-          if (token.mintAddress && tokenAddresses.includes(token.mintAddress)) {
-            manuallyTradedTokens.add(token.mintAddress)
-          }
-        })
-      }
-    }
-
-    return manuallyTradedTokens
+    const mints = new Set(rows.map((row) => row.mint).filter((mint): mint is string => !!mint))
+    manualTradeCache = { at: Date.now(), queried: new Set(tokenAddresses), mints }
+    return mints
   } catch (error) {
     console.error('Error in checkManualTradingHistoryBatch:', error)
     return new Set<string>() // Return empty set if error occurs
