@@ -1823,6 +1823,154 @@ export async function evaluateConsensusGateForOpen(params: {
  * unknown value to) drops the whole Robinhood twin — measured 261 of the 627 sim rows over
  * three days — so "all chains" has to be reachable.
  */
+/**
+ * Daily paper PnL: one row per calendar day the positions CLOSED (that is when the PnL is realized),
+ * plus the peak simultaneously-open count per day for the capital/budget view.
+ *
+ * The window is built in SQL from `date::timestamp AT TIME ZONE tz` for the same reason as the export:
+ * comparing a pg timestamptz against a locally-formatted string silently matches nothing.
+ */
+export async function aggregateDailyPnl(params: {
+  from: string
+  to: string
+  timeZone: string
+}): Promise<{
+  daily: Array<{
+    day: string
+    trades: number
+    won: number
+    lost: number
+    sum_pnl_pct: string | null
+    sum_pnl_pct_weighted: string | null
+    median_size_mult: string | null
+    min_size_mult: string | null
+    max_size_mult: string | null
+    with_size_mult: number
+    avg_pnl_pct: string | null
+    median_pnl_pct: string | null
+    with_exec: number
+    exec_pnl_quote: string | null
+  }>
+  peaks: Array<{ day: string; peak_open: number }>
+  byRegime: Array<{
+    regime: string | null
+    trades: number
+    won: number
+    lost: number
+    sum_pnl_pct: string | null
+  }>
+  /** day -> regime tag, from market_regime_tags. Empty while tagging is dormant. */
+  regimeByDay: Array<{ day: string; regime_tag: string | null }>
+}> {
+  const timeZone = resolveReportTimeZone(params.timeZone)
+  const args = [params.from, params.to, timeZone]
+
+  const { rows: daily } = await query<{
+    day: string
+    trades: number
+    won: number
+    lost: number
+    sum_pnl_pct: string | null
+    sum_pnl_pct_weighted: string | null
+    median_size_mult: string | null
+    min_size_mult: string | null
+    max_size_mult: string | null
+    with_size_mult: number
+    avg_pnl_pct: string | null
+    median_pnl_pct: string | null
+    with_exec: number
+    exec_pnl_quote: string | null
+  }>(
+    `SELECT to_char(date_trunc('day', exit_at AT TIME ZONE $3), 'YYYY-MM-DD') AS day,
+            count(*)::int AS trades,
+            count(*) FILTER (WHERE status = 'won')::int AS won,
+            count(*) FILTER (WHERE status = 'lost')::int AS lost,
+            sum(pnl_pct) AS sum_pnl_pct,
+            -- Weighted by the size multiplier the system actually applied, so PnL in SOL reflects
+            -- the real sizing instead of an assumed flat stake. coalesce(1) leaves un-stamped rows.
+            sum(pnl_pct * coalesce((features->>'ml_size_mult')::numeric, 1)) AS sum_pnl_pct_weighted,
+            percentile_cont(0.5) WITHIN GROUP (ORDER BY (features->>'ml_size_mult')::numeric) AS median_size_mult,
+            min((features->>'ml_size_mult')::numeric) AS min_size_mult,
+            max((features->>'ml_size_mult')::numeric) AS max_size_mult,
+            count(*) FILTER (WHERE features ? 'ml_size_mult')::int AS with_size_mult,
+            avg(pnl_pct) AS avg_pnl_pct,
+            percentile_cont(0.5) WITHIN GROUP (ORDER BY pnl_pct) AS median_pnl_pct,
+            count(*) FILTER (WHERE features ? 'exec')::int AS with_exec,
+            sum((features->'exec'->>'pnlQuote')::numeric) AS exec_pnl_quote
+       FROM strategy_outcomes
+      WHERE is_simulated
+        AND exit_at IS NOT NULL
+        AND exit_at >= ($1::date::timestamp AT TIME ZONE $3)
+        AND exit_at <  (($2::date + 1)::timestamp AT TIME ZONE $3)
+      GROUP BY 1
+      ORDER BY 1`,
+    args,
+  )
+
+  // Same interval-overlap sweep (and the same reason for it) as loadPaperCapital: counting buy/sell
+  // records overstates exposure because a position whose close record never landed never decrements.
+  const { rows: peaks } = await query<{ day: string; peak_open: number }>(
+    `WITH ev AS (
+       SELECT entry_at AS ts, 1 AS d
+         FROM strategy_outcomes
+        WHERE is_simulated
+          AND entry_at >= ($1::date::timestamp AT TIME ZONE $3)
+          AND entry_at <  (($2::date + 1)::timestamp AT TIME ZONE $3)
+       UNION ALL
+       SELECT coalesce(exit_at, NOW()) AS ts, -1 AS d
+         FROM strategy_outcomes
+        WHERE is_simulated
+          AND entry_at >= ($1::date::timestamp AT TIME ZONE $3)
+          AND entry_at <  (($2::date + 1)::timestamp AT TIME ZONE $3)
+     ), cum AS (
+       SELECT ts, sum(sum(d)) OVER (ORDER BY ts) AS open_now
+         FROM ev GROUP BY ts
+     )
+     SELECT to_char(date_trunc('day', ts AT TIME ZONE $3), 'YYYY-MM-DD') AS day,
+            max(open_now)::int AS peak_open
+       FROM cum GROUP BY day ORDER BY day`,
+    args,
+  )
+
+  // Per-regime totals over the range, from the tag stamped at exit — regime sizing is configured
+  // per tag, so this is the grouping that decides each bucket's position size.
+  // Grouped by the stamped size multiplier rather than by a regime tag: the multiplier is what the
+  // sizing system actually applied (and what the outcomes record), while `market_regime_tags` holds
+  // a separate vocabulary that has been dormant since 2026-07-10 and is stamped on no recent close.
+  const { rows: byRegime } = await query<{
+    regime: string | null
+    trades: number
+    won: number
+    lost: number
+    sum_pnl_pct: string | null
+  }>(
+    `SELECT to_char(coalesce((features->>'ml_size_mult')::numeric, 1), 'FM0.000') AS regime,
+            count(*)::int AS trades,
+            count(*) FILTER (WHERE status = 'won')::int AS won,
+            count(*) FILTER (WHERE status = 'lost')::int AS lost,
+            sum(pnl_pct) AS sum_pnl_pct
+       FROM strategy_outcomes
+      WHERE is_simulated
+        AND exit_at IS NOT NULL
+        AND exit_at >= ($1::date::timestamp AT TIME ZONE $3)
+        AND exit_at <  (($2::date + 1)::timestamp AT TIME ZONE $3)
+      GROUP BY 1
+      ORDER BY trades DESC
+      LIMIT 12`,
+    args,
+  )
+
+  const { rows: regimeByDay } = await query<{ day: string; regime_tag: string | null }>(
+    `SELECT to_char(tag_date, 'YYYY-MM-DD') AS day, regime_tag
+       FROM market_regime_tags
+      WHERE tag_date >= $1::date AND tag_date <= $2::date
+      ORDER BY tag_date`,
+    [params.from, params.to],
+  ).catch(() => ({ rows: [] as Array<{ day: string; regime_tag: string | null }> }))
+
+  return { daily, peaks, byRegime, regimeByDay }
+}
+
 export async function aggregateTokenPnlByToken(params: {
   chain?: StrategyChain
   isSimulated: boolean

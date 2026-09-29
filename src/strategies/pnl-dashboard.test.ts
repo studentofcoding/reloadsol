@@ -1,0 +1,211 @@
+import { describe, expect, it } from 'vitest'
+import {
+  buildDailyRows,
+  buildSizingBuckets,
+  capacityForBudget,
+  pnlSolFor,
+  resolveBasePositionSizeSol,
+  resolveDailyBudgetSol,
+  summarizeDailyPnl,
+  type DailyPnlRow,
+} from './pnl-dashboard'
+
+const BASE = 0.005
+const BUDGET = 0.5
+
+function rawDay(over: Record<string, unknown> = {}) {
+  return {
+    day: '2026-09-29',
+    trades: 10,
+    won: 6,
+    lost: 4,
+    sum_pnl_pct: '100',
+    sum_pnl_pct_weighted: '50', // the system's median multiplier halved the stake
+    median_size_mult: '0.5',
+    with_size_mult: 10,
+    avg_pnl_pct: '10',
+    median_pnl_pct: '2',
+    with_exec: 0,
+    exec_pnl_quote: null,
+    ...over,
+  }
+}
+
+function dayRow(over: Partial<DailyPnlRow> = {}): DailyPnlRow {
+  return {
+    day: '2026-09-29',
+    regimeTag: null,
+    trades: 10,
+    won: 6,
+    lost: 4,
+    sumPnlPct: 100,
+    sumPnlPctWeighted: 50,
+    avgPnlPct: 10,
+    medianPnlPct: 2,
+    pnlSolFlat: 0.005,
+    pnlSolSized: 0.0025,
+    medianSizeMult: 0.5,
+    withSizeMult: 10,
+    withExec: 0,
+    execPnlSol: null,
+    peakConcurrent: 64,
+    capitalSol: 0.32,
+    budgetUsedPct: 64,
+    capacity: 100,
+    sizedCapacity: 200,
+    ...over,
+  }
+}
+
+describe('config', () => {
+  it('defaults the budget and the base stake, and refuses junk', () => {
+    expect(resolveDailyBudgetSol({})).toBe(0.5)
+    expect(resolveBasePositionSizeSol({})).toBe(0.005)
+    for (const raw of ['', 'abc', '0', '-1']) {
+      expect(resolveDailyBudgetSol({ SIM_DAILY_BUDGET_SOL: raw })).toBe(0.5)
+      expect(resolveBasePositionSizeSol({ SIM_BASE_POSITION_SOL: raw })).toBe(0.005)
+    }
+  })
+
+  it('capacity is how many positions the budget carries, and sizing changes it', () => {
+    expect(capacityForBudget(BUDGET, 0.005)).toBe(100)
+    expect(capacityForBudget(BUDGET, 0.01)).toBe(50)
+    expect(capacityForBudget(BUDGET, 0)).toBe(0)
+  })
+})
+
+describe('pnlSolFor', () => {
+  it('applies the stake to the summed percentage', () => {
+    expect(pnlSolFor(26676, 0.005)).toBeCloseTo(1.3338, 6)
+    expect(pnlSolFor(-100, 0.01)).toBeCloseTo(-0.01, 8)
+  })
+})
+
+describe('buildDailyRows with the stamped sizing', () => {
+  it('reports the flat stake and the sized stake side by side', () => {
+    const rows = buildDailyRows({
+      daily: [rawDay()],
+      peaks: [{ day: '2026-09-29', peak_open: 64 }],
+      basePositionSizeSol: BASE,
+      budgetSol: BUDGET,
+    })
+    expect(rows[0].pnlSolFlat).toBeCloseTo(0.005, 8) // 100% of 0.005
+    expect(rows[0].pnlSolSized).toBeCloseTo(0.0025, 8) // 50% of 0.005 — the half-size stake
+    expect(rows[0].medianSizeMult).toBe(0.5)
+    expect(rows[0].withSizeMult).toBe(10)
+  })
+
+  it('scales capacity by the applied sizing', () => {
+    const rows = buildDailyRows({
+      daily: [rawDay()],
+      peaks: [],
+      basePositionSizeSol: BASE,
+      budgetSol: BUDGET,
+    })
+    expect(rows[0].capacity).toBe(100)
+    expect(rows[0].sizedCapacity).toBe(200) // half the stake, twice the positions
+  })
+
+  it('falls back to the flat figure when a day has no stamped multiplier', () => {
+    const rows = buildDailyRows({
+      daily: [rawDay({ sum_pnl_pct_weighted: null, median_size_mult: null, with_size_mult: 0 })],
+      peaks: [],
+      basePositionSizeSol: BASE,
+      budgetSol: BUDGET,
+    })
+    expect(rows[0].pnlSolSized).toBeCloseTo(rows[0].pnlSolFlat, 10)
+    expect(rows[0].medianSizeMult).toBeNull()
+    expect(rows[0].sizedCapacity).toBe(100)
+  })
+
+  it('treats junk as zero rather than NaN', () => {
+    const rows = buildDailyRows({
+      daily: [rawDay({ sum_pnl_pct: 'abc', avg_pnl_pct: null, median_pnl_pct: '' })],
+      peaks: [],
+      basePositionSizeSol: BASE,
+      budgetSol: BUDGET,
+    })
+    expect(rows[0].sumPnlPct).toBe(0)
+    expect(rows[0].avgPnlPct).toBe(0)
+  })
+})
+
+describe('buildSizingBuckets', () => {
+  it('prices each multiplier bucket at its own stake', () => {
+    const buckets = buildSizingBuckets({
+      bySizeMult: [
+        { regime: '0.500', trades: 20, won: 12, lost: 8, sum_pnl_pct: '50' },
+        { regime: '1.000', trades: 100, won: 50, lost: 50, sum_pnl_pct: '80' },
+      ],
+      basePositionSizeSol: BASE,
+    })
+    expect(buckets[0].sizeMult).toBe(0.5)
+    expect(buckets[0].pnlSolSized).toBeCloseTo(0.00125, 8) // 50% × 0.5 × 0.005
+    expect(buckets[1].sizeMult).toBe(1)
+    expect(buckets[1].pnlSolSized).toBeCloseTo(0.004, 8)
+  })
+
+  it('treats a missing multiplier as the base stake', () => {
+    const buckets = buildSizingBuckets({
+      bySizeMult: [{ regime: null, trades: 1, won: 1, lost: 0, sum_pnl_pct: '100' }],
+      basePositionSizeSol: BASE,
+    })
+    expect(buckets[0].sizeMult).toBe(1)
+  })
+})
+
+describe('summarizeDailyPnl', () => {
+  const rows: DailyPnlRow[] = [
+    dayRow({ day: '2026-09-28', pnlSolFlat: 0.005, pnlSolSized: 0.005, medianSizeMult: 1 }),
+    dayRow({
+      day: '2026-09-29',
+      sumPnlPct: -40,
+      sumPnlPctWeighted: -20,
+      pnlSolFlat: -0.002,
+      pnlSolSized: -0.001,
+      medianSizeMult: 0.5,
+      trades: 14,
+      won: 9,
+      lost: 5,
+      withExec: 4,
+      execPnlSol: -0.004,
+      peakConcurrent: 64,
+    }),
+  ]
+
+  it('totals both figures and reports the sizing effect', () => {
+    const s = summarizeDailyPnl({ rows, budgetSol: BUDGET, basePositionSizeSol: BASE })
+    expect(s.pnlSolFlat).toBeCloseTo(0.003, 8)
+    expect(s.pnlSolSized).toBeCloseTo(0.004, 8)
+    expect(s.sizingEffectPct).toBeCloseTo((0.001 / 0.003) * 100, 6)
+    expect(s.medianSizeMult).toBeCloseTo(0.75, 8)
+  })
+
+  it('reports capacity at the base stake and the peak against the budget', () => {
+    const s = summarizeDailyPnl({ rows, budgetSol: BUDGET, basePositionSizeSol: BASE })
+    expect(s.capacity).toBe(100)
+    expect(s.peakConcurrent).toBe(64)
+    expect(s.peakCapitalSol).toBeCloseTo(0.32, 8)
+    expect(s.peakBudgetUsedPct).toBeCloseTo(64, 6)
+  })
+
+  it('carries the exec total only when records exist', () => {
+    const s = summarizeDailyPnl({ rows, budgetSol: BUDGET, basePositionSizeSol: BASE })
+    expect(s.tradesWithExec).toBe(4)
+    expect(s.execPnlSol).toBeCloseTo(-0.004, 8)
+  })
+
+  it('names best and worst by the sized figure', () => {
+    const s = summarizeDailyPnl({ rows, budgetSol: BUDGET, basePositionSizeSol: BASE })
+    expect(s.bestDay?.day).toBe('2026-09-28')
+    expect(s.worstDay?.day).toBe('2026-09-29')
+  })
+
+  it('survives an empty range', () => {
+    const s = summarizeDailyPnl({ rows: [], budgetSol: BUDGET, basePositionSizeSol: BASE })
+    expect(s.days).toBe(0)
+    expect(s.sizingEffectPct).toBe(0)
+    expect(s.medianSizeMult).toBeNull()
+    expect(s.bestDay).toBeNull()
+  })
+})
