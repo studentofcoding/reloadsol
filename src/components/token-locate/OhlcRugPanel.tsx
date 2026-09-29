@@ -10,6 +10,8 @@ import {
   type OhlcRugThresholds,
 } from '@/strategies/ohlc-rug-rules'
 import type { DetectRugLabel } from '@/strategies/detect-snapshots'
+import RiskChip from '@/components/risk/RiskChip'
+import type { RiskChipData } from '@/types/risk-chip'
 
 const THRESHOLDS_KEY = 'ohlc-rug-thresholds-v1'
 
@@ -58,6 +60,7 @@ type SnapshotResponse = {
   trip: boolean
   rule_hits: ReturnType<typeof evaluateOhlcRugRules>['hits']
   features: ReturnType<typeof evaluateOhlcRugRules>['features']
+  riskChip?: RiskChipData | null
 }
 
 function fmtPct(ratio: number | null | undefined): string {
@@ -185,6 +188,11 @@ export default function OhlcRugPanel({
           {live.trip ? 'trip' : 'ok'}
         </span>
       </div>
+      {query.data.riskChip ? (
+        <div className="flex">
+          <RiskChip chip={query.data.riskChip} />
+        </div>
+      ) : null}
       {n === 0 && query.data.empty_reason ? (
         <p className="text-[11px] leading-tight text-amber-200/70">
           {query.data.empty_reason}

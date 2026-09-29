@@ -29,6 +29,8 @@ import { RUG_LIST_QUERY_KEY } from "@/hooks/useRugList";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTradingSignals, useTradingSignalsStrategies, SignalItem } from "@/hooks/useTradingSignals";
 import { formatAppDateTime } from "@/utils/datetime";
+import RiskChip from "@/components/risk/RiskChip";
+import { useRiskChips } from "@/hooks/useRiskChips";
 import {
   formatSignalsListOptionLabel,
   formatSignalsListOptionTitle,
@@ -273,6 +275,10 @@ export default function SignalsTab() {
 
   // Web/social presence for the rendered mints (live-only, self-nulls per row).
   const { presenceFor } = useTokenPresence(signals.map((s) => s.token_address));
+  const { chips: riskChips } = useRiskChips(
+    signals.map((s) => s.token_address),
+    network,
+  );
 
   const seeded = seedSignalsListPickerOptions(network);
   const strategyOptions: SignalsListPickerOption[] =
@@ -1091,6 +1097,7 @@ export default function SignalsTab() {
                             ))}
                             <TokenSearchLink address={s.token_address} />
                             {labelBadge(s.label)}
+                            <RiskChip chip={riskChips[s.token_address]} />
                             <button
                               onClick={() =>
                                 handleOpenChart(s.token_address, s.token_symbol)

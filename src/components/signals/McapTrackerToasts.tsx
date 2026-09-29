@@ -235,6 +235,11 @@ export default function McapTrackerToasts({ toasts }: McapTrackerToastsProps) {
                         Entry {entryMcapLabel}
                       </span>
                     )}
+                    {item.riskLabel && (
+                      <span className="rounded border border-gray-500/50 bg-black/25 px-1.5 py-0.5 text-xs font-medium opacity-90">
+                        {item.riskLabel}
+                      </span>
+                    )}
                     <button
                       type="button"
                       data-slot="toast-action"

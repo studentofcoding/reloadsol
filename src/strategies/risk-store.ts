@@ -273,6 +273,7 @@ export type RiskChip = {
 }
 
 type RiskRow = {
+  token_address?: string
   rugcheck_score_norm: number | null
   rugcheck_risk_names: string[] | null
   dev_verdict: DevVerdict | null
@@ -295,6 +296,32 @@ export async function readRiskChip(
     return chipFromRow(row)
   } catch {
     return null
+  }
+}
+
+/** Bulk read for list surfaces — one query for many tokens. */
+export async function readRiskChips(
+  chain: string,
+  addresses: string[],
+): Promise<Record<string, RiskChip>> {
+  const list = [...new Set(addresses.map((a) => a.trim()).filter(Boolean))]
+  if (list.length === 0) return {}
+  try {
+    const { rows } = await query<RiskRow>(
+      `SELECT token_address, rugcheck_score_norm, rugcheck_risk_names, dev_verdict, mode, risk_reasons
+       FROM token_risk_features
+       WHERE chain = $1 AND token_address = ANY($2)
+       LIMIT 500`,
+      [chain, list],
+    )
+    const out: Record<string, RiskChip> = {}
+    for (const row of rows) {
+      const chip = chipFromRow(row)
+      if (chip && row.token_address) out[row.token_address] = chip
+    }
+    return out
+  } catch {
+    return {}
   }
 }
 
