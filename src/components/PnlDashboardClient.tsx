@@ -84,6 +84,7 @@ interface RegimeRow {
 
 interface Payload {
   success: boolean
+  range?: { from: string; to: string; timezone: string }
   daily?: DailyRow[]
   regimes?: RegimeRow[]
   sizing?: SizingRow[]
@@ -100,12 +101,25 @@ interface Climate {
 
 const RANGES = [7, 14, 30, 90]
 
+/** Today in the operator's timezone, so "today" matches the day the sims trade in. */
+function todayIso(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' })
+}
+
+function shiftDays(iso: string, days: number): string {
+  const d = new Date(`${iso}T12:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + days)
+  return d.toISOString().slice(0, 10)
+}
+
 const sol = (v: number, d = 4) => `${v >= 0 ? '' : '-'}${Math.abs(v).toFixed(d)}`
 const pct = (v: number, d = 1) => `${v.toFixed(d)}%`
 const tone = (v: number) => (v > 0 ? 'text-emerald-400' : v < 0 ? 'text-red-400' : 'text-gray-400')
 
 export default function PnlDashboardClient() {
-  const [days, setDays] = useState(14)
+  // Anchored on today: one day by default, widening to a range via the pickers or a preset.
+  const [from, setFrom] = useState(() => todayIso())
+  const [to, setTo] = useState(() => todayIso())
   const [data, setData] = useState<Payload | null>(null)
   const [climate, setClimate] = useState<Climate | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -115,10 +129,7 @@ export default function PnlDashboardClient() {
     setLoading(true)
     setError(null)
     try {
-      const to = new Date()
-      const from = new Date(to.getTime() - (days - 1) * 86_400_000)
-      const iso = (d: Date) => d.toISOString().slice(0, 10)
-      const res = await fetch(`/api/pnl/daily?from=${iso(from)}&to=${iso(to)}`)
+      const res = await fetch(`/api/pnl/daily?from=${from}&to=${to}`)
       const body = (await res.json()) as Payload
       if (!body.success) throw new Error(body.error || 'Request failed')
       setData(body)
@@ -127,7 +138,13 @@ export default function PnlDashboardClient() {
     } finally {
       setLoading(false)
     }
-  }, [days])
+  }, [from, to])
+
+  const applyPreset = useCallback((n: number) => {
+    const anchor = todayIso()
+    setTo(anchor)
+    setFrom(shiftDays(anchor, -(n - 1)))
+  }, [])
 
   const loadClimate = useCallback(async () => {
     try {
@@ -157,8 +174,11 @@ export default function PnlDashboardClient() {
           <div>
             <h1 className="text-2xl font-semibold">Paper PnL progress</h1>
             <p className="text-gray-400 text-sm mt-1">
-              Simulated trades only. Capital = peak concurrent positions × the base stake; the budget
-              is a concurrency limit because capital recycles.
+              {data?.range
+                ? `${data.range.from === data.range.to ? 'Single day' : 'Range'} ${data.range.from} → ${data.range.to} (${data.range.timezone}) · `
+                : ''}
+              budget per day {sol(summary?.budgetSol ?? 0, 2)} SOL · velocity = peak concurrent
+              capital × stake, which is the binding number because capital recycles.
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -168,12 +188,42 @@ export default function PnlDashboardClient() {
                 {climate.scale ? ` · sizeScale ${climate.scale}` : ''}
               </span>
             ) : null}
+            <label className="text-xs text-gray-400">
+              From
+              <input
+                type="date"
+                value={from}
+                max={to}
+                onChange={(e) => setFrom(e.target.value || todayIso())}
+                className="block mt-0.5 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-white"
+              />
+            </label>
+            <label className="text-xs text-gray-400">
+              To
+              <input
+                type="date"
+                value={to}
+                min={from}
+                onChange={(e) => setTo(e.target.value || todayIso())}
+                className="block mt-0.5 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-white"
+              />
+            </label>
+            <button
+              onClick={() => {
+                const anchor = todayIso()
+                setFrom(anchor)
+                setTo(anchor)
+              }}
+              className={`px-3 py-1.5 text-sm rounded border border-gray-700 ${from === to && to === todayIso() ? 'bg-emerald-800 text-white' : 'bg-gray-900 text-gray-300 hover:bg-gray-800'}`}
+            >
+              Today
+            </button>
             <div className="flex rounded border border-gray-700 overflow-hidden">
               {RANGES.map((r) => (
                 <button
                   key={r}
-                  onClick={() => setDays(r)}
-                  className={`px-3 py-1.5 text-sm ${days === r ? 'bg-emerald-800 text-white' : 'bg-gray-900 text-gray-300 hover:bg-gray-800'}`}
+                  onClick={() => applyPreset(r)}
+                  className="px-2.5 py-1.5 text-xs bg-gray-900 text-gray-300 hover:bg-gray-800"
                 >
                   {r}d
                 </button>
