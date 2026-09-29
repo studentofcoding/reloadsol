@@ -12,6 +12,7 @@ import { fetchJupiterV2SearchRaw } from '@/utils/jupiter-metadata'
 import { cacheGet, cacheSet } from '@/utils/redis-cache'
 import {
   scoreDevReputation,
+  topDevTokens,
   type DevReputation,
 } from '@/strategies/dev-reputation'
 
@@ -113,13 +114,20 @@ export async function fetchDevReputation(params: {
     return null
   }
 
-  const rep = scoreDevReputation({
-    innerCount: toNum(data.inner_count) ?? 0,
-    openCount: toNum(data.open_count) ?? 0,
-    athMc: toNum(data.creator_ath_info?.ath_mc),
-    mintedCount: params.mintedCount ?? null,
-    tokenAthMcs: (data.tokens ?? []).map((t) => toNum(t.token_ath_mc)),
-  })
+  const rep: DevReputation = {
+    ...scoreDevReputation({
+      innerCount: toNum(data.inner_count) ?? 0,
+      openCount: toNum(data.open_count) ?? 0,
+      athMc: toNum(data.creator_ath_info?.ath_mc),
+      mintedCount: params.mintedCount ?? null,
+      tokenAthMcs: (data.tokens ?? []).map((t) => toNum(t.token_ath_mc)),
+    }),
+    // Top 10 by ATH — persisted with the row so the UI needs no GMGN call.
+    tokens: topDevTokens(
+      (data.tokens ?? []) as Array<Record<string, unknown>>,
+      10,
+    ),
+  }
 
   const ttl = Number(process.env.DEV_REPUTATION_TTL_S)
   void cacheSet(key, rep, Number.isFinite(ttl) && ttl > 0 ? ttl : DEFAULT_TTL_S)

@@ -15,7 +15,11 @@ import {
   isDevReputationEnabled,
   resolveCreatorAddress,
 } from '@/utils/dev-reputation-data'
-import type { DevReputation, DevVerdict } from '@/strategies/dev-reputation'
+import type {
+  DevReputation,
+  DevTokenRef,
+  DevVerdict,
+} from '@/strategies/dev-reputation'
 import {
   composeRiskLabel,
   type RiskChipTone,
@@ -66,6 +70,8 @@ CREATE TABLE IF NOT EXISTS dev_reputation (
   re_eval_after TIMESTAMPTZ,
   PRIMARY KEY (chain, creator_address)
 );
+ALTER TABLE dev_reputation
+  ADD COLUMN IF NOT EXISTS tokens JSONB NOT NULL DEFAULT '[]'::jsonb;
 `
 
 let ensurePromise: Promise<void> | null = null
@@ -176,8 +182,9 @@ async function persistDevReputation(input: {
     `INSERT INTO dev_reputation (
        chain, creator_address, sample, open_count, inner_count,
        graduation_ratio, ath_mc, verdict, reasons, mode,
-       evaluated_at, re_eval_after
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10, NOW(), NOW() + ($11 || ' hours')::interval)
+       tokens, evaluated_at, re_eval_after
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10,
+       $11::jsonb, NOW(), NOW() + ($12 || ' hours')::interval)
      ON CONFLICT (chain, creator_address) DO UPDATE SET
        sample = EXCLUDED.sample,
        open_count = EXCLUDED.open_count,
@@ -187,6 +194,7 @@ async function persistDevReputation(input: {
        verdict = EXCLUDED.verdict,
        reasons = EXCLUDED.reasons,
        mode = EXCLUDED.mode,
+       tokens = EXCLUDED.tokens,
        evaluated_at = NOW(),
        re_eval_after = EXCLUDED.re_eval_after`,
     [
@@ -200,6 +208,7 @@ async function persistDevReputation(input: {
       input.dev.verdict,
       input.dev.reasons,
       input.mode,
+      JSON.stringify(input.dev.tokens ?? []),
       String(hours),
     ],
   )
@@ -353,9 +362,13 @@ export type DevReputationRow = {
   creator_address: string
   verdict: DevVerdict
   sample: number
+  open_count: number
+  inner_count: number
   graduation_ratio: number | null
   ath_mc: number | null
   reasons: string[]
+  tokens: DevTokenRef[] | null
+  mode: string
   evaluated_at: string
 }
 
@@ -376,15 +389,17 @@ async function queryMany(
   limit: number,
 ): Promise<DevReputationRow[]> {
   const cap = Math.min(Math.max(Math.floor(limit), 1), 500)
+  const COLS = `creator_address, verdict, sample, open_count, inner_count,
+    graduation_ratio, ath_mc, reasons, tokens, mode, evaluated_at`
   const { rows } = verdict
     ? await query<DevReputationRow>(
-        `SELECT creator_address, verdict, sample, graduation_ratio, ath_mc, reasons, evaluated_at
-         FROM dev_reputation WHERE verdict = $1 ORDER BY evaluated_at DESC LIMIT $2`,
+        `SELECT ${COLS} FROM dev_reputation WHERE verdict = $1
+         ORDER BY ath_mc DESC NULLS LAST, evaluated_at DESC LIMIT $2`,
         [verdict, cap],
       )
     : await query<DevReputationRow>(
-        `SELECT creator_address, verdict, sample, graduation_ratio, ath_mc, reasons, evaluated_at
-         FROM dev_reputation ORDER BY evaluated_at DESC LIMIT $1`,
+        `SELECT ${COLS} FROM dev_reputation
+         ORDER BY ath_mc DESC NULLS LAST, evaluated_at DESC LIMIT $1`,
         [cap],
       )
   return rows

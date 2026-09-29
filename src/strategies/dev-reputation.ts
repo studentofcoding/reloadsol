@@ -30,6 +30,59 @@ export type DevReputation = {
   athMc: number | null
   verdict: DevVerdict
   reasons: string[]
+  /** Top tokens by ATH (≤10), from GMGN created_tokens. */
+  tokens?: DevTokenRef[]
+}
+
+export type DevTokenRef = {
+  address: string
+  symbol: string | null
+  athMc: number | null
+  marketCap: number | null
+  liquidity: number | null
+  holders: number | null
+  graduated: boolean
+  launchpad: string | null
+  createdAt: number | null
+}
+
+function num(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() !== '') {
+    const n = Number(value)
+    return Number.isFinite(n) ? n : null
+  }
+  return null
+}
+
+function str(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : null
+}
+
+/** Map + sort GMGN created-token rows into the top-N by ATH market cap. */
+export function topDevTokens(
+  rows: Array<Record<string, unknown>>,
+  n = 10,
+): DevTokenRef[] {
+  const mapped: DevTokenRef[] = []
+  for (const row of rows) {
+    const address = str(row.token_address)
+    if (!address) continue
+    mapped.push({
+      address,
+      symbol: str(row.symbol),
+      athMc: num(row.token_ath_mc),
+      marketCap: num(row.market_cap),
+      liquidity: num(row.pool_liquidity),
+      holders: num(row.holders),
+      graduated: row.is_open === true,
+      launchpad: str(row.launchpad_platform),
+      createdAt: num(row.create_timestamp),
+    })
+  }
+  return mapped
+    .sort((a, b) => (b.athMc ?? -1) - (a.athMc ?? -1))
+    .slice(0, Math.max(0, n))
 }
 
 function envNum(key: string, fallback: number): number {

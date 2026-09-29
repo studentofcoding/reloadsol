@@ -53,6 +53,7 @@ export default function NavigationTabs({
     "/dev/strategies",
     "/dev/token-search",
     "/dev/ohlc-labels",
+    "/dev/dev-reputation",
     "/dev/arbitrage",
   ].some((path) => (pathname || "").startsWith(path));
 
@@ -375,6 +376,19 @@ export default function NavigationTabs({
                       title="OHLC labels"
                     >
                       <span className="text-xs font-semibold">OHLC</span>
+                    </Link>
+                    ) : null}
+                    {can("/dev/dev-reputation") ? (
+                    <Link
+                      href="/dev/dev-reputation"
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
+                        isActive("/dev/dev-reputation")
+                          ? "bg-gray-700 text-white"
+                          : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
+                      }`}
+                      title="Dev reputation"
+                    >
+                      <span className="text-xs font-semibold">Devs</span>
                     </Link>
                     ) : null}
                     {can("/dev/arbitrage") ? (
@@ -809,6 +823,19 @@ export default function NavigationTabs({
                 >
                   <span className="mb-1 text-sm font-bold">OHLC</span>
                   <span className="text-xs font-medium">Labels</span>
+                </Link>
+                ) : null}
+                {can("/dev/dev-reputation") ? (
+                <Link
+                  href="/dev/dev-reputation"
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg ${navChromeItem} ${
+                    isActive("/dev/dev-reputation")
+                      ? "bg-white text-black"
+                      : "text-gray-400"
+                  }`}
+                >
+                  <span className="mb-1 text-sm font-bold">Devs</span>
+                  <span className="text-xs font-medium">Reputation</span>
                 </Link>
                 ) : null}
                 {can("/dev/arbitrage") ? (
