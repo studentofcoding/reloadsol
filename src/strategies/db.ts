@@ -6,6 +6,13 @@ import { readTokenSymbol, readTrainingClass } from './outcome-features'
 import { dedupeStrategyOutcomeRows } from './outcome-dedupe'
 import { resolveStrategyFamily } from './strategy-family'
 import { runConsensusTest, type ConsensusTestResult } from './consensus-test'
+import {
+  consensusGateMode,
+  decideConsensusGate,
+  getConsensusMinFamilies,
+  type ConsensusGateDecision,
+  type ConsensusShadowRow,
+} from './consensus-gate'
 import { applyAutoOutcomeLabels } from './outcome-labeling'
 import { matchesTrainingClassFilter } from './ml-training-features'
 import {
@@ -1664,6 +1671,82 @@ export async function loadConsensusTest(
     }
     console.warn('[strategies/db] consensus test failed:', errorMessage(error))
     return runConsensusTest([])
+  }
+}
+
+const CONSENSUS_EVIDENCE_TTL_MS = 10 * 60 * 1000
+const consensusEvidenceCache = new Map<string, { at: number; value: { significant: boolean; reason: string } }>()
+
+/**
+ * Evidence for the (shadow) consensus gate. Memoized in-process for 10 minutes: the
+ * test bootstraps 10k resamples, far too heavy to run per would-be open.
+ */
+export async function loadConsensusEvidence(
+  chain: StrategyChain,
+  minFamilies: number,
+): Promise<{ significant: boolean; reason: string }> {
+  const key = `${chain}:${minFamilies}`
+  const now = Date.now()
+  const hit = consensusEvidenceCache.get(key)
+  if (hit && now - hit.at <= CONSENSUS_EVIDENCE_TTL_MS) return hit.value
+
+  const from = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString()
+  const result = await loadConsensusTest({ chain, from })
+  const lift =
+    result.lifts.find((l) => l.bucket_family_count === minFamilies) ??
+    result.lifts.find((l) => l.vs === '1')
+  const value = lift
+    ? { significant: lift.significant, reason: `${lift.bucket_label} families vs 1: ${lift.reason}` }
+    : { significant: false, reason: 'no lift computed' }
+  consensusEvidenceCache.set(key, { at: now, value })
+  return value
+}
+
+/**
+ * What the consensus gate would decide for a would-be open: the families that have
+ * already entered this mint, plus the (memoized) evidence. Returns the row to record
+ * and whether the caller must actually skip the open. Gated — see consensus-gate.ts.
+ */
+export async function evaluateConsensusGateForOpen(params: {
+  chain: StrategyChain
+  strategyId: string
+  tokenAddress: string
+  symbol?: string | null
+}): Promise<{ decision: ConsensusGateDecision; row: ConsensusShadowRow }> {
+  const mode = consensusGateMode()
+  const minFamilies = getConsensusMinFamilies()
+  const familyMap = await loadStrategyFamilyMap()
+  const { rows } = await query<{ strategy_id: string }>(
+    `SELECT DISTINCT strategy_id FROM strategy_outcomes
+      WHERE chain = $1 AND token_address = $2`,
+    [params.chain, params.tokenAddress],
+  )
+  const strategies = rows.map((r) => r.strategy_id)
+  const families = [...new Set(strategies.map((id) => familyMap.get(id) ?? id))]
+  const evidence = await loadConsensusEvidence(params.chain, minFamilies)
+  const decision = decideConsensusGate({
+    familyCount: families.length,
+    minFamilies,
+    evidence,
+    mode,
+  })
+  return {
+    decision,
+    row: {
+      chain: params.chain,
+      strategyId: params.strategyId,
+      tokenAddress: params.tokenAddress,
+      symbol: params.symbol ?? null,
+      familyCount: families.length,
+      families,
+      strategies,
+      minFamilies,
+      decision: decision.decision,
+      reason: decision.reason,
+      evidenceSignificant: evidence.significant,
+      evidenceReason: evidence.reason,
+      mode,
+    },
   }
 }
 

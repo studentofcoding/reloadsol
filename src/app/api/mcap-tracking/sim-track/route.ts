@@ -69,6 +69,8 @@ import {
 } from '@/utils/mcap-raptor-trade'
 import { computeOpenTradeCycle } from '@/utils/simulation-trades'
 import { buildTradingRecord, insertTradingRecords } from '@/utils/trading-records-db'
+import { evaluateConsensusGateForOpen } from '@/strategies/db'
+import { recordConsensusShadow } from '@/strategies/consensus-gate'
 import type { TrackingRecord } from '@/utils/trading-tracker'
 import { getSolPriceUSD } from '@/utils/solana'
 import { toClimateChipPayload } from '@/utils/climateDisplay'
@@ -1197,6 +1199,24 @@ async function runSimTrack(request: NextRequest) {
             pBad: ml.pBad,
             pWinner: ml.pWinner,
           })
+        }
+
+        // Strategy-consensus gate — SHADOW by default (consensus-gate.ts). Records what
+        // it would decide for this would-be open and only skips when the gate is set to
+        // enforce AND the consensus lift is significant. Fail-soft: an error here must
+        // never block an open.
+        const consensus = await evaluateConsensusGateForOpen({
+          chain,
+          strategyId: strategy.id,
+          tokenAddress: snapshot.token_address,
+          symbol: snapshot.token_symbol,
+        }).catch(() => null)
+        if (consensus) {
+          void recordConsensusShadow(consensus.row)
+          if (consensus.decision.enforced) {
+            skipped.push(`${snapshot.token_symbol}: consensus_gate`)
+            continue
+          }
         }
 
         if (!execMode.isSimulated) {

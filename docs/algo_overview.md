@@ -193,6 +193,21 @@ mean +83 % vs median −39 % on first entries) plus a Wilson CI on the token win
 only follow a significant lift, shadow-first, mirroring the wallet-digger concurrence shape
 (`alpha_concurrence_signals`).
 
+**That gate now exists in its gated form** (`src/strategies/consensus-gate.ts`,
+`db/init/47-strategy-consensus-shadow.sql`). It decides whether a would-be open has enough
+independent families behind it, but `decideConsensusGate` returns `no_evidence` whenever the test
+is not significant — so an unproven lift can never suppress a trade. Default
+`CONSENSUS_GATE_MODE=shadow` (record only, in `strategy_consensus_shadow`, readable via
+`GET /api/strategies/consensus-shadow`); `enforce` is opt-in; `CONSENSUS_GATE_KILL_SWITCH` forces
+shadow; `CONSENSUS_GATE_MIN_FAMILIES` (default 2). The hook sits on the mcap sim open boundary and
+is fail-soft — it can never break an open. `would_gate` rows mean "we would have skipped this one"
+and are only meaningful once `evidence_significant` is true, which today it is not.
+
+**Spawn diversity guard, also shadow** (`src/strategies/candidate-diversity.ts`): each candidate's
+token-set Jaccard against the active variants is measured and returned in the search cycle result
+(`diversity`, `diversity_enforced`); redundant candidates are dropped only when
+`SEARCH_DIVERSITY_ENFORCE=1`. This is the root cause of the clone redundancy above.
+
 Two historical defects this closed (both fixed in the writers; history repaired by
 `scripts/backfill-strategy-outcome-entry-at-standalone.mjs`):
 

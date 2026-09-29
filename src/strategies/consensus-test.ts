@@ -43,6 +43,9 @@ export type ConsensusBucket = {
 }
 
 export type ConsensusLift = {
+  /** Which bucket this lift describes (so a gate can ask about a specific N). */
+  bucket_family_count: number
+  bucket_label: string
   vs: string
   delta_median_pct: number | null
   delta_ci: [number, number] | null
@@ -213,6 +216,8 @@ export function runConsensusTest(
 
     if (!single || singleValues.length === 0) {
       lifts.push({
+        bucket_family_count: bucket.family_count,
+        bucket_label: bucket.label,
         vs: '1',
         delta_median_pct: null,
         delta_ci: null,
@@ -232,6 +237,8 @@ export function runConsensusTest(
     const significant = !thin && excludesZero
 
     lifts.push({
+      bucket_family_count: bucket.family_count,
+      bucket_label: bucket.label,
       vs: '1',
       delta_median_pct: delta,
       delta_ci: ci,

@@ -18,8 +18,16 @@ import {
   isSearchStrategyId,
   listActiveSearchStrategies,
   pruneLosingSearchStrategies,
+  searchStrategyId,
   spawnFromCandidatesFile,
 } from '@/strategies/strategy-search-bandit'
+import {
+  annotateCandidateDiversity,
+  getSearchDiversityMaxJaccard,
+  searchDiversityEnforced,
+  type CandidateDiversity,
+} from '@/strategies/candidate-diversity'
+import { query } from '@/utils/db'
 import {
   listStrategyOutcomes,
   loadStrategyDefinitionById,
@@ -241,6 +249,37 @@ export type SearchCycleResult = {
   canonical: { replaced: string | null; from?: string; reason?: string }
   dormant: Array<{ id: string; ok: boolean; error?: string; reason?: string }>
   deactivated: Array<{ id: string; ok: boolean; error?: string; reason?: string }>
+  /** Overlap of each candidate with the already-active variants (shadow unless enforcing). */
+  diversity: CandidateDiversity[]
+  diversity_enforced: boolean
+}
+
+/** Token sets of the active search variants, for the diversity guard. */
+async function loadActiveVariantTokens(
+  ids: string[],
+): Promise<Array<{ id: string; tokens: Set<string> }>> {
+  if (ids.length === 0) return []
+  try {
+    const { rows } = await query<{ strategy_id: string; token_address: string }>(
+      `SELECT DISTINCT strategy_id, token_address
+         FROM strategy_outcomes
+        WHERE strategy_id = ANY($1::text[]) AND token_address IS NOT NULL`,
+      [ids],
+    )
+    const byId = new Map<string, Set<string>>()
+    for (const row of rows) {
+      const set = byId.get(row.strategy_id) ?? new Set<string>()
+      set.add(row.token_address)
+      byId.set(row.strategy_id, set)
+    }
+    return [...byId.entries()].map(([id, tokens]) => ({ id, tokens }))
+  } catch (error) {
+    console.warn(
+      '[strategy-search] active variant token sets failed:',
+      error instanceof Error ? error.message : error,
+    )
+    return []
+  }
 }
 
 export async function runStrategySearchCycle(
@@ -258,9 +297,34 @@ export async function runStrategySearchCycle(
       holdout: { avgPnlPct: r.holdout.avgPnlPct },
     })),
   })
+
+  // Diversity guard: record how much each candidate duplicates an active variant, and
+  // only drop the redundant ones when SEARCH_DIVERSITY_ENFORCE=1 (see
+  // candidate-diversity.ts). Shadow by default.
+  const activeSearch = await listActiveSearchStrategies(domain)
+  const diversity = annotateCandidateDiversity({
+    candidates: candidates.map((candidate) => ({
+      id: searchStrategyId(domain, candidate.id),
+      tokens: new Set(
+        rowsForCandidate(domain, candidate, rows)
+          .map((r) => r.token_address)
+          .filter((t): t is string => typeof t === 'string' && t.length > 0),
+      ),
+    })),
+    active: await loadActiveVariantTokens(activeSearch.map((s) => s.id)),
+    maxJaccard: getSearchDiversityMaxJaccard(),
+  })
+  const diversityEnforced = searchDiversityEnforced()
+  const redundant = new Set(
+    diversity.filter((d) => d.redundant).map((d) => d.candidate_id),
+  )
+  const spawnable = diversityEnforced
+    ? candidates.filter((c) => !redundant.has(searchStrategyId(domain, c.id)))
+    : candidates
+
   const spawned = await spawnFromCandidatesFile({
     domain,
-    candidates,
+    candidates: spawnable,
     onlyBeatsBaseline: true,
   })
   const canonical = await maybeReplaceCanonicalSim({ domain, outcomes: rows })
@@ -283,6 +347,8 @@ export async function runStrategySearchCycle(
     canonical,
     dormant: tidy.dormant,
     deactivated: tidy.deactivated,
+    diversity,
+    diversity_enforced: diversityEnforced,
   }
 }
 
