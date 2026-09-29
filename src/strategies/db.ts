@@ -2258,17 +2258,17 @@ export async function aggregateStrategyReports(params: {
   const mcapTrackerStats = await buildMcapTrackerReportStats(rows, breakdown)
   const bestTradeWindows = computeBestTradeWindows(rows, { timeZone })
 
-  const [overlap, pairs, consensus, capital] = await Promise.all([
+  const [overlap, pairs, consensus] = await Promise.all([
     loadTokenStrategyOverlap(params),
     loadStrategyPairOverlap(params),
     loadConsensusTest(params),
-    // Both chains unless the caller filtered to one — the units differ (SOL vs ETH).
-    Promise.all(
-      (params.chain ? [params.chain] : (['sol', 'robinhood'] as const)).map((chain) =>
-        loadPaperCapital({ chain, days: 3, timeZone }),
-      ),
-    ),
   ])
+  // Chain-scoped like the rest of the report (parseStrategyChain always resolves one), so
+  // the RH/ETH block appears with ?chain=robinhood. Units differ per chain, so a single
+  // block is the honest shape.
+  const capital = [
+    await loadPaperCapital({ chain: params.chain ?? 'sol', days: 3, timeZone }),
+  ]
 
   return {
     breakdown,

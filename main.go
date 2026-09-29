@@ -1578,6 +1578,11 @@ func (cs *CronService) runDLMMManage() {
         cs.workers.Fail("dlmm_manage", err.Error())
         return
     }
+    if isSkippedBody(resp) {
+        cs.logger.Info("⏭️ DLMM manage skipped (job lock held)")
+        cs.workers.Skipped("dlmm_manage")
+        return
+    }
     cs.logger.Success(fmt.Sprintf("✅ DLMM manage completed: %s", resp))
     cs.workers.Success("dlmm_manage")
 }
@@ -1636,6 +1641,11 @@ func (cs *CronService) runRhClmmManage() {
         cs.workers.Fail("rh_clmm_manage", err.Error())
         return
     }
+    if isSkippedBody(resp) {
+        cs.logger.Info("⏭️ RH CLMM manage skipped (job lock held)")
+        cs.workers.Skipped("rh_clmm_manage")
+        return
+    }
     cs.logger.Success(fmt.Sprintf("✅ RH CLMM manage completed: %s", resp))
     cs.workers.Success("rh_clmm_manage")
 }
@@ -1666,6 +1676,11 @@ func (cs *CronService) runRhLpScreen() {
         cs.workers.Fail("rh_lp_screen", err.Error())
         return
     }
+    if isSkippedBody(resp) {
+        cs.logger.Info("⏭️ RH LP screen skipped (job lock held)")
+        cs.workers.Skipped("rh_lp_screen")
+        return
+    }
     cs.logger.Success(fmt.Sprintf("✅ RH LP screen completed: %s", resp))
     cs.workers.Success("rh_lp_screen")
 }
@@ -1694,6 +1709,11 @@ func (cs *CronService) runStrategySearch() {
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ Strategy search failed: %v", err))
         cs.workers.Fail("strategy_search", err.Error())
+        return
+    }
+    if isSkippedBody(resp) {
+        cs.logger.Info("⏭️ Strategy search skipped (job lock held)")
+        cs.workers.Skipped("strategy_search")
         return
     }
     cs.logger.Success(fmt.Sprintf("✅ Strategy search completed: %s", resp))
@@ -1737,6 +1757,11 @@ func (cs *CronService) runOhlcSample() {
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ OHLC sampler failed: %v", err))
         cs.workers.Fail("ohlc_sampler", err.Error())
+        return
+    }
+    if isSkippedBody(resp) {
+        cs.logger.Info("⏭️ OHLC sampler skipped (job lock held)")
+        cs.workers.Skipped("ohlc_sampler")
         return
     }
     cs.logger.Success(fmt.Sprintf("✅ OHLC sampler completed: %s", resp))
