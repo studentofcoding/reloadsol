@@ -117,15 +117,19 @@ const pct = (v: number, d = 1) => `${v.toFixed(d)}%`
 const tone = (v: number) => (v > 0 ? 'text-emerald-400' : v < 0 ? 'text-red-400' : 'text-gray-400')
 
 export default function PnlDashboardClient() {
-  // Anchored on today: one day by default, widening to a range via the pickers or a preset.
-  const [from, setFrom] = useState(() => todayIso())
-  const [to, setTo] = useState(() => todayIso())
+  // Anchored on today, but the anchor is NOT read during render: this component prerenders at build
+  // time, and Next rejects a current-time read there (blocking-prerender-current-time-client). The
+  // dates start empty and are set on mount, which also keeps the server and client markup identical.
+  const [today, setToday] = useState('')
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
   const [data, setData] = useState<Payload | null>(null)
   const [climate, setClimate] = useState<Climate | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
   const load = useCallback(async () => {
+    if (!from || !to) return
     setLoading(true)
     setError(null)
     try {
@@ -156,10 +160,18 @@ export default function PnlDashboardClient() {
     }
   }, [])
 
+  // Anchor on mount (the one place reading the clock is allowed), then keep the climate fresh.
+  useEffect(() => {
+    const anchor = todayIso()
+    setToday(anchor)
+    setFrom(anchor)
+    setTo(anchor)
+    void loadClimate()
+  }, [loadClimate])
+
   useEffect(() => {
     void load()
-    void loadClimate()
-  }, [load, loadClimate])
+  }, [load])
 
   const summary = data?.summary
   const rows = data?.daily ?? []
@@ -211,10 +223,11 @@ export default function PnlDashboardClient() {
             <button
               onClick={() => {
                 const anchor = todayIso()
+                setToday(anchor)
                 setFrom(anchor)
                 setTo(anchor)
               }}
-              className={`px-3 py-1.5 text-sm rounded border border-gray-700 ${from === to && to === todayIso() ? 'bg-emerald-800 text-white' : 'bg-gray-900 text-gray-300 hover:bg-gray-800'}`}
+              className={`px-3 py-1.5 text-sm rounded border border-gray-700 ${today && from === to && to === today ? 'bg-emerald-800 text-white' : 'bg-gray-900 text-gray-300 hover:bg-gray-800'}`}
             >
               Today
             </button>
