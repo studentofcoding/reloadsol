@@ -120,15 +120,6 @@ async function runTrendingBotRhSimDetached(logger: any): Promise<void> {
 export async function internalTrackPost(request: NextRequest, logger: any) {
   const requestStartTime = Date.now()
   const requestId = Math.random().toString(36).substring(7)
-  // #region debug-trending-cycle-2 (TEMPORARY — Solana-phase profile; remove after capture)
-  const dbgT0 = Date.now()
-  let dbgPrev = dbgT0
-  const dbgMark = (label: string) => {
-    const t = Date.now()
-    console.warn(`[dbg-trending2] ${label} +${t - dbgPrev}ms total=${t - dbgT0}ms`)
-    dbgPrev = t
-  }
-  // #endregion debug-trending-cycle-2
 
   const { acquireJobLock, releaseJobLock } = await import('@/utils/bot-job-lock')
   const tokenInfoCaptures: TokenInfoDetectCapture[] = []
@@ -169,7 +160,6 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
     // guard so it cannot overlap itself; the standalone web server is long-lived, so the work
     // continues after this response is sent.
     void runTrendingBotRhSimDetached(logger)
-    dbgMark('rh-detached') // dbg-trending2
 
     // Log incoming request
     logger.info('api_request', 'Tracking Request Started', {
@@ -307,7 +297,6 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
 
     // Opt-in: intersect Jupiter toptrending with market-brain /union (membership).
     // Off by default; skipped when MARKET_BRAIN_TOKEN is missing. Does not change execute.
-    dbgMark(`feed pools=${pools.length}`) // dbg-trending2
     const brainUniverse = await applyBrainTrendingUniverse(pools)
     if (brainUniverse.error && !brainUniverse.applied) {
       console.warn(`🧠 market-brain trending universe skipped: ${brainUniverse.error}`)
@@ -335,7 +324,6 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
     const { results: filterResults, summary: filteringSummary } =
       await performEnhancedFiltering(pools, undefined, effectiveFilter)
 
-    dbgMark(`filters kept=${filterResults.filter((r: any) => r.passed).length} rejected=${filterResults.filter((r: any) => !r.passed).length}`) // dbg-trending2
     // Extract accepted tokens
     const filteredTokens = filterResults
       .filter(result => result.passed)
@@ -1853,7 +1841,6 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
       message: `Tracked ${filteredTokens.length} tokens: ${newTokensAdded} new, ${tokensUpdated} updated, ${tokensLost} lost`
     }
 
-    dbgMark('candidate-loop+end') // dbg-trending2
     if (DEBUG_LOG) {
       console.debug('✅ 5-minute tracking completed:', summary)
     } else {

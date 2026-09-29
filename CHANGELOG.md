@@ -8,6 +8,14 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the trending cycle ran for minutes and starved the whole process
+
+- **Measured profile of `/api/trending/track`** (temporary `console.warn` marks — 91% of this path's instrumentation is `console.log`, which production's `removeConsole` strips, so the cycle looked silent): `diagnoseTradingWallet` **1.8 s**, then the cycle sat in `runTrendingBotRhSimCycle()` — one run held the lock **4 m 12 s** and was still going. With the Solana phases instrumented separately: `feed pools=42` 144 ms, `filters` **8,695 ms** (≈1.7 s per candidate), candidate loop 87 ms.
+- **Deleted `diagnoseTradingWallet()` from the route** (its only caller, function removed too): ~1.8 s per tick, every tick, whose entire output was `console.log` — cost with no reader in production.
+- **The Robinhood sim no longer runs inline.** Detached behind its own guard (in-process flag + a `trending_rh_sim` DB lock, because the Solana cycle's `trending_track` lock is released when the request returns). Its duration is logged via `console.warn` and measures **69.2 s** — that was blocking the Solana phase outright, and starving every other request in the shared Node process. Effect on the neighbours: filtered/unfiltered trending went from 30 s `context deadline exceeded` failures to 2–3 s successes, and the mcap sim's 30 s timeouts had the same cause. Cycle total is now **8.9 s** and the cron logs `✅ Trending tracker completed` instead of failures.
+- The `trending_track` TTL stays at 600 s: raising it (as first proposed) rested on the cycle taking minutes, which the detach removes — and a short TTL is what bounds recovery when a deploy kills a cycle mid-run (measured: the ship restart left a stale row that blocked every tick until its TTL expired).
+- **Still open:** the candidate filter's ~1.7 s per candidate is now the dominant cost of the cycle.
+
 ### Added — range-selectable token PnL spreadsheet
 
 - **`GET /api/strategies/pnl-export`** takes an inclusive day range (`from`/`to` in `tz`, default

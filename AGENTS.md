@@ -51,3 +51,21 @@ Report each step verbosely (exit code + failures). Confirm `npm run start` boots
 - Command Code reads `AGENTS.md` (not `CLAUDE.md`).
 - `.commandcode/` is gitignored here — local-only tooling; share process via this file.
 - Learned preferences live in `.commandcode/taste/`.
+
+## Several agents at once
+
+This tree can be shared by more than one Command Code instance. Coordination is global and
+automatic (the `agent-coordination` skill, hooks in `~/.commandcode/settings.json`); state lives
+in `~/.commandcode/agents/<repo-slug>/`, never in the repo.
+
+```bash
+agents status            # who else is live here, their task/claims, foreign WIP
+agents claim <path>…     # declare intent before a workstream; release when done
+```
+
+- **Never `git add -A` / `git commit -a` / `git stash` here** — commit explicit paths
+  (`git add <paths>`, `git commit -- <paths>`). Foreign WIP means another agent is mid-flight.
+- **Build/deploy from an isolated worktree at your own commit**, never from a tree carrying
+  someone else's uncommitted work (this repo has already shipped a concurrent workstream's
+  half-finished files once).
+
