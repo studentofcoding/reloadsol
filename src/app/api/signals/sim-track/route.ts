@@ -202,7 +202,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
   }
   const { withJobLock } = await import('@/utils/bot-job-lock')
-  return withJobLock('signals_sim_track', 300, () => runSimTrack(request))
+  return withJobLock('signals_sim_track', 900, () => runSimTrack(request))
 }
 
 async function runSimTrack(request: NextRequest) {

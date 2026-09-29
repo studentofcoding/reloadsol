@@ -741,7 +741,7 @@ export async function POST(request: NextRequest) {
   // open and manage passes, so per-phase names let two runs open the same mint
   // concurrently and each compute "not open yet" from records lacking the other's
   // in-flight buys.
-  return withJobLock('mcap_tracker_sim', 300, () => runSimTrack(request))
+  return withJobLock('mcap_tracker_sim', 900, () => runSimTrack(request))
 }
 
 async function runSimTrack(request: NextRequest) {

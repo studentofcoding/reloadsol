@@ -879,7 +879,7 @@ func (cs *CronService) runSignalsSimTrack() {
     url := fmt.Sprintf("%s/api/signals/sim-track?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
     // 180s like the gmgn/social sims: at the 30s default this was killed with
     // `context deadline exceeded` on every tick even when the work was healthy.
-    resp, err := cs.makeRequest("POST", url, nil, 180)
+    resp, err := cs.makeRequest("POST", url, nil, 600)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ Signals sim track failed: %v", err))
         cs.workers.Fail("signals_sim_track", err.Error())
@@ -923,7 +923,7 @@ func (cs *CronService) runMcapTrackerSimAll() {
     cs.workers.Begin("mcap_tracker_sim_track")
     cs.logger.Info("📈 Running mcap tracker sim track (phase=all)...")
     url := fmt.Sprintf("%s/api/mcap-tracking/sim-track?key=%s&phase=all", cs.config.APIBaseURL, cs.config.TrendingSecret)
-    resp, err := cs.makeRequest("POST", url, nil, 120)
+    resp, err := cs.makeRequest("POST", url, nil, 600)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ MCap tracker sim track failed: %v", err))
         cs.workers.Fail("mcap_tracker_sim_track", err.Error())
@@ -938,7 +938,7 @@ func (cs *CronService) runGmgnSimTrack() {
     cs.workers.Begin("gmgn_sim_track")
     cs.logger.Info("🐋 Running GMGN sim track...")
     url := fmt.Sprintf("%s/api/gmgn/sim-track?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
-    resp, err := cs.makeRequest("POST", url, nil, 180)
+    resp, err := cs.makeRequest("POST", url, nil, 600)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ GMGN sim track failed: %v", err))
         cs.workers.Fail("gmgn_sim_track", err.Error())
@@ -953,7 +953,7 @@ func (cs *CronService) runSocialSimTrack() {
     cs.workers.Begin("social_sim_track")
     cs.logger.Info("📣 Running social sim track...")
     url := fmt.Sprintf("%s/api/social/sim-track?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
-    resp, err := cs.makeRequest("POST", url, nil, 180)
+    resp, err := cs.makeRequest("POST", url, nil, 600)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ Social sim track failed: %v", err))
         cs.workers.Fail("social_sim_track", err.Error())
