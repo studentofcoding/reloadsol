@@ -197,6 +197,7 @@ interface Payload {
 }
 
 interface Climate {
+  cascadeVeto?: boolean
   state?: string | null
   sizeKind?: string
   scale?: number
@@ -479,6 +480,21 @@ export default function PnlDashboardClient() {
               <h2 className="text-sm text-gray-300">
                 Strategy readiness <span className="text-gray-500">— net of the calibrated drag</span>
               </h2>
+              <div className="flex items-baseline gap-3">
+              <span className="text-[10px] text-gray-500" title="Every sim stake is its base multiplied by this. A small median stake is usually the regime, not a bad strategy.">
+                {climate?.state ? (
+                  <>
+                    regime <span className="text-gray-300">{climate.state}</span>
+                    {typeof climate.scale === 'number' ? (
+                      <>
+                        {' '}· size <span className="text-gray-300">×{climate.scale}</span>
+                      </>
+                    ) : null}
+                    {climate.cascadeVeto ? <span className="text-amber-400"> · cascade veto</span> : null}
+                    {' '}— stakes below are post-scale
+                  </>
+                ) : null}
+              </span>
               <button
                 type="button"
                 onClick={() => setGateSample((v) => !v)}
@@ -487,6 +503,7 @@ export default function PnlDashboardClient() {
               >
                 sample gate: {gateSample ? `on (n≥${ledger!.readiness![0]?.minSample ?? 30})` : 'off'}
               </button>
+              </div>
             </div>
             <div className="overflow-x-auto rounded border border-gray-800">
               <table className="w-full text-xs">
