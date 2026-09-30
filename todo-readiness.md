@@ -23,8 +23,15 @@ that cost is ≤1% of a trade only at **≥0.006 SOL**. Measured mean sim size, 
 | `mcap_enter_at_80` | 186 | 0.00441 | 1.4% |
 | `gmgn_sm_kol_combined` | 56 | 0.00873 | 0.7% — and losing anyway |
 
-- [ ] Raise the mcap/search base size ~2x (0.0035 → ~0.007 SOL) so their evidence is measured at a size
-      we would actually trade. Scope it to the strategies we could arm.
+- [ ] Raise the mcap/search base. **Decision: the regime keeps sizing every position** — every stake is
+      its base x the brain's `sizeScale` (0.25 today, De-risk with a cascade veto), which is why the
+      observed stake is ~0.001. Clearing the ~0.006 fixed-cost floor at the *current* climate needs a
+      base of ~0.024 (≈6x), and in Hype (scale 1.0) that same base stakes four times as much — so this is
+      a policy choice, not a constant to nudge.
+- [ ] Change it where it lives: **local code for `search_mcap_*`** (no brain recipe exists for the family,
+      so it takes the documented `keep local size` fallback) and the **recipe** for
+      `mcap_enter_first_seen`. The amount reaches `openSimPosition` already sized
+      (`stampBrainRisk(..., { sizedSol })`), i.e. the base is applied upstream in the sim-open path.
 - [ ] Decide `att_rh` separately: 16,446 of ~17,700 positions at a **4.00%** fixed cost with a
       break-even median — it cannot be profitable with any positive fees. Size it up, or keep it as a
       data source and never arm it.

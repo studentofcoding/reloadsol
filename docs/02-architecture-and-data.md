@@ -181,6 +181,41 @@ constants are.
 of size, so the fixed cost is ≤1% of a trade at **≥0.006 SOL**. The design size (0.005 SOL) sits at that
 edge; the desk's actual mean (~0.0017 SOL) is ~3x below it, which is where the remaining drag comes from.
 
+### Paper-desk readiness: what the dashboard measures, and what it refuses to
+
+`/dev/paper-trade` answers one question — is a strategy worth arming — and the value is in what it
+declines to report.
+
+**Source.** The per-token table is the **ledger**: `summarizeLedgerPositions`
+(`src/strategies/ledger-pnl.ts`) rebuilds each position from the raw `trading_records` legs
+(`proceedsSol += tokenSol` on sells, `pnlPct = pnlSol / costSol`). It never reads the writer's exit
+valuation, so it is only as good as the legs — which is why the next two rules exist.
+
+**Pre-fix positions are excluded, not summed.** The old writer stamped `const sellPriceUsd = 0.000001`
+in place of an exit valuation, so those positions compute proceeds ~0 and read as −99%. They are a data
+defect, not a loss. `isNominalPrice` detects exactly that sentinel — a genuine rug records a *real* tiny
+price and is left alone — and such positions carry `nominalLegs`: listed, but measured out of every
+aggregate. `summarizeLedger` reports `nominalPositions` and `buildStrategyReadiness` reports
+`excludedNominal` per strategy, so the omission is visible rather than silent. Measured at the fix:
+**967 of ~17.7k positions** in a 3-day window.
+
+**Per-strategy readiness** (`buildStrategyReadiness`): median return per trade (never a mean — one
+5,000% winner carries it), median stake, gross, the calibrated drag, **net per trade**, and **peak
+concurrent positions** (`peakConcurrentPositions`, interval overlap) — the number that has to fit
+`MAX_SOL_AT_RISK` at the live size.
+
+**The sample floor is a view, not a computation.** Below `READINESS_MIN_SAMPLE` (default 30) counted
+closes, `verdict` reads `insufficient`; `verdictUngated` always carries the raw judgement and
+`minSample` the floor, so a UI toggles between them with no round trip. A median on a handful of trades
+is noise, and "no result yet" must not read as a result.
+
+**Stakes are post-regime.** Every sim stake is its base multiplied by the brain's `sizeScale` —
+`/api/regime/climate` returns it (`{ state, sizeKind, cascadeVeto, scale }`), and the recipe grid is
+`Hype 1 · Range 0.75 · Mixed 0.5 · De-risk 0.25 · Cash 0`. So a small median stake is usually the
+regime trimming risk, not a weak strategy; the readiness header states the multiplier beside the table.
+Sizing to clear a fixed cost at *today's* climate is fragile — at De-risk (0.25) the stake is a quarter
+of the same base in Hype.
+
 ## 4. Data flows (representative)
 
 | Flow | Path |
