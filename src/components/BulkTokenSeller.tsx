@@ -43,12 +43,10 @@ import {
   type SellOutputPreset,
 } from "@/utils/sell-output-mint";
 import {
-  mintsNeedingJupiterQuote,
   sellAmountRaw,
   sellQuoteAllFailedBanner,
 } from "@/utils/sell-quote-fallback";
 import { isQuoteUsable, quoteMatchesAmount } from "@/utils/quote-freshness";
-import { JUPITER_MAX_RPS } from "@/utils/jupiter-rps";
 import TokenAddressSearchField from "./TokenAddressSearchField";
 import { walletsMatch } from "@/utils/rh-wallet-holdings";
 import { executeGmgnBulkSell } from "@/utils/gmgn-bulk-trade";
@@ -60,7 +58,8 @@ import {
   peekFreshPreparedSwap,
   warmResolvedPreparedSwap,
 } from "@/utils/swap-executor";
-import { impactToAbsPct } from "@/utils/swap-quote-pick";
+import { impactToAbsPct, passesImpactGate } from "@/utils/swap-quote-pick";
+import { pickParallelSwapQuote } from "@/utils/swap-quote-parallel";
 import {
   AUTO_SLIPPAGE_BPS,
   AUTO_SLIPPAGE_CAP_BPS,
@@ -121,7 +120,7 @@ import { useRpc } from "@/contexts/RpcContext";
 import RpcPanel from "./RpcPanel";
 import PnLShareModal from "./PnLShareModal";
 import { pnlShareService } from "@/utils/pnl-share-service";
-import { mapRaptorQuoteToDisplay, RAPTOR_DEV_FEE_ACCOUNT, RAPTOR_DEV_FEE_BPS } from "@/utils/solanatracker-raptor";
+import { RAPTOR_DEV_FEE_ACCOUNT, RAPTOR_DEV_FEE_BPS } from "@/utils/solanatracker-raptor";
 
 function patchWalletTokenLists(
   data: WalletTokensData,
@@ -377,8 +376,6 @@ export default function BulkTokenSeller({
   // Quote state (Raptor via /api/solanatracker/quote)
   const [autoQuote, setAutoQuote] = useState<boolean>(true);
   const [quotes, setQuotes] = useState<Record<string, QuoteData>>({});
-  const quotesRef = useRef(quotes);
-  quotesRef.current = quotes;
   const [isGettingQuotes, setIsGettingQuotes] = useState<boolean>(false);
   const [lastQuoteTime, setLastQuoteTime] = useState<number>(0);
   const [showSettings, setShowSettings] = useState<boolean>(false);
@@ -452,84 +449,35 @@ export default function BulkTokenSeller({
   }, []);
 
   // Quote fetching functions for different providers
-  const fetchSolanaTrackerQuote = useCallback(
-    async (inputMint: string, amount: string): Promise<QuoteData | null> => {
-      try {
-        const query = new URLSearchParams({
-          inputMint,
-          outputMint: sellOut.outputMint,
-          amount,
-          slippageBps: prefetchSlippageBps(slippage).toString(),
-        });
-        const response = await fetch(
-          `/api/solanatracker/quote?${query.toString()}`,
-        );
-        if (!response.ok) throw new Error("Solana Tracker quote failed");
-
-        const data = await response.json();
-        const mapped = mapRaptorQuoteToDisplay(data, amount);
-
-        return {
-          provider: "solanatracker",
-          inputMint,
-          outputMint: sellOut.outputMint,
-          amount,
-          outAmount: mapped.outAmount,
-          priceImpact: mapped.priceImpact * 100,
-          timestamp: Date.now(),
-          route: mapped.route,
-        };
-      } catch (error) {
-        console.error("Solana Tracker quote error:", error);
-        return null;
-      }
-    },
-    [slippage, sellOut.outputMint],
-  );
-
-  const fetchJupiterPreviewQuote = useCallback(
-    async (inputMint: string, amount: string): Promise<QuoteData | null> => {
-      try {
-        const query = new URLSearchParams({
-          inputMint,
-          outputMint: sellOut.outputMint,
-          amount,
-          slippageBps: prefetchSlippageBps(slippage).toString(),
-        });
-        const response = await fetch(`/api/jupiter/quote?${query.toString()}`);
-        if (!response.ok) throw new Error("Jupiter quote failed");
-        const mapped = (await response.json()) as {
-          outAmount?: string;
-          priceImpact?: number;
-          route?: unknown;
-        };
-        if (!mapped.outAmount || !/^\d+$/.test(mapped.outAmount)) return null;
-        return {
-          provider: "jupiter",
-          inputMint,
-          outputMint: sellOut.outputMint,
-          amount,
-          outAmount: mapped.outAmount,
-          priceImpact: (mapped.priceImpact ?? 0) * 100,
-          timestamp: Date.now(),
-          route: mapped.route,
-        };
-      } catch (error) {
-        console.error("Jupiter preview quote error:", error);
-        return null;
-      }
-    },
-    [slippage, sellOut.outputMint],
-  );
-
+  /**
+   * One token -> the same candidate the executor would trade: `pickParallelSwapQuote` races Raptor,
+   * Jupiter Lite and Jupiter Swap, drops anything above the impact gate, and takes the best output
+   * (see docs/SWAP_AND_CLOSE_FLOW.md). Quoting Raptor alone here is what made the estimate disagree
+   * with the achievable route: for a two-pool token it returned a single-hop, 38%-impact route.
+   */
   const fetchQuoteForToken = useCallback(
     async (token: TokenToSell): Promise<QuoteData | null> => {
       const amount = sellAmountRaw(token.sellAmount);
-      const raptor = await fetchSolanaTrackerQuote(token.mintAddress, amount);
-      if (raptor) return raptor;
-      return fetchJupiterPreviewQuote(token.mintAddress, amount);
+      if (!amount || amount === "0") return null;
+      const picked = await pickParallelSwapQuote({
+        inputMint: token.mintAddress,
+        outputMint: sellOut.outputMint,
+        amount,
+        slippageBps: prefetchSlippageBps(slippage),
+      });
+      if (!picked) return null;
+      return {
+        provider: picked.provider === "raptor" ? "solanatracker" : "jupiter",
+        inputMint: token.mintAddress,
+        outputMint: sellOut.outputMint,
+        amount,
+        outAmount: picked.outAmount,
+        priceImpact: picked.impactPct,
+        timestamp: Date.now(),
+        route: picked.quote?.routePlan,
+      };
     },
-    [fetchSolanaTrackerQuote, fetchJupiterPreviewQuote],
+    [slippage, sellOut.outputMint],
   );
 
   const fetchAllQuotes = useCallback(async () => {
@@ -544,59 +492,22 @@ export default function BulkTokenSeller({
     setError("");
 
     try {
-      const raptorResults = await Promise.allSettled(
-        tokensToQuote.map(async (token) => {
-          const amount = sellAmountRaw(token.sellAmount);
-          const quote = await fetchSolanaTrackerQuote(token.mintAddress, amount);
-          return { mintAddress: token.mintAddress, amount, quote };
-        }),
+      const results = await Promise.all(
+        tokensToQuote.map(async (token) => ({
+          mint: token.mintAddress,
+          quote: await fetchQuoteForToken(token),
+        })),
       );
 
       const newQuotes: Record<string, QuoteData> = {};
-      const raptorHits = new Set<string>();
-      raptorResults.forEach((result) => {
-        if (result.status === "fulfilled" && result.value.quote) {
-          newQuotes[result.value.mintAddress] = result.value.quote;
-          raptorHits.add(result.value.mintAddress);
-        }
-      });
-
-      const amountByMint = new Map(
-        tokensToQuote.map((t) => [t.mintAddress, sellAmountRaw(t.sellAmount)]),
-      );
-      const needJup = mintsNeedingJupiterQuote(
-        tokensToQuote.map((t) => t.mintAddress),
-        raptorHits,
-        quotesRef.current,
-        Date.now(),
-      );
-
-      const jupGapMs = 1000 / JUPITER_MAX_RPS;
-      let jupiterHits = 0;
-      for (let i = 0; i < needJup.length; i++) {
-        if (i > 0) {
-          await new Promise((r) => setTimeout(r, jupGapMs));
-        }
-        const mint = needJup[i];
-        const amount = amountByMint.get(mint) ?? "0";
-        const quote = await fetchJupiterPreviewQuote(mint, amount);
-        if (quote) {
-          newQuotes[mint] = quote;
-          jupiterHits++;
-        }
+      for (const r of results) {
+        if (r.quote) newQuotes[r.mint] = r.quote;
       }
 
       setQuotes((prevQuotes) => ({ ...prevQuotes, ...newQuotes }));
       setLastQuoteTime(Date.now());
 
-      const keptValid = tokensToQuote.filter(
-        (t) =>
-          !raptorHits.has(t.mintAddress) &&
-          !needJup.includes(t.mintAddress) &&
-          quotesRef.current[t.mintAddress],
-      ).length;
-      const successCount = raptorHits.size + jupiterHits + keptValid;
-      const banner = sellQuoteAllFailedBanner(successCount);
+      const banner = sellQuoteAllFailedBanner(Object.keys(newQuotes).length);
       if (banner) setError(banner);
     } catch (error) {
       console.error("Batch quote error:", error);
@@ -608,8 +519,7 @@ export default function BulkTokenSeller({
     isSolTrade,
     selectedTokens,
     selectedZeroBalanceTokens,
-    fetchSolanaTrackerQuote,
-    fetchJupiterPreviewQuote,
+    fetchQuoteForToken,
     isGettingQuotes,
   ]);
 
@@ -3560,7 +3470,11 @@ export default function BulkTokenSeller({
                                 token.mintAddress,
                                 sellAmountRaw(token.sellAmount),
                               );
-                              if (quote && isQuoteValid(quote, sellAmountRaw(token.sellAmount))) {
+                              if (
+                                quote &&
+                                isQuoteValid(quote, sellAmountRaw(token.sellAmount)) &&
+                                passesImpactGate(quote.priceImpact)
+                              ) {
                                 return (
                                   total +
                                   parseFloat(quote.outAmount) /

@@ -24,6 +24,13 @@ This document summarizes how bulk swaps and token account closures work across t
 
 Fail-soft per provider (a 429 on Swap does not fail Lite/Raptor). Winner = highest `outAmount`, then lower impact, then prefer Raptor. Prepare uses that provider: Raptor `quote-and-swap`, Lite `/swap`, or Swap `/order?taker=`. Live arb still passes `maxHops` and keeps the Raptor hops path.
 
+**Display surfaces must use this same picker.** A quote shown to the user (`BulkTokenSeller`'s
+estimate) has to be the candidate `prepareSwapTransaction` would trade — racing Raptor alone, or
+preferring it, shows a route the impact gate may then refuse (a two-pool token quoted single-hop at
+`RAPTOR_MAX_HOPS=1` reads 38% impact / 2.46 SOL less than the executable route). Keeping
+`RAPTOR_MAX_HOPS=1` is deliberate: the conservative default is correct for thin tokens, and route
+selection — not the hop ceiling — is where a better price comes from.
+
 ## Raptor Swap Flow (Raptor winner / arb)
 
 Per [Solana Tracker Swap API](https://docs.solanatracker.io/guides/swap-api):

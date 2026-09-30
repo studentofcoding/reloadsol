@@ -8,6 +8,33 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — sell estimate quoted a route the executor would refuse
+
+The sell page's SOL estimate came from Raptor alone (`fetchQuoteForToken` tried Raptor and fell back
+to Jupiter only when Raptor *failed*), so for a token whose best route needs two pools it priced the
+whole position off a single-hop, 38%-impact route. Measured for 681.397224200 BP:
+
+| quote | output | impact |
+| --- | --- | --- |
+| Raptor via the seller's old path (`RAPTOR_MAX_HOPS=1`) | **3.9750 SOL** | 38.34% |
+| Raptor at maxHops 2 / 3 / 5 | 6.4296 / 6.4301 / 6.4301 SOL | 0.08% |
+| Jupiter | 6.4337 SOL | 0.07% |
+
+So the estimate was 2.46 SOL (38%) low *and* unexecutable — `SWAP_QUOTE_MAX_IMPACT_PCT` (default
+15%) would have refused that route, meaning the button advertised a sale that could not happen.
+
+- The seller now quotes through `pickParallelSwapQuote` — the same best-of (Raptor / Jupiter Lite /
+  Jupiter Swap), impact-gated picker `prepareSwapTransaction` uses for the executed swap — so the
+  estimate is the route that would actually run and the two can no longer disagree. Quoting still
+  respects the shared `JUPITER_MAX_RPS` gate.
+- Fixed the impact normalisation this exposed: the seller stored `priceImpact * 100` for a provider
+  that already reports percent, inflating "Avg Price Impact" 100x and making any gate check
+  unreliable. Normalised once through `impactToAbsPct` instead.
+- Deleted the bypassed provider helpers (~72 lines) and the now-dead `quotesRef`.
+- `RAPTOR_MAX_HOPS` stays at its documented `1`: the conservative single-hop default is right for
+  thin tokens, and the fix belongs in route selection, not the hop ceiling (verified live — thin
+  tokens route single-pool either way).
+
 ### Fixed — no hardcoded SOL price anywhere (live price only)
 
 - **The sell page showed an estimate up to 61% off.** `BulkTokenSeller` held its SOL price in
