@@ -52,7 +52,10 @@ export function resolveJupiterBurstCapacity(
   env: Record<string, string | undefined> = process.env,
 ): number {
   const parsed = Number(env.JUPITER_BURST)
-  return Number.isFinite(parsed) && parsed >= 1 ? Math.floor(parsed) : 4
+  // 8, not 4: the measured tolerance is "~6 rps sequential — 8 ok, then 429", and a bulk action makes
+  // one prepare per selected token. At 4, a 5-token batch dribbled out the rest at 2s each (measured
+  // 0.23 / 0.39 / 2.17 / 4.23 / 6.00s); at 8 the batch fits one burst while the sustained rate holds.
+  return Number.isFinite(parsed) && parsed >= 1 ? Math.floor(parsed) : 8
 }
 
 /** Tokens held back for the trade lane; never the whole bucket. */

@@ -88,7 +88,9 @@ describe('jupiter gate: lanes', () => {
 
 describe('jupiter gate config', () => {
   it('defaults inside the measured burst tolerance and never reserves the whole bucket', () => {
-    expect(resolveJupiterBurstCapacity({})).toBe(4)
+    // 8 matches the measured tolerance ("~6 rps sequential — 8 ok, then 429") so a bulk batch of
+    // prepares fits one burst; 4 made a 5-token batch dribble out at 2s per remaining call.
+    expect(resolveJupiterBurstCapacity({})).toBe(8)
     expect(resolveJupiterTradeReserve({})).toBe(2)
     expect(resolveJupiterTradeReserve({ JUPITER_BURST: '3', JUPITER_TRADE_RESERVE: '99' })).toBe(2)
     expect(createJupiterGate({ JUPITER_MAX_RPS: '1', JUPITER_BURST: '8' })).toEqual({

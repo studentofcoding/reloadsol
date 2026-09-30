@@ -8,6 +8,34 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — bulk buy/sell waited on a per-token Jupiter fan-out
+
+Measured with the production wallet, 3 and 5 tokens back to back (read-only: quotes and unsigned
+prepares, nothing signed or sent):
+
+| fan-out | n=3 | n=5 |
+| --- | --- | --- |
+| estimate (no taker, background lane) | **29.03s** wall (3.02 / 7.04 / 29.03) | **14.87s** wall (0.01 → 14.87) |
+| prepare (taker, trade lane) | 2.44s wall | 6.00s wall (0.23 / 0.39 / 2.17 / 4.23 / 6.00) |
+| Raptor (ungated) | 0.66s wall | 0.65s wall |
+
+The estimate fanned out one **background-lane** quote per selected token; that lane is capped at
+`capacity - reserve` and starved by in-process callers (the sims and price lookups run inside the app,
+so they never appear in the nginx logs), and a single token's quote waited up to 29s. The trade lane's
+prepares then paid one 2s refill each past the reserve of 2. Raptor — the venue this path executes on —
+answered all five in 0.65s.
+
+- The seller's estimate now asks **Raptor first** (ungated, and the venue `prepareSwapTransaction`
+  builds with `RAPTOR_DEV_FEE_ACCOUNT`), escalating to the Jupiter picker **only when Raptor is
+  unavailable or its own impact fails the gate** — the guardrail that keeps the 38%-impact single-hop
+  route out of the estimate at `RAPTOR_MAX_HOPS=1`.
+- `JUPITER_BURST` default 4 → **8**, the measured tolerance ("~6 rps sequential — 8 ok, then 429"), so a
+  bulk batch of prepares fits one burst instead of dribbling out at 2s per call.
+- The token→token sell is covered and unchanged: `sellOutputMint` resolves the custom output with its
+  own symbol/decimals, and `swapPrepareCacheKey` includes `outputMint`, so a native-output swap can
+  never be reused for a token-output quote.
+
+
 ### Changed — cost model calibrated to real quotes; Jupiter demand cut
 
 **The model charged 11.5x the real cost.** Measured on a live pair (STONK: buying 0.005 SOL implied

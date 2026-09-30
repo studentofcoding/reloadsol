@@ -457,6 +457,45 @@ export default function BulkTokenSeller({
    * (see docs/SWAP_AND_CLOSE_FLOW.md). Quoting Raptor alone here is what made the estimate disagree
    * with the achievable route: for a two-pool token it returned a single-hop, 38%-impact route.
    */
+  /** Raptor (`/api/solanatracker/quote`) — the venue this sell path executes on. Ungated. */
+  const fetchRaptorQuote = useCallback(
+    async (
+      inputMint: string,
+      amount: string,
+      slippageBps: number,
+    ): Promise<QuoteData | null> => {
+      try {
+        const query = new URLSearchParams({
+          inputMint,
+          outputMint: sellOut.outputMint,
+          amount,
+          slippageBps: String(prefetchSlippageBps(slippageBps)),
+        });
+        const response = await fetch(`/api/solanatracker/quote?${query.toString()}`);
+        if (!response.ok) return null;
+        const data = (await response.json()) as {
+          amountOut?: string;
+          priceImpact?: number;
+          routePlan?: unknown;
+        };
+        if (!data.amountOut) return null;
+        return {
+          provider: "solanatracker",
+          inputMint,
+          outputMint: sellOut.outputMint,
+          amount,
+          outAmount: data.amountOut,
+          priceImpact: impactToAbsPct(data.priceImpact),
+          timestamp: Date.now(),
+          route: data.routePlan,
+        };
+      } catch {
+        return null;
+      }
+    },
+    [sellOut.outputMint, slippage],
+  );
+
   const fetchQuoteForToken = useCallback(
     async (token: TokenToSell): Promise<QuoteData | null> => {
       const amount = sellAmountRaw(token.sellAmount);
@@ -491,6 +530,15 @@ export default function BulkTokenSeller({
         }
       }
 
+      // The sell executes on Raptor (the prepared swap is built with RAPTOR_DEV_FEE_ACCOUNT), Raptor
+      // is not gated, and it answers a whole batch in well under a second where the Jupiter-backed
+      // picker took 3-29s per token on the background lane. So ask the venue that will execute first —
+      // but only keep its answer when its own impact passes the gate, because at RAPTOR_MAX_HOPS=1 a
+      // two-pool token quotes a single-hop route far above it, and that is the estimate a user must
+      // not be shown. Escalate to the picker when Raptor is unavailable or its impact is unacceptable.
+      const raptor = await fetchRaptorQuote(token.mintAddress, amount, slippage);
+      if (raptor && passesImpactGate(raptor.priceImpact)) return raptor;
+
       const picked = await pickParallelSwapQuote({
         inputMint: token.mintAddress,
         outputMint: sellOut.outputMint,
@@ -509,7 +557,7 @@ export default function BulkTokenSeller({
         route: picked.quote?.routePlan,
       };
     },
-    [slippage, priorityFee, publicKey, sellOut.outputMint],
+    [slippage, priorityFee, publicKey, sellOut.outputMint, fetchRaptorQuote],
   );
 
   const fetchAllQuotes = useCallback(async () => {
