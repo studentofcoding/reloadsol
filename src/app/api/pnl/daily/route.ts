@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse, connection } from 'next/server'
-import { aggregateDailyPnl } from '@/strategies/db'
+import { aggregateDailyPnl, loadOpenPaperPositions } from '@/strategies/db'
 import {
   DEFAULT_REPORT_TIMEZONE,
   resolveReportTimeZone,
@@ -45,11 +45,13 @@ export async function GET(request: NextRequest) {
     const budgetSol = resolveDailyBudgetSol()
     const basePositionSizeSol = resolveBasePositionSizeSol()
 
-    const { daily, peaks, bySizeMult, byRegimeTag, regimeByDay } = await aggregateDailyPnl({
-      from,
-      to,
-      timeZone,
-    })
+    const [{ daily, peaks, bySizeMult, byRegimeTag, regimeByDay }, openPositions] =
+      await Promise.all([
+        aggregateDailyPnl({ from, to, timeZone }),
+        // The paper positions the sims now register into the SL/TP tracker, so the dashboard can
+        // show what is open right now rather than only what has closed.
+        loadOpenPaperPositions(),
+      ])
 
     const budgetHeadroom = resolveBudgetHeadroom()
     const rows = buildDailyRows({
@@ -73,6 +75,7 @@ export async function GET(request: NextRequest) {
       config: { budgetSol, basePositionSizeSol, budgetHeadroom },
       regimes,
       daily: rows,
+      open_positions: openPositions,
       sizing,
       summary,
     })

@@ -58,6 +58,18 @@ function dayRow(over: Partial<DailyPnlRow> = {}): DailyPnlRow {
     velocityMaxSol: 0.32,
     velocityMaxPct: 64,
     optimalBudgetSol: 0.4,
+    meanSizeMult: 0.5,
+    winRatePct: 60,
+    avgRiskSol: 0.0025,
+    avgRewardSol: 0.004,
+    winLossRatio: 1.6,
+    profitFactor: 2.4,
+    grossWinPct: 120,
+    grossLossPct: -50,
+    avgWinPct: 20,
+    avgLossPct: -12.5,
+    bestPnlPct: 40,
+    worstPnlPct: -20,
     ...over,
   }
 }
@@ -264,5 +276,69 @@ describe('buildRegimeBuckets', () => {
     expect(buckets[0].pnlSolFlat).toBeCloseTo(0.006, 8) // 120% of 0.005
     expect(buckets[1].regimeTag).toBeNull()
     expect(buckets[1].pnlSolFlat).toBeCloseTo(-0.0015, 8)
+  })
+})
+
+describe('per-day risk and reward', () => {
+  it('computes WR, average risk, average reward, the ratio and profit factor', () => {
+    const rows = buildDailyRows({
+      daily: [
+        rawDay({
+          trades: 10,
+          won: 6,
+          lost: 4,
+          gross_win_pct: '120',
+          gross_loss_pct: '-50',
+          avg_win_pct: '20',
+          avg_loss_pct: '-12.5',
+          mean_size_mult: '0.5',
+        }),
+      ],
+      peaks: [],
+      basePositionSizeSol: BASE,
+      budgetSol: BUDGET,
+    })
+    const d = rows[0]
+    expect(d.winRatePct).toBeCloseTo(60, 6)
+    expect(d.avgRiskSol).toBeCloseTo(0.0025, 8) // 0.005 base × 0.5 mean sizing
+    expect(d.avgRewardSol).toBeCloseTo(0.0005, 8) // 0.0025 risked × 20% average win
+    expect(d.winLossRatio).toBeCloseTo(20 / 12.5, 6)
+    expect(d.profitFactor).toBeCloseTo(120 / 50, 6)
+    expect(d.bestPnlPct).toBe(0)
+  })
+
+  it('reports a null ratio and factor rather than Infinity on a day with no losses', () => {
+    const rows = buildDailyRows({
+      daily: [rawDay({ lost: 0, gross_loss_pct: '0', avg_loss_pct: '0' })],
+      peaks: [],
+      basePositionSizeSol: BASE,
+      budgetSol: BUDGET,
+    })
+    expect(rows[0].winLossRatio).toBeNull()
+    expect(rows[0].profitFactor).toBeNull()
+  })
+
+  it('survives a day with no trades at all', () => {
+    const rows = buildDailyRows({
+      daily: [rawDay({ trades: 0, won: 0, lost: 0, gross_win_pct: null, gross_loss_pct: null })],
+      peaks: [],
+      basePositionSizeSol: BASE,
+      budgetSol: BUDGET,
+    })
+    expect(rows[0].winRatePct).toBe(0)
+    expect(Number.isFinite(rows[0].avgRiskSol)).toBe(true)
+  })
+
+  it('rolls the range metrics up weighted by trades', () => {
+    const rows = [
+      dayRow({ day: 'a', won: 10, lost: 0, avgWinPct: 30, avgLossPct: 0, grossWinPct: 300, grossLossPct: 0, avgRiskSol: 0.005, avgRewardSol: 0.0015 }),
+      dayRow({ day: 'b', won: 0, lost: 10, avgWinPct: 0, avgLossPct: -10, grossWinPct: 0, grossLossPct: -100, avgRiskSol: 0.005, avgRewardSol: 0 }),
+    ]
+    const s = summarizeDailyPnl({ rows, budgetSol: BUDGET, basePositionSizeSol: BASE })
+    expect(s.avgWinPct).toBeCloseTo(30, 6)
+    expect(s.avgLossPct).toBeCloseTo(-10, 6)
+    expect(s.winLossRatio).toBeCloseTo(3, 6)
+    expect(s.profitFactor).toBeCloseTo(3, 6)
+    expect(s.avgRiskSol).toBeCloseTo(0.005, 8)
   })
 })

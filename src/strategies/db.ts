@@ -1886,6 +1886,13 @@ export async function aggregateDailyPnl(params: {
     lost: number
     sum_pnl_pct: string | null
     sum_pnl_pct_weighted: string | null
+    gross_win_pct: string | null
+    gross_loss_pct: string | null
+    avg_win_pct: string | null
+    avg_loss_pct: string | null
+    best_pnl_pct: string | null
+    worst_pnl_pct: string | null
+    mean_size_mult: string | null
     median_size_mult: string | null
     min_size_mult: string | null
     max_size_mult: string | null
@@ -1924,6 +1931,13 @@ export async function aggregateDailyPnl(params: {
     lost: number
     sum_pnl_pct: string | null
     sum_pnl_pct_weighted: string | null
+    gross_win_pct: string | null
+    gross_loss_pct: string | null
+    avg_win_pct: string | null
+    avg_loss_pct: string | null
+    best_pnl_pct: string | null
+    worst_pnl_pct: string | null
+    mean_size_mult: string | null
     median_size_mult: string | null
     min_size_mult: string | null
     max_size_mult: string | null
@@ -1941,6 +1955,15 @@ export async function aggregateDailyPnl(params: {
             -- Weighted by the size multiplier the system actually applied, so PnL in SOL reflects
             -- the real sizing instead of an assumed flat stake. coalesce(1) leaves un-stamped rows.
             sum(pnl_pct * coalesce((features->>'ml_size_mult')::numeric, 1)) AS sum_pnl_pct_weighted,
+            -- Risk/reward, realized: what the winners and losers actually did.
+            sum(pnl_pct) FILTER (WHERE pnl_pct > 0) AS gross_win_pct,
+            sum(pnl_pct) FILTER (WHERE pnl_pct < 0) AS gross_loss_pct,
+            avg(pnl_pct) FILTER (WHERE pnl_pct > 0) AS avg_win_pct,
+            avg(pnl_pct) FILTER (WHERE pnl_pct < 0) AS avg_loss_pct,
+            max(pnl_pct) AS best_pnl_pct,
+            min(pnl_pct) AS worst_pnl_pct,
+            -- Mean applied sizing, so the average stake at risk is base stake x this.
+            avg(coalesce((features->>'ml_size_mult')::numeric, 1)) AS mean_size_mult,
             percentile_cont(0.5) WITHIN GROUP (ORDER BY (features->>'ml_size_mult')::numeric) AS median_size_mult,
             min((features->>'ml_size_mult')::numeric) AS min_size_mult,
             max((features->>'ml_size_mult')::numeric) AS max_size_mult,
@@ -2044,6 +2067,90 @@ export async function aggregateDailyPnl(params: {
   ).catch(() => ({ rows: [] as Array<{ regime: string | null; trades: number; won: number; lost: number; sum_pnl_pct: string | null }> }))
 
   return { daily, peaks, bySizeMult, byRegimeTag, regimeByDay }
+}
+
+/**
+ * Every closed trade on one day, for the dashboard's expandable per-day list. Bounded by the day, so
+ * a 90-day range never has to ship thousands of rows at once.
+ */
+export async function loadDayClosedTrades(params: {
+  day: string
+  timeZone: string
+  limit?: number
+}): Promise<Array<{
+  strategy_id: string
+  token_address: string
+  token_symbol: string | null
+  pnl_pct: string | null
+  status: string | null
+  regime_tag: string | null
+  has_exec: boolean
+  entry_at: string | null
+  exit_at: string | null
+}>> {
+  const timeZone = resolveReportTimeZone(params.timeZone)
+  const { rows } = await query<{
+    strategy_id: string
+    token_address: string
+    token_symbol: string | null
+    pnl_pct: string | null
+    status: string | null
+    regime_tag: string | null
+    has_exec: boolean
+    entry_at: string | null
+    exit_at: string | null
+  }>(
+    `SELECT strategy_id,
+            token_address,
+            features->>'token_symbol' AS token_symbol,
+            pnl_pct, status,
+            features->>'regime_tag_at_exit' AS regime_tag,
+            (features ? 'exec') AS has_exec,
+            entry_at, exit_at
+       FROM strategy_outcomes
+      WHERE is_simulated
+        AND exit_at IS NOT NULL
+        AND exit_at >= ($1::date::timestamp AT TIME ZONE $2)
+        AND exit_at <  (($1::date + 1)::timestamp AT TIME ZONE $2)
+      ORDER BY pnl_pct DESC NULLS LAST
+      LIMIT $3`,
+    [params.day, timeZone, params.limit ?? 2000],
+  )
+  return rows
+}
+
+/** Currently-open PAPER positions, from the SL/TP tracker the sims now register into. */
+export async function loadOpenPaperPositions(limit = 500): Promise<Array<{
+  token_address: string
+  token_symbol: string
+  strategy_id: string | null
+  position_size: string
+  entry_price: string
+  current_price: string
+  stop_loss_price: string
+  take_profit_price: string
+  created_at: string
+}>> {
+  const { rows } = await query<{
+    token_address: string
+    token_symbol: string
+    strategy_id: string | null
+    position_size: string
+    entry_price: string
+    current_price: string
+    stop_loss_price: string
+    take_profit_price: string
+    created_at: string
+  }>(
+    `SELECT token_address, token_symbol, strategy_id, position_size,
+            entry_price, current_price, stop_loss_price, take_profit_price, created_at
+       FROM sl_tp_positions
+      WHERE is_active AND is_simulation
+      ORDER BY created_at DESC
+      LIMIT $1`,
+    [limit],
+  ).catch(() => ({ rows: [] as Array<never> }))
+  return rows as never
 }
 
 export async function aggregateTokenPnlByToken(params: {

@@ -34,6 +34,42 @@ interface DailyRow {
   velocityMaxSol: number
   velocityMaxPct: number
   optimalBudgetSol: number
+  meanSizeMult: number
+  winRatePct: number
+  avgRiskSol: number
+  avgRewardSol: number
+  winLossRatio: number | null
+  profitFactor: number | null
+  grossWinPct: number
+  grossLossPct: number
+  avgWinPct: number
+  avgLossPct: number
+  bestPnlPct: number
+  worstPnlPct: number
+}
+
+interface DayTrade {
+  strategy_id: string
+  token_address: string
+  token_symbol: string | null
+  pnl_pct: string | null
+  status: string | null
+  regime_tag: string | null
+  has_exec: boolean
+  entry_at: string | null
+  exit_at: string | null
+}
+
+interface OpenPosition {
+  token_address: string
+  token_symbol: string
+  strategy_id: string | null
+  position_size: string
+  entry_price: string
+  current_price: string
+  stop_loss_price: string
+  take_profit_price: string
+  created_at: string
 }
 
 interface SizingRow {
@@ -67,6 +103,12 @@ interface Summary {
   peakBudgetUsedPct: number
   bestDay: { day: string; pnlSol: number } | null
   worstDay: { day: string; pnlSol: number } | null
+  avgWinPct: number
+  avgLossPct: number
+  avgRiskSol: number
+  avgRewardSol: number
+  winLossRatio: number | null
+  profitFactor: number | null
   velocityMaxSol: number
   suggestedDailyBudgetSol: number
   budgetHeadroom: number
@@ -86,6 +128,7 @@ interface Payload {
   success: boolean
   range?: { from: string; to: string; timezone: string }
   daily?: DailyRow[]
+  open_positions?: OpenPosition[]
   regimes?: RegimeRow[]
   sizing?: SizingRow[]
   summary?: Summary
@@ -124,6 +167,9 @@ export default function PnlDashboardClient() {
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const [data, setData] = useState<Payload | null>(null)
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const [dayTrades, setDayTrades] = useState<Record<string, DayTrade[]>>({})
+  const [dayLoading, setDayLoading] = useState<string | null>(null)
   const [climate, setClimate] = useState<Climate | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -149,6 +195,29 @@ export default function PnlDashboardClient() {
     setTo(anchor)
     setFrom(shiftDays(anchor, -(n - 1)))
   }, [])
+
+  /** Expand a day: fetch its closed trades once, then toggle. */
+  const toggleDay = useCallback(
+    async (day: string) => {
+      if (expanded === day) {
+        setExpanded(null)
+        return
+      }
+      setExpanded(day)
+      if (dayTrades[day]) return
+      setDayLoading(day)
+      try {
+        const res = await fetch(`/api/pnl/day?date=${day}`)
+        const body = (await res.json()) as { success: boolean; trades?: DayTrade[] }
+        setDayTrades((prev) => ({ ...prev, [day]: body.trades ?? [] }))
+      } catch {
+        setDayTrades((prev) => ({ ...prev, [day]: [] }))
+      } finally {
+        setDayLoading(null)
+      }
+    },
+    [expanded, dayTrades],
+  )
 
   const loadClimate = useCallback(async () => {
     try {
@@ -177,6 +246,7 @@ export default function PnlDashboardClient() {
   const rows = data?.daily ?? []
   const sizing = data?.sizing ?? []
   const regimes = data?.regimes ?? []
+  const openPositions = data?.open_positions ?? []
   const maxAbs = useMemo(() => Math.max(0.0001, ...rows.map((r) => Math.abs(r.pnlSolSized))), [rows])
 
   return (
@@ -310,6 +380,63 @@ export default function PnlDashboardClient() {
           />
         </section>
 
+        {/* Open positions, from the SL/TP tracker the sims register into */}
+        <section className="rounded border border-gray-800 bg-gray-900 p-4">
+          <div className="flex items-baseline justify-between">
+            <h2 className="font-semibold">Open positions</h2>
+            <span className="text-xs text-gray-500">
+              {openPositions.length} tracked ·{' '}
+              {sol(openPositions.reduce((s, p) => s + Number(p.position_size || 0), 0), 4)} SOL at risk
+            </span>
+          </div>
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-gray-400 text-left border-b border-gray-800">
+                  <th className="py-1.5 pr-4">Token</th>
+                  <th className="py-1.5 pr-4">Strategy</th>
+                  <th className="py-1.5 pr-4">Size</th>
+                  <th className="py-1.5 pr-4">Entry</th>
+                  <th className="py-1.5 pr-4">Now</th>
+                  <th className="py-1.5 pr-4">To stop</th>
+                  <th className="py-1.5 pr-4">To target</th>
+                  <th className="py-1.5">Opened</th>
+                </tr>
+              </thead>
+              <tbody>
+                {openPositions.map((p) => {
+                  const entry = Number(p.entry_price) || 0
+                  const now = Number(p.current_price) || entry
+                  const toStop = entry > 0 ? ((Number(p.stop_loss_price) - now) / now) * 100 : 0
+                  const toTarget = entry > 0 ? ((Number(p.take_profit_price) - now) / now) * 100 : 0
+                  return (
+                    <tr key={`${p.token_address}-${p.strategy_id}`} className="border-b border-gray-800/50">
+                      <td className="py-1.5 pr-4 text-gray-300">{p.token_symbol || p.token_address.slice(0, 6)}</td>
+                      <td className="py-1.5 pr-4 text-gray-500">{p.strategy_id ?? '—'}</td>
+                      <td className="py-1.5 pr-4 text-gray-300">{sol(Number(p.position_size), 4)}</td>
+                      <td className="py-1.5 pr-4 text-gray-400">{entry.toPrecision(4)}</td>
+                      <td className="py-1.5 pr-4 text-gray-400">{now.toPrecision(4)}</td>
+                      <td className="py-1.5 pr-4 text-red-400">{toStop.toFixed(1)}%</td>
+                      <td className="py-1.5 pr-4 text-emerald-400">{toTarget.toFixed(1)}%</td>
+                      <td className="py-1.5 text-gray-500">{(p.created_at ?? '').slice(0, 16).replace('T', ' ')}</td>
+                    </tr>
+                  )
+                })}
+                {openPositions.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="py-3 text-gray-500">Nothing open right now.</td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-gray-500 mt-3">
+            Paper positions registered by the strategies with their own stop and target. The monitor
+            evaluates them every cycle and records triggers — it never executes on-chain for a
+            simulated position.
+          </p>
+        </section>
+
         {/* Regime context — populated once market_regime_tags has rows */}
         <section className="rounded border border-gray-800 bg-gray-900 p-4">
           <div className="flex items-baseline justify-between">
@@ -429,6 +556,10 @@ export default function PnlDashboardClient() {
                   <th className="py-1.5 pr-4 w-32"> </th>
                   <th className="py-1.5 pr-4">Flat</th>
                   <th className="py-1.5 pr-4">Median ×</th>
+                  <th className="py-1.5 pr-4">WR</th>
+                  <th className="py-1.5 pr-4">Avg risk</th>
+                  <th className="py-1.5 pr-4">R:R</th>
+                  <th className="py-1.5 pr-4">PF</th>
                   <th className="py-1.5 pr-4">Open</th>
                   <th className="py-1.5 pr-4">Velocity</th>
                   <th className="py-1.5 pr-4">Budget</th>
@@ -439,7 +570,15 @@ export default function PnlDashboardClient() {
                 {[...rows].reverse().map((r) => (
                   <tr key={r.day} className="border-b border-gray-800/50">
                     <td className="py-1.5 pr-4 text-gray-300">{r.day}</td>
-                    <td className="py-1.5 pr-4 text-gray-300">{r.trades}</td>
+                    <td className="py-1.5 pr-4 text-gray-300">
+                      <button
+                        onClick={() => void toggleDay(r.day)}
+                        className="text-left hover:text-emerald-300"
+                        title="Show the tokens traded that day"
+                      >
+                        {expanded === r.day ? '▾' : '▸'} {r.trades}
+                      </button>
+                    </td>
                     <td className="py-1.5 pr-4 text-gray-300">
                       {r.won} / {r.lost}
                     </td>
@@ -457,12 +596,68 @@ export default function PnlDashboardClient() {
                     <td className="py-1.5 pr-4 text-gray-400">
                       {r.medianSizeMult != null ? `${r.medianSizeMult.toFixed(2)}×` : '—'}
                     </td>
+                    <td className={`py-1.5 pr-4 ${r.winRatePct >= 50 ? 'text-emerald-400' : 'text-gray-300'}`}>
+                      {pct(r.winRatePct, 0)}
+                    </td>
+                    <td className="py-1.5 pr-4 text-gray-400">{sol(r.avgRiskSol, 4)}</td>
+                    <td className="py-1.5 pr-4 text-gray-400">
+                      {r.winLossRatio != null ? `${r.winLossRatio.toFixed(2)}×` : '—'}
+                    </td>
+                    <td className={`py-1.5 pr-4 ${(r.profitFactor ?? 0) >= 1 ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {r.profitFactor != null ? r.profitFactor.toFixed(2) : '—'}
+                    </td>
                     <td className="py-1.5 pr-4 text-gray-300">{r.peakConcurrent}</td>
                     <td className="py-1.5 pr-4 text-gray-300">{sol(r.velocityMaxSol, 3)}</td>
                     <td className={`py-1.5 pr-4 ${r.budgetUsedPct > 100 ? 'text-amber-400' : 'text-gray-300'}`}>
                       {pct(r.budgetUsedPct, 0)}
                     </td>
                     <td className="py-1.5 text-gray-400">{sol(r.optimalBudgetSol, 3)}</td>
+                    {expanded === r.day ? (
+                      <tr className="bg-gray-950/60">
+                        <td colSpan={15} className="px-4 py-3">
+                          {dayLoading === r.day ? (
+                            <span className="text-gray-500 text-xs">Loading {r.day}…</span>
+                          ) : (dayTrades[r.day] ?? []).length === 0 ? (
+                            <span className="text-gray-500 text-xs">No closed trades on {r.day}.</span>
+                          ) : (
+                            <div className="max-h-80 overflow-y-auto">
+                              <table className="w-full text-xs">
+                                <thead>
+                                  <tr className="text-gray-500 text-left border-b border-gray-800">
+                                    <th className="py-1 pr-3">Token</th>
+                                    <th className="py-1 pr-3">Strategy</th>
+                                    <th className="py-1 pr-3">PnL %</th>
+                                    <th className="py-1 pr-3">Status</th>
+                                    <th className="py-1 pr-3">Regime</th>
+                                    <th className="py-1 pr-3">Exit</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {(dayTrades[r.day] ?? []).map((t, i) => (
+                                    <tr key={`${t.token_address}-${i}`} className="border-b border-gray-800/40">
+                                      <td className="py-1 pr-3 text-gray-300">
+                                        {t.token_symbol || t.token_address.slice(0, 6)}
+                                        {t.has_exec ? <span className="text-emerald-500"> ✓exec</span> : null}
+                                      </td>
+                                      <td className="py-1 pr-3 text-gray-500">{t.strategy_id}</td>
+                                      <td className={`py-1 pr-3 ${tone(Number(t.pnl_pct ?? 0))}`}>
+                                        {pct(Number(t.pnl_pct ?? 0), 1)}
+                                      </td>
+                                      <td className="py-1 pr-3 text-gray-400">{t.status ?? '—'}</td>
+                                      <td className="py-1 pr-3 text-gray-500">{t.regime_tag ?? '—'}</td>
+                                      <td className="py-1 pr-3 text-gray-500">
+                                        {(t.exit_at ?? '').slice(11, 16)}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+
+                    ) : null}
                   </tr>
                 ))}
                 {rows.length === 0 ? (

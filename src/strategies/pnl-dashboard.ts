@@ -37,7 +37,25 @@ export interface DailyPnlRow {
   /** Base stake × Σ(pnl_pct × mult) / 100: what the system's own sizing returned. */
   pnlSolSized: number
   medianSizeMult: number | null
+  /** Mean applied sizing, so the average stake is base × this. */
+  meanSizeMult: number
   withSizeMult: number
+  /** Closed-trade win rate for the day. */
+  winRatePct: number
+  /** Average stake at risk per position, in SOL. */
+  avgRiskSol: number
+  /** Average realized reward per winning trade, in SOL. */
+  avgRewardSol: number
+  /** avg win / |avg loss| — the realized reward:risk ratio. */
+  winLossRatio: number | null
+  /** gross wins / |gross losses|, null when the day had no losses. */
+  profitFactor: number | null
+  grossWinPct: number
+  grossLossPct: number
+  avgWinPct: number
+  avgLossPct: number
+  bestPnlPct: number
+  worstPnlPct: number
   withExec: number
   execPnlSol: number | null
   peakConcurrent: number
@@ -87,6 +105,12 @@ export interface PnlBudgetSummary {
   peakBudgetUsedPct: number
   bestDay: { day: string; pnlSol: number } | null
   worstDay: { day: string; pnlSol: number } | null
+  avgWinPct: number
+  avgLossPct: number
+  avgRiskSol: number
+  avgRewardSol: number
+  winLossRatio: number | null
+  profitFactor: number | null
   /** Peak simultaneous capital over the range (the binding number). */
   velocityMaxSol: number
   /** The largest day's optimal budget: what the daily budget should have been. */
@@ -145,6 +169,13 @@ export function buildDailyRows(params: {
     lost: number
     sum_pnl_pct: string | number | null
     sum_pnl_pct_weighted?: string | number | null
+    gross_win_pct?: string | number | null
+    gross_loss_pct?: string | number | null
+    avg_win_pct?: string | number | null
+    avg_loss_pct?: string | number | null
+    best_pnl_pct?: string | number | null
+    worst_pnl_pct?: string | number | null
+    mean_size_mult?: string | number | null
     median_size_mult?: string | number | null
     with_size_mult?: number
     avg_pnl_pct: string | number | null
@@ -166,6 +197,14 @@ export function buildDailyRows(params: {
     const peakConcurrent = peakByDay.get(row.day) ?? 0
     const capitalSol = peakConcurrent * params.basePositionSizeSol
     const mult = medianMult && medianMult > 0 ? medianMult : 1
+    const meanMult = num(row.mean_size_mult) > 0 ? num(row.mean_size_mult) : 1
+    const trades = num(row.trades)
+    const won = num(row.won)
+    const grossWinPct = num(row.gross_win_pct)
+    const grossLossPct = num(row.gross_loss_pct)
+    const avgWinPct = num(row.avg_win_pct)
+    const avgLossPct = num(row.avg_loss_pct)
+    const avgRiskSol = params.basePositionSizeSol * meanMult
     return {
       day: row.day,
       regimeTag: params.regimeByDay?.get(row.day) ?? null,
@@ -179,7 +218,19 @@ export function buildDailyRows(params: {
       pnlSolFlat: pnlSolFor(sumPnlPct, params.basePositionSizeSol),
       pnlSolSized: pnlSolFor(sumWeighted, params.basePositionSizeSol),
       medianSizeMult: medianMult,
+      meanSizeMult: meanMult,
       withSizeMult: num(row.with_size_mult),
+      winRatePct: trades > 0 ? (won / trades) * 100 : 0,
+      avgRiskSol,
+      avgRewardSol: avgRiskSol * (avgWinPct / 100),
+      winLossRatio: avgLossPct < 0 ? avgWinPct / Math.abs(avgLossPct) : null,
+      profitFactor: grossLossPct < 0 ? grossWinPct / Math.abs(grossLossPct) : null,
+      grossWinPct,
+      grossLossPct,
+      avgWinPct,
+      avgLossPct,
+      bestPnlPct: num(row.best_pnl_pct),
+      worstPnlPct: num(row.worst_pnl_pct),
       withExec: num(row.with_exec),
       execPnlSol: num(row.with_exec) > 0 ? num(row.exec_pnl_quote) : null,
       peakConcurrent,
@@ -269,6 +320,26 @@ export function summarizeDailyPnl(params: {
     worstDay: ranked[ranked.length - 1]
       ? { day: ranked[ranked.length - 1].day, pnlSol: ranked[ranked.length - 1].pnlSolSized }
       : null,
+    avgWinPct: won > 0 ? rows.reduce((s, r) => s + r.avgWinPct * r.won, 0) / won : 0,
+    avgLossPct: lost > 0 ? rows.reduce((s, r) => s + r.avgLossPct * r.lost, 0) / lost : 0,
+    avgRiskSol:
+      trades > 0 ? rows.reduce((s, r) => s + r.avgRiskSol * r.trades, 0) / trades : 0,
+    avgRewardSol: (() => {
+      const winTrades = rows.reduce((s, r) => s + r.won, 0)
+      return winTrades > 0
+        ? rows.reduce((s, r) => s + r.avgRewardSol * r.won, 0) / winTrades
+        : 0
+    })(),
+    winLossRatio: (() => {
+      const loss = won + lost > 0 ? rows.reduce((s, r) => s + r.avgLossPct * r.lost, 0) / (lost || 1) : 0
+      const win = won > 0 ? rows.reduce((s, r) => s + r.avgWinPct * r.won, 0) / won : 0
+      return loss < 0 ? win / Math.abs(loss) : null
+    })(),
+    profitFactor: (() => {
+      const gw = rows.reduce((s, r) => s + r.grossWinPct, 0)
+      const gl = rows.reduce((s, r) => s + r.grossLossPct, 0)
+      return gl < 0 ? gw / Math.abs(gl) : null
+    })(),
     velocityMaxSol: peakCapitalSol,
     suggestedDailyBudgetSol: rows.reduce((m, r) => Math.max(m, r.optimalBudgetSol), 0),
     budgetHeadroom: params.budgetHeadroom ?? 1.25,
