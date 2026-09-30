@@ -48,7 +48,7 @@ describe('fetchTradingRecordsForWallet bounds', () => {
     expect(String(mockQuery.mock.calls[0]![0])).not.toContain('make_interval')
   })
 
-  it('sinceLastClose returns only rows from each mint last full close onward', async () => {
+  it('sinceLastClose bounds per (strategy, mint), not per mint', async () => {
     await fetchTradingRecordsForWallet('trending-bot-sim-rh', {
       strategies: ['att_rh'],
       sinceLastClose: true,
@@ -61,12 +61,18 @@ describe('fetchTradingRecordsForWallet bounds', () => {
     expect(text).toContain('t.timestamp >= coalesce(lc.ts, to_timestamp(0))')
     expect(text).not.toContain('make_interval')
     expect(text).toContain('ORDER BY t.timestamp ASC')
+    // Keyed on the strategy as well: a close by ONE strategy must not truncate another
+    // strategy's still-open cycle on the same mint. The per-mint key did exactly that and
+    // changed the reconstructed open set for 4 of the 7 active mcap strategies.
+    expect(text).toContain(`data->>'bot_strategy' AS strategy`)
+    expect(text).toContain(`lc.strategy = t.data->>'bot_strategy'`)
+    expect(text).toContain('GROUP BY 1, 2')
     expect(params).toEqual(['trending-bot-sim-rh', ['att_rh']])
   })
 })
 
 describe('buildOpenMcapSimReportPositions record window', () => {
-  it('reads the full sim history — the sinceLastClose tail is not equivalent for mcap', async () => {
+  it('reads the bounded sim history, keyed per (strategy, mint)', async () => {
     mockQuery.mockReset()
     mockQuery.mockResolvedValue({ rows: [], rowCount: 0 } as never)
     await buildOpenMcapSimReportPositions()
@@ -74,10 +80,8 @@ describe('buildOpenMcapSimReportPositions record window', () => {
       .map(([sql]) => String(sql))
       .filter((s) => s.includes('FROM trading_records'))
     expect(reads).toHaveLength(1)
-    // The tail starts each mint at its last full close, which changes the open set for 4 of
-    // the 7 active mcap strategies (measured against prod), so this read stays unbounded.
-    expect(reads[0]).not.toContain('last_close')
-    expect(reads[0]).toContain('ORDER BY timestamp ASC')
+    expect(reads[0]).toContain('last_close AS')
+    expect(reads[0]).toContain(`lc.strategy = t.data->>'bot_strategy'`)
   })
 })
 

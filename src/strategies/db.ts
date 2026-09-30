@@ -1326,14 +1326,13 @@ const MCAP_SIM_RECORDS_TTL_MS = 60_000
 let mcapSimRecordsCache: { at: number; records: SimWalletRecords } | null = null
 
 /**
- * The sim wallet's full trading history, reused for up to 60 s. One report needs it
- * twice (open positions and coverage counts) and it is ~27 MB each time; the values
- * are display-only and the sim's own cycle is slower than this TTL.
+ * The sim wallet's history, bounded to what the reconstruction needs and reused for up to
+ * 60 s. One report needs it twice (open positions and coverage counts) and the full history
+ * is ~27 MB; the values are display-only and the sim's own cycle is slower than this TTL.
  *
- * Full history on purpose: `sinceLastClose` is NOT equivalent here. Measured against
- * prod, reconstructing with the tail vs the full history differs for 4 of the 7 active
- * mcap strategies (48 open positions from the full history vs 35 from the tail) — unlike
- * the RH sim, where the tail was verified identical. Guarded by a unit test.
+ * The bound is `sinceLastClose`, which is exact because it is keyed per (strategy, mint) —
+ * see fetchTradingRecordsForWallet. It returns 2,095 records where the whole history is
+ * 5,283. Guarded by a unit test that the query keeps the strategy key.
  */
 export async function loadMcapSimRecords(): Promise<SimWalletRecords> {
   const now = Date.now()
@@ -1341,7 +1340,7 @@ export async function loadMcapSimRecords(): Promise<SimWalletRecords> {
     return mcapSimRecordsCache.records
   }
   const wallet = process.env.MCAP_TRACKER_SIM_WALLET_ADDRESS || 'mcap-tracker-sim'
-  const records = await fetchTradingRecordsForWallet(wallet)
+  const records = await fetchTradingRecordsForWallet(wallet, { sinceLastClose: true })
   mcapSimRecordsCache = { at: now, records }
   return records
 }
@@ -3153,10 +3152,14 @@ export async function fetchTradingRecordsForWallet(
   opts?: { strategies?: string[]; sinceDays?: number; sinceLastClose?: boolean },
 ): Promise<import('@/utils/trading-tracker').TrackingRecord[]> {
   try {
-    // `sinceLastClose` returns only the rows the position reconstruction actually needs:
-    // from each mint's most recent full close onward (never-closed mints keep everything).
-    // A cycle that ended before the last close cannot be open, so the tail is sufficient —
-    // and it avoids hydrating tens of MB of closed history in Node on every cycle.
+    // `sinceLastClose` returns only the rows the position reconstruction actually needs.
+    //
+    // The bound is per (strategy, mint), NOT per mint: each strategy holds its own cycle on a
+    // mint, so a close by ONE strategy must not truncate another strategy's still-open cycle.
+    // Measured against prod, the per-mint bound changed the reconstructed open set for 4 of
+    // the 7 active mcap strategies; this one is exact (0 of 7 differ, 2,095 records instead
+    // of 5,283). It is a superset of the per-mint bound, so callers that were already exact
+    // with the wider key stay exact.
     if (opts?.sinceLastClose) {
       const strategyCondition = opts.strategies?.length
         ? `AND data->>'bot_strategy' = ANY($2::text[])`
@@ -3164,17 +3167,20 @@ export async function fetchTradingRecordsForWallet(
       const strategyValues = opts.strategies?.length ? [opts.strategies] : []
       const { rows } = await query<{ data: import('@/utils/trading-tracker').TrackingRecord }>(
         `WITH last_close AS (
-           SELECT data->'tokens'->0->>'mintAddress' AS mint, max(timestamp) AS ts
+           SELECT data->>'bot_strategy' AS strategy,
+                  data->'tokens'->0->>'mintAddress' AS mint,
+                  max(timestamp) AS ts
              FROM trading_records
             WHERE wallet_address = $1
               AND data->>'operationType' = 'sell'
               AND data->>'close_position' = 'true'
               ${strategyCondition}
-            GROUP BY 1
+            GROUP BY 1, 2
          )
          SELECT t.data FROM trading_records t
            LEFT JOIN last_close lc
              ON lc.mint = t.data->'tokens'->0->>'mintAddress'
+            AND lc.strategy = t.data->>'bot_strategy'
           WHERE t.wallet_address = $1
             ${strategyCondition.replace('data->>', 't.data->>')}
             AND t.timestamp >= coalesce(lc.ts, to_timestamp(0))

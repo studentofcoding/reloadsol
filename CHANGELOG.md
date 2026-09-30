@@ -86,24 +86,40 @@ it went cold constantly, and the view renders "Loading strategies…" until it r
 
 **Follow-up found on the server after deploying the above.** A CPU profile (`node --cpu-prof` on a
 second instance inside the container, no code change) attributed **0.68 s of CPU to a 10.5 s request**
-— it is waiting, not computing — and per-section timing (temporary `#region debug` logs) showed the
-remaining ~6 s is **spread across ~8 sections**, nothing concentrated: outcomes read ~1.0 s,
-open-sim-positions ~0.45 s, mcap-stats ~0.49 s, best-trade-windows ~0.46 s, consensus 0.78-1.1 s,
-overlap/pairs 0.06-1.1 s, paper-capital ~0.3 s. One of the two unbounded reads was a real win:
+— it is waiting, not computing. The decisive probe was a report over a **1-hour window** (almost no
+outcome rows) against single-query endpoints: `/api/health` 0.006 s, `/api/strategies` 0.038 s,
+`/api/strategies/outcomes?limit=1` 0.040 s, **reports 6.65 s**. So ~6.6 s of the 8.5 s was
+**filter-independent** — not the outcome rows, and not the aggregates.
 
+- **The real cost was a quadratic sim reconstruction called 14× per request.**
+  `getOpenMcapPositions` ran `records.find(...)` **per token over the whole history**
+  (O(records × mints) — seconds on the sim's ~5k records), and `aggregateStrategyReports` invoked it
+  once **per mcap definition** for the coverage counts *and* again per definition for the
+  open-positions list. The per-mint buy lookup is now hoisted into a Map built in the same order (the
+  same record wins), and the reconstruction runs **once per request**, with coverage counts derived
+  from that same list. Measured: **cold 8.5 s → 4.0-5.1 s**, the filter-independent floor
+  **6.65 s → 2.10 s**. The shared helper also speeds up the sim cycle that uses it.
 - `getTrackingHealthStats` read **all 31,316** `token_mcap_tracking` rows and counted them in Node; it
   is now a single SQL aggregate row — **509 ms of SQL plus a JS pass over every row → 17-22 ms**,
   measured inside the deployed request. The timeline-inconsistency rule is mirrored as
-  `count(*) FILTER (WHERE when_reach_*pct IS NOT NULL AND first_seen_at > when_reach_*pct)`, and the
-  output was verified against the live endpoint (0 inconsistent, 31,316 tracked — both matched).
-  Callers: the reports endpoint and `GET /api/mcap-tracking`.
-- **Tried and reverted — the other one was wrong.** Bounding the sim-wallet read with `sinceLastClose`
-  (5,274 → 1,422 records, 27.5 MB → 1.0 MB) is **not equivalent** for mcap: reconstructing open
-  positions from the tail vs the full history differs for **4 of the 7 active mcap strategies**,
-  measured by running the real `getOpenMcapSimPositions` over both record sets pulled from prod (45
-  positions from the full history). The RH sim's identical-looking use of the tail does not transfer.
-  The read stays unbounded on purpose, pinned by a unit test asserting it is not passed
-  `sinceLastClose`.
+  `count(*) FILTER (...)`, and the output was verified against the live endpoint (0 inconsistent,
+  31,316 tracked — both matched). Callers: the reports endpoint and `GET /api/mcap-tracking`.
+- **The sim-wallet read is now bounded — and the first attempt at it was wrong for a subtle reason.**
+  Keying the last full close **per mint** (27.5 MB → 1.0 MB) looked like a free win and was reverted:
+  it changes the reconstructed open set for **4 of the 7 active mcap strategies** (measured by running
+  the real `getOpenMcapSimPositions` over both record sets pulled from prod). The cause is that each
+  strategy holds **its own cycle on a mint**, so a close by one strategy was truncating another
+  strategy's still-open cycle. Keying per **(strategy, mint)** is exact — **0 of 7 strategies differ**,
+  2,095 records instead of 5,283 — and it is a superset of the per-mint bound, so the callers that were
+  already exact with the wider key stay exact. Pinned by a unit test that the query keeps the strategy
+  key.
+- `computeBestTradeWindows` built a `Intl.DateTimeFormat` **per row** (~0.45 s over 4.5k rows); one
+  formatter per timezone now. The strategy family map was queried three times per report; memoized 60 s.
+  `coverage`/`abPairs` look rows up by key instead of scanning `breakdown` per definition.
+- The route is **stale-while-revalidate**: when the 600 s fresh entry has expired it returns the last
+  body and refreshes in the background (single-flight), so a user never pays the cold cost twice.
+  Responses carry `X-Report-Cache: fresh|stale|miss`.
+
 
 ### Fixed — trades waited 5-6s on a Jupiter queue shared with background work
 
