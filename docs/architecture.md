@@ -199,7 +199,7 @@ Enforced in [`src/utils/api-auth.ts`](../src/utils/api-auth.ts) + [`src/config/a
 |------|-----|----------|
 | **public** | Anyone | `/api/health`, `/api/rpc`, `/api/solprice` |
 | **wallet** | Signed wallet session | `/api/buy`, `/api/operations`, `/api/trading/records` |
-| **dev** | Whitelisted dev wallets | `/api/signals`, `/api/potential`, `/api/rug`, `/api/trending`, `/api/workers`, `/api/strategies` |
+| **dev** | Whitelisted dev wallets | `/api/signals`, `/api/potential`, `/api/rug`, `/api/trending`, `/api/workers`, `/api/strategies`, `/api/dev/reputation`, `/api/gmgn/risk-chips` |
 | **service** | Cron secrets / bearer / UA | `/api/trending/track`, `/api/signals/sim-track`, `/api/pnl/update` |
 
 Wallet session: `WALLET_SESSION_SECRET` cookie after SIWS-style sign-in.
@@ -271,6 +271,7 @@ Live candles come from **Solana Tracker** (`fetchTokenOhlc` / `GET /api/gmgn/tok
 |-------|---------|
 | `token_detect_snapshots` | Freeview / concentration last-10×1m OHLC bars + rug-rule eval. Not Token Info tiles — that ledger is specified in [SPEC-token-info-universal-ledger-v1.md](./specs/SPEC-token-info-universal-ledger-v1.md) and is not built yet |
 | `signal_ohlc_labels` | Rising / Rug snapshots for the kanban tag (gallery `/dev/ohlc-labels`). Store key `rising` (legacy `potential` migrated). Not ML `v2-potential`. |
+| `token_risk_features`, `dev_reputation` | Shadow risk (migrations 48/49): per-token RugCheck features (score / named risks / insider graph / LP lock / creator balance) + per-creator dev verdict with top-10 tokens by ATH. Display-only — `mode` stays `shadow` until the correlation is significant; see [SPEC-dev-reputation-rugcheck-v1.md](./specs/SPEC-dev-reputation-rugcheck-v1.md) |
 
 ### Legacy / optional
 

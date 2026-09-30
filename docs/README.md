@@ -25,6 +25,7 @@ this folder remain authoritative references.
 | — | [SPEC-sol-first-spine-4class-ohlc-v1.md](./SPEC-sol-first-spine-4class-ohlc-v1.md) | Draft: Sol-first spine — 4-class OHLC second head + soft size. Extends the Target machine spine. Numerics TBD; docs only |
 | — | [SPEC-gmgn-web-multi-token-info-v1.md](./specs/SPEC-gmgn-web-multi-token-info-v1.md) | Public gmgn.ai multi-token info for Freeview / ledger capture. Flag `GMGN_TOKEN_INFO_SOURCE=web` (default openapi). Max batch 8. OpenAPI stays for trade/search/rank |
 | — | [SPEC-token-info-universal-ledger-v1.md](./specs/SPEC-token-info-universal-ledger-v1.md) | To-spec: immutable detect Token Info ledger (nine Freeview tiles) shared by every strategy. Soft use only; concentration hard ban unchanged. Docs only |
+| — | [SPEC-dev-reputation-rugcheck-v1.md](./specs/SPEC-dev-reputation-rugcheck-v1.md) | **Shipped, shadow-first**: dev ban/profitable-dev lists (GMGN `created_tokens`) + keyless RugCheck risk features; one `(shadow)` label on every surface incl. `/dev/dev-reputation`. Correlation inconclusive (n≈19) → enforcement off |
 
 ## Diagrams
 

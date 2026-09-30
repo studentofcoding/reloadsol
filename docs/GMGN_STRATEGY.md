@@ -212,6 +212,17 @@ Cron `gmgn_radar_digest` (default every **86400s**, `GMGN_RADAR_DIGEST_INTERVAL`
 
 Tune in strategy config or via PATCH `/api/strategies/{id}`.
 
+### Shadow risk beside the gate (display-only)
+
+`gateGmgnCandidates` also runs **`attachRiskShadow`** after `evaluateGmgnSecurity` — it records a
+`RiskLabel` (RugCheck's free keyless report + the creator's dev reputation from
+`created_tokens`) and **never changes `pass` / `banned`**. Every rendered line is suffixed
+`(shadow)`. Flags default off: `RUGCHECK_ENABLED`, `DEV_REPUTATION_ENABLED`,
+`DEV_REPUTATION_MODE=shadow`. The same shadow is enqueued for every token captured by the mcap /
+social / trending seam (`captureTokenInfoDetectBatch`), decoupled from the GMGN panel so RugCheck
+still writes when GMGN is rate-limited. Correlation is **not yet significant** (n≈19) — enforcement
+stays off. Details: [specs/SPEC-dev-reputation-rugcheck-v1.md](./specs/SPEC-dev-reputation-rugcheck-v1.md).
+
 ## Rate limits
 
 GMGN leaky bucket (~20 capacity). Per poll tick: **2** track calls (SM + KOL). Per sim tick: 1–2 track + up to **5** candidates × (info + security).

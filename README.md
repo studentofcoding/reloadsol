@@ -252,6 +252,25 @@ Chart fetches (`GET {origin}/chart/{token}`, response `oclhv`) use `SOLANATRACKE
 | `TRENDING_MAX_PURCHASES_PER_TOKEN` | `2` | Lifetime opens per `(strategy, mint)`. |
 | `TRENDING_DROP_RUGGED` | on | `false` disables dropping `token_rug_list` mints from the trending feed (list + bot candidates). |
 
+### Shadow risk — dev reputation + RugCheck (display-only)
+
+Both default **off**, and neither gates anything: they record + label only, suffixed `(shadow)`
+([docs/specs/SPEC-dev-reputation-rugcheck-v1.md](docs/specs/SPEC-dev-reputation-rugcheck-v1.md)).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RUGCHECK_ENABLED` | `false` | Free keyless `GET /v1/tokens/{id}/report` → `token_risk_features` (`score_normalised`, named risks, insider graph, LP lock, creator balance) |
+| `RUGCHECK_MAX_REQ_PER_SEC` | `3` | Serial gate (~30 % of the measured ~10 rps clean ceiling) |
+| `RUGCHECK_TTL_S` | `900` | Per-mint cache |
+| `DEV_REPUTATION_ENABLED` | `false` | Score each creator from GMGN `created_tokens` (graduation rate + per-coin ATH) → `dev_reputation` |
+| `DEV_REPUTATION_MODE` | `shadow` | `enforce` only once the correlation is significant — it is **not** today |
+| `DEV_REPUTATION_KILL_SWITCH` | `false` | `true` forces shadow |
+| `DEV_REPUTATION_TTL_S` | `86400` | Per-creator cache |
+| `DEV_MIN_SAMPLE` · `DEV_BAN_MAX_GRADUATION` · `DEV_GOOD_MIN_GRADUATION` · `DEV_GOOD_MIN_ATH_MC` | `5` · `0.05` · `0.25` · `1000000` | Verdict thresholds (in-code defaults, env-tunable) |
+
+UI `/dev/dev-reputation` (profitable devs vs ban list, top-10 tokens each). Read APIs:
+`GET /api/dev/reputation`, `GET /api/gmgn/risk-chips` (bulk chips for list surfaces).
+
 ### Market-brain (optional)
 
 Read-only client for [market-brain](https://market-brain.yonathanevanchristy.workers.dev) lists + recipes + `/regime/params` + `/ohlc` + `/risk/from-score`. Universe plugs default off. OHLC prefers brain when a read token is set (set `MARKET_BRAIN_OHLC=0` to keep SolanaTracker/GMGN). Principal sim-open **score risk** (`GET /risk/from-score`) defaults on when a read token is set — set `MARKET_BRAIN_SCORE_RISK=0` to keep today's recipe / `DEFAULT_MCAP_TRACKER_EXIT` knobs. Climate `sizeScale` still comes from `/regime/params`. Does not change live execute.
