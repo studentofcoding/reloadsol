@@ -56,6 +56,22 @@ it went cold constantly, and the view renders "Loading strategies…" until it r
 - The report read **projects the 12 columns** `mapStrategyOutcomeRow` actually reads instead of
   `SELECT *` (the unfiltered case pulled 82k rows, `features` JSONB included).
 
+**Follow-up found on the server after deploying the above.** The endpoint was down to ~8.5 s cold but
+still slow, and a CPU profile (`node --cpu-prof` on a second instance inside the container, no code
+change) attributed **0.41 s of CPU to an 8.5 s request** — it was I/O-bound, not computing. A
+`pg_stat_activity` trace of the request showed its own statements are all sub-second; the wall clock
+went into two unbounded reads the report barely needs:
+
+- `buildOpenMcapSimReportPositions` re-read the sim wallet's **entire** trading history
+  (**5,274 records / 27.5 MB** measured on prod) to build open positions. It now uses the existing
+  `sinceLastClose` tail — the same read the sim cycle already uses for this exact reconstruction
+  (when it was introduced on the RH sim: identical open positions, 1,340 rows / 1.1 MB instead of
+  154,930 / 151 MB).
+- `getTrackingHealthStats` read **all 31,316** `token_mcap_tracking` rows and counted them in Node; it
+  is now a single SQL aggregate row, with the timeline-inconsistency rule mirrored as
+  `count(*) FILTER (WHERE when_reach_*pct IS NOT NULL AND first_seen_at > when_reach_*pct)`. Callers:
+  the reports endpoint and `GET /api/mcap-tracking`.
+
 ### Fixed — trades waited 5-6s on a Jupiter queue shared with background work
 
 The gate that keeps us inside Jupiter's quota was a single 2-second line

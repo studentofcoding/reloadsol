@@ -201,7 +201,12 @@ cold**, which is what made `?tab=closed` look like it never loaded (the DB part 
 uses an **in-place nth-element selection** (same values for the same seed) with
 `DEFAULT_SAMPLES` 10,000 → **2,000** (`CONSENSUS_BOOTSTRAP_SAMPLES`) — one CI is **288 ms**, ~54× faster.
 The reports cache TTL is 600 s and the closed view fetches reports in its own query so the outcome table
-paints without waiting on the aggregate.
+paints without waiting on the aggregate. **The bootstrap was only part of it:** after that fix the cold
+path was still ~8.5 s while using **0.41 s of CPU** (profiled with `node --cpu-prof` on a second
+instance inside the container), i.e. it was I/O-bound. Two unbounded reads explained it and are now
+bounded — the sim wallet's **whole** history re-read to build open positions (27.5 MB; now the existing
+`sinceLastClose` tail) and `getTrackingHealthStats` reading all 31,316 `token_mcap_tracking` rows to
+count them in Node (now one SQL aggregate).
 
 **That gate now exists in its gated form** (`src/strategies/consensus-gate.ts`,
 `db/init/47-strategy-consensus-shadow.sql`). It decides whether a would-be open has enough
