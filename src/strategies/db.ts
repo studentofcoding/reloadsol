@@ -1,7 +1,7 @@
 import { query, queryOne } from '@/utils/db'
 import { isMissingSchemaError } from '@/utils/db-health'
 import { getTrackingHealthStats, computeMcapSimPnlPct } from '@/utils/mcap-tracker'
-import { countOpenMcapSimPositions, getOpenMcapSimPositions } from '@/utils/mcap-sim-track'
+import { getOpenMcapSimPositions } from '@/utils/mcap-sim-track'
 import { readTokenSymbol, readTrainingClass } from './outcome-features'
 import { dedupeStrategyOutcomeRows } from './outcome-dedupe'
 import { resolveStrategyFamily } from './strategy-family'
@@ -1414,6 +1414,7 @@ export async function buildMcapTrackerReportStats(
   rows: StrategyOutcomeRow[],
   breakdown: StrategyReportBreakdown[],
   simRecords?: SimWalletRecords,
+  openPositionsIn?: McapOpenSimReportRow[],
 ): Promise<McapTrackerReportStats> {
   const mcapRows = rows.filter((r) => r.domain === 'mcap_tracker' && r.is_simulated)
   const health = await getTrackingHealthStats()
@@ -1456,7 +1457,7 @@ export async function buildMcapTrackerReportStats(
     milestone_buckets,
     timeline_inconsistent_count: health.timelineInconsistentCount,
     total_tracked_tokens: health.totalTokens,
-    open_sim_positions: await buildOpenMcapSimReportPositions(simRecords),
+    open_sim_positions: openPositionsIn ?? (await buildOpenMcapSimReportPositions(simRecords)),
   }
 }
 
@@ -2830,14 +2831,15 @@ export async function aggregateStrategyReports(params: {
   }
 
   const mcapOpenByStrategy = new Map<string, number>()
-  // One read for both consumers (coverage counts here, open_sim_positions in
-  // buildMcapTrackerReportStats) and reused across requests for 60 s.
+  // One read and ONE reconstruction per request. The reconstruction is quadratic in the
+  // record count (a full scan per token) and used to run once per definition here and
+  // again per definition for the open-positions list — 14 passes over the sim history.
   const mcapSimRecords = await loadMcapSimRecords()
-  for (const def of defRows) {
-    if (def.domain !== 'mcap_tracker') continue
+  const mcapOpenPositions = await buildOpenMcapSimReportPositions(mcapSimRecords)
+  for (const position of mcapOpenPositions) {
     mcapOpenByStrategy.set(
-      def.id,
-      countOpenMcapSimPositions(mcapSimRecords, def.id),
+      position.strategy_id,
+      (mcapOpenByStrategy.get(position.strategy_id) ?? 0) + 1,
     )
   }
 
@@ -2900,6 +2902,7 @@ export async function aggregateStrategyReports(params: {
     rows,
     breakdown,
     mcapSimRecords,
+    mcapOpenPositions,
   )
   const bestTradeWindows = computeBestTradeWindows(rows, { timeZone })
 
