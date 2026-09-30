@@ -1393,7 +1393,18 @@ export async function buildMcapTrackerReportStats(
   breakdown: StrategyReportBreakdown[],
 ): Promise<McapTrackerReportStats> {
   const mcapRows = rows.filter((r) => r.domain === 'mcap_tracker' && r.is_simulated)
+  // #region debug (debug-reports-latency)
+  const tHealth = Date.now()
+  // #endregion
   const health = await getTrackingHealthStats()
+  // #region debug (debug-reports-latency)
+  console.warn(`[dbg-reports]   tracking-health: ${Date.now() - tHealth} ms`)
+  const tOpen = Date.now()
+  // #endregion
+  const openSimPositions = await buildOpenMcapSimReportPositions()
+  // #region debug (debug-reports-latency)
+  console.warn(`[dbg-reports]   open-sim-positions: ${Date.now() - tOpen} ms`)
+  // #endregion
 
   const strategies = breakdown.filter(
     (b) => b.domain === 'mcap_tracker' && b.is_simulated && b.trade_count > 0,
@@ -1433,7 +1444,7 @@ export async function buildMcapTrackerReportStats(
     milestone_buckets,
     timeline_inconsistent_count: health.timelineInconsistentCount,
     total_tracked_tokens: health.totalTokens,
-    open_sim_positions: await buildOpenMcapSimReportPositions(),
+    open_sim_positions: openSimPositions,
   }
 }
 
@@ -2635,6 +2646,11 @@ export async function aggregateStrategyReports(params: {
   timezone: string
 }> {
   const timeZone = resolveReportTimeZone(params.timeZone ?? DEFAULT_REPORT_TIMEZONE)
+  // #region debug (debug-reports-latency)
+  const dbgT0 = Date.now()
+  const dbg = (label: string, from: number) =>
+    console.warn(`[dbg-reports] ${label}: ${Date.now() - from} ms`)
+  // #endregion
   const emptyMcapStats: McapTrackerReportStats = {
     strategies: [],
     milestone_buckets: [],
@@ -2647,6 +2663,9 @@ export async function aggregateStrategyReports(params: {
 
   let rows: StrategyOutcomeRow[]
   try {
+    // #region debug (debug-reports-latency)
+    const tOutcomes = Date.now()
+    // #endregion
     const result = await query<Record<string, unknown>>(
       // Project what mapStrategyOutcomeRow actually reads: `SELECT *` pulled every
       // row (82k across domains) with the whole features JSONB for a report that
@@ -2657,6 +2676,9 @@ export async function aggregateStrategyReports(params: {
       values,
     )
     rows = dedupeStrategyOutcomeRows(result.rows.map(mapStrategyOutcomeRow))
+    // #region debug (debug-reports-latency)
+    dbg(`outcomes-read (${result.rows.length} rows)`, tOutcomes)
+    // #endregion
   } catch (error) {
     if (isMissingSchemaError(error)) {
       return {
@@ -2720,7 +2742,13 @@ export async function aggregateStrategyReports(params: {
 
   breakdown.sort((a, b) => b.win_rate - a.win_rate)
 
+  // #region debug (debug-reports-latency)
+  const tDefs = Date.now()
+  // #endregion
   const defRows = await loadStrategyDefinitionRows(undefined, params.chain)
+  // #region debug (debug-reports-latency)
+  dbg('strategy-definitions', tDefs)
+  // #endregion
   const breakdownByKey = new Map(
     breakdown.map((b) => [`${b.domain}|${b.strategy_id}|${b.is_simulated}`, b]),
   )
@@ -2863,20 +2891,48 @@ export async function aggregateStrategyReports(params: {
     .slice(0, 8)
 
   const mlStats = computeMlLabelStats(rows)
+  // #region debug (debug-reports-latency)
+  const tMcap = Date.now()
+  // #endregion
   const mcapTrackerStats = await buildMcapTrackerReportStats(rows, breakdown)
+  // #region debug (debug-reports-latency)
+  dbg('mcap-tracker-stats', tMcap)
+  const tWin = Date.now()
+  // #endregion
   const bestTradeWindows = computeBestTradeWindows(rows, { timeZone })
+  // #region debug (debug-reports-latency)
+  dbg('best-trade-windows', tWin)
 
-  const [overlap, pairs, consensus] = await Promise.all([
-    loadTokenStrategyOverlap(params),
-    loadStrategyPairOverlap(params),
-    loadConsensusTest(params),
-  ])
+  const tOv = Date.now()
+  const overlapP = loadTokenStrategyOverlap(params).then((v) => {
+    dbg('overlap', tOv)
+    return v
+  })
+  const tPr = Date.now()
+  const pairsP = loadStrategyPairOverlap(params).then((v) => {
+    dbg('pairs', tPr)
+    return v
+  })
+  const tCo = Date.now()
+  const consensusP = loadConsensusTest(params).then((v) => {
+    dbg('consensus', tCo)
+    return v
+  })
+  const [overlap, pairs, consensus] = await Promise.all([overlapP, pairsP, consensusP])
+  // #endregion
   // Chain-scoped like the rest of the report (parseStrategyChain always resolves one), so
   // the RH/ETH block appears with ?chain=robinhood. Units differ per chain, so a single
   // block is the honest shape.
+  // #region debug (debug-reports-latency)
+  const tCap = Date.now()
+  // #endregion
   const capital = [
     await loadPaperCapital({ chain: params.chain ?? 'sol', days: 3, timeZone }),
   ]
+  // #region debug (debug-reports-latency)
+  dbg('paper-capital', tCap)
+  dbg('TOTAL aggregateStrategyReports', dbgT0)
+  // #endregion
 
   return {
     breakdown,

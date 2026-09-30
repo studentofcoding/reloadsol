@@ -17,6 +17,9 @@ const REPORTS_CACHE_TTL_S = 600
 
 export async function GET(request: NextRequest) {
   await connection()
+  // #region debug (debug-reports-latency)
+  const tRoute = Date.now()
+  // #endregion
   try {
     const { searchParams } = new URL(request.url)
     const domain = searchParams.get('domain') as StrategyDomain | null
@@ -71,6 +74,9 @@ export async function GET(request: NextRequest) {
       timeZone,
     })
 
+    // #region debug (debug-reports-latency)
+    console.warn(`[dbg-reports] route: aggregate returned at ${Date.now() - tRoute} ms`)
+    // #endregion
     const totalTrades = breakdown.reduce((s, b) => s + b.trade_count, 0)
     const totalWins = breakdown.reduce((s, b) => s + b.win_count, 0)
     const avgWinRate = totalTrades ? totalWins / totalTrades : 0
