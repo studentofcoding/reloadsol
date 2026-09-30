@@ -15,6 +15,7 @@ import {
 import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import { useRhWalletMode } from "@/contexts/RhWalletModeContext";
 import { useResolvedWalletPublicKey } from "@/hooks/useResolvedWalletPublicKey";
+import { useSolPrice } from "@/hooks/useSolPrice";
 import { useWalletTokens, refreshWalletTokensData, type WalletTokensData } from "@/hooks/useWalletTokens";
 import { compactDustOnlyDefault } from "@/utils/reload-home";
 import UniversalWalletButton from "./UniversalWalletButton";
@@ -368,8 +369,10 @@ export default function BulkTokenSeller({
   const [balanceBefore, setBalanceBefore] = useState<number>(0);
   const [balanceAfter, setBalanceAfter] = useState<number>(0);
 
-  // SOL price in USD
-  const [solPriceUsd, setSolPriceUsd] = useState<number>(145); // Default fallback
+  // SOL price in USD — always the app's live price (`/api/solprice`). No hardcoded fallback:
+  // a literal converts USD at a rate that is not the market's, and nothing downstream can tell.
+  const solPriceQuery = useSolPrice();
+  const solPriceUsd = solPriceQuery.data && solPriceQuery.data > 0 ? solPriceQuery.data : 0;
 
   // Quote state (Raptor via /api/solanatracker/quote)
   const [autoQuote, setAutoQuote] = useState<boolean>(true);
@@ -2252,20 +2255,6 @@ export default function BulkTokenSeller({
     return () => clearMetadataUpdateCallback();
   }, [handleMetadataUpdate]);
 
-  // Calculate estimated SOL after fees for selected tokens
-  const grossUSD = selectedTokens.reduce(
-    (total, token) => total + (token.usdValue * token.sellPercentage) / 100,
-    0,
-  );
-  const grossSOL = grossUSD / solPriceUsd; // Convert USD to SOL
-  const sellFee = getFeeForOperation("SELL", grossSOL); // 0.25% of SOL received
-  // Close fees/rent only for explicit close targets (zero-balance), not 100% sells —
-  // sell no longer auto-closes emptied ATAs (use Close for rent reclaim).
-  const tokensToClose = selectedZeroBalanceTokens.length;
-  const closeFee = getFeeForOperation("CLOSE") * tokensToClose;
-  const rentRecovery = tokensToClose * 0.00203928;
-  const estimatedSOL = grossSOL - sellFee - closeFee + rentRecovery;
-
   // Calculate total reload estimation based on showDustOnly filter
   const dustTokenList = useMemo(
     () => [...dustTokens, ...zeroValueTokens],
@@ -2290,13 +2279,17 @@ export default function BulkTokenSeller({
   const totalZeroTokens = showDustOnly
     ? zeroValueTokens.length
     : zeroBalanceTokens.length;
-  const totalGrossSOL = totalGrossUSD / solPriceUsd;
-  const totalSellFee = getFeeForOperation("SELL", totalGrossSOL);
+  // `null` until a real price is known — never a number derived from a made-up rate.
+  const totalGrossSOL = solPriceUsd > 0 ? totalGrossUSD / solPriceUsd : null;
+  const totalSellFee =
+    totalGrossSOL != null ? getFeeForOperation("SELL", totalGrossSOL) : 0;
   // Rent reclaim is a separate Close step; estimate sell proceeds only here.
   const totalCloseFee = getFeeForOperation("CLOSE") * totalZeroTokens;
   const totalRentRecovery = totalZeroTokens * 0.00203928;
   const totalReloadEstimate =
-    totalGrossSOL - totalSellFee - totalCloseFee + totalRentRecovery;
+    totalGrossSOL != null
+      ? totalGrossSOL - totalSellFee - totalCloseFee + totalRentRecovery
+      : null;
 
   // Handle token selection for chart display
   const handleSelectToken = useCallback((mintAddress: string) => {
@@ -2726,6 +2719,7 @@ export default function BulkTokenSeller({
                   {(showDustOnly
                     ? dustTokenList.length > 0
                     : userTokens.length > 0) &&
+                    totalReloadEstimate != null &&
                     totalReloadEstimate > 0 && (
                       <span className="font-bold">
                         ~ {totalReloadEstimate.toFixed(3)} SOL

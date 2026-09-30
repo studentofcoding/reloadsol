@@ -42,6 +42,7 @@
     "ml:pattern-daily": "bash scripts/ml-pattern-daily.sh",
     "test:watch": "vitest",
     "verify:no-raw-useeffect": "node scripts/verify-no-raw-useeffect.js",
+    "verify:no-hardcoded-sol-price": "node scripts/verify-no-hardcoded-sol-price.js",
     "db:check-migrations": "bash scripts/check-migrations-idempotent.sh",
     "logs": "node scripts/tail-logs.js",
     "logs:follow": "node scripts/tail-logs.js -f",

@@ -25,7 +25,7 @@ via the global `PostToolUse` hook; run `graphify update .` yourself if it did no
 ## Verify gate (exact)
 
 ```bash
-rm -rf .next/ && npm run lint && npm run verify:no-raw-useeffect && npm run build && npm run start
+rm -rf .next/ && npm run lint && npm run verify:no-raw-useeffect && npm run verify:no-hardcoded-sol-price && npm run build && npm run start
 ```
 
 Report each step verbosely (exit code + failures). Confirm `npm run start` boots, then stop it.

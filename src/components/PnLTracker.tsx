@@ -186,8 +186,8 @@ export default function PnLTracker() {
     staleTime: 60_000,
   });
   const nativePriceUsd = isRobinhood
-    ? (ethPriceQuery.data ?? 3000)
-    : (solPriceQuery.data ?? 145);
+    ? (ethPriceQuery.data ?? 0)
+    : (solPriceQuery.data ?? 0);
   const solPriceUsd = nativePriceUsd;
 
   // Chain-aware native amount helpers — SOL fields are solana-only, ETH
@@ -723,7 +723,7 @@ export default function PnLTracker() {
         const closedCycles: PnLRecord[] = [];
 
         const solPriceCache = solPriceUsd; // capture once
-        const ethPriceCache = ethPriceQuery.data ?? 3000;
+        const ethPriceCache = ethPriceQuery.data ?? 0;
 
         // Chain-aware native price for cycles that lack trade-time USD values.
         // Uses the cycle's own chain price (never the currently-viewed network's

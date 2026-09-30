@@ -53,7 +53,6 @@ type UnifiedTokenModalProps = {
   result?: BulkBuyResult | BulkSellResult | CloseResult | null
   balanceBefore?: number
   balanceAfter?: number
-  solToUsd?: (solValue: number) => number
   onSelectToken?: (mintAddress: string) => void
   pointsEarned?: number
   
@@ -77,7 +76,6 @@ export default function UnifiedTokenModal({
   result,
   balanceBefore,
   balanceAfter,
-  solToUsd = (sol) => sol * 145,
   onSelectToken,
   pointsEarned,
   tokenAddress,

@@ -117,6 +117,24 @@ Type in `src/utils/trading-tracker.ts`; stored in `trading_records.data` JSONB.
 per-wallet+chain `localStorage` offline cache otherwise (re-synced on reconnect);
 memory cache, offline keys and API queries are all `wallet:chain` scoped.
 
+### SOL / native price: one live source, never a literal
+
+The app has exactly one price source, read live, and **no hardcoded fallback anywhere**:
+
+- Server: `getSolPriceUSDCore()` (`src/utils/sol-price-core.ts`) — Bybit → CoinGecko/Jupiter in
+  parallel, backed by a 30 s cache (+5 min stale). `/api/solprice` exposes it.
+- Client: `useSolPrice()` (`src/hooks/useSolPrice.ts`) over `/api/solprice`.
+
+When no source has ever returned a price, both report **unavailable** (`price: 0`,
+`source: 'unavailable'`, HTTP 503 from the route) rather than a made-up number. Callers then take
+their own `> 0` branch or render an explicit placeholder (`—`) — a fabricated rate is
+indistinguishable from a real one downstream, so a displayed estimate or a recorded `solPriceUsd`
+would be wrong without anyone noticing. `solPriceUsd` recorded on a trade is the **trade-time**
+price taken from this same source, which is why history stays valid when the current price moves.
+
+Enforced by `npm run verify:no-hardcoded-sol-price` (part of the verify gate): it scans
+`src/**` for a literal feeding a price expression, so the retired `145` sentinel cannot come back.
+
 ## 4. Data flows (representative)
 
 | Flow | Path |

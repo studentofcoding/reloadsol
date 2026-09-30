@@ -8,6 +8,31 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — no hardcoded SOL price anywhere (live price only)
+
+- **The sell page showed an estimate up to 61% off.** `BulkTokenSeller` held its SOL price in
+  `useState<number>(145)` whose setter was **never called** (`setSolPriceUsd` appeared exactly
+  once, in its own declaration — the "handled by `useSolPrice`" comment next to it was not true).
+  Every USD→SOL figure there was converted at $145 while the market was ~$118.79, understating
+  the "You have ~ X SOL to reload" header by ~18%. `TradingHistory`, `PnLTracker`,
+  `TransactionResultModal` and `AlgoDashboardTab` carried the same literal in defaults, so
+  `TransactionResultModal`'s "≈ $" line was converted at $145 for every caller that didn't
+  override it.
+- **The server could fabricate a price too.** `sol-price-core.ts` seeded its cache with
+  `DEFAULT_SOL_PRICE_USD = 145` and returned it (`source: 'default'`) when Bybit, CoinGecko and
+  Jupiter all failed; `/api/solprice` answered `price: 145, source: 'emergency_default'`; and
+  `getSolPriceUSD()` returned `145` on error. The cache logic even used `price !== 145` as its
+  "is this a real price?" test. A fabricated price is worse than none — the sim writers check
+  `solPrice > 0` and cannot tell it from a real quote, so a failed lookup was recorded as fact.
+- **Now:** one live source, read every time. The server reports `price: 0` /
+  `source: 'unavailable'` (route: HTTP 503) when nothing has ever been observed and treats `> 0`
+  as "real"; every client surface reads `useSolPrice()` and shows an explicit `—` or omits the
+  figure when the price is unknown instead of assuming one. Dead `estimatedSOL` scaffolding in the
+  seller (only fed an unrendered value) and the unused `UnifiedTokenModal.solToUsd` prop are gone.
+- **Guarded:** `npm run verify:no-hardcoded-sol-price` (new, wired into the verify gate) fails if a
+  literal ever feeds a price expression again — verified failing on a probe violation and passing
+  clean. Rule documented in `docs/02-architecture-and-data.md`.
+
 ### Added — dev ban / profitable-dev lists + RugCheck risk features (shadow)
 
 - **Two shadow-first signals, nothing enforced.** A token's creator is scored from GMGN

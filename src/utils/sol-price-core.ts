@@ -14,16 +14,22 @@ interface PriceCache {
   originalSource: string;
 }
 
-// Default SOL price in case all APIs fail
-const DEFAULT_SOL_PRICE_USD = 145;
+/**
+ * There is deliberately no default SOL price. A fabricated price is worse than none: writers that
+ * see one cannot tell it from a real quote and record it as fact. When no source has ever returned
+ * a price, the cache holds `price: 0` / `source: 'unavailable'` and every caller degrades on its own
+ * `> 0` check instead of silently converting at a made-up rate.
+ */
+const UNAVAILABLE_PRICE = 0;
+const UNAVAILABLE_SOURCE = 'unavailable';
 
 // In-memory cache with 30-second expiry
 let priceCache: PriceCache = {
-  price: DEFAULT_SOL_PRICE_USD,
+  price: UNAVAILABLE_PRICE,
   timestamp: 0,
   expiresAt: 0,
-  source: 'default',
-  originalSource: 'default'
+  source: UNAVAILABLE_SOURCE,
+  originalSource: UNAVAILABLE_SOURCE
 };
 
 // Cache TTL in milliseconds (30 seconds for fresh, 5 minutes for stale)
@@ -172,10 +178,9 @@ async function fetchWithRateLimit(
 
 async function hydrateSolPriceFromRedis(): Promise<void> {
   const cached = await cacheGet<PriceCache>(SOL_PRICE_REDIS_KEY)
-  if (!cached?.price) return
-  if (cached.expiresAt > Date.now() || cached.price !== DEFAULT_SOL_PRICE_USD) {
-    priceCache = cached
-  }
+  // Only a real observed price is worth hydrating — never a placeholder.
+  if (!cached?.price || cached.price <= 0) return
+  priceCache = cached
 }
 
 async function persistSolPriceToRedis(): Promise<void> {
@@ -188,8 +193,7 @@ export async function getSolPriceUSDCore(): Promise<{ price: number; source: str
 
   // Check if we can use stale cache to avoid API calls during high load
   const now = Date.now();
-  if (priceCache.price && priceCache.price !== DEFAULT_SOL_PRICE_USD &&
-    now - priceCache.timestamp < STALE_CACHE_TTL_MS) {
+  if (priceCache.price > 0 && now - priceCache.timestamp < STALE_CACHE_TTL_MS) {
     console.log('Using stale cache to reduce API load');
     // Use originalSource to prevent accumulation
     return { price: priceCache.price, source: `stale_${priceCache.originalSource}` };
@@ -237,14 +241,14 @@ export async function getSolPriceUSDCore(): Promise<{ price: number; source: str
     }
   }
 
-  // All APIs failed, use cached or default price
-  if (priceCache.price && priceCache.price !== DEFAULT_SOL_PRICE_USD) {
+  // All APIs failed: a stale observed price is still real; nothing is not.
+  if (priceCache.price > 0) {
     console.warn('All APIs failed, using stale cached price');
     return { price: priceCache.price, source: `stale_${priceCache.originalSource}` };
   }
 
-  console.warn('All APIs failed, using default price');
-  return { price: DEFAULT_SOL_PRICE_USD, source: 'default' };
+  console.warn('All APIs failed and no price has ever been observed — reporting unavailable');
+  return { price: UNAVAILABLE_PRICE, source: UNAVAILABLE_SOURCE };
 }
 
 export async function warmSolPriceCacheFromRedis(): Promise<void> {
