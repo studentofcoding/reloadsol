@@ -1327,8 +1327,9 @@ export async function buildOpenMcapSimReportPositions(): Promise<McapOpenSimRepo
     loadStrategyDefinitionRows('mcap_tracker'),
     // Full history on purpose: `sinceLastClose` is NOT equivalent here. Measured against
     // prod, reconstructing with the tail vs the full history differs for 4 of the 7 active
-    // mcap strategies (45 positions from the full history) — unlike the RH sim, where the
-    // tail was verified identical. Correctness over the ~450 ms this read costs.
+    // mcap strategies (48 open positions from the full history vs 35 from the tail) — unlike
+    // the RH sim, where the tail was verified identical. Costs ~1-2 s of the report's cold
+    // path (it transfers ~27 MB back); correctness wins.
     fetchTradingRecordsForWallet(mcapSimWallet),
   ])
 
