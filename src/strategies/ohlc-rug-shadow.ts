@@ -63,62 +63,61 @@ export function logOhlcRugCounterfactual(input: {
  * Default enforce=false — never blocks. Flip enforce later to hard-reject.
  * Correlation / Freeview outcome paint stays on buy_bulk.
  */
+/** Bars + rule evaluation for a mint — the expensive, entry-feature-independent half. */
+export type OhlcRugShadowBase = {
+  bars: OhlcRugBar[]
+  evalResult: OhlcRugEval | null
+  source: string
+}
+
+export type OhlcRugShadowMemo = Map<string, Promise<OhlcRugShadowBase>>
+
+/**
+ * Fetch the bars and evaluate the rules — the part that goes through the shared, rate-gated
+ * market-data path (measured ~1.07 s per call, i.e. the GMGN gate at 1.4 rps).
+ *
+ * It does not depend on the caller's entry features, so a caller evaluating the same mint for
+ * several strategies can share a `memo` and pay that fetch **once per run** instead of once per
+ * strategy. Pass a fresh Map per request: this gates an entry, so it must not go stale across
+ * requests.
+ */
+export async function loadOhlcRugShadowBase(
+  tokenAddress: string,
+  opts?: { fallbackOwn1m?: boolean; memo?: OhlcRugShadowMemo },
+): Promise<OhlcRugShadowBase> {
+  const memoKey = `${tokenAddress}|${opts?.fallbackOwn1m === true ? 'own' : 'canonical'}`
+  const memo = opts?.memo
+  const cached = memo?.get(memoKey)
+  if (cached) return cached
+
+  const load = (async (): Promise<OhlcRugShadowBase> => {
+    try {
+      const { bars, source } = await fetchLastOhlcRugBars(tokenAddress, OHLC_RUG_MAX_BARS, {
+        fallbackOwn1m: opts?.fallbackOwn1m === true,
+      })
+      if (bars.length === 0) return { bars: [], evalResult: null, source: source || 'none' }
+      return { bars, evalResult: evaluateOhlcRugRules(bars), source: source || 'none' }
+    } catch {
+      return { bars: [], evalResult: null, source: 'error' }
+    }
+  })()
+
+  memo?.set(memoKey, load)
+  return load
+}
+
 export async function attachOhlcRugShadow(
   tokenAddress: string,
   entryFeatures: Record<string, unknown>,
-  opts?: { enforce?: boolean; fallbackOwn1m?: boolean },
+  opts?: { enforce?: boolean; fallbackOwn1m?: boolean; memo?: OhlcRugShadowMemo },
 ): Promise<AttachOhlcRugShadowResult> {
   const enforce = opts?.enforce === true
-  const fallbackOwn1m = opts?.fallbackOwn1m === true
+  const { bars, evalResult, source } = await loadOhlcRugShadowBase(tokenAddress, {
+    fallbackOwn1m: opts?.fallbackOwn1m,
+    memo: opts?.memo,
+  })
 
-  try {
-    const { bars, source } = await fetchLastOhlcRugBars(
-      tokenAddress,
-      OHLC_RUG_MAX_BARS,
-      { fallbackOwn1m },
-    )
-    if (bars.length === 0) {
-      return {
-        features: {
-          ...entryFeatures,
-          ohlc_rug_skipped: 'no_bars_or_error',
-          ohlc_rug_shadow_at: new Date().toISOString(),
-        },
-        reject: false,
-        reason: null,
-        trip: false,
-        evalResult: null,
-        bars: [],
-        source: source || 'none',
-      }
-    }
-
-    const evalResult = evaluateOhlcRugRules(bars)
-    const features = mergeOhlcRugIntoEntryFeatures(entryFeatures, evalResult)
-    const reasons = ohlcRugHitReasons(evalResult)
-    const reason = reasons.length > 0 ? reasons.join('; ') : null
-
-    if (evalResult.trip) {
-      logOhlcRugCounterfactual({
-        mintAddress: tokenAddress,
-        trip: true,
-        hits: (features.ohlc_rug_hits as string[]) ?? [],
-        dumpPct: evalResult.features.dumpPct,
-        reason,
-      })
-    }
-
-    const reject = enforce && evalResult.trip
-    return {
-      features,
-      reject,
-      reason: reject ? reason : null,
-      trip: evalResult.trip,
-      evalResult,
-      bars,
-      source: source || 'none',
-    }
-  } catch {
+  if (!evalResult) {
     return {
       features: {
         ...entryFeatures,
@@ -129,8 +128,33 @@ export async function attachOhlcRugShadow(
       reason: null,
       trip: false,
       evalResult: null,
-      bars: [],
-      source: 'error',
+      bars,
+      source,
     }
+  }
+
+  const features = mergeOhlcRugIntoEntryFeatures(entryFeatures, evalResult)
+  const reasons = ohlcRugHitReasons(evalResult)
+  const reason = reasons.length > 0 ? reasons.join('; ') : null
+
+  if (evalResult.trip) {
+    logOhlcRugCounterfactual({
+      mintAddress: tokenAddress,
+      trip: true,
+      hits: (features.ohlc_rug_hits as string[]) ?? [],
+      dumpPct: evalResult.features.dumpPct,
+      reason,
+    })
+  }
+
+  const reject = enforce && evalResult.trip
+  return {
+    features,
+    reject,
+    reason: reject ? reason : null,
+    trip: evalResult.trip,
+    evalResult,
+    bars,
+    source,
   }
 }

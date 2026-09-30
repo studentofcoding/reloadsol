@@ -72,6 +72,7 @@ import {
   resolveMcapSlippageBps,
 } from '@/utils/mcap-raptor-trade'
 import { computeOpenTradeCycle } from '@/utils/simulation-trades'
+import type { OhlcRugShadowMemo } from '@/strategies/ohlc-rug-shadow'
 import { buildTradingRecord, insertTradingRecords } from '@/utils/trading-records-db'
 import { evaluateConsensusGateForOpen } from '@/strategies/db'
 import { recordConsensusShadow } from '@/strategies/consensus-gate'
@@ -880,6 +881,9 @@ async function runSimTrack(request: NextRequest) {
   const dbgLog = (label: string, data: Record<string, unknown>) =>
     console.warn(`[dbg-mcap-sim] ${label} ${JSON.stringify(data)}`)
   // #endregion
+  // One OHLC load per mint per run. The seven strategies evaluate the same candidates, and that
+  // load is rate-gated (~1.07 s measured), so without this the run pays it once per strategy.
+  const ohlcRugMemo: OhlcRugShadowMemo = new Map()
 
   try {
     const liveAvailable = isMcapLiveTradingAvailable()
@@ -1260,6 +1264,7 @@ async function runSimTrack(request: NextRequest) {
         // #endregion
         const ohlc = await attachOhlcRugShadow(snapshot.token_address, annotated, {
           enforce: execMode.isSimulated,
+          memo: ohlcRugMemo,
         })
         // #region debug (debug-mcap-sim-timing)
         dbgOhlcMs += Date.now() - dbgOhlcStart
