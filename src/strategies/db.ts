@@ -1320,17 +1320,38 @@ function bucketMcapOutcomeStats(
   }
 }
 
-export async function buildOpenMcapSimReportPositions(): Promise<McapOpenSimReportRow[]> {
-  const mcapSimWallet =
-    process.env.MCAP_TRACKER_SIM_WALLET_ADDRESS || 'mcap-tracker-sim'
+type SimWalletRecords = import('@/utils/trading-tracker').TrackingRecord[]
+
+const MCAP_SIM_RECORDS_TTL_MS = 60_000
+let mcapSimRecordsCache: { at: number; records: SimWalletRecords } | null = null
+
+/**
+ * The sim wallet's full trading history, reused for up to 60 s. One report needs it
+ * twice (open positions and coverage counts) and it is ~27 MB each time; the values
+ * are display-only and the sim's own cycle is slower than this TTL.
+ *
+ * Full history on purpose: `sinceLastClose` is NOT equivalent here. Measured against
+ * prod, reconstructing with the tail vs the full history differs for 4 of the 7 active
+ * mcap strategies (48 open positions from the full history vs 35 from the tail) — unlike
+ * the RH sim, where the tail was verified identical. Guarded by a unit test.
+ */
+export async function loadMcapSimRecords(): Promise<SimWalletRecords> {
+  const now = Date.now()
+  if (mcapSimRecordsCache && now - mcapSimRecordsCache.at < MCAP_SIM_RECORDS_TTL_MS) {
+    return mcapSimRecordsCache.records
+  }
+  const wallet = process.env.MCAP_TRACKER_SIM_WALLET_ADDRESS || 'mcap-tracker-sim'
+  const records = await fetchTradingRecordsForWallet(wallet)
+  mcapSimRecordsCache = { at: now, records }
+  return records
+}
+
+export async function buildOpenMcapSimReportPositions(
+  recordsIn?: SimWalletRecords,
+): Promise<McapOpenSimReportRow[]> {
   const [defRows, records] = await Promise.all([
     loadStrategyDefinitionRows('mcap_tracker'),
-    // Full history on purpose: `sinceLastClose` is NOT equivalent here. Measured against
-    // prod, reconstructing with the tail vs the full history differs for 4 of the 7 active
-    // mcap strategies (48 open positions from the full history vs 35 from the tail) — unlike
-    // the RH sim, where the tail was verified identical. Costs ~1-2 s of the report's cold
-    // path (it transfers ~27 MB back); correctness wins.
-    fetchTradingRecordsForWallet(mcapSimWallet),
+    recordsIn ?? loadMcapSimRecords(),
   ])
 
   const positions: McapOpenSimReportRow[] = []
@@ -1392,6 +1413,7 @@ export async function buildOpenMcapSimReportPositions(): Promise<McapOpenSimRepo
 export async function buildMcapTrackerReportStats(
   rows: StrategyOutcomeRow[],
   breakdown: StrategyReportBreakdown[],
+  simRecords?: SimWalletRecords,
 ): Promise<McapTrackerReportStats> {
   const mcapRows = rows.filter((r) => r.domain === 'mcap_tracker' && r.is_simulated)
   const health = await getTrackingHealthStats()
@@ -1434,7 +1456,7 @@ export async function buildMcapTrackerReportStats(
     milestone_buckets,
     timeline_inconsistent_count: health.timelineInconsistentCount,
     total_tracked_tokens: health.totalTokens,
-    open_sim_positions: await buildOpenMcapSimReportPositions(),
+    open_sim_positions: await buildOpenMcapSimReportPositions(simRecords),
   }
 }
 
@@ -1525,8 +1547,16 @@ export async function listTopPnlByActiveStrategy(
  * is fetched whole rather than resolved per id; ids with no definition row fall back
  * to themselves via the LEFT JOIN in the callers.
  */
+const FAMILY_MAP_TTL_MS = 60_000
+let familyMapCache: { at: number; map: Map<string, string> } | null = null
+
 async function loadStrategyFamilyMap(): Promise<Map<string, string>> {
+  const now = Date.now()
+  if (familyMapCache && now - familyMapCache.at < FAMILY_MAP_TTL_MS) {
+    return familyMapCache.map
+  }
   const map = new Map<string, string>()
+  let loaded = false
   try {
     const { rows } = await query<{ id: string; domain: string; config: unknown }>(
       `SELECT id, domain, config FROM strategy_definitions`,
@@ -1541,11 +1571,14 @@ async function loadStrategyFamilyMap(): Promise<Map<string, string>> {
         }),
       )
     }
+    loaded = true
   } catch (error) {
     if (!isMissingSchemaError(error)) {
       console.warn('[strategies/db] strategy family map failed:', errorMessage(error))
     }
   }
+  // Only cache a real read: a missing-schema failure must be retried, not pinned.
+  if (loaded) familyMapCache = { at: now, map }
   return map
 }
 
@@ -2722,7 +2755,7 @@ export async function aggregateStrategyReports(params: {
   breakdown.sort((a, b) => b.win_rate - a.win_rate)
 
   const defRows = await loadStrategyDefinitionRows(undefined, params.chain)
-  const breakdownByKey = new Map(
+  let breakdownByKey = new Map(
     breakdown.map((b) => [`${b.domain}|${b.strategy_id}|${b.is_simulated}`, b]),
   )
 
@@ -2750,6 +2783,13 @@ export async function aggregateStrategyReports(params: {
     if (a.trade_count !== b.trade_count) return b.trade_count - a.trade_count
     return a.strategy_id.localeCompare(b.strategy_id)
   })
+
+  // Rebuilt after the synthetic zero rows are merged, so coverage/abPairs can look
+  // rows up by key instead of scanning `breakdown` per definition.
+  breakdownByKey = new Map(
+    breakdown.map((b) => [`${b.domain}|${b.strategy_id}|${b.is_simulated}`, b]),
+  )
+  const defById = new Map(defRows.map((d) => [d.id, d]))
 
   const mlByStrategy = new Map<string, { unlabeled: number; labeled: number }>()
   for (const row of rows) {
@@ -2790,9 +2830,9 @@ export async function aggregateStrategyReports(params: {
   }
 
   const mcapOpenByStrategy = new Map<string, number>()
-  const mcapSimWallet =
-    process.env.MCAP_TRACKER_SIM_WALLET_ADDRESS || 'mcap-tracker-sim'
-  const mcapSimRecords = await fetchTradingRecordsForWallet(mcapSimWallet)
+  // One read for both consumers (coverage counts here, open_sim_positions in
+  // buildMcapTrackerReportStats) and reused across requests for 60 s.
+  const mcapSimRecords = await loadMcapSimRecords()
   for (const def of defRows) {
     if (def.domain !== 'mcap_tracker') continue
     mcapOpenByStrategy.set(
@@ -2802,12 +2842,8 @@ export async function aggregateStrategyReports(params: {
   }
 
   const coverage: StrategyCoverageRow[] = defRows.map((def) => {
-    const sim = breakdown.find(
-      (b) => b.strategy_id === def.id && b.domain === def.domain && b.is_simulated,
-    )
-    const live = breakdown.find(
-      (b) => b.strategy_id === def.id && b.domain === def.domain && !b.is_simulated,
-    )
+    const sim = breakdownByKey.get(`${def.domain}|${def.id}|true`)
+    const live = breakdownByKey.get(`${def.domain}|${def.id}|false`)
     const simLast = sim?.last_exit_at ?? null
     const liveLast = live?.last_exit_at ?? null
     const lastExitAt =
@@ -2845,13 +2881,9 @@ export async function aggregateStrategyReports(params: {
     .map((d) => d.id)
 
   const abPairs: import('./types').StrategyAbPair[] = abParallelIds.map((id) => {
-    const domain = defRows.find((d) => d.id === id)?.domain ?? 'trending_bot'
-    const sim = breakdown.find(
-      (b) => b.strategy_id === id && b.is_simulated && b.domain === domain,
-    ) ?? null
-    const live = breakdown.find(
-      (b) => b.strategy_id === id && !b.is_simulated && b.domain === domain,
-    ) ?? null
+    const domain = defById.get(id)?.domain ?? 'trending_bot'
+    const sim = breakdownByKey.get(`${domain}|${id}|true`) ?? null
+    const live = breakdownByKey.get(`${domain}|${id}|false`) ?? null
     return { strategy_id: id, domain: domain as StrategyDomain, sim, live }
   })
 
@@ -2864,7 +2896,11 @@ export async function aggregateStrategyReports(params: {
     .slice(0, 8)
 
   const mlStats = computeMlLabelStats(rows)
-  const mcapTrackerStats = await buildMcapTrackerReportStats(rows, breakdown)
+  const mcapTrackerStats = await buildMcapTrackerReportStats(
+    rows,
+    breakdown,
+    mcapSimRecords,
+  )
   const bestTradeWindows = computeBestTradeWindows(rows, { timeZone })
 
   const [overlap, pairs, consensus] = await Promise.all([
