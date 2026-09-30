@@ -322,9 +322,33 @@ Sim-only deployments can omit these (defaults apply; circuit breaker affects rea
 
 ```bash
 TRADING_KEYPAIR_JSON=[1,2,3,...]
-MAX_SOL_AT_RISK=1.0
+MAX_SOL_AT_RISK=0.1      # enforced on prod; per strategy: MAX_SOL_AT_RISK x allocation (25% default)
 MIN_SOL_BALANCE=0.1
 ```
+
+**Enabling a live trial is an env change, not a deploy** — and nothing is armed today: every row in
+`strategy_definitions` is `execution_mode = sim_only` and `MCAP_LIVE_TRADING_ENABLED` is unset.
+The live path is also narrow and fails safe: only `MCAP_LIVE_STRATEGY_ID` (`mcap_enter_first_seen`) is
+eligible, and `resolveExecutionMode('live_only', liveAvailable=false)` **skips the open** rather than
+substituting a simulated trade, so arming a strategy without the env produces no trades at all.
+
+Runbook for the first real fill:
+
+1. **Fund the wallet.** The trading wallet held `0.0955 SOL` — below the 0.1 cap — so a live trial
+   cannot clear fees until it is funded for at least the cap plus headroom.
+2. Set `MCAP_LIVE_TRADING_ENABLED=true` (with `TRADING_KEYPAIR_JSON` already present) and recreate web.
+3. Give the chosen strategy `execution_mode = 'live_only'` in `strategy_definitions` (one strategy only).
+4. Watch: `docker logs -f reloadsol-web`, the paper-trade dashboard, and the wallet on-chain.
+5. **Kill switch:** set `MCAP_LIVE_TRADING_ENABLED=false` and recreate — env only, no code change, and
+   the live path goes inert immediately while the paper desk keeps running.
+6. Record the first fill against what the sim predicted for the same signal (see the exec-model note in
+   the changelog). A fill you cannot compare to a prediction teaches nothing.
+
+**Sizing warning before arming anything.** The execution model charges
+`SIM_PRIORITY_FEE_QUOTE=0.002` SOL **per side** (0.004 round trip) plus `SIM_FEE_BPS=100` and
+`SIM_SPREAD_BPS=50`. On a 0.005 SOL position the fixed priority fee alone is ~80% of the stake — which
+is why the 14-day ledger shows gross `+0.33` SOL but a modelled drag of `-61.78` SOL. Size trades from
+the fee floor, not from the budget: ~0.05 SOL makes the fixed cost ~8% of the stake, ~0.1 SOL ~4%.
 
 ## SSL / HTTPS
 
