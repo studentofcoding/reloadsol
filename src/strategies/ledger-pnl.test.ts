@@ -221,3 +221,63 @@ describe('summarizeLedger net figures', () => {
     expect(s.realizedNetSol).toBe(0)
   })
 })
+
+import { buildStrategyReadiness, peakConcurrentPositions } from './ledger-pnl'
+
+function pos(o: Partial<import('./ledger-pnl').LedgerPosition> & { strategyId: string }) {
+  return {
+    mintAddress: 'm',
+    symbol: 'TOK',
+    chain: 'sol',
+    costSol: 0.005,
+    proceedsSol: 0.0055,
+    pnlSol: 0.0005,
+    pnlPct: 10,
+    buys: 1,
+    sells: 1,
+    openedAt: 1_000,
+    closedAt: 2_000,
+    closed: true,
+    ...o,
+  }
+}
+
+describe('peakConcurrentPositions', () => {
+  it('counts overlap, and does not count touching intervals', () => {
+    expect(peakConcurrentPositions([pos({ strategyId: 'a', openedAt: 1, closedAt: 2 }), pos({ strategyId: 'a', openedAt: 2, closedAt: 3 })])).toBe(1)
+    expect(peakConcurrentPositions([pos({ strategyId: 'a', openedAt: 1, closedAt: 5 }), pos({ strategyId: 'a', openedAt: 2, closedAt: 3 })])).toBe(2)
+  })
+
+  it('treats an open position as still running', () => {
+    expect(peakConcurrentPositions([pos({ strategyId: 'a', openedAt: 1, closedAt: 2 }), pos({ strategyId: 'a', openedAt: 3, closedAt: null, closed: false })])).toBe(1)
+  })
+})
+
+describe('buildStrategyReadiness', () => {
+  it('separates a candidate from a strategy whose drag eats it', () => {
+    const out = buildStrategyReadiness([
+      // healthy: repeated positive trades
+      pos({ strategyId: 'good', pnlSol: 0.0004, costSol: 0.005, pnlPct: 8 }),
+      pos({ strategyId: 'good', pnlSol: 0.0004, costSol: 0.005, pnlPct: 8, openedAt: 5_000, closedAt: 6_000 }),
+      // break-even: gross is flat, the fixed drag makes it negative
+      pos({ strategyId: 'flat', pnlSol: 0, costSol: 0.0015, pnlPct: 0 }),
+      pos({ strategyId: 'flat', pnlSol: 0, costSol: 0.0015, pnlPct: 0 }),
+    ])
+    const good = out.find((s) => s.strategyId === 'good')!
+    const flat = out.find((s) => s.strategyId === 'flat')!
+    expect(good.netPerTradeSol).toBeGreaterThan(0)
+    expect(good.medianPnlPct).toBe(8)
+    expect(good.verdict).toBe('candidate')
+    expect(flat.netPerTradeSol).toBeLessThan(0)
+    expect(flat.verdict).toBe('not_viable')
+  })
+
+  it('sorts by net per trade and ignores strategies with nothing closed', () => {
+    const out = buildStrategyReadiness([
+      pos({ strategyId: 'small', pnlSol: 0.0001, costSol: 0.005, pnlPct: 2 }),
+      pos({ strategyId: 'big', pnlSol: 0.0010, costSol: 0.005, pnlPct: 20 }),
+      pos({ strategyId: 'open-only', closed: false, closedAt: null, pnlSol: 0 }),
+    ])
+    expect(out.map((s) => s.strategyId)).toEqual(['big', 'small'])
+  })
+})

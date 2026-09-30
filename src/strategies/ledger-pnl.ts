@@ -240,3 +240,99 @@ export function summarizeLedger(positions: LedgerPosition[]): LedgerSummary {
     realizedNetSol: realizedPnlSol - drag,
   }
 }
+
+// --- per-strategy readiness: what a live candidate has to clear ------------------------------------
+//
+// The decision this answers: is a strategy worth arming, judged at a size and a cost we would actually
+// trade? Everything here is measured from the positions — no headline means (one 5,000% winner carries a
+// mean), no gross-only numbers (a positive gross with a drag that eats it is not a candidate), and no
+// aggregate that hides which strategy is which.
+
+export interface StrategyReadiness {
+  strategyId: string
+  /** Closed positions in the window. */
+  closed: number
+  /** Median return per trade. The typical trade, not the average one. */
+  medianPnlPct: number
+  /** Median stake, which is what decides how much the fixed cost bites. */
+  medianSizeSol: number
+  grossSol: number
+  dragSol: number
+  netSol: number
+  netPerTradeSol: number
+  /** Peak simultaneous open positions — must fit `MAX_SOL_AT_RISK` at the live size. */
+  peakConcurrent: number
+  verdict: 'candidate' | 'marginal' | 'not_viable'
+}
+
+/** Maximum simultaneous open positions from interval overlap (openedAt → closedAt). */
+export function peakConcurrentPositions(positions: LedgerPosition[]): number {
+  const events: Array<{ at: number; delta: number }> = []
+  for (const p of positions) {
+    events.push({ at: p.openedAt, delta: 1 })
+    // An open position never releases; a closed one releases at its close.
+    if (p.closed && p.closedAt != null) events.push({ at: p.closedAt, delta: -1 })
+  }
+  // Closes before opens at the same instant, so touching intervals are not counted as overlapping.
+  events.sort((a, b) => a.at - b.at || a.delta - b.delta)
+  let live = 0
+  let peak = 0
+  for (const e of events) {
+    live += e.delta
+    if (live > peak) peak = live
+  }
+  return peak
+}
+
+function median(sorted: number[]): number {
+  if (sorted.length === 0) return 0
+  const mid = Math.floor(sorted.length / 2)
+  return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
+}
+
+export function buildStrategyReadiness(
+  positions: LedgerPosition[],
+  params?: ExecutionParams,
+): StrategyReadiness[] {
+  const byStrategy = new Map<string, LedgerPosition[]>()
+  for (const p of positions) {
+    const key = p.strategyId ?? '(unknown)'
+    const list = byStrategy.get(key)
+    if (list) list.push(p)
+    else byStrategy.set(key, [p])
+  }
+
+  const out: StrategyReadiness[] = []
+  for (const [strategyId, list] of byStrategy) {
+    const closedPositions = list.filter((p) => p.closed)
+    if (closedPositions.length === 0) continue
+    const grossSol = closedPositions.reduce((s, p) => s + p.pnlSol, 0)
+    // The calibrated model, not an approximation: the same drag the ledger summary applies.
+    const dragSol = closedPositions.reduce((s, p) => s + modelledDragSol(p.costSol, params), 0)
+    const netSol = grossSol - dragSol
+    const netPerTradeSol = netSol / closedPositions.length
+    const medianPnlPct = median(closedPositions.map((p) => p.pnlPct).sort((a, b) => a - b))
+    const medianSizeSol = median(closedPositions.map((p) => p.costSol).sort((a, b) => a - b))
+
+    out.push({
+      strategyId,
+      closed: closedPositions.length,
+      medianPnlPct,
+      medianSizeSol,
+      grossSol,
+      dragSol,
+      netSol,
+      netPerTradeSol,
+      peakConcurrent: peakConcurrentPositions(list),
+      // A candidate is one whose typical trade is positive *and* whose total survives the drag. Below
+      // that it is not a sizing question — no size fixes a median that loses to its own fixed cost.
+      verdict:
+        netPerTradeSol > 0 && medianPnlPct > 0
+          ? 'candidate'
+          : netPerTradeSol > 0
+            ? 'marginal'
+            : 'not_viable',
+    })
+  }
+  return out.sort((a, b) => b.netPerTradeSol - a.netPerTradeSol)
+}

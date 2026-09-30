@@ -150,6 +150,19 @@ interface ClosedPosition {
 }
 
 interface LedgerPayload {
+  /** Per-strategy readiness from the ledger: net of the calibrated drag, best first. */
+  readiness?: Array<{
+    strategyId: string
+    closed: number
+    medianPnlPct: number
+    medianSizeSol: number
+    grossSol: number
+    dragSol: number
+    netSol: number
+    netPerTradeSol: number
+    peakConcurrent: number
+    verdict: 'candidate' | 'marginal' | 'not_viable'
+  }>
   success: boolean
   records?: number
   summary?: LedgerSummary
@@ -449,6 +462,69 @@ export default function PnlDashboardClient() {
             sub={`${summary?.won ?? 0}W / ${summary?.lost ?? 0}L · ${pct(summary?.winRatePct ?? 0)} win · sized ${summary?.tradesWithSizeMult ?? 0}`}
           />
         </section>
+
+        {/* Per-strategy readiness. The decision this is for: is a strategy worth arming, judged at the
+            size and the cost we would actually trade — not on a mean that one winner carries, and not
+            gross of the drag. */}
+        {(ledger?.readiness ?? []).length > 0 ? (
+          <section className="mt-4">
+            <h2 className="text-sm text-gray-300 mb-2">
+              Strategy readiness <span className="text-gray-500">— net of the calibrated drag</span>
+            </h2>
+            <div className="overflow-x-auto rounded border border-gray-800">
+              <table className="w-full text-xs">
+                <thead className="bg-gray-900 text-gray-400">
+                  <tr>
+                    <th className="text-left py-1.5 pl-2 pr-3 font-medium">Strategy</th>
+                    <th className="text-right py-1.5 px-2 font-medium">Closed</th>
+                    <th className="text-right py-1.5 px-2 font-medium">Median %</th>
+                    <th className="text-right py-1.5 px-2 font-medium">Median size</th>
+                    <th className="text-right py-1.5 px-2 font-medium">Gross</th>
+                    <th className="text-right py-1.5 px-2 font-medium">Drag</th>
+                    <th className="text-right py-1.5 px-2 font-medium">Net / trade</th>
+                    <th className="text-right py-1.5 px-2 font-medium">Peak open</th>
+                    <th className="text-left py-1.5 pl-2 font-medium">Verdict</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ledger!.readiness!.map((r) => (
+                    <tr key={r.strategyId} className="border-t border-gray-800">
+                      <td className="py-1 pl-2 pr-3 text-gray-200">{r.strategyId}</td>
+                      <td className="py-1 px-2 text-right text-gray-400">{r.closed}</td>
+                      <td className={`py-1 px-2 text-right ${r.medianPnlPct > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {pct(r.medianPnlPct)}
+                      </td>
+                      <td className="py-1 px-2 text-right text-gray-400">{sol(r.medianSizeSol, 4)}</td>
+                      <td className="py-1 px-2 text-right text-gray-400">{sol(r.grossSol, 3)}</td>
+                      <td className="py-1 px-2 text-right text-amber-400">-{sol(r.dragSol, 3)}</td>
+                      <td className={`py-1 px-2 text-right font-medium ${r.netPerTradeSol > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {sol(r.netPerTradeSol, 6)}
+                      </td>
+                      <td className="py-1 px-2 text-right text-gray-400">{r.peakConcurrent}</td>
+                      <td
+                        className={`py-1 pl-2 ${
+                          r.verdict === 'candidate'
+                            ? 'text-emerald-400'
+                            : r.verdict === 'marginal'
+                              ? 'text-amber-400'
+                              : 'text-gray-500'
+                        }`}
+                      >
+                        {r.verdict}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-[10px] text-gray-500 mt-1.5 leading-relaxed">
+              Net/trade = (Σ pnl − calibrated drag) / closed, using the same cost model the desk charges.
+              Peak open is simultaneous positions — at the live size it has to fit MAX_SOL_AT_RISK. A
+              candidate has a positive typical trade <em>and</em> a total that survives the drag; below
+              that it is not a sizing question.
+            </p>
+          </section>
+        ) : null}
 
         {/* Ledger: realized PnL from recorded cash flows, not from the outcome percentage */}
         <section className="rounded border border-gray-800 bg-gray-900 p-4">

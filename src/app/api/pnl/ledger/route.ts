@@ -5,7 +5,7 @@ import {
   resolveReportTimeZone,
 } from '@/strategies/best-trade-windows'
 import { dayInTimeZone, isValidDayString } from '@/strategies/token-pnl-export'
-import { summarizeLedger, summarizeLedgerPositions } from '@/strategies/ledger-pnl'
+import { buildStrategyReadiness, summarizeLedger, summarizeLedgerPositions } from '@/strategies/ledger-pnl'
 import type { TrackingRecord } from '@/utils/trading-tracker'
 
 const DEFAULT_RANGE_DAYS = 14
@@ -74,6 +74,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       range: { from, to, timezone: timeZone },
+      // Per-strategy readiness: median trade, the calibrated drag, net per trade, and peak concurrent
+      // positions (which has to fit MAX_SOL_AT_RISK at the live size). Sorted best net first.
+      readiness: buildStrategyReadiness(positions),
       records: rows.length,
       summary: summarizeLedger(positions),
       strategies: [...byStrategy.entries()]
