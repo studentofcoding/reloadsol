@@ -452,10 +452,28 @@ async function openSimPosition(params: {
 
 /** Writes today's regime tag at most once per process per (day, state); failures may retry. */
 let lastRegimeTagWrite = ''
+let regimeFetchAttemptedFor = ''
 async function persistDailyRegimeTag(climate: { state?: string | null } | null): Promise<void> {
-  const state = typeof climate?.state === 'string' ? climate.state.trim() : ''
-  if (!state) return
+  let state = typeof climate?.state === 'string' ? climate.state.trim() : ''
   const tagDate = new Date().toISOString().slice(0, 10)
+  // The sim only resolves the climate when the brain universe applies, which made this depend on an
+  // unrelated opt-in and silently write nothing. Ask the climate service directly instead — it
+  // answers in ~100ms — and remember the attempt for the day either way so a failing service is not
+  // hammered once per cycle.
+  if (!state && regimeFetchAttemptedFor !== tagDate) {
+    regimeFetchAttemptedFor = tagDate
+    try {
+      const fetched = toClimateChipPayload(await fetchClimate())
+      state = typeof fetched?.state === 'string' ? fetched.state.trim() : ''
+    } catch (error) {
+      console.warn(
+        '[mcap-sim] regime fetch failed:',
+        error instanceof Error ? error.message : error,
+      )
+      return
+    }
+  }
+  if (!state) return
   const key = `${tagDate}:${state}`
   if (lastRegimeTagWrite === key) return
   try {

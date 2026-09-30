@@ -498,6 +498,31 @@ export async function listMarketRegimeTags(limit = 30): Promise<
   }
 }
 
+/**
+ * Derive a position's stake from the sim ledger when the caller did not pass one.
+ *
+ * The buys that opened the cycle are the cost basis, computed with the same helper the sims use
+ * (`computeOpenSimCycle`), so the chokepoint works for every writer instead of only the ones that
+ * were taught to pass a size. Best-effort: an unknown wallet or a missing cycle yields 0, and the
+ * caller then logs the skip rather than inventing a stake.
+ */
+async function deriveStakeFromLedger(params: {
+  chain: StrategyChain
+  strategyId: string
+  mintAddress: string
+  entryAt?: string | null
+  exitAt: string
+}): Promise<number> {
+  if (!params.mintAddress) return 0
+  const { simWalletForChain, MCAP_TRACKER_SIM_WALLET } = await import('./sim-wallets')
+  const { computeOpenSimCycle } = await import('@/utils/simulation-trades')
+  const wallet = simWalletForChain(MCAP_TRACKER_SIM_WALLET, params.chain)
+  const records = await fetchTradingRecordsForWallet(wallet, { sinceLastClose: true })
+  const cycle = computeOpenSimCycle(records, params.mintAddress)
+  const stake = Number(cycle?.totalSolBought)
+  return Number.isFinite(stake) && stake > 0 ? stake : 0
+}
+
 export async function insertStrategyOutcome(params: {
   strategy_id: string
   domain: StrategyDomain
@@ -542,12 +567,21 @@ export async function insertStrategyOutcome(params: {
   // Shadow execution record: how this close would really have filled. Sims only — the live path
   // (is_simulated: false) must never wait on a quote. Omits the record when the entry size is not
   // in the features, rather than inventing one.
-  if (params.is_simulated && exitProvided && params.pnl_pct != null && params.sol_amount != null) {
+  if (params.is_simulated && exitProvided && params.pnl_pct != null) {
     const priceRatio = 1 + Number(params.pnl_pct) / 100
-    // The entry size, passed by the caller. It is NOT in the features: measured over two days,
-    // 763 sim closes carry an `amount_sol` key with a usable value on zero of them, and no entry
-    // rows exist at all — so a derivation here would be dead code pretending to be a fallback.
-    const costSol = Number(params.sol_amount)
+    // The stake: what the caller passed, else derived from the sim ledger (the buys that opened the
+    // position, the same construction the sims use). It is NOT in the features — measured over two
+    // days, 763 sim closes carry an `amount_sol` key with a usable value on zero of them.
+    let costSol = Number(params.sol_amount)
+    if (!(Number.isFinite(costSol) && costSol > 0)) {
+      costSol = await deriveStakeFromLedger({
+        chain,
+        strategyId: params.strategy_id,
+        mintAddress: params.token_address,
+        entryAt,
+        exitAt,
+      }).catch(() => 0)
+    }
     if (Number.isFinite(costSol) && costSol > 0 && priceRatio > 0) {
       const exec = await buildShadowExecutionRecordForCost({
         chain,
@@ -556,6 +590,16 @@ export async function insertStrategyOutcome(params: {
         priceRatio,
       })
       if (exec) features = { ...features, exec }
+      else console.warn('[sim-exec] record not built', { strategy: params.strategy_id, costSol, priceRatio })
+    } else {
+      // Loud on purpose: a silent skip here is indistinguishable from "not wired", which cost three
+      // debugging rounds. A close that should have a record and does not says so.
+      console.warn('[sim-exec] skipped: no usable stake', {
+        strategy: params.strategy_id,
+        sol_amount: params.sol_amount ?? null,
+        derived: costSol,
+        priceRatio,
+      })
     }
   }
 
