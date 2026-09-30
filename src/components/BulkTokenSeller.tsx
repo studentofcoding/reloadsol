@@ -1255,13 +1255,9 @@ export default function BulkTokenSeller({
         operation: "sell",
         isSimulation: false,
         tokenSymbols: ok.map((r) => r.symbol),
-        amountUnit:
-          sellOut.symbol === "SOL" ||
-          sellOut.symbol === "ETH" ||
-          sellOut.symbol === "USDG" ||
-          sellOut.symbol === "WETH"
-            ? sellOut.symbol
-            : undefined,
+        // The output symbol, whatever it is — a whitelist dropped custom token outputs and the modal
+        // then defaulted to "SOL".
+        amountUnit: sellOut.symbol,
         error: success
           ? undefined
           : fail[0]?.error ||
@@ -1560,7 +1556,7 @@ export default function BulkTokenSeller({
                     : undefined;
                 })()
               : undefined,
-          amountUnit: "SOL",
+          amountUnit: sellOut.symbol,
           error: sellResult.success
             ? undefined
             : sellResult.failedSwaps[0]?.error || "Sell failed",

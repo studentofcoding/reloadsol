@@ -10,7 +10,12 @@ export type CloseableAccount = {
   symbol?: string;
 };
 
-export type TradeAmountUnit = 'SOL' | 'ETH' | 'USDC' | 'USDG' | 'WETH';
+/**
+ * The unit the native-side amount is denominated in. Not a closed union: a sell can output any
+ * token (token→token), and forcing the caller into `'SOL'` made the confirmation claim SOL for a
+ * position that received something else entirely.
+ */
+export type TradeAmountUnit = string;
 
 export type TradeOutcomeState = {
   isOpen: boolean;
