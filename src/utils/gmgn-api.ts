@@ -10,9 +10,16 @@ import type { GmgnTrackResponse, GmgnTrackRow } from './gmgn-cli'
 
 const DEFAULT_HOST = 'https://openapi.gmgn.ai'
 const DEFAULT_TIMEOUT_MS = 15_000
-/** Default max GMGN requests/second across the whole process (env-tunable).
- * AI / Agent tier is ~0.5 rps; was 5 and burst Freeview into 429. */
-const DEFAULT_MAX_REQ_PER_SEC = 0.5
+/**
+ * Default max GMGN requests/second across the whole process (env-tunable).
+ *
+ * Measured live 2026-09-30 (bounded ramp, stopping at the first 429): this key
+ * tolerated 5 sequential `token info` calls then 429'd on #6 — ≈3.6 rps — and
+ * concurrency-4 429'd immediately. So the old 0.5 was ~7× more conservative than
+ * the ceiling; 1.4 is ~40% of it. Re-measure with
+ * `scripts/` ramp before raising further. See docs/GMGN_RATE_BUDGET.md.
+ */
+const DEFAULT_MAX_REQ_PER_SEC = 1.4
 /** Cap on 429 retry sleeps — longer reset windows just fail fast (RATE_LIMIT). */
 const MAX_RETRY_WAIT_MS = 5_000
 /** How long a read-only GET respects a negative rate-limit cache (seconds). */
@@ -20,10 +27,18 @@ const RATE_LIMIT_COOLDOWN_S = 30
 const PKCS8_PRIVATE_KEY_RE =
   /(-----BEGIN PRIVATE KEY-----[\s\S]+?-----END PRIVATE KEY-----)/
 
-const gate: { chain: Promise<void>; lastAt: number } = {
-  chain: Promise.resolve(),
-  lastAt: 0,
+const gate: { lastAt: number } = { lastAt: 0 }
+
+/** Call urgency — a burst of chart/shadow reads must not delay a trade. */
+export type GmgnPriority = 'high' | 'normal' | 'low'
+
+const LANE_ORDER: GmgnPriority[] = ['high', 'normal', 'low']
+const lanes: Record<GmgnPriority, Array<() => void>> = {
+  high: [],
+  normal: [],
+  low: [],
 }
+let pumping = false
 
 /** Effective min gap between GMGN HTTP starts (ms). Exported for self-check. */
 export function gmgnMinIntervalMs(): number {
@@ -34,18 +49,54 @@ export function gmgnMinIntervalMs(): number {
   return Math.ceil(1000 / DEFAULT_MAX_REQ_PER_SEC)
 }
 
-/** Global min-interval gate for all GMGN requests (serial, env-tunable). */
-function gmgnRateGate(): Promise<void> {
-  const minIntervalMs = gmgnMinIntervalMs()
-  const next = gate.chain.then(async () => {
-    const now = Date.now()
-    const wait = Math.max(0, gate.lastAt + minIntervalMs - now)
-    if (wait > 0) await sleep(wait)
-    gate.lastAt = Date.now()
+/** Peek the queue depth per lane (test/observability). */
+export function gmgnLaneSizes(): Record<GmgnPriority, number> {
+  return { high: lanes.high.length, normal: lanes.normal.length, low: lanes.low.length }
+}
+
+/**
+ * Global min-interval gate with priority lanes. Only the *starts* are spaced
+ * (callers fetch after the gate resolves, as before), but a waiting caller is
+ * now ordered by lane: execution (`high`) ahead of the gate/candidate path
+ * (`normal`) ahead of charts and the shadow (`low`).
+ */
+export function gmgnRateGate(priority: GmgnPriority = 'normal'): Promise<void> {
+  return new Promise<void>((resolve) => {
+    lanes[priority].push(resolve)
+    void pumpLanes()
   })
-  // Keep the chain alive even if a caller drops its reference.
-  gate.chain = next.catch(() => undefined)
-  return next
+}
+
+function laneHasWork(): boolean {
+  return lanes.high.length > 0 || lanes.normal.length > 0 || lanes.low.length > 0
+}
+
+function pickLane(): (() => void) | undefined {
+  for (const p of LANE_ORDER) {
+    const next = lanes[p].shift()
+    if (next) return next
+  }
+  return undefined
+}
+
+async function pumpLanes(): Promise<void> {
+  if (pumping) return
+  pumping = true
+  try {
+    while (laneHasWork()) {
+      const minIntervalMs = gmgnMinIntervalMs()
+      const wait = Math.max(0, gate.lastAt + minIntervalMs - Date.now())
+      // Wait FIRST, then pick: anything that arrives during the interval is
+      // ordered by lane instead of being served in arrival order.
+      if (wait > 0) await sleep(wait)
+      const next = pickLane()
+      if (!next) break
+      gate.lastAt = Date.now()
+      next()
+    }
+  } finally {
+    pumping = false
+  }
 }
 
 /** Remember 429s so read-only GETs skip upstream during the reset window. */
@@ -342,6 +393,7 @@ async function gmgnFetch(
   query: Record<string, string> = {},
   method: 'GET' | 'POST' = 'GET',
   body: unknown = null,
+  priority: GmgnPriority = 'normal',
 ): Promise<unknown> {
   const apiKey = getApiKey()
   const bodyStr = body != null ? JSON.stringify(body) : null
@@ -350,7 +402,7 @@ async function gmgnFetch(
   // Gate BEFORE stamping: GMGN rejects a timestamp older than ~20s
   // (AUTH_TIMESTAMP_EXPIRED), and the serial gate can hold a request behind a
   // queue of weight-2 calls from several concurrent workers.
-  await gmgnRateGate()
+  await gmgnRateGate(priority)
   const params = {
     ...query,
     timestamp: String(Math.floor(Date.now() / 1000)),
@@ -375,6 +427,7 @@ async function gmgnSignedFetch(
   query: Record<string, string> = {},
   method: 'GET' | 'POST' = 'GET',
   body: unknown = null,
+  priority: GmgnPriority = 'normal',
 ): Promise<unknown> {
   const apiKey = getApiKey()
   const privateKeyPem = getPrivateKeyPem()
@@ -384,7 +437,7 @@ async function gmgnSignedFetch(
   const autoRetry = method !== 'POST'
   // Gate BEFORE stamping/signing: the signature covers the timestamp, and GMGN
   // rejects a timestamp older than ~20s (AUTH_TIMESTAMP_EXPIRED).
-  await gmgnRateGate()
+  await gmgnRateGate(priority)
   const timestamp = Math.floor(Date.now() / 1000)
   const params = {
     ...query,
@@ -466,13 +519,20 @@ export async function tokenKline(params: {
   to: number
 }): Promise<unknown> {
   return unwrapApiData(
-    await gmgnFetch('/v1/market/token_kline', {
-      chain: params.chain,
-      address: params.address,
-      resolution: params.resolution,
-      from: String(params.from),
-      to: String(params.to),
-    }),
+    await gmgnFetch(
+      '/v1/market/token_kline',
+      {
+        chain: params.chain,
+        address: params.address,
+        resolution: params.resolution,
+        from: String(params.from),
+        to: String(params.to),
+      },
+      'GET',
+      null,
+      // Charts are the lowest priority lane.
+      'low',
+    ),
   )
 }
 
@@ -527,10 +587,18 @@ export async function createdTokens(params: {
   const wallet =
     params.chain === 'sol' ? params.wallet : params.wallet.toLowerCase()
   const data = unwrapApiData<GmgnCreatedTokens>(
-    await gmgnFetch('/v1/user/created_tokens', {
-      chain: params.chain,
-      wallet_address: wallet,
-    }),
+    await gmgnFetch(
+      '/v1/user/created_tokens',
+      {
+        chain: params.chain,
+        wallet_address: wallet,
+      },
+      'GET',
+      null,
+      // Shadow dev lookups are the lowest priority: a burst of them must never
+      // delay a trade or the entry gate.
+      'low',
+    ),
   )
   return data ?? {}
 }
@@ -703,14 +771,21 @@ export async function tradeQuote(params: {
   const from =
     params.chain === 'sol' ? params.from : params.from.toLowerCase()
   return unwrapApiData<GmgnTradeQuote>(
-    await gmgnFetch('/v1/trade/quote', {
-      chain: params.chain,
-      from_address: from,
-      input_token: params.inputToken,
-      output_token: params.outputToken,
-      input_amount: params.amount,
-      slippage: String(params.slippage),
-    }),
+    await gmgnFetch(
+      '/v1/trade/quote',
+      {
+        chain: params.chain,
+        from_address: from,
+        input_token: params.inputToken,
+        output_token: params.outputToken,
+        input_amount: params.amount,
+        slippage: String(params.slippage),
+      },
+      'GET',
+      null,
+      // Execution path — ahead of every read.
+      'high',
+    ),
   )
 }
 
@@ -748,7 +823,7 @@ export async function tradeSwap(params: {
     body.is_anti_mev = true
   }
   return unwrapApiData<GmgnTradeSwapResult>(
-    await gmgnSignedFetch('/v1/trade/swap', {}, 'POST', body),
+    await gmgnSignedFetch('/v1/trade/swap', {}, 'POST', body, 'high'),
   )
 }
 
@@ -757,10 +832,17 @@ export async function tradeOrderGet(params: {
   orderId: string
 }): Promise<GmgnTradeOrder> {
   return unwrapApiData<GmgnTradeOrder>(
-    await gmgnSignedFetch('/v1/trade/query_order', {
-      chain: params.chain,
-      order_id: params.orderId,
-    }),
+    await gmgnSignedFetch(
+      '/v1/trade/query_order',
+      {
+        chain: params.chain,
+        order_id: params.orderId,
+      },
+      'GET',
+      null,
+      // Execution path — a pending order must not queue behind chart reads.
+      'high',
+    ),
   )
 }
 

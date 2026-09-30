@@ -38,6 +38,9 @@ export function isGmgnSnapshotData(value: unknown): value is GmgnSnapshotData {
   )
 }
 
+/** Single-flight: concurrent callers for the same mint share one upstream load. */
+const inflight = new Map<string, Promise<GmgnSnapshotData | undefined>>()
+
 /**
  * Cached token info + security. A `RATE_LIMIT` error is re-thrown (callers
  * map it to a 429 response); any other per-endpoint failure degrades to the
@@ -55,10 +58,25 @@ export async function getGmgnTokenSnapshotCached(
     void cacheDel(key)
   }
 
-  if (usesGmgnWebTokenInfo(chain)) {
-    return loadWebSnapshot(address, key)
-  }
+  // Concurrent callers (UI poll + cron tick + shadow) otherwise each spend the
+  // shared rate budget on the same mint.
+  const existing = inflight.get(key)
+  if (existing) return existing
 
+  const load = (
+    usesGmgnWebTokenInfo(chain)
+      ? loadWebSnapshot(address, key)
+      : loadOpenApiSnapshot(chain, address, key)
+  ).finally(() => inflight.delete(key))
+  inflight.set(key, load)
+  return load
+}
+
+async function loadOpenApiSnapshot(
+  chain: GmgnTradeChain,
+  address: string,
+  key: string,
+): Promise<GmgnSnapshotData | undefined> {
   let rateLimited: GmgnApiError | null = null
   const [info, security] = await Promise.all([
     tokenInfo({ chain, address }).catch((e: unknown) => {

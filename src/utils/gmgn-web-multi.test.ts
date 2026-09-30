@@ -94,9 +94,11 @@ describe('gmgn web multi pure helpers', () => {
     ])
   })
 
-  it('defaults to openapi and 0.4 posts/sec', () => {
+  it('defaults to openapi and the calibrated 0.9 posts/sec', () => {
     delete process.env.GMGN_WEB_MAX_POST_PER_SEC
-    expect(gmgnWebMinIntervalMs()).toBe(2500)
+    // Measured ceiling on this path is >2.3 rps (6/6 clean); 0.9 is ~40% of the
+    // observed floor — see docs/GMGN_RATE_BUDGET.md.
+    expect(gmgnWebMinIntervalMs()).toBe(1112)
     expect(gmgnTokenInfoSource()).toBe('openapi')
     expect(usesGmgnWebTokenInfo('sol')).toBe(false)
     process.env.GMGN_TOKEN_INFO_SOURCE = 'web'

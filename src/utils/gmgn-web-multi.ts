@@ -8,8 +8,15 @@ import { cacheDelByPrefix, cacheGet, cacheSet } from '@/utils/redis-cache'
 
 const DEFAULT_HOST = 'https://gmgn.ai'
 const DEFAULT_TIMEOUT_MS = 15_000
-const DEFAULT_MAX_POST_PER_SEC = 0.4
-const DEFAULT_POSITIVE_TTL_S = 20
+/**
+ * Measured live 2026-09-30: the worker path held 6/6 `200` at 2.28 rps and never
+ * 429'd, so the true ceiling is higher than that. 0.9 is ~40% of the observed
+ * floor. See docs/GMGN_RATE_BUDGET.md.
+ */
+const DEFAULT_MAX_POST_PER_SEC = 0.9
+/** Positive cache TTL. Most fields move on the order of minutes, so 90s is still
+ * fresh for the consumers while cutting repeat upstream calls. */
+const DEFAULT_POSITIVE_TTL_S = 90
 const DEFAULT_NEGATIVE_COOLDOWN_S = 60
 const DEFAULT_LEDGER_DEBOUNCE_MS = 350
 /** Interim skip marker until `token_info_detect` exists. Not the durable SoT. */
@@ -166,7 +173,8 @@ export function gmgnWebMinIntervalMs(): number {
 export function gmgnWebPositiveTtlS(): number {
   const raw = Number(process.env.GMGN_WEB_POSITIVE_TTL_S ?? DEFAULT_POSITIVE_TTL_S)
   const s = Number.isFinite(raw) ? raw : DEFAULT_POSITIVE_TTL_S
-  return Math.min(30, Math.max(10, Math.floor(s)))
+  // Cap 15 min: long enough to cut repeats, short enough to stay honest.
+  return Math.min(900, Math.max(10, Math.floor(s)))
 }
 
 export function gmgnWebNegativeCooldownMs(): number {

@@ -37,10 +37,12 @@ afterEach(async () => {
 })
 
 describe('gmgn-api rate limiting + gate (public API)', () => {
-  it('default AI-tier gap is 2000ms (0.5 rps) when env unset', async () => {
+  it('default gap is 715ms (1.4 rps) when env unset', async () => {
     delete process.env.GMGN_MAX_REQ_PER_SEC
     const { gmgnMinIntervalMs } = await import('./gmgn-api')
-    expect(gmgnMinIntervalMs()).toBe(2000)
+    // Calibrated to the measured ceiling (~3.6 rps, 429 at the 6th back-to-back
+    // call) at ~40% — see docs/GMGN_RATE_BUDGET.md.
+    expect(gmgnMinIntervalMs()).toBe(715)
   })
 
   it('tokenInfo unwraps a normal response', async () => {

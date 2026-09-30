@@ -17,6 +17,7 @@ this folder remain authoritative references.
 | — | [DATA_PUBLIC_SCOUT.md](./DATA_PUBLIC_SCOUT.md) | `/dev/insight` data-public scout + Safe-gated paper notes (no live exec) |
 | — | [STRATEGY_SCOUT.md](./STRATEGY_SCOUT.md) | `buybulk-datapublic-scout` vs `rhtape-datapublic-scout` — separate strategies |
 | — | [GMGN_INTERNAL_API.md](./GMGN_INTERNAL_API.md) | Reverse-engineered GMGN internal web API: Cloudflare-gated (not public), reachable only via our `gmgn-web-proxy` Worker; recorded inventory + server-side verified matrix |
+| — | [GMGN_RATE_BUDGET.md](./GMGN_RATE_BUDGET.md) | Measured GMGN rate ceilings (openapi ≈3.6 rps, worker ≥2.3 rps) and the calibrated constants + priority lanes + single-flight that keep us off the limit; how to re-measure |
 | — | [SPEC-rug-filter-v1.md](./specs/SPEC-rug-filter-v1.md) | To-spec: Bubblemaps + Jupiter organic AND rug filter (discovery soft, pre-entry hard). Not implemented yet |
 | — | [SPEC-early-enter-soft-gate-v1.md](./specs/SPEC-early-enter-soft-gate-v1.md) | Implementing: Early Enter cl-* soft gate (toast+Telegram) + Tracker filters + Analytics minimal+price |
 | — | [SPEC-strategies-algo-tester-unify-v1.md](./specs/SPEC-strategies-algo-tester-unify-v1.md) | Implementing: unify Algo Tester (all six domains, Config + Open + Closed); `/dev/strategies` redirects |

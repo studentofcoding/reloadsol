@@ -8,6 +8,24 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — GMGN rate budget calibrated to measurement, plus priority lanes
+
+- **We were not rate limited — we were ~7× under the quota.** Measured live (bounded ramp, stop at the
+  first 429): the openapi key tolerated **5 sequential calls then 429'd on #6 (≈3.6 rps)**, and
+  concurrency-4 429'd instantly; the worker path held **6/6 at 2.28 rps** without a 429. The old
+  constants (0.5 / 0.4 rps) were guesses. Now `GMGN_MAX_REQ_PER_SEC=1.4` and
+  `GMGN_WEB_MAX_POST_PER_SEC=0.9` — ~40 % of the measured ceilings, env-tunable, with the measurements
+  recorded in code. Inter-call spacing drops 2 s → ~0.7 s.
+- **Priority lanes.** The single serial gate is now `high` (trade quote/swap/order) > `normal` (gate +
+  candidates) > `low` (charts, shadow dev lookups), and the pump waits *then* picks — so a request
+  arriving during the interval is ordered by lane, not arrival. This is the failure we saw:
+  `gmgn_sim_track` returned `GMGN rate limit exceeded` while `radar_digest` kept succeeding.
+- **Cache first.** Web positive TTL 20 s → **90 s** (its clamp had capped at 30 s; now up to 15 min),
+  and the **openapi** snapshot path gained single-flight, so concurrent callers share one upstream load.
+- Deferred, only if needed: weight-aware budget, an edge token bucket in the Durable Object,
+  and gate-wait/RATE_LIMIT counters. Measurements + the re-measure recipe:
+  [docs/GMGN_RATE_BUDGET.md](docs/GMGN_RATE_BUDGET.md). IP/key rotation is explicitly rejected.
+
 ### Fixed — a concurrent deploy could leave the origin down
 
 An artifact ship and a pull-triggered deploy reached `docker compose up` together, the recreate lost
