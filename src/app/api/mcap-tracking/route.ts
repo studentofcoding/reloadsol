@@ -15,6 +15,16 @@ import { isTrackerSocialJoinEnabled } from '@/utils/tracker-flags'
 import { loadTrackerSocialJoinMap } from '@/app/api/mcap-tracking/join-trending-social'
 import type { TrendingSocialFields } from '@/utils/tracker-social-join'
 import { buildMcapListWhere } from '@/app/api/mcap-tracking/list-where'
+import { cacheGet, cacheSet, cacheSetNx } from '@/utils/redis-cache'
+
+/**
+ * The list payload is a page render (TrackerTab / BoardTab on load and on every filter change)
+ * and its stats walk every tracked token, so it is cached per query string. Fresh for a
+ * minute; kept for a day so an expired entry can still be served while a detached refresh
+ * recomputes it (the caller never waits on the recompute).
+ */
+const MCAP_LIST_FRESH_TTL_S = 60
+const MCAP_LIST_STALE_TTL_S = 24 * 60 * 60
 
 const LIST_SORT_COLUMNS = new Set([
   'last_updated_at', 'first_seen_at', 'mcap_growth_percent',
@@ -57,6 +67,33 @@ export async function GET(request: NextRequest) {
 
     // New action to fetch all MCap tracking data with enhanced statistics
     if (action === 'list') {
+      const baseUrl =
+        process.env.API_HOST || process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
+      // `__refresh` is the detached-refresh marker, so it must not be part of the key.
+      const cacheParams = new URLSearchParams(searchParams)
+      cacheParams.delete('__refresh')
+      const cacheQuery = cacheParams.toString()
+      const listCacheKey = `mcap:tracking:list:v1:${cacheQuery}`
+      const listStaleKey = `${listCacheKey}:stale`
+      const isRefreshPass = searchParams.get('__refresh') === '1'
+
+      if (!isRefreshPass) {
+        const cachedList = await cacheGet<Record<string, unknown>>(listCacheKey)
+        if (cachedList) {
+          return NextResponse.json(cachedList, { headers: { 'X-Mcap-Cache': 'fresh' } })
+        }
+        const staleList = await cacheGet<Record<string, unknown>>(listStaleKey)
+        if (staleList) {
+          // Single-flight: one detached refresh at a time, and it never delays this response.
+          if (await cacheSetNx(`${listCacheKey}:refresh`, '1', 120)) {
+            void fetch(`${baseUrl}/api/mcap-tracking?${cacheQuery}&__refresh=1`, {
+              headers: { 'x-internal-refresh': '1' },
+            }).catch(() => {})
+          }
+          return NextResponse.json(staleList, { headers: { 'X-Mcap-Cache': 'stale' } })
+        }
+      }
+
       const page = parseInt(searchParams.get('page') || '1')
       const limit = parseInt(searchParams.get('limit') || '50')
       const search = searchParams.get('search') || ''
@@ -148,23 +185,32 @@ export async function GET(request: NextRequest) {
         item.first_mcap > 0
       )
 
-      // Enhanced statistics calculations
+      // Enhanced statistics: ONE pass instead of six filters plus three reduces.
       const totalTokens = allData.length
-      const gainers = allData.filter(item => item.mcap_growth_percent > 0).length
-      const losers = allData.filter(item => item.mcap_growth_percent < 0).length
-      const zeroPercentTokens = allData.filter(item => Math.abs(item.mcap_growth_percent) < 0.01).length
+      let gainers = 0
+      let losers = 0
+      let zeroPercentTokens = 0
+      let nonZeroCount = 0
+      let sumGrowthAll = 0
+      let sumGrowthNonZero = 0
+      let totalMcap = 0
+      let highestGrowth = totalTokens > 0 ? -Infinity : 0
+      for (const item of allData) {
+        const growth = Number(item.mcap_growth_percent)
+        sumGrowthAll += growth
+        totalMcap += item.current_mcap
+        if (growth > 0) gainers++
+        if (growth < 0) losers++
+        if (Math.abs(growth) < 0.01) zeroPercentTokens++
+        else {
+          nonZeroCount++
+          sumGrowthNonZero += growth
+        }
+        if (growth > highestGrowth) highestGrowth = growth
+      }
       const zeroPercentage = totalTokens > 0 ? (zeroPercentTokens / totalTokens) * 100 : 0
-
-      // Calculate average growth with and without 0% PnL
-      const nonZeroTokens = allData.filter(item => Math.abs(item.mcap_growth_percent) >= 0.01)
-      const avgGrowthAll = totalTokens > 0 ?
-        allData.reduce((sum, item) => sum + item.mcap_growth_percent, 0) / totalTokens : 0
-      const avgGrowthExcludingZero = nonZeroTokens.length > 0 ?
-        nonZeroTokens.reduce((sum, item) => sum + item.mcap_growth_percent, 0) / nonZeroTokens.length : 0
-
-      const highestGrowth = allData.length > 0
-        ? Math.max(...allData.map((item) => item.mcap_growth_percent))
-        : 0
+      const avgGrowthAll = totalTokens > 0 ? sumGrowthAll / totalTokens : 0
+      const avgGrowthExcludingZero = nonZeroCount > 0 ? sumGrowthNonZero / nonZeroCount : 0
 
       const bucketHourBangkok = (iso: string): string => {
         const { hour } = getAppLocalParts(new Date(iso))
@@ -173,15 +219,30 @@ export async function GET(request: NextRequest) {
 
       // PnL Time Window Analysis
       const pnlThresholds = [50, 100, 200, 500, 1000, 2000, 5000]
-      const pnlTimeWindows: Record<string, {
+      type PnlTimeWindow = {
         count: number
         timeDistribution: Record<string, number>
         peakHours: string[]
         avgTimeToReach: number
-      }> = {}
+      }
+      const pnlTimeWindows: Record<string, PnlTimeWindow> = {}
+      const pnlBuyTimeWindows: Record<string, PnlTimeWindow> = {}
+
+      // Precompute the per-token window facts ONCE. The threshold passes below used to run
+      // their own `new Date()` and `Intl` (via bucketHourBangkok) per row per threshold —
+      // 14 passes over every tracked token, on a page-render path.
+      const tokenWindows = allData.map((token) => ({
+        growth: Number(token.mcap_growth_percent),
+        sellHour: bucketHourBangkok(token.last_updated_at),
+        buyHour: bucketHourBangkok(token.first_seen_at),
+        timeDiff:
+          (new Date(token.last_updated_at).getTime() -
+            new Date(token.first_seen_at).getTime()) /
+          (1000 * 60 * 60),
+      }))
 
       pnlThresholds.forEach(threshold => {
-        const tokensAboveThreshold = allData.filter(item => item.mcap_growth_percent >= threshold)
+        const tokensAboveThreshold = tokenWindows.filter(w => w.growth >= threshold)
 
         // Time distribution analysis (24-hour format)
         const hourlyDistribution: Record<string, number> = {}
@@ -193,16 +254,11 @@ export async function GET(request: NextRequest) {
         let validTimeCalculations = 0
 
         tokensAboveThreshold.forEach(token => {
-          // Analyze when the token first reached this threshold
-          const firstSeenDate = new Date(token.first_seen_at)
-          const lastUpdatedDate = new Date(token.last_updated_at)
-
           // Use last_updated_at hour in Asia/Bangkok as sell/exit bucket
-          const reachedHour = bucketHourBangkok(token.last_updated_at)
-          hourlyDistribution[reachedHour]++
+          hourlyDistribution[token.sellHour]++
 
           // Calculate time to reach threshold (in hours)
-          const timeDiff = (lastUpdatedDate.getTime() - firstSeenDate.getTime()) / (1000 * 60 * 60)
+          const timeDiff = token.timeDiff
           if (timeDiff >= 0 && timeDiff <= 168) { // Within a week
             totalTimeToReach += timeDiff
             validTimeCalculations++
@@ -224,16 +280,9 @@ export async function GET(request: NextRequest) {
         }
       })
 
-      // Buy Time Window Analysis (ENTRY): based on first_seen_at UTC hour
-      const pnlBuyTimeWindows: Record<string, {
-        count: number
-        timeDistribution: Record<string, number>
-        peakHours: string[]
-        avgTimeToReach: number
-      }> = {}
-
+      // Buy Time Window Analysis (ENTRY): based on first_seen_at hour in Asia/Bangkok
       pnlThresholds.forEach(threshold => {
-        const tokensAboveThreshold = allData.filter(item => item.mcap_growth_percent >= threshold)
+        const tokensAboveThreshold = tokenWindows.filter(w => w.growth >= threshold)
 
         const hourlyDistribution: Record<string, number> = {}
         for (let hour = 0; hour < 24; hour++) {
@@ -244,15 +293,11 @@ export async function GET(request: NextRequest) {
         let validTimeCalculations = 0
 
         tokensAboveThreshold.forEach(token => {
-          const firstSeenDate = new Date(token.first_seen_at)
-          const lastUpdatedDate = new Date(token.last_updated_at)
-
           // Use first_seen_at hour in Asia/Bangkok as the ENTRY bucket
-          const startHour = bucketHourBangkok(token.first_seen_at)
-          hourlyDistribution[startHour]++
+          hourlyDistribution[token.buyHour]++
 
-          // Keep the same average time-to-target calculation for comparability
-          const timeDiff = (lastUpdatedDate.getTime() - firstSeenDate.getTime()) / (1000 * 60 * 60)
+          // Same average time-to-target calculation as the sell windows
+          const timeDiff = token.timeDiff
           if (timeDiff >= 0 && timeDiff <= 168) {
             totalTimeToReach += timeDiff
             validTimeCalculations++
@@ -491,35 +536,72 @@ export async function GET(request: NextRequest) {
 
       const summaryData = thirtyDayData || []
 
-      const recentTokens = summaryData.filter(item =>
-        new Date(item.first_seen_at) >= thirtyDaysAgo
-      )
-
-      // Calculate daily breakdown for the past 30 days
-      const dailyBreakdown = []
+      // 30 local-day windows, then ONE pass over the rows and one over the windows. This used
+      // to re-filter the whole set for each of the 30 days, parsing a Date per row per day.
+      const dayWindows: Array<{ startMs: number; endMs: number; date: string }> = []
       for (let i = 29; i >= 0; i--) {
         const date = new Date()
         date.setDate(date.getDate() - i)
         const dayStart = new Date(date.setHours(0, 0, 0, 0))
         const dayEnd = new Date(date.setHours(23, 59, 59, 999))
-
-        const dayTokens = summaryData.filter(item => {
-          const tokenDate = new Date(item.first_seen_at)
-          return tokenDate >= dayStart && tokenDate <= dayEnd
-        })
-
-        const dayStats = {
+        dayWindows.push({
+          startMs: dayStart.getTime(),
+          endMs: dayEnd.getTime(),
           date: dayStart.toISOString().split('T')[0],
-          tokensAdded: dayTokens.length,
-          avgGrowth: dayTokens.length > 0 ?
-            dayTokens.reduce((sum, item) => sum + item.mcap_growth_percent, 0) / dayTokens.length : 0,
-          totalMcap: dayTokens.reduce((sum, item) => sum + item.current_mcap, 0),
-          gainers: dayTokens.filter(item => item.mcap_growth_percent > 0).length,
-          losers: dayTokens.filter(item => item.mcap_growth_percent < 0).length
-        }
-
-        dailyBreakdown.push(dayStats)
+        })
       }
+
+      const dayTotals = dayWindows.map(() => ({
+        tokensAdded: 0,
+        sumGrowth: 0,
+        sumMcap: 0,
+        gainers: 0,
+        losers: 0,
+      }))
+      const thirtyDaysAgoMs = thirtyDaysAgo.getTime()
+      let recentCount = 0
+      let recentSumGrowth = 0
+
+      for (const item of summaryData) {
+        const seenMs = new Date(item.first_seen_at).getTime()
+        if (!Number.isFinite(seenMs)) continue
+        if (seenMs >= thirtyDaysAgoMs) {
+          recentCount++
+          recentSumGrowth += item.mcap_growth_percent
+        }
+        // Windows are contiguous and ascending, so a binary search finds the one containing it.
+        let lo = 0
+        let hi = dayWindows.length - 1
+        let idx = -1
+        while (lo <= hi) {
+          const mid = (lo + hi) >> 1
+          if (seenMs < dayWindows[mid]!.startMs) hi = mid - 1
+          else if (seenMs > dayWindows[mid]!.endMs) lo = mid + 1
+          else {
+            idx = mid
+            break
+          }
+        }
+        if (idx < 0) continue
+        const totals = dayTotals[idx]!
+        totals.tokensAdded++
+        totals.sumGrowth += item.mcap_growth_percent
+        totals.sumMcap += item.current_mcap
+        if (item.mcap_growth_percent > 0) totals.gainers++
+        if (item.mcap_growth_percent < 0) totals.losers++
+      }
+
+      const dailyBreakdown = dayWindows.map((window, i) => {
+        const totals = dayTotals[i]!
+        return {
+          date: window.date,
+          tokensAdded: totals.tokensAdded,
+          avgGrowth: totals.tokensAdded > 0 ? totals.sumGrowth / totals.tokensAdded : 0,
+          totalMcap: totals.sumMcap,
+          gainers: totals.gainers,
+          losers: totals.losers,
+        }
+      })
 
       // Optionally fetch live trending data to refresh current mcap/price for dynamic PnL
       let liveTrendingMap = new Map<string, {
@@ -532,7 +614,6 @@ export async function GET(request: NextRequest) {
         logo_url?: string
       }>()
       try {
-        const baseUrl = process.env.API_HOST || process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
         const trendingResp = await fetch(`${baseUrl}/api/trending?cache=off&nocache=true`, {
           headers: { 'x-no-cache': '1' },
           next: { revalidate: 0 }
@@ -643,7 +724,7 @@ export async function GET(request: NextRequest) {
         avgGrowthAll,
         avgGrowthExcludingZero,
         highestGrowth,
-        totalMcap: allData.reduce((sum, item) => sum + item.current_mcap, 0),
+        totalMcap,
         solPriceUSD,
         pnlTimeWindows,
         pnlBuyTimeWindows,
@@ -655,9 +736,8 @@ export async function GET(request: NextRequest) {
         },
         mcapRangeAnalysis,
         thirtyDaysSummary: {
-          totalTokensAdded: recentTokens.length,
-          avgDailyGrowth: recentTokens.length > 0 ?
-            recentTokens.reduce((sum, item) => sum + item.mcap_growth_percent, 0) / recentTokens.length : 0,
+          totalTokensAdded: recentCount,
+          avgDailyGrowth: recentCount > 0 ? recentSumGrowth / recentCount : 0,
           dailyBreakdown
         }
       }
@@ -714,7 +794,7 @@ export async function GET(request: NextRequest) {
         toasts.push(...scanned.toasts)
       }
 
-      return NextResponse.json({
+      const listedBody = {
         success: true,
         data: listData,
         pagination: {
@@ -725,6 +805,13 @@ export async function GET(request: NextRequest) {
         },
         stats,
         toasts
+      }
+
+      await cacheSet(listCacheKey, listedBody, MCAP_LIST_FRESH_TTL_S)
+      await cacheSet(listStaleKey, listedBody, MCAP_LIST_STALE_TTL_S)
+
+      return NextResponse.json(listedBody, {
+        headers: { 'X-Mcap-Cache': isRefreshPass ? 'refresh' : 'miss' },
       })
     }
 

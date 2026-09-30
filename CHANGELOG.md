@@ -8,6 +8,28 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — the mcap tracker list no longer rebuilds every statistic per request
+
+`GET /api/mcap-tracking?action=list` is a page render (TrackerTab / BoardTab on load and on every
+filter change) and measured **2.5–3.2 s every call**, with no cache anywhere on the route. Same
+classes of problem as the reports latency work, found by the same measurement:
+
+- `getAppLocalParts` built a new `Intl.DateTimeFormat` on **every** call (`src/utils/datetime.ts`),
+  and the list called it once per row per threshold — the identical bug to `hourInTimeZone`. The
+  formatter is hoisted.
+- The two time-window analyses ran **14 filter-and-recompute passes** over every tracked token
+  (7 thresholds × sell/entry, each row doing 2 `new Date()` plus a bucket). The per-token facts
+  (growth, sell hour, entry hour, time-to-target) are now computed once and the passes filter those.
+- The 30-day breakdown re-filtered the whole set **30 times**, parsing a `Date` per row per day; it is
+  now one pass with a binary search over the 30 precomputed day windows. The 30-day recent-total and
+  average ride along in the same pass.
+- The summary statistics were six filters plus three reduces; one pass now.
+- The response is cached per query string — 60 s fresh, kept 24 h and served **stale** while a
+  detached single-flight refresh recomputes it (`X-Mcap-Cache: fresh|stale|miss|refresh`), so a caller
+  never waits on the recompute.
+
+Verified: tsc clean, lint 0 errors, 305 files / 2,058 tests pass.
+
 ### Changed — the report's two whole-analysis sections are precomputed
 
 `consensus` (a seeded bootstrap over the report window) and `capital` (a 3-day paper-capital sweep) do
