@@ -875,6 +875,11 @@ async function runSimTrack(request: NextRequest) {
       : 'all'
   const runManage = phase === 'manage' || phase === 'all'
   const runOpen = phase === 'open' || phase === 'all'
+  // #region debug (debug-mcap-sim-timing)
+  const dbgRunStart = Date.now()
+  const dbgLog = (label: string, data: Record<string, unknown>) =>
+    console.warn(`[dbg-mcap-sim] ${label} ${JSON.stringify(data)}`)
+  // #endregion
 
   try {
     const liveAvailable = isMcapLiveTradingAvailable()
@@ -926,6 +931,15 @@ async function runSimTrack(request: NextRequest) {
     await persistDailyRegimeTag(brainClimate)
 
     for (const strategy of strategies) {
+      // #region debug (debug-mcap-sim-timing)
+      const dbgStrategyStart = Date.now()
+      let dbgManageMs = 0
+      let dbgOpenMs = 0
+      let dbgOhlcCalls = 0
+      let dbgOhlcMs = 0
+      let dbgRecordsCalls = 0
+      let dbgRecordsMs = 0
+      // #endregion
       // Robinhood has no live execution path yet — every RH definition stays paper.
       const execMode =
         chain === 'robinhood'
@@ -991,6 +1005,9 @@ async function runSimTrack(request: NextRequest) {
       }
 
       if (runManage) {
+      // #region debug (debug-mcap-sim-timing)
+      const dbgManageStart = Date.now()
+      // #endregion
       for (const pos of openPositions) {
         const snapshot =
           trackingByMint.get(pos.mintAddress) ??
@@ -1090,7 +1107,15 @@ async function runSimTrack(request: NextRequest) {
       }
 
       if (runOpen) {
+      // #region debug (debug-mcap-sim-timing)
+      const dbgOpenStart = Date.now()
+      const dbgRecordsStart = Date.now()
+      dbgRecordsCalls++
+      // #endregion
       records = await fetchTradingRecordsForWallet(walletAddress)
+      // #region debug (debug-mcap-sim-timing)
+      dbgRecordsMs += Date.now() - dbgRecordsStart
+      // #endregion
       const currentOpen = getOpenPositionsForStrategy(
         records,
         strategy.id,
@@ -1227,9 +1252,16 @@ async function runSimTrack(request: NextRequest) {
         )
         const annotated = annotateEntryFeatures(baseFeatures, socialCtx)
         const { attachOhlcRugShadow } = await import('@/strategies/ohlc-rug-shadow')
+        // #region debug (debug-mcap-sim-timing)
+        const dbgOhlcStart = Date.now()
+        dbgOhlcCalls++
+        // #endregion
         const ohlc = await attachOhlcRugShadow(snapshot.token_address, annotated, {
           enforce: execMode.isSimulated,
         })
+        // #region debug (debug-mcap-sim-timing)
+        dbgOhlcMs += Date.now() - dbgOhlcStart
+        // #endregion
         if (ohlc.reject) {
           skipped.push(
             `${snapshot.token_symbol}: ohlc_rug (${ohlc.reason ?? 'trip'})`,
@@ -1416,6 +1448,23 @@ async function runSimTrack(request: NextRequest) {
       await flushPending('open')
       }
 
+      // #region debug (debug-mcap-sim-timing)
+      if (runManage) dbgManageMs += Date.now() - dbgManageStart
+      if (runOpen) dbgOpenMs += Date.now() - dbgOpenStart
+      dbgLog('strategy', {
+        id: strategy.id,
+        totalMs: Date.now() - dbgStrategyStart,
+        manageMs: dbgManageMs,
+        openMs: dbgOpenMs,
+        recordsCalls: dbgRecordsCalls,
+        recordsMs: dbgRecordsMs,
+        ohlcCalls: dbgOhlcCalls,
+        ohlcMs: dbgOhlcMs,
+        opened,
+        closed,
+      })
+      // #endregion
+
       results.push({
         strategyId: strategy.id,
         chain,
@@ -1431,6 +1480,15 @@ async function runSimTrack(request: NextRequest) {
       phase,
       results,
     })
+
+    // #region debug (debug-mcap-sim-timing)
+    dbgLog('TOTAL', {
+      phase,
+      totalMs: Date.now() - dbgRunStart,
+      opened: results.reduce((s, r) => s + r.opened, 0),
+      closed: results.reduce((s, r) => s + r.closed, 0),
+    })
+    // #endregion
 
     return NextResponse.json({
       success: true,
