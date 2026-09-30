@@ -1464,6 +1464,21 @@ export default function BulkTokenSeller({
                 )?.symbol
               : `${sellResult.successfulSwaps.length} tokens`,
           solAmount: sellResult.totalReceived,
+          // Exact quantity that left the wallet (base units -> UI) for the single-token case. The
+          // swap is exact-in, so the requested amount is the filled amount.
+          tokenAmount:
+            sellResult.successfulSwaps.length === 1
+              ? (() => {
+                  const sold = selectedTokens.find(
+                    (t) =>
+                      t.mintAddress ===
+                      sellResult.successfulSwaps[0]?.mintAddress,
+                  );
+                  return sold
+                    ? sold.sellAmount / 10 ** sold.decimals
+                    : undefined;
+                })()
+              : undefined,
           amountUnit: "SOL",
           error: sellResult.success
             ? undefined

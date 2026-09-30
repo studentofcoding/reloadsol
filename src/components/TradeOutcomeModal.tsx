@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useState } from "react";
+import { formatTradeAmount } from "@/utils/trade-display";
 
 export type TradeOutcomeOperation = 'buy' | 'sell' | 'close';
 
@@ -19,6 +20,13 @@ export type TradeOutcomeState = {
   tokenSymbol?: string;
   mintAddress?: string;
   solAmount?: number;
+  /**
+   * Exact token quantity traded, for the single-token case. Paired with `tokenSymbol` this is the
+   * figure a user actually checks against the chain ("sold 681.397224 BP"), so it is shown verbatim
+   * rather than rounded to a headline. Absent for multi-token batches, where one symbol cannot
+   * describe the mix — the modal then states the native side only.
+   */
+  tokenAmount?: number;
   /** Unit for solAmount display (default SOL). */
   amountUnit?: TradeAmountUnit;
   error?: string;
@@ -91,6 +99,7 @@ export default function TradeOutcomeModal({
   tokenSymbol,
   mintAddress,
   solAmount,
+  tokenAmount,
   amountUnit = 'SOL',
   error,
   closeableAccounts,
@@ -157,11 +166,19 @@ export default function TradeOutcomeModal({
           {success && operation !== 'buy' ? (
             <p className="text-gray-300 text-sm mb-1">{tokenLabel}</p>
           ) : null}
-          {success && operation === 'sell' && typeof solAmount === 'number' ? (
+          {success && typeof tokenAmount === 'number' && Number.isFinite(tokenAmount) ? (
             <p className="text-gray-400 text-sm">
-              Received:{' '}
+              {operation === 'buy' ? 'Received:' : 'Sold:'}{' '}
               <span className="text-white font-mono">
-                {solAmount.toFixed(4)} {amountUnit}
+                {formatTradeAmount(tokenAmount)} {tokenLabel}
+              </span>
+            </p>
+          ) : null}
+          {success && typeof solAmount === 'number' ? (
+            <p className="text-gray-400 text-sm">
+              {operation === 'buy' ? 'Spent:' : 'Received:'}{' '}
+              <span className="text-white font-mono">
+                {formatTradeAmount(solAmount)} {amountUnit}
               </span>
             </p>
           ) : null}

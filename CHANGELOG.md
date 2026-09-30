@@ -8,6 +8,22 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — buy value estimate + exact amounts on trade outcomes
+
+- **The buy CTA states the value.** `BulkTokenBuyer`'s button now appends `(≈ $X)`: the input amount
+  at the live native price (SOL), or as the dollar unit for USDC — the same convention the buy
+  tracker uses (spend × native price) rather than a per-token price of our own. An unknown price
+  produces no figure at all, never a substituted rate (`estimateBuyUsdValue`).
+- **The outcome modal states both sides.** `TradeOutcomeModal` now shows the exact quantity and the
+  native amount — buy: `Received: N SYMBOL` / `Spent: X SOL`; sell: `Sold: N SYMBOL` /
+  `Received: X SOL`. The buy's native figure is what was actually routed (`buyResult.totalSpent`,
+  fees excluded; USDC keeps the requested amount because `totalSpent` is lamport-denominated); the
+  sell's quantity comes from the executed base amount and the mint's decimals. Multi-token batches
+  show the native side only, since one symbol cannot describe the mix. Both are rendered through
+  `formatTradeAmount` so a small fill never reads as `0.00`.
+- 8 unit tests cover the fail-closed estimate (missing/zero price → `null`, so no number is shown)
+  and the amount formatting. Helpers live in `src/utils/trade-display.ts`.
+
 ### Fixed — sell estimate quoted a route the executor would refuse
 
 The sell page's SOL estimate came from Raptor alone (`fetchQuoteForToken` tried Raptor and fell back

@@ -111,6 +111,7 @@ import {
   warmResolvedPreparedSwap,
 } from "@/utils/swap-executor";
 import { impactToAbsPct } from "@/utils/swap-quote-pick";
+import { estimateBuyUsdValue } from "@/utils/trade-display";
 import {
   AUTO_SLIPPAGE_BPS,
   AUTO_SLIPPAGE_CAP_BPS,
@@ -1420,7 +1421,12 @@ export default function BulkTokenBuyer() {
             buyResult.successfulPurchases.length === 1
               ? firstSymbol
               : `${buyResult.successfulPurchases.length} tokens`,
-          solAmount: parseFloat(solAmount),
+          // The amount actually routed (excludes fees). USDC keeps the requested figure:
+          // totalSpent is lamport-denominated, so it would be wrong for a 6-decimal input.
+          solAmount:
+            selectedCurrency === "USDC"
+              ? parseFloat(solAmount)
+              : buyResult.totalSpent,
           amountUnit: selectedCurrency === "USDC" ? "USDC" : "SOL",
           error: buyResult.success
             ? undefined
@@ -2753,6 +2759,26 @@ export default function BulkTokenBuyer() {
                     <span>
                       Buy {validMints.length} Token
                       {validMints.length !== 1 ? "s" : ""}
+                      {(() => {
+                        // Valued the way the buy tracker does — spend x native price — rather than
+                        // inventing a per-token price. An unknown price yields no figure at all.
+                        const usd = estimateBuyUsdValue({
+                          amount: parseFloat(solAmount),
+                          currency: selectedCurrency === "USDC" ? "USDC" : "SOL",
+                          nativePriceUsd: solUsd,
+                        });
+                        if (usd == null) return null;
+                        return (
+                          <span className="text-gray-600">
+                            {" "}
+                            (≈ $
+                            {usd.toLocaleString(undefined, {
+                              maximumFractionDigits: 2,
+                            })}
+                            )
+                          </span>
+                        );
+                      })()}
                     </span>
                     <svg
                       className="w-5 h-5"
