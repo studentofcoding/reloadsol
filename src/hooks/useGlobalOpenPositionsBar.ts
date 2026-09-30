@@ -43,12 +43,20 @@ export function useGlobalOpenPositionsBar() {
   const isSol = network === 'sol';
   const enabled = isSol && !!walletAddress && !!connection;
 
+  // Deliberately the DEFAULT `includeZeroBalance` (true), not false.
+  //
+  // The query key is `['wallet-tokens', address, includeZeroBalance, source]`, so asking for the
+  // filtered list put this bar on a DIFFERENT cache entry from the one the buy flow refreshes:
+  // BulkTokenBuyer and ChartBuyModal omit the flag, so their post-buy `refetchFresh()` only ever
+  // updated the `true` entry — and this bar, on `false`, kept its pre-buy list forever. That is the
+  // whole "new buys never show up in Open positions" bug. Sharing the canonical key means the
+  // post-trade refresh reaches this bar too; zero-balance tokens are excluded by the bar's own
+  // filter below, so the visible result is unchanged.
   const holdings = useWalletTokens({
     connection,
     publicKey,
     walletAddress,
     enabled,
-    includeZeroBalance: false,
   });
 
   const holdingsByMint = useMemo(() => {
