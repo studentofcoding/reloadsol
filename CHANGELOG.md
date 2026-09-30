@@ -23,9 +23,12 @@ whole position off a single-hop, 38%-impact route. Measured for 681.397224200 BP
 So the estimate was 2.46 SOL (38%) low *and* unexecutable — `SWAP_QUOTE_MAX_IMPACT_PCT` (default
 15%) would have refused that route, meaning the button advertised a sale that could not happen.
 
-- The seller now quotes through `pickParallelSwapQuote` — the same best-of (Raptor / Jupiter Lite /
-  Jupiter Swap), impact-gated picker `prepareSwapTransaction` uses for the executed swap — so the
-  estimate is the route that would actually run and the two can no longer disagree. Quoting still
+- The seller now quotes through `pickParallelSwapQuote` — the same impact-gated picker
+  `prepareSwapTransaction` uses for the executed swap — so the estimate is the route that would
+  actually run and the two can no longer disagree. Correction to this entry as first written: that
+  picker is **Jupiter-only** on the desk path (Swap V2 `/order`, Lite only when V2 fails; Raptor is
+  arbitrage-only), not the three-provider race the docs described. The docs are corrected in the
+  same commit. Quoting still
   respects the shared `JUPITER_MAX_RPS` gate.
 - Fixed the impact normalisation this exposed: the seller stored `priceImpact * 100` for a provider
   that already reports percent, inflating "Avg Price Impact" 100x and making any gate check

@@ -367,7 +367,7 @@ handleFastSell
 
 | Internal API | External |
 |--------------|----------|
-| `/api/jupiter/portfolio` + Raptor + `/api/jupiter/reclaim/craft` + `/api/rpc` | Jupiter Portfolio + Raptor + Jupiter Ultra reclaim |
+| `/api/jupiter/portfolio` + `/api/jupiter/quote` + `/api/jupiter/reclaim/craft` + `/api/rpc` | Jupiter Portfolio + Jupiter Swap V2 + Jupiter Ultra reclaim |
 
 #### D. `/swap` — Jupiter Terminal
 
@@ -554,7 +554,7 @@ See [architecture.md §9–10](./architecture.md#9-recent-improvements-jun-2026)
 | PnL cron auth fixed | `pnl_update` worker succeeds with `PNL_UPDATE_SECRET` |
 | Trending schema patch | `volume_5m` + related columns on `trending_token_tracker` |
 | OHLC | GMGN **embed** for UI charts; Solana Tracker candles via `/api/gmgn/token-ohlc` + `token_detect_snapshots` / `signal_ohlc_labels` |
-| Raptor bulk paths | Unchanged — still primary for `/buy`, `/sell`, chart buy |
+| Desk swap path | Jupiter Swap V2 `/order` (Lite only if V2 fails) is primary for `/buy`, `/sell`, chart buy; Raptor is arbitrage-only (`maxHops`) |
 
 | Next | Suggested action |
 |------|------------------|
@@ -572,13 +572,12 @@ See [architecture.md §9–10](./architecture.md#9-recent-improvements-jun-2026)
 | `src/components/BulkTokenSeller.tsx` | Bulk sell + close-only UI |
 | `src/utils/jupiter.ts` | `executeBulkBuy`, `executeBulkSellAlt`, `closeTokenAccounts`, Jupiter Lite helpers |
 | `src/utils/jupiter-reclaim.ts` | Jupiter `/reclaim/craft` client + tx injection |
-| `src/utils/solanatracker-raptor.ts` | Raptor API client + proxies |
+| `src/utils/solanatracker-raptor.ts` | Raptor API client + proxies (arbitrage swaps) |
 | `src/hooks/useWalletTokens.ts` | Jupiter Portfolio hook |
 | `src/utils/jupiter-portfolio.ts` | Portfolio fetch + mapping |
-| `src/components/signals/LiveTab.tsx` | Single buy/sell (Jupiter Lite) |
-| `src/components/signals/LiveTab.tsx` | Single buy/sell via `executeClientSwap` |
-| `src/components/signals/BoardTab.tsx` | Single buy (Raptor bulk), sell via `executeClientSwap` |
-| `src/components/PnLTracker.tsx` | Fast Sell (Raptor + close) |
+| `src/components/signals/LiveTab.tsx` | Single buy/sell via `executeClientSwap` (desk swap: Jupiter V2, Lite fallback) |
+| `src/components/signals/BoardTab.tsx` | Single buy + sell via `executeClientSwap` |
+| `src/components/PnLTracker.tsx` | Fast Sell (desk swap + Jupiter reclaim close) |
 | `src/app/(trade)/swap/SwapPageClient.tsx` | Jupiter Terminal |
 | `src/app/api/solanatracker/*` | Raptor proxy routes |
 | `src/app/api/jupiter/reclaim/craft/route.ts` | Reclaim proxy |

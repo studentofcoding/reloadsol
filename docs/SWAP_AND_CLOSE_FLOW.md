@@ -8,30 +8,46 @@ This document summarizes how bulk swaps and token account closures work across t
 |-------|---------|-------|
 | Wallet tokens | Shyft `all_tokens` (cached), Jupiter Portfolio fallback | `useWalletTokens.ts`, `sol-wallet-holdings.ts`, `shyft-wallet.ts` |
 | Multi-tx send | Shyft `send_many_txns` (RPC fallback per tx) | `swap-executor.ts`, `shyft-transaction.ts` |
-| Swaps | **Parallel pick:** Raptor (maxHops=1) + Jupiter Lite + Jupiter Swap `/order`; impact-gated; winner’s prepare | `swap-executor.ts`, `swap-quote-pick.ts`, `solanatracker-raptor.ts`, `jupiter-lite-swap.ts`, `jupiter-swap-quote.ts` |
+| Swaps (desk) | **Jupiter Swap V2 `/order`**, falling back to **Jupiter Lite** only when V2 fails; impact-gated; that provider prepares | `swap-executor.ts`, `swap-quote-pick.ts`, `jupiter-swap-quote.ts`, `jupiter-lite-swap.ts` |
+| Swaps (arb) | **Raptor** with a hops override (`maxHops` set) | `swap-executor.ts`, `solanatracker-raptor.ts` |
 | RPC | Same-origin `/api/rpc` proxy (fallback send only) | `RpcContext.tsx`, `/api/rpc/route.ts` |
 | Prices/metadata | Jupiter APIs (UI support, not swap execution) | `/api/tokens/prices`, `/api/jupiter/metadata` |
 | Charts | GMGN iframe embeds only (`gmgn.cc`) | Bulk pages, chart pages |
 | Close accounts | Jupiter `/reclaim/craft` + fixed fee (manual fallback) | `jupiter-reclaim.ts`, `/api/jupiter/reclaim/craft`, `closeTokenAccounts` |
 
-## Directional swap quote (parallel pick)
+## Directional (desk) swap quote
 
-`fetchSwapQuote` / `prepareSwapTransaction` (no `maxHops`) race three providers and **gate** by absolute price impact (`SWAP_QUOTE_MAX_IMPACT_PCT`, default **15%**):
+The desk path — `fetchSwapQuote` / `prepareSwapTransaction` **without** `maxHops` — is
+**Jupiter-only**, gated by absolute price impact (`SWAP_QUOTE_MAX_IMPACT_PCT`, default **15%**):
 
-1. **Solana Tracker Raptor** — still `maxHops=1` / `RAPTOR_DEFAULT_MAX_HOPS` (do not raise for directional bots)
-2. **Jupiter Lite** — `lite-api.jup.ag/swap/v1/quote` (proxied `/api/jupiter/lite/quote`)
-3. **Jupiter Swap** — `api.jup.ag/swap/v2/order` (proxied `/api/jupiter/quote`; needs `JUPITER_API_KEY`)
+1. **Jupiter Swap V2** — `api.jup.ag/swap/v2/order` (proxied `/api/jupiter/quote`; needs `JUPITER_API_KEY`). This is the primary and, normally, the only candidate.
+2. **Jupiter Lite** — `lite-api.jup.ag/swap/v1/quote` (proxied `/api/jupiter/lite/quote`), queried **only when V2 fails**.
 
-Fail-soft per provider (a 429 on Swap does not fail Lite/Raptor). Winner = highest `outAmount`, then lower impact, then prefer Raptor. Prepare uses that provider: Raptor `quote-and-swap`, Lite `/swap`, or Swap `/order?taker=`. Live arb still passes `maxHops` and keeps the Raptor hops path.
+**Raptor is not queried on the desk path.** `prepareSwapTransaction` sends `maxHops != null` to
+`prepareArbSwap` (Raptor plus the hops override) and everything else to `prepareDeskSwap`
+(`prepareJupiterSwapPrepared`, then Lite). `TRADE_PROVIDER` / `getTradeProvider()` selects the
+arb/legacy send stack — it does not move desk swaps onto Raptor.
 
-**Display surfaces must use this same picker.** A quote shown to the user (`BulkTokenSeller`'s
-estimate) has to be the candidate `prepareSwapTransaction` would trade — racing Raptor alone, or
-preferring it, shows a route the impact gate may then refuse (a two-pool token quoted single-hop at
-`RAPTOR_MAX_HOPS=1` reads 38% impact / 2.46 SOL less than the executable route). Keeping
-`RAPTOR_MAX_HOPS=1` is deliberate: the conservative default is correct for thin tokens, and route
-selection — not the hop ceiling — is where a better price comes from.
+`collectSwapQuoteCandidates` (`src/utils/swap-quote-parallel.ts`) therefore usually returns a single
+candidate; `pickBestSwapQuote` (`src/utils/swap-quote-pick.ts`) filters by the impact gate and orders
+by highest `outAmount`, then lower impact, then `PROVIDER_TIE_RANK` (raptor → jupiter_lite →
+jupiter_swap — the Raptor rank is unused while only Jupiter is collected). Fail-soft: a 429 on V2
+does not fail Lite.
 
-## Raptor Swap Flow (Raptor winner / arb)
+**Display surfaces must use this same picker.** A quote shown to a user (`BulkTokenSeller`'s
+estimate) has to be the candidate `prepareSwapTransaction` would trade. Quoting Raptor alone showed a
+single-hop, 38%-impact route for a two-pool token — 2.46 SOL below the executable route **and**
+above the gate, i.e. a sale the executor would have refused. `RAPTOR_MAX_HOPS` staying at its default
+`1` is deliberate: the conservative single-hop default is right for thin tokens, and route selection,
+not the hop ceiling, is where a better price comes from.
+
+**Known nuances.** The estimate quotes `/order` without `taker` while prepare uses
+`/order?taker=<pubkey>`, so the two are not byte-identical inputs and the number can shift slightly at
+click time (the executor re-quotes at prepare, so nothing unsafe is executed). The failure banner in
+`sell-quote-fallback.ts` still says *"Failed to get quotes from Raptor"*, which misattributes the
+source now that this path is Jupiter-only.
+
+## Raptor Swap Flow (arb only — `maxHops` set)
 
 Per [Solana Tracker Swap API](https://docs.solanatracker.io/guides/swap-api):
 
@@ -44,8 +60,8 @@ Per [Solana Tracker Swap API](https://docs.solanatracker.io/guides/swap-api):
 
 | Helper | Purpose |
 |--------|---------|
-| `fetchSwapQuote` | Parallel Raptor + Lite + Swap; impact gate; pick winner |
-| `prepareSwapTransaction` | Winner’s prepare (arb: `maxHops` → Raptor hops path) |
+| `fetchSwapQuote` | Jupiter V2 (`/order`, no taker), Lite only if V2 fails; impact gate; pick winner |
+| `prepareSwapTransaction` | Desk → Jupiter V2 (Lite fallback); arb (`maxHops`) → Raptor hops path |
 | `submitSignedSwap` | Shyft send or RPC; Raptor status poll only if tx was Raptor-built |
 | `executeClientSwap` | Single-tx: prepare → sign → submit → confirm |
 | `signTransactionsWithFallback` | Batch sign; one-by-one fallback on wallet reject |
@@ -65,8 +81,9 @@ Per [Solana Tracker Swap API](https://docs.solanatracker.io/guides/swap-api):
 
 ## Providers and Flow
 
-- **Solana Tracker Raptor (swap execution)**
-  - Quote: `GET /api/solanatracker/quote` → Raptor `GET /quote` (`maxHops=1` directional)
+- **Solana Tracker Raptor (arb swaps; not the desk)**
+  - Quote: `GET /api/solanatracker/quote` → Raptor `GET /quote` (`maxHops` defaults to
+    `RAPTOR_MAX_HOPS`; callers may override per request)
   - Swap: `POST /api/solanatracker/swap` → Raptor `POST /quote-and-swap`
   - Send: `POST /api/solanatracker/send` → Raptor `POST /send-transaction`
   - Status: `GET /api/solanatracker/transaction/[signature]` (Raptor-built txs)
@@ -74,12 +91,12 @@ Per [Solana Tracker Swap API](https://docs.solanatracker.io/guides/swap-api):
     to the buy_bulk treasury (`feeAccount` / `feeBps` via `src/utils/buybulk-fee.ts`);
     clients cannot omit or override it.
 
-- **Jupiter Lite (directional fallback)**
+- **Jupiter Lite (desk fallback — only when V2 fails)**
   - Quote: `GET /api/jupiter/lite/quote` → `lite-api.jup.ag/swap/v1/quote`
   - Swap build: `POST /api/jupiter/lite/swap` → `POST /swap`
   - Shares `throttleJupiterRps` with Price V3 / Swap `/order` on the server
 
-- **Jupiter Swap `/order` (directional fallback)**
+- **Jupiter Swap `/order` (desk primary)**
   - Quote: `GET /api/jupiter/quote` → `api.jup.ag/swap/v2/order` (no `taker`)
   - Prepare: same URL with `taker` = user pubkey (unsigned `transaction`)
   - Requires `JUPITER_API_KEY`; send still uses Shyft/RPC like Lite

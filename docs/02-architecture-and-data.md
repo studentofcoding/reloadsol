@@ -141,7 +141,8 @@ Enforced by `npm run verify:no-hardcoded-sol-price` (part of the verify gate): i
 |---|---|
 | **RPC proxy** | Browser/server → `GET/POST /api/rpc` (`src/app/api/rpc/route.ts`) → Shyft (or Raptor) RPC list with failover + per-endpoint health; RH RPC via `/api/rh/rpc` |
 | **Jupiter pricing** | `/api/tokens/prices`, `/api/jupiter/*` proxy Jupiter; open-card marks come from a shared GMGN + Redis + SSE feed with Jupiter fallback (SSE via `/api/trading/subscribe`; 8s polling fallback) |
-| **Solana swaps** | Raptor quote-and-swap / send / status through `/api/solanatracker/{quote,swap,send,transaction}` (server-side) |
+| **Solana swaps (desk)** | Jupiter Swap V2 `/api/jupiter/quote` → wallet-signed v0 → `/api/rpc` or Shyft send; Lite `/api/jupiter/lite/*` only when V2 fails |
+| **Solana swaps (arb)** | Raptor `quote-and-swap` / send / status through `/api/solanatracker/{quote,swap,send,transaction}` (server-side, `maxHops` set) |
 | **RH Kyber routes+swap** | `/api/kyber/routes` (GET tokenIn/tokenOut/amountIn) and `/api/kyber/build` (POST routeSummary/sender/recipient/slippage) proxy Kyber (`https://aggregator-api.kyberswap.com/robinhood/api/v1/…`); browser helpers `clientKyberRoute` / `clientKyberBuild` (`src/utils/kyber-aggregator.ts`) |
 | **RH GMGN trades** | `/api/gmgn/trade/quote` · `/api/gmgn/trade/swap` (`confirmed:true`; `from` must equal the GMGN-bound address for the chain) · `/api/gmgn/trade/order?chain&orderId` status poll |
 | **Solana token holdings** | `/api/shyft/wallet/all_tokens` — cached Shyft `all_tokens` (15s fresh / 120s stale, `fresh=1` after trade); Jupiter Portfolio fallback (`/api/jupiter/portfolio`); RPC `fetchUserTokens` last resort |

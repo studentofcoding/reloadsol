@@ -46,12 +46,14 @@ selection back to `sol`.
 
 ### Solana
 
-- **Solana Tracker Raptor** is still the preferred executor when it quotes a
-  1-hop route inside the impact gate, but directional `fetchSwapQuote` /
-  `prepareSwapTransaction` race **Raptor (`maxHops=1`) + Jupiter Lite + Jupiter
-  Swap `/order`**, discard routes above `SWAP_QUOTE_MAX_IMPACT_PCT` (default 15%),
-  and build via the winner: `prepareSwapTransaction` → wallet signs the returned v0 tx →
-  `submitSignedSwap` (Shyft or RPC) → poll `confirmed|failed|expired`
+- **Directional (desk) swaps are Jupiter-only.** `fetchSwapQuote` /
+  `prepareSwapTransaction` (no `maxHops`) quote **Jupiter Swap V2 `/order`**, fall back to
+  **Jupiter Lite only when V2 fails**, and discard routes above
+  `SWAP_QUOTE_MAX_IMPACT_PCT` (default 15%). Build:
+  `prepareSwapTransaction` → wallet signs the returned v0 tx → `submitSignedSwap`
+  (Shyft or RPC) → poll `confirmed|failed|expired`. **Solana Tracker Raptor is arbitrage-only**
+  (`maxHops != null` → `prepareArbSwap`); it is not queried on the desk path, and `TRADE_PROVIDER`
+  selects the arb/legacy send stack rather than moving desk swaps onto Raptor
   (`src/utils/swap-executor.ts`, `src/utils/jupiter.ts` `executeBulkBuy`,
   `executeBulkSellAlt`, `executeClientSwap`; proxies `/api/solanatracker/*`,
   `/api/jupiter/lite/*`, `/api/jupiter/quote`).
@@ -60,8 +62,8 @@ selection back to `sol`.
   prefetch, and `executeBulkSellAlt`. Compact `ReloadHome` (native SOL only) is unused as a post-connect landing; connect goes to `/sell/{chain}`.
   PnL Fast Sell stays native SOL.
 - **Jupiter** handles pricing/metadata, the wallet token list (Portfolio), the `/swap`
-  Jupiter Terminal widget, account close/reclaim, and **Lite / Swap `/order` as
-  directional quote/prepare fallbacks** when Raptor has no 1-hop route or fails the impact gate.
+  Jupiter Terminal widget, account close/reclaim, and the **directional quote/prepare itself**
+  (Swap V2 `/order`, with Lite as the failure fallback).
 - **GMGN** on Solana is charts (embedded `gmgn.cc` iframes) plus a dev-only GMGN
   bound-wallet path in the bulk buyer (`useGmgnOnSol`); GMGN is not a Solana swap executor.
 - Tokens: cached Shyft `all_tokens` (`useWalletTokens.ts`, Jupiter Portfolio fallback); prices from the shared

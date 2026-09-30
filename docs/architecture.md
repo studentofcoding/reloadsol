@@ -89,7 +89,7 @@ flowchart LR
     Infra[sltp daily_summary pnl]
   end
 
-  manual --> Raptor[Raptor / Jupiter Lite]
+  manual --> Raptor[Jupiter V2 desk / Raptor arb]
   dev --> API[Next.js /api/*]
   auto --> API
   API --> Postgres[(reloadsol_db)]
@@ -97,14 +97,14 @@ flowchart LR
 
 ### 2.1 Manual trading (wallet-signed)
 
-User connects wallet; swaps execute client-side or via Raptor proxies.
+User connects wallet; desk swaps execute client-side against Jupiter V2 (`/api/jupiter/quote`), with Raptor proxies used for arbitrage.
 
 | Route | Stack | Doc |
 |-------|-------|-----|
-| `/buy`, `/sell` | Solana Tracker Raptor bulk | [whole_process.md](./whole_process.md) |
-| `/dev/signals` Live/Board tabs | Jupiter Lite + Raptor mix | same |
-| `/chart/[mint]` | Raptor single buy + GMGN chart | same |
-| `/pnl` Fast Sell | Raptor + Jupiter reclaim close | same |
+| `/buy`, `/sell` | Jupiter Swap V2 bulk (Raptor = arb only) | [whole_process.md](./whole_process.md) |
+| `/dev/signals` Live/Board tabs | Jupiter V2 (Lite fallback) | same |
+| `/chart/[mint]` | Jupiter V2 single buy + GMGN chart | same |
+| `/pnl` Fast Sell | Jupiter V2 sell + Jupiter reclaim close | same |
 | `/swap` | Jupiter Terminal widget | same |
 
 ### 2.2 Algo automation (server cron)
@@ -299,8 +299,8 @@ Default `npm run docker:deploy` uses `--auto` from git diff.
 
 | Service | Used for |
 |---------|----------|
-| **Solana Tracker Raptor** | Bulk buy/sell, chart buy, PnL fast sell |
-| **Jupiter Lite** | Single buy/sell in signals, SL/TP monitor |
+| **Solana Tracker Raptor** | Arbitrage swaps (`maxHops`) and status polling for Raptor-built txs |
+| **Jupiter Swap V2 / Jupiter Lite** | Desk (directional) quote + prepare everywhere; Lite only when V2 fails |
 | **Shyft all_tokens** | Wallet token list (cached; Jupiter Portfolio fallback) |
 | **Shyft send_many_txns** | Batch broadcast of already-signed Solana txs |
 | **Jupiter Ultra Reclaim** | Close empty ATAs after sell |
