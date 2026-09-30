@@ -1325,11 +1325,11 @@ export async function buildOpenMcapSimReportPositions(): Promise<McapOpenSimRepo
     process.env.MCAP_TRACKER_SIM_WALLET_ADDRESS || 'mcap-tracker-sim'
   const [defRows, records] = await Promise.all([
     loadStrategyDefinitionRows('mcap_tracker'),
-    // Open positions only — the report never needs the sim wallet's whole history.
-    // Full history here measured 5,274 records / 27.5 MB on prod; the tail is the
-    // same read the sim cycle already uses for this reconstruction (identical open
-    // positions, measured on the RH sim when it was introduced).
-    fetchTradingRecordsForWallet(mcapSimWallet, { sinceLastClose: true }),
+    // Full history on purpose: `sinceLastClose` is NOT equivalent here. Measured against
+    // prod, reconstructing with the tail vs the full history differs for 4 of the 7 active
+    // mcap strategies (45 positions from the full history) — unlike the RH sim, where the
+    // tail was verified identical. Correctness over the ~450 ms this read costs.
+    fetchTradingRecordsForWallet(mcapSimWallet),
   ])
 
   const positions: McapOpenSimReportRow[] = []

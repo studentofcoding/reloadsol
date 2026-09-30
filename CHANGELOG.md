@@ -84,21 +84,26 @@ it went cold constantly, and the view renders "Loading strategies…" until it r
 - The report read **projects the 12 columns** `mapStrategyOutcomeRow` actually reads instead of
   `SELECT *` (the unfiltered case pulled 82k rows, `features` JSONB included).
 
-**Follow-up found on the server after deploying the above.** The endpoint was down to ~8.5 s cold but
-still slow, and a CPU profile (`node --cpu-prof` on a second instance inside the container, no code
-change) attributed **0.41 s of CPU to an 8.5 s request** — it was I/O-bound, not computing. A
-`pg_stat_activity` trace of the request showed its own statements are all sub-second; the wall clock
-went into two unbounded reads the report barely needs:
+**Follow-up found on the server after deploying the above.** A CPU profile (`node --cpu-prof` on a
+second instance inside the container, no code change) attributed **0.68 s of CPU to a 10.5 s request**
+— it is waiting, not computing — and per-section timing (temporary `#region debug` logs) showed the
+remaining ~6 s is **spread across ~8 sections**, nothing concentrated: outcomes read ~1.0 s,
+open-sim-positions ~0.45 s, mcap-stats ~0.49 s, best-trade-windows ~0.46 s, consensus 0.78-1.1 s,
+overlap/pairs 0.06-1.1 s, paper-capital ~0.3 s. One of the two unbounded reads was a real win:
 
-- `buildOpenMcapSimReportPositions` re-read the sim wallet's **entire** trading history
-  (**5,274 records / 27.5 MB** measured on prod) to build open positions. It now uses the existing
-  `sinceLastClose` tail — the same read the sim cycle already uses for this exact reconstruction
-  (when it was introduced on the RH sim: identical open positions, 1,340 rows / 1.1 MB instead of
-  154,930 / 151 MB).
 - `getTrackingHealthStats` read **all 31,316** `token_mcap_tracking` rows and counted them in Node; it
-  is now a single SQL aggregate row, with the timeline-inconsistency rule mirrored as
-  `count(*) FILTER (WHERE when_reach_*pct IS NOT NULL AND first_seen_at > when_reach_*pct)`. Callers:
-  the reports endpoint and `GET /api/mcap-tracking`.
+  is now a single SQL aggregate row — **509 ms of SQL plus a JS pass over every row → 17-22 ms**,
+  measured inside the deployed request. The timeline-inconsistency rule is mirrored as
+  `count(*) FILTER (WHERE when_reach_*pct IS NOT NULL AND first_seen_at > when_reach_*pct)`, and the
+  output was verified against the live endpoint (0 inconsistent, 31,316 tracked — both matched).
+  Callers: the reports endpoint and `GET /api/mcap-tracking`.
+- **Tried and reverted — the other one was wrong.** Bounding the sim-wallet read with `sinceLastClose`
+  (5,274 → 1,422 records, 27.5 MB → 1.0 MB) is **not equivalent** for mcap: reconstructing open
+  positions from the tail vs the full history differs for **4 of the 7 active mcap strategies**,
+  measured by running the real `getOpenMcapSimPositions` over both record sets pulled from prod (45
+  positions from the full history). The RH sim's identical-looking use of the tail does not transfer.
+  The read stays unbounded on purpose, pinned by a unit test asserting it is not passed
+  `sinceLastClose`.
 
 ### Fixed — trades waited 5-6s on a Jupiter queue shared with background work
 

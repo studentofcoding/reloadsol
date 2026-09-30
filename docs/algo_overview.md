@@ -201,12 +201,15 @@ cold**, which is what made `?tab=closed` look like it never loaded (the DB part 
 uses an **in-place nth-element selection** (same values for the same seed) with
 `DEFAULT_SAMPLES` 10,000 → **2,000** (`CONSENSUS_BOOTSTRAP_SAMPLES`) — one CI is **288 ms**, ~54× faster.
 The reports cache TTL is 600 s and the closed view fetches reports in its own query so the outcome table
-paints without waiting on the aggregate. **The bootstrap was only part of it:** after that fix the cold
-path was still ~8.5 s while using **0.41 s of CPU** (profiled with `node --cpu-prof` on a second
-instance inside the container), i.e. it was I/O-bound. Two unbounded reads explained it and are now
-bounded — the sim wallet's **whole** history re-read to build open positions (27.5 MB; now the existing
-`sinceLastClose` tail) and `getTrackingHealthStats` reading all 31,316 `token_mcap_tracking` rows to
-count them in Node (now one SQL aggregate).
+paints without waiting on the aggregate. **The bootstrap was only part of it:** the cold path is still
+~6 s, and a CPU profile (`node --cpu-prof` on a second instance inside the container) attributes
+**~0 CPU** to the request — it is waiting, not computing — with per-section timing showing the cost is
+**spread across ~8 sections** rather than concentrated (outcomes read ~1 s, consensus ~1 s, mcap-stats
+~0.5 s, best-trade-windows ~0.5 s, open-sim-positions ~0.45 s, paper-capital ~0.3 s). Two notes from
+that work: `getTrackingHealthStats` no longer reads all 31,316 `token_mcap_tracking` rows (one SQL
+aggregate row, 509 ms → ~20 ms, output verified identical), and bounding the sim-wallet read with
+`sinceLastClose` was **tried and reverted** — it changes the reconstructed open positions for 4 of the
+7 active mcap strategies, so that read stays unbounded.
 
 **That gate now exists in its gated form** (`src/strategies/consensus-gate.ts`,
 `db/init/47-strategy-consensus-shadow.sql`). It decides whether a would-be open has enough

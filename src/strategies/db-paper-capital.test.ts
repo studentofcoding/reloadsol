@@ -6,7 +6,11 @@ vi.mock('@/utils/db', () => ({
 }))
 
 import { query } from '@/utils/db'
-import { fetchTradingRecordsForWallet, loadPaperCapital } from './db'
+import {
+  buildOpenMcapSimReportPositions,
+  fetchTradingRecordsForWallet,
+  loadPaperCapital,
+} from './db'
 
 const mockQuery = vi.mocked(query)
 
@@ -58,6 +62,22 @@ describe('fetchTradingRecordsForWallet bounds', () => {
     expect(text).not.toContain('make_interval')
     expect(text).toContain('ORDER BY t.timestamp ASC')
     expect(params).toEqual(['trending-bot-sim-rh', ['att_rh']])
+  })
+})
+
+describe('buildOpenMcapSimReportPositions record window', () => {
+  it('reads the full sim history — the sinceLastClose tail is not equivalent for mcap', async () => {
+    mockQuery.mockReset()
+    mockQuery.mockResolvedValue({ rows: [], rowCount: 0 } as never)
+    await buildOpenMcapSimReportPositions()
+    const reads = mockQuery.mock.calls
+      .map(([sql]) => String(sql))
+      .filter((s) => s.includes('FROM trading_records'))
+    expect(reads).toHaveLength(1)
+    // The tail starts each mint at its last full close, which changes the open set for 4 of
+    // the 7 active mcap strategies (measured against prod), so this read stays unbounded.
+    expect(reads[0]).not.toContain('last_close')
+    expect(reads[0]).toContain('ORDER BY timestamp ASC')
   })
 })
 
