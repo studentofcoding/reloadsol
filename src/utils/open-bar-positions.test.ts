@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { listLiveOpenBarPositions } from './open-bar-positions'
+import { listLiveOpenBarPositions, visibleOpenBarPositions } from './open-bar-positions'
 import type { TrackingRecord } from '@/utils/trading-tracker'
+import type { OpenBarPosition } from './open-bar-positions'
 
 const t0 = Date.parse('2026-09-01T00:00:00Z')
 
@@ -95,5 +96,44 @@ describe('listLiveOpenBarPositions', () => {
       holdings,
     )
     expect(open).toEqual([])
+  })
+})
+
+describe('visibleOpenBarPositions', () => {
+  const pos = (mint: string): OpenBarPosition => ({
+    mintAddress: mint,
+    symbol: 'TOK',
+    logoURI: null,
+    buyPriceUsd: 0.05,
+    balanceRaw: 1_000_000,
+    uiAmount: 1000,
+    decimals: 6,
+  })
+
+  it('keeps a priced position and drops an unpriced one (the clone signature)', () => {
+    const out = visibleOpenBarPositions([pos('Priced'), pos('Clone')], { Priced: 1.23 })
+    expect(out.map((p) => p.mintAddress)).toEqual(['Priced'])
+  })
+
+  it('keeps a position through one missed poll', () => {
+    const out = visibleOpenBarPositions([pos('Flicker')], {}, { Flicker: 9.99 })
+    expect(out.map((p) => p.mintAddress)).toEqual(['Flicker'])
+  })
+
+  it('drops an unpriced position once the feed HAS answered without it', () => {
+    const out = visibleOpenBarPositions(
+      [pos('Gone'), pos('Other')],
+      { Other: 1.5 },
+      {},
+    )
+    expect(out.map((p) => p.mintAddress)).toEqual(['Other'])
+  })
+
+  it('fails open when the feed answered nothing at all, so an outage cannot empty the bar', () => {
+    // Deliberate: an empty response means "we learned nothing", not "nothing has a price" — so a
+    // pricing outage cannot hide every real position. The clone-hiding rule needs an answer.
+    const all = [pos('A'), pos('B')]
+    expect(visibleOpenBarPositions(all, {})).toEqual(all)
+    expect(visibleOpenBarPositions(all, {}, {})).toEqual(all)
   })
 })

@@ -1,12 +1,16 @@
 'use client';
 
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTradingData } from '@/components/TradingDataProvider';
 import { useWallet, useConnection } from '@/components/WalletProvider';
 import { useAppNetwork } from '@/contexts/AppNetworkContext';
 import { useWalletTokens } from '@/hooks/useWalletTokens';
-import { listLiveOpenBarPositions } from '@/utils/open-bar-positions';
+import {
+  listLiveOpenBarPositions,
+  visibleOpenBarPositions,
+} from '@/utils/open-bar-positions';
+import type { OpenBarPosition } from '@/utils/open-bar-positions';
 import { pctFromBaseline } from '@/utils/watchlist/pct';
 import { mergeTokensByMint } from '@/components/signals/shared/row-holdings';
 import { useIsClient } from '@/hooks/useIsClient';
@@ -18,8 +22,6 @@ import {
 export const GLOBAL_OPEN_BAR_PRICES_KEY = 'global-open-bar-prices';
 /** Match PnL open marks — `/api/prices/open` (GMGN/Jupiter), not slow 60s Jupiter-only. */
 export const OPEN_BAR_PRICE_POLL_MS = 15_000;
-/** How long a last-seen price keeps a position visible across a missed poll. */
-export const OPEN_BAR_PRICE_GRACE_MS = 60_000;
 
 async function fetchOpenBarPrices(
   tokenAddresses: string[],
@@ -98,16 +100,18 @@ export function useGlobalOpenPositionsBar() {
     [enabled, records, holdingsByMint],
   );
 
-  // Provisional first paint: the last list observed for this wallet+chain, so chips render before
-  // the holdings fetch resolves — which is the whole reload delay. `useIsClient` keeps the server
-  // and hydration renders identical (empty), so seeding cannot cause a hydration mismatch.
-  const cachedPositions = useMemo(
-    () =>
-      isClient && enabled && walletAddress
-        ? readOpenBarPositionsCache(walletAddress, chain)
-        : [],
-    [isClient, enabled, walletAddress, chain],
-  );
+  // Provisional paint: the last list observed for this wallet+chain, so chips render before the
+  // holdings fetch resolves — the whole reload delay. Read in an effect, not during render: the
+  // cache validates its age with `Date.now()`, and a clock read in render aborts the Next prerender
+  // pass (`blocking-prerender-current-time-client`) — a build failure, not a warning. `useIsClient`
+  // keeps the server and hydration renders identical, so nothing can mismatch.
+  const [cachedPositions, setCachedPositions] = useState<OpenBarPosition[]>([]);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- client-only source (localStorage);
+  // there is no render-time way to read it without a clock (see the comment above).
+  useEffect(() => {
+    if (!isClient || !enabled || !walletAddress) return;
+    setCachedPositions(readOpenBarPositionsCache(walletAddress, chain));
+  }, [isClient, enabled, walletAddress, chain]);
 
   const mintsKey = candidates.map((p) => p.mintAddress).join(',');
   const pricesQuery = useQuery({
@@ -124,26 +128,13 @@ export function useGlobalOpenPositionsBar() {
 
   const currentPrices = pricesQuery.data ?? {};
 
-  /**
-   * Visibility prices: the live feed, plus the last price seen for a mint within the grace window.
-   * A price that misses one poll must not make a real position flap out of the bar. Display never
-   * uses this — the percentage reads the live price only, so a held-over price shows `—` rather than
-   * a stale percentage. (Idempotent ref write, safe under a double render.)
-   */
-  const lastSeenPricesRef = useRef<Record<string, { price: number; at: number }>>({});
-  const visiblePrices = useMemo(() => {
-    const now = Date.now();
-    const out: Record<string, number> = {};
-    for (const [mint, seen] of Object.entries(lastSeenPricesRef.current)) {
-      if (now - seen.at <= OPEN_BAR_PRICE_GRACE_MS) out[mint] = seen.price;
-    }
-    for (const [mint, price] of Object.entries(currentPrices)) {
-      if (price > 0) {
-        out[mint] = price;
-        lastSeenPricesRef.current[mint] = { price, at: now };
-      }
-    }
-    return out;
+  // The response this one replaced. One poll of grace: a price that misses a single poll must not
+  // make a real position flap out of the bar. Counting polls instead of milliseconds keeps every
+  // clock read out of render (see above). Display never uses it — the percentage reads the live
+  // price only, so a held-over position shows `—` rather than a stale percentage.
+  const previousPricesRef = useRef<Record<string, number>>({});
+  useEffect(() => {
+    previousPricesRef.current = currentPrices;
   }, [currentPrices]);
 
   /**
@@ -152,11 +143,11 @@ export function useGlobalOpenPositionsBar() {
    * position is priced. Fail-open when the feed returned nothing at all, so a pricing outage cannot
    * empty the bar.
    */
-  const positions = useMemo(() => {
-    if (candidates.length === 0) return candidates;
-    if (Object.keys(currentPrices).length === 0) return candidates;
-    return candidates.filter((p) => (visiblePrices[p.mintAddress] ?? 0) > 0);
-  }, [candidates, currentPrices, visiblePrices]);
+  const positions = useMemo(
+    () =>
+      visibleOpenBarPositions(candidates, currentPrices, previousPricesRef.current),
+    [candidates, currentPrices],
+  );
 
   // Live inputs (holdings or records) replace the provisional list as soon as they exist, so a
   // wallet with genuinely no positions does not keep stale chips on screen.

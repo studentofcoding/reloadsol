@@ -29,9 +29,15 @@ test only warned.
 - The sell estimate prefers the **warmed prepared swap** — the exact object `prepareSwapTransaction`
   signs, built with the same `taker` — over a separately-parameterised quote, so the estimate and the
   executed route are the same artifact. The parallel picker remains the fallback when nothing is warm.
-- A price that misses one poll no longer makes a real position flap out of the open bar: the last
-  seen price keeps it visible for `OPEN_BAR_PRICE_GRACE_MS` (60s). Display still uses the live price
-  only, so a held-over price shows `—` rather than a stale percentage.
+- A price that misses one poll no longer makes a real position flap out of the open bar: a position
+  stays visible while the price from the *previous* response still holds it (one poll of grace,
+  counted in polls rather than milliseconds). Display still uses the live price only, so a held-over
+  position shows `—` rather than a stale percentage.
+- The cached list is read in an effect, not during render. Next aborts the prerender pass on a clock
+  read in render (`blocking-prerender-current-time-client`) because the cache validates its age —
+  that broke the production build on `/swap` and the artifact ship with it. Counting polls keeps
+  every clock read out of render; the first cached paint lands one commit after hydration, still far
+  ahead of the holdings fetch it replaces.
 
 
 ### Fixed — the open-positions chips showed the symbol twice
