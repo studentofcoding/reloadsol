@@ -360,8 +360,8 @@ Process: [`main.go`](../main.go) — container `reloadsol-cron`, port **8080** (
 | `TRENDING_TRACKER_SECRET` | — | Auth for trending/signals/mcap sim |
 | `SIGNALS_SIM_INTERVAL` | 120 | signals sim-track |
 | `SIGNAL_REFRESH_INTERVAL` | 60 | signals refresh |
-| `MCAP_TRACKER_SIM_OPEN_INTERVAL` | 15 | mcap tracker sim open (`phase=open`) |
-| `MCAP_TRACKER_SIM_INTERVAL` | 120 | mcap tracker sim manage (`phase=manage`) |
+| `MCAP_TRACKER_SIM_OPEN_INTERVAL` | 15 (prod sets 900) | mcap tracker sim open (`phase=open`) |
+| `MCAP_TRACKER_SIM_INTERVAL` | 120 (prod sets 900) | mcap tracker sim manage (`phase=manage`) |
 | `SOCIAL_ROLLUP_INTERVAL` | 300 | social rollup + 24h patterns |
 | `SOCIAL_SIM_INTERVAL` | 900 (prod) | social sim-track (FOMO burst open) |
 | `SOCIAL_BURST_WINDOW_MIN` | 30 | FOMO burst window read from `social_token_events` |

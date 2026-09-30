@@ -152,10 +152,14 @@ Shared:
 - **Position OPEN/CLOSE Telegram:** unified template (`OPEN` / `OPEN · copy trade` / `EARLY · copy trade` / `CLOSE`) via `buildStrategyAlertText`. Sends when `config.notify.telegram` is on (defaults on when unset).
 - **`/dev/strategies` notify toggles:** each card has **Telegram** + **UI toasts**. **Activate** sets both on; **Deactivate** sets both off; either can be flipped manually afterward (including TG/UI on while strategy off).
 - **UI:** `McapSimOpenToastHost` in root layout; polls `GET /api/mcap-tracking/sim-open-alerts` every 15s; toast **top-right** (`z-index: 9999`) with **Buy**.
-- **Telegram env:** `TELEGRAM_BOT_TOKEN` + `TELEGRAM_ALERT_CHAT_ID`; `STRATEGY_TRACK_TELEGRAM_ENABLED` must not be `false` (global kill switch).- **Workers:** `signals_refresh` (~60s) helps Stage 1; **`mcap_tracker_sim_open` (~15s, `phase=open`)** for Stage 2 opens; **`mcap_tracker_sim_track` (~120s, `phase=manage`)** for exits/snapshots. Manual track trigger runs `phase=all`. Skip-if-running on both.
+- **Telegram env:** `TELEGRAM_BOT_TOKEN` + `TELEGRAM_ALERT_CHAT_ID`; `STRATEGY_TRACK_TELEGRAM_ENABLED` must not be `false` (global kill switch).
+- **Workers:** `signals_refresh` (~60s) helps Stage 1; the mcap sim runs as **one `phase=all` job** (`mcap_tracker_sim_track`, prod interval 900s) covering opens and exits/snapshots — it deliberately shares a single job lock so two runs cannot both see "not open yet". Manual track trigger runs `phase=all`. Skip-if-running.
 - **`mcap_enter_at_80` freshness:** skips `milestone_too_old` outside `recencyMinutes` (default 240). **Entry mcap = live `current_mcap` at open** (copy-trade fill); milestone only gates eligibility. Telegram Entry is the buy-now reference.
 - **Mcap WR skew:** TP +200% / first_mcap (or live fill) baseline means winners often land near ~+200%; organic/holders gates off by default — compare other domains carefully.
 - **Env:** `MCAP_TRACKER_SIM_OPEN_INTERVAL` (default 15), `MCAP_TRACKER_SIM_INTERVAL` (default 120 manage).
+  **Prod runs both at 900** (`.env`), so the single `phase=all` job runs every 15 min and takes 3–5 min —
+  its open phase is dominated by the per-candidate OHLC entry gate, which is now loaded once per mint
+  per run instead of once per strategy.
 - **DB:** apply [`db/init/07-mcap-drop-peak.sql`](../db/init/07-mcap-drop-peak.sql) for `-40%`/`-80%` drop stamps + peak profit columns (auto `rugged` / `potential` labels).
 ## North star
 
