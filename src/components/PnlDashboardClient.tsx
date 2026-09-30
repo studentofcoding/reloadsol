@@ -115,6 +115,29 @@ interface Summary {
   budgetAdequate: boolean
 }
 
+interface LedgerSummary {
+  positions: number
+  closed: number
+  open: number
+  realizedPnlSol: number
+  realizedPnlPct: number
+  costSol: number
+  won: number
+  lost: number
+  winRatePct: number
+  grossWinSol: number
+  grossLossSol: number
+  profitFactor: number | null
+}
+
+interface LedgerPayload {
+  success: boolean
+  records?: number
+  summary?: LedgerSummary
+  strategies?: Array<LedgerSummary & { strategyId: string }>
+  error?: string
+}
+
 interface RegimeRow {
   regimeTag: string | null
   trades: number
@@ -170,6 +193,7 @@ export default function PnlDashboardClient() {
   const [expanded, setExpanded] = useState<string | null>(null)
   const [dayTrades, setDayTrades] = useState<Record<string, DayTrade[]>>({})
   const [dayLoading, setDayLoading] = useState<string | null>(null)
+  const [ledger, setLedger] = useState<LedgerPayload | null>(null)
   const [climate, setClimate] = useState<Climate | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -241,6 +265,24 @@ export default function PnlDashboardClient() {
   useEffect(() => {
     void load()
   }, [load])
+
+  // Ledger view: realized PnL from the recorded sim cash flows, independent of the outcome rows.
+  useEffect(() => {
+    if (!from || !to) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const res = await fetch(`/api/pnl/ledger?from=${from}&to=${to}`)
+        const body = (await res.json()) as LedgerPayload
+        if (!cancelled) setLedger(body)
+      } catch {
+        if (!cancelled) setLedger(null)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [from, to])
 
   const summary = data?.summary
   const rows = data?.daily ?? []
@@ -378,6 +420,80 @@ export default function PnlDashboardClient() {
             value={`${summary?.trades ?? 0}`}
             sub={`${summary?.won ?? 0}W / ${summary?.lost ?? 0}L · ${pct(summary?.winRatePct ?? 0)} win · sized ${summary?.tradesWithSizeMult ?? 0}`}
           />
+        </section>
+
+        {/* Ledger: realized PnL from recorded cash flows, not from the outcome percentage */}
+        <section className="rounded border border-gray-800 bg-gray-900 p-4">
+          <div className="flex items-baseline justify-between">
+            <h2 className="font-semibold">Ledger (real cash flows)</h2>
+            <span className="text-xs text-gray-500">
+              {ledger?.records ?? 0} sim records · derived read-side, not stored
+            </span>
+          </div>
+          {ledger?.summary ? (
+            <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3">
+              <Stat
+                label="Realized PnL"
+                value={`${sol(ledger.summary.realizedPnlSol)} SOL`}
+                sub={`${pct(ledger.summary.realizedPnlPct)} on ${sol(ledger.summary.costSol, 3)} deployed`}
+                tone={tone(ledger.summary.realizedPnlSol)}
+              />
+              <Stat
+                label="Closed / open"
+                value={`${ledger.summary.closed} / ${ledger.summary.open}`}
+                sub={`${ledger.summary.won}W ${ledger.summary.lost}L · ${pct(ledger.summary.winRatePct, 1)} WR`}
+              />
+              <Stat
+                label="Profit factor"
+                value={ledger.summary.profitFactor != null ? ledger.summary.profitFactor.toFixed(2) : '—'}
+                sub={`+${sol(ledger.summary.grossWinSol)} / ${sol(ledger.summary.grossLossSol)} SOL`}
+                tone={(ledger.summary.profitFactor ?? 0) >= 1 ? 'text-emerald-400' : 'text-red-400'}
+              />
+              <Stat
+                label="Positions"
+                value={`${ledger.summary.positions}`}
+                sub="reconstructed from buys and sells"
+              />
+            </div>
+          ) : (
+            <p className="text-xs text-gray-500 mt-2">No ledger data for this range.</p>
+          )}
+          {(ledger?.strategies ?? []).length > 0 ? (
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-gray-400 text-left border-b border-gray-800">
+                    <th className="py-1.5 pr-4">Strategy</th>
+                    <th className="py-1.5 pr-4">Closed</th>
+                    <th className="py-1.5 pr-4">W / L</th>
+                    <th className="py-1.5 pr-4">WR</th>
+                    <th className="py-1.5 pr-4">Deployed</th>
+                    <th className="py-1.5 pr-4">Realized SOL</th>
+                    <th className="py-1.5">PF</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(ledger?.strategies ?? []).map((s) => (
+                    <tr key={s.strategyId} className="border-b border-gray-800/50">
+                      <td className="py-1.5 pr-4 text-gray-300">{s.strategyId}</td>
+                      <td className="py-1.5 pr-4 text-gray-300">{s.closed}</td>
+                      <td className="py-1.5 pr-4 text-gray-300">{s.won} / {s.lost}</td>
+                      <td className="py-1.5 pr-4 text-gray-300">{pct(s.winRatePct, 0)}</td>
+                      <td className="py-1.5 pr-4 text-gray-400">{sol(s.costSol, 3)}</td>
+                      <td className={`py-1.5 pr-4 ${tone(s.realizedPnlSol)}`}>{sol(s.realizedPnlSol)}</td>
+                      <td className="py-1.5 text-gray-400">{s.profitFactor != null ? s.profitFactor.toFixed(2) : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+          <p className="text-xs text-gray-500 mt-3">
+            Derived from <code>trading_records</code>: each position is reconstructed from its own
+            simulated buys and sells, scoped per strategy, with a full close ending the cycle. This is
+            the ground truth the outcome percentage does not carry — no modelled slippage applied yet,
+            so treat it as the &quot;before impact&quot; figure.
+          </p>
         </section>
 
         {/* Open positions, from the SL/TP tracker the sims register into */}

@@ -567,7 +567,11 @@ export async function insertStrategyOutcome(params: {
   // Shadow execution record: how this close would really have filled. Sims only — the live path
   // (is_simulated: false) must never wait on a quote. Omits the record when the entry size is not
   // in the features, rather than inventing one.
-  if (params.is_simulated && exitProvided && params.pnl_pct != null) {
+  // `is_simulated` DEFAULTS TO TRUE in the column (db/init/02-schema.sql:562), so a writer that
+  // omits it produces a simulated row while this parameter is undefined. Requiring a truthy value
+  // here silently excluded those writers from every downstream feature — the mismatch that made the
+  // execution record look unwired for four rounds. Match the column: only an explicit false is live.
+  if (params.is_simulated !== false && exitProvided && params.pnl_pct != null) {
     const priceRatio = 1 + Number(params.pnl_pct) / 100
     // The stake: what the caller passed, else derived from the sim ledger (the buys that opened the
     // position, the same construction the sims use). It is NOT in the features — measured over two
@@ -2151,6 +2155,63 @@ export async function loadOpenPaperPositions(limit = 500): Promise<Array<{
     [limit],
   ).catch(() => ({ rows: [] as Array<never> }))
   return rows as never
+}
+
+/**
+ * The sim ledger for a window, shaped for `summarizeLedgerPositions`.
+ *
+ * Only the fields the reconstruction needs are selected — the full `data` blob is heavy (the table is
+ * 265 MB overall), and pulling it for a month of sims would be tens of MB for no reason. `is_simulation`
+ * is filtered in SQL and the window bounds are built the same way as every other report query.
+ */
+export async function loadSimLedgerRecords(params: {
+  from: string
+  to: string
+  timeZone: string
+  limit?: number
+}): Promise<Array<{
+  operationType: string
+  timestamp: number
+  chain: string | null
+  tokens: unknown
+  solAmount: number | null
+  successCount: number | null
+  botStrategy: string | null
+}>> {
+  const timeZone = resolveReportTimeZone(params.timeZone)
+  const { rows } = await query<{
+    operationType: string | null
+    ts: number | null
+    chain: string | null
+    tokens: unknown
+    sol_amount: string | null
+    success_count: string | null
+    bot_strategy: string | null
+  }>(
+    `SELECT data->>'operationType' AS "operationType",
+            (extract(epoch from timestamp) * 1000)::bigint AS ts,
+            coalesce(data->>'chain', 'sol') AS chain,
+            data->'tokens' AS tokens,
+            data->>'solAmount' AS sol_amount,
+            data->>'successCount' AS success_count,
+            data->>'bot_strategy' AS bot_strategy
+       FROM trading_records
+      WHERE data->>'is_simulation' = 'true'
+        AND timestamp >= ($1::date::timestamp AT TIME ZONE $3)
+        AND timestamp <  (($2::date + 1)::timestamp AT TIME ZONE $3)
+      ORDER BY timestamp ASC
+      LIMIT $4`,
+    [params.from, params.to, timeZone, params.limit ?? 40000],
+  )
+  return rows.map((r) => ({
+    operationType: r.operationType ?? '',
+    timestamp: Number(r.ts ?? 0),
+    chain: r.chain,
+    tokens: r.tokens ?? [],
+    solAmount: r.sol_amount == null ? null : Number(r.sol_amount),
+    successCount: r.success_count == null ? null : Number(r.success_count),
+    botStrategy: r.bot_strategy,
+  }))
 }
 
 export async function aggregateTokenPnlByToken(params: {
