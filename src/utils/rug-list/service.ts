@@ -24,6 +24,75 @@ export type MarkTokenRugInput = {
   chain?: AppNetwork
 }
 
+/**
+ * Sources that are our own rules rather than a user's judgement. Everything else (live, signals,
+ * board, tracker, dlmm, freeview, …) is a user label and counts toward the dev's user-rug total.
+ * A new automated writer must be added here, or its verdicts will read as user signals.
+ */
+const AUTOMATED_RUG_SOURCES: ReadonlySet<string> = new Set(['gmgn-radar', 'concentration'])
+
+/** The token's creator: what the risk shadow already stored, else the Jupiter last resort. */
+async function resolveTokenDev(chain: string, tokenAddress: string): Promise<string | null> {
+  const stored = await queryOne<{ creator_address: string | null }>(
+    `SELECT creator_address FROM token_risk_features
+      WHERE chain = $1 AND token_address = $2`,
+    [chain, tokenAddress],
+  )
+  if (stored?.creator_address) return stored.creator_address
+
+  try {
+    const { resolveCreatorAddress } = await import('@/utils/dev-reputation-data')
+    return await resolveCreatorAddress({ chain, info: {}, mint: tokenAddress })
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Attribute a user rug label to the token's dev (display-only signal). Best-effort: the label write
+ * itself must never fail because of this, and an unknown creator is skipped rather than invented.
+ */
+async function attributeUserRug(input: {
+  chain: string
+  tokenAddress: string
+  symbol?: string | null
+  source: string
+}): Promise<void> {
+  if (AUTOMATED_RUG_SOURCES.has(input.source)) return
+  try {
+    const creatorAddress = await resolveTokenDev(input.chain, input.tokenAddress)
+    if (!creatorAddress) return
+    const { recordUserRug } = await import('@/strategies/risk-store')
+    await recordUserRug({
+      chain: input.chain,
+      creatorAddress,
+      tokenAddress: input.tokenAddress,
+      symbol: input.symbol,
+      source: input.source,
+    })
+  } catch (error) {
+    console.warn('[rug-list] user rug attribution failed', {
+      mint: input.tokenAddress,
+      error: error instanceof Error ? error.message : String(error),
+    })
+  }
+}
+
+/** Undo the attribution on unmark. A no-op when the token was never counted. */
+async function detachUserRug(chain: string, tokenAddress: string): Promise<void> {
+  try {
+    const creatorAddress = await resolveTokenDev(chain, tokenAddress)
+    if (!creatorAddress) return
+    const { clearUserRug } = await import('@/strategies/risk-store')
+    await clearUserRug({ chain, creatorAddress, tokenAddress })
+  } catch (error) {
+    console.warn('[rug-list] user rug detach failed', {
+      mint: tokenAddress,
+      error: error instanceof Error ? error.message : String(error),
+    })
+  }
+}
+
 async function syncTradingSignalRugged(
   tokenAddress: string,
   tokenSymbol: string | null | undefined,
@@ -141,6 +210,9 @@ export async function markTokenRug(input: MarkTokenRugInput) {
     })
   }
 
+  // Count it against the dev when a user is the one saying "rug".
+  await attributeUserRug({ chain, tokenAddress, symbol: tokenSymbol, source })
+
   return entry
 }
 
@@ -153,6 +225,7 @@ export async function unmarkTokenRug(
   await removeRugEntry(tokenAddress, c)
   await revertTradingSignalRugged(tokenAddress, c)
   await revertMcapTrackingRugged(tokenAddress)
+  await detachUserRug(c, tokenAddress)
 }
 
 /** Toggle rug state; returns new rugged status. */

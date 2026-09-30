@@ -77,6 +77,12 @@ CREATE TABLE IF NOT EXISTS dev_reputation (
 );
 ALTER TABLE dev_reputation
   ADD COLUMN IF NOT EXISTS tokens JSONB NOT NULL DEFAULT '[]'::jsonb;
+-- User-labelled rugs, kept separate from the automated GMGN aggregates above so "a user said rug"
+-- and "our rules said rug" stay distinguishable.
+ALTER TABLE dev_reputation
+  ADD COLUMN IF NOT EXISTS user_rug_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE dev_reputation
+  ADD COLUMN IF NOT EXISTS user_rug_tokens JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE token_risk_features
   ADD COLUMN IF NOT EXISTS rugcheck_lp_locked_usd NUMERIC;
 ALTER TABLE token_risk_features
@@ -441,6 +447,13 @@ function chipFromRow(row: RiskRow): RiskChip | null {
   }
 }
 
+export type UserRugRef = {
+  token_address: string
+  symbol: string | null
+  source: string
+  at: string
+}
+
 export type DevReputationRow = {
   creator_address: string
   verdict: DevVerdict
@@ -451,8 +464,108 @@ export type DevReputationRow = {
   ath_mc: number | null
   reasons: string[]
   tokens: DevTokenRef[] | null
+  /** Rugs labelled by a user (not by our own rules) — display only, no verdict impact yet. */
+  user_rug_count: number
+  user_rug_tokens: UserRugRef[] | null
   mode: string
   evaluated_at: string
+}
+
+/**
+ * Record a user-labelled rug against a token's dev.
+ *
+ * Keyed like every other dev aggregate (`chain + creator_address`) so the count sits beside
+ * `open_count`/`inner_count`. The stored token array is the source of truth for the count and is
+ * deduped by token address inside the statement, so re-marking the same token cannot double count
+ * and unmarking removes exactly one entry.
+ *
+ * Best-effort: a user's label write must never fail because of this.
+ */
+export async function recordUserRug(input: {
+  chain: string
+  creatorAddress: string
+  tokenAddress: string
+  symbol?: string | null
+  source: string
+}): Promise<number> {
+  try {
+    await ensureRiskTables()
+    const entry: UserRugRef = {
+      token_address: input.tokenAddress,
+      symbol: input.symbol ?? null,
+      source: input.source,
+      at: new Date().toISOString(),
+    }
+    const { rows } = await query<{ user_rug_count: number }>(
+      `WITH existing AS (
+         SELECT user_rug_tokens FROM dev_reputation
+          WHERE chain = $1 AND creator_address = $2
+       ), next AS (
+         SELECT CASE
+           WHEN EXISTS (
+             SELECT 1
+               FROM jsonb_array_elements(
+                 COALESCE((SELECT user_rug_tokens FROM existing), '[]'::jsonb)
+               ) e
+              WHERE e->>'token_address' = $3
+           ) THEN COALESCE((SELECT user_rug_tokens FROM existing), '[]'::jsonb)
+           ELSE COALESCE((SELECT user_rug_tokens FROM existing), '[]'::jsonb)
+                || jsonb_build_array($4::jsonb)
+         END AS tokens
+       )
+       INSERT INTO dev_reputation (chain, creator_address, user_rug_tokens, user_rug_count)
+       SELECT $1, $2, tokens, jsonb_array_length(tokens) FROM next
+       ON CONFLICT (chain, creator_address) DO UPDATE SET
+         user_rug_tokens = EXCLUDED.user_rug_tokens,
+         user_rug_count = EXCLUDED.user_rug_count
+       RETURNING user_rug_count`,
+      [input.chain, input.creatorAddress, input.tokenAddress, JSON.stringify(entry)],
+    )
+    return rows[0]?.user_rug_count ?? 0
+  } catch (error) {
+    console.warn(
+      '[risk-store] recordUserRug failed:',
+      error instanceof Error ? error.message : String(error),
+    )
+    return 0
+  }
+}
+
+/** Remove a user rug (unmark/toggle). A no-op when the token was never counted. */
+export async function clearUserRug(input: {
+  chain: string
+  creatorAddress: string
+  tokenAddress: string
+}): Promise<number> {
+  try {
+    await ensureRiskTables()
+    const { rows } = await query<{ user_rug_count: number }>(
+      `WITH next AS (
+         SELECT COALESCE(jsonb_agg(e), '[]'::jsonb) AS tokens
+           FROM jsonb_array_elements(
+             COALESCE((
+               SELECT user_rug_tokens FROM dev_reputation
+                WHERE chain = $1 AND creator_address = $2
+             ), '[]'::jsonb)
+           ) e
+          WHERE e->>'token_address' <> $3
+       )
+       UPDATE dev_reputation d
+          SET user_rug_tokens = next.tokens,
+              user_rug_count = jsonb_array_length(next.tokens)
+         FROM next
+        WHERE d.chain = $1 AND d.creator_address = $2
+       RETURNING d.user_rug_count`,
+      [input.chain, input.creatorAddress, input.tokenAddress],
+    )
+    return rows[0]?.user_rug_count ?? 0
+  } catch (error) {
+    console.warn(
+      '[risk-store] clearUserRug failed:',
+      error instanceof Error ? error.message : String(error),
+    )
+    return 0
+  }
 }
 
 /** Dev list for observability (`GET /api/dev/reputation`). */
@@ -473,7 +586,7 @@ async function queryMany(
 ): Promise<DevReputationRow[]> {
   const cap = Math.min(Math.max(Math.floor(limit), 1), 500)
   const COLS = `creator_address, verdict, sample, open_count, inner_count,
-    graduation_ratio, ath_mc, reasons, tokens, mode, evaluated_at`
+    graduation_ratio, ath_mc, reasons, tokens, user_rug_count, user_rug_tokens, mode, evaluated_at`
   const { rows } = verdict
     ? await query<DevReputationRow>(
         `SELECT ${COLS} FROM dev_reputation WHERE verdict = $1

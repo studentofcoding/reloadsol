@@ -15,6 +15,13 @@ type DevTokenRef = {
   createdAt: number | null
 }
 
+type UserRugRef = {
+  token_address: string
+  symbol: string | null
+  source: string
+  at: string
+}
+
 type DevRow = {
   creator_address: string
   verdict: 'ban' | 'good' | 'inconclusive' | 'unknown'
@@ -25,6 +32,9 @@ type DevRow = {
   ath_mc: number | null
   reasons: string[] | null
   tokens: DevTokenRef[] | null
+  /** Rugs a user labelled (not our own rules). Display only — no verdict impact yet. */
+  user_rug_count?: number
+  user_rug_tokens?: UserRugRef[] | null
   mode: string
   evaluated_at: string
 }
@@ -159,6 +169,16 @@ function DevList({ verdict, title, blurb }: { verdict: 'good' | 'ban'; title: st
                   created {dev.sample} · {dev.open_count} grad · {fmtPct(dev.graduation_ratio)}
                 </span>
                 <span className="text-[11px] text-gray-400">ATH {fmtUsd(dev.ath_mc)}</span>
+                {dev.user_rug_count ? (
+                  <span
+                    className="rounded border border-red-900/60 bg-red-950/40 px-1 py-0.5 text-[10px] text-red-300"
+                    title={(dev.user_rug_tokens ?? [])
+                      .map((t) => `${t.symbol ?? short(t.token_address)} (${t.source})`)
+                      .join(', ')}
+                  >
+                    {dev.user_rug_count} user rug{dev.user_rug_count === 1 ? '' : 's'}
+                  </span>
+                ) : null}
                 <span className="ml-auto text-[10px] text-gray-500">{open ? '▲' : '▼'} top {dev.tokens?.length ?? 0}</span>
               </button>
               {dev.reasons && dev.reasons.length > 0 ? (
@@ -187,9 +207,31 @@ function DevList({ verdict, title, blurb }: { verdict: 'good' | 'ban'; title: st
                 </div>
               ) : null}
               {open ? (
-                <div className="overflow-x-auto border-t border-gray-800 bg-black/20">
-                  <DevTokens tokens={dev.tokens ?? []} />
-                </div>
+                <>
+                  {dev.user_rug_tokens && dev.user_rug_tokens.length > 0 ? (
+                    <div className="flex flex-wrap gap-1 border-t border-gray-800 bg-black/20 px-2 py-1.5">
+                      <span className="text-[10px] uppercase tracking-wide text-red-400/80">
+                        user-labelled rugs
+                      </span>
+                      {dev.user_rug_tokens.map((t) => (
+                        <a
+                          key={`${t.token_address}-${t.source}`}
+                          href={`https://gmgn.ai/sol/token/${t.token_address}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          title={`${t.source} · ${t.at}`}
+                          className="rounded border border-red-900/60 bg-red-950/30 px-1 py-0.5 text-[10px] text-red-200 hover:text-white"
+                        >
+                          {t.symbol ?? short(t.token_address)}
+                          <span className="text-red-400/70"> · {t.source}</span>
+                        </a>
+                      ))}
+                    </div>
+                  ) : null}
+                  <div className="overflow-x-auto border-t border-gray-800 bg-black/20">
+                    <DevTokens tokens={dev.tokens ?? []} />
+                  </div>
+                </>
               ) : null}
             </div>
           )

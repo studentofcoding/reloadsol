@@ -416,6 +416,36 @@ function formatError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/**
+ * POST and read the body once, checking the status and content-type before parsing.
+ *
+ * The backfill can outlive the proxy budget, and both nginx and Cloudflare answer that with an HTML
+ * error page — parsing it as JSON is what surfaced as `Unexpected token '<', "<!DOCTYPE "...`,
+ * which hid the real status. Returns `json: null` plus the body snippet for a non-JSON answer.
+ */
+async function postJson<T>(
+  url: string,
+): Promise<{ ok: boolean; status: number; json: T | null; snippet: string }> {
+  const res = await fetch(url, { method: "POST", credentials: "include" });
+  const contentType = res.headers.get("content-type") ?? "";
+  const body = await res.text();
+  if (!contentType.includes("application/json")) {
+    return { ok: res.ok, status: res.status, json: null, snippet: body.slice(0, 120) };
+  }
+  try {
+    return { ok: res.ok, status: res.status, json: JSON.parse(body) as T, snippet: "" };
+  } catch {
+    return { ok: res.ok, status: res.status, json: null, snippet: body.slice(0, 120) };
+  }
+}
+
+/** A gateway cut (nginx 504 / Cloudflare 524) means "narrow the scope", not "the label logic broke". */
+function backfillHttpHint(status: number): string {
+  return status === 504 || status === 524
+    ? " — the request outlived the proxy; scope it to a domain or retry"
+    : "";
+}
+
 function formatRelativeTime(date: Date | null, nowMs: number): string {
   if (!date) return "";
   const secs = Math.floor((nowMs - date.getTime()) / 1000);
@@ -951,19 +981,22 @@ export default function StrategyAdminHub({
       if (reportDomain) params.set("domain", reportDomain);
       if (reportStrategyId) params.set("strategyId", reportStrategyId);
 
-      const previewRes = await fetch(
-        `/api/strategies/ml/backfill-labels?${params.toString()}`,
-        { method: "POST", credentials: "include" },
-      );
-      const previewJson = (await previewRes.json()) as {
+      const preview = await postJson<{
         success?: boolean;
         error?: string;
         preview?: Record<string, number>;
         skipped_manual?: number;
-      };
-      if (!previewRes.ok || !previewJson.success) {
-        throw new Error(previewJson.error || "Backfill preview failed");
+      }>(`/api/strategies/ml/backfill-labels?${params.toString()}`);
+      if (!preview.ok || !preview.json?.success) {
+        throw new Error(
+          preview.json?.error
+            ? `${preview.json.error}${backfillHttpHint(preview.status)}`
+            : `Backfill preview failed (HTTP ${preview.status})${backfillHttpHint(
+                preview.status,
+              )}${preview.snippet ? ` — ${preview.snippet}` : ""}`,
+        );
       }
+      const previewJson = preview.json;
 
       const p = previewJson.preview ?? {};
       const previewDetail = [
@@ -998,27 +1031,39 @@ export default function StrategyAdminHub({
 
       setBackfillPhase("running");
       params.delete("dry_run");
-      const runRes = await fetch(
-        `/api/strategies/ml/backfill-labels?${params.toString()}`,
-        { method: "POST", credentials: "include" },
-      );
-      const runJson = (await runRes.json()) as {
+      const run = await postJson<{
         success?: boolean;
         error?: string;
         updated?: number;
+        unchanged?: number;
         skipped_manual?: number;
-      };
-      if (!runRes.ok || !runJson.success) {
-        throw new Error(runJson.error || "Backfill failed");
+        truncated?: boolean;
+      }>(`/api/strategies/ml/backfill-labels?${params.toString()}`);
+      if (!run.ok || !run.json?.success) {
+        throw new Error(
+          run.json?.error
+            ? `${run.json.error}${backfillHttpHint(run.status)}`
+            : `Backfill failed (HTTP ${run.status})${backfillHttpHint(run.status)}${
+                run.snippet ? ` — ${run.snippet}` : ""
+              }`,
+        );
       }
+      const runJson = run.json;
 
       await strategiesQuery.refetch();
+      const runDetail = [
+        runJson.unchanged ? `${runJson.unchanged} already current` : null,
+        runJson.skipped_manual
+          ? `${runJson.skipped_manual} manual rows skipped`
+          : null,
+        runJson.truncated ? "scope capped — run again for the rest" : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
       showToast(
         "success",
         `Backfilled ${runJson.updated ?? 0} outcomes`,
-        runJson.skipped_manual
-          ? `${runJson.skipped_manual} manual rows skipped`
-          : undefined,
+        runDetail || undefined,
       );
     } catch (e) {
       showToast("error", "Backfill failed", formatError(e));

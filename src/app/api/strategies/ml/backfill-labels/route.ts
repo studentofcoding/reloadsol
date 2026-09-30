@@ -4,6 +4,12 @@ import { CLOSED_LOOP_PRINCIPAL_IDS } from '@/strategies/closed-loop-ml'
 import { isMlRouteAuthorized } from '@/strategies/ml-api-auth'
 import type { StrategyDomain } from '@/strategies/types'
 
+/**
+ * The scope is usually the whole table (~82k outcomes) and the write pass is chunked, so give it
+ * room above the proxy budget rather than being cut into an HTML gateway page.
+ */
+export const maxDuration = 300
+
 export async function POST(request: NextRequest) {
   const authError = isMlRouteAuthorized(request)
   if (authError) {

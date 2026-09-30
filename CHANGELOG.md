@@ -8,6 +8,48 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the ML label backfill no longer outlives the proxy, plus user rugs counted per dev
+
+**Backfill.** `POST /api/strategies/ml/backfill-labels` failed with `Unexpected token '<', "<!DOCTYPE "...`.
+Measured first: the labelling itself is fine — an `mcap_tracker`-scoped run labelled **4,707 rows in
+12.3 s** — but the request is **unbounded**: `SELECT *` over every matching outcome (82,577 rows
+across domains; `trending_bot` alone is 77,426) and then **one `UPDATE` plus one prediction resolution
+per row** (2–6 round trips each), with no "did it change?" check. Extrapolated, the unscoped run needs
+~3.5 minutes, and nginx's `location /api/` inherits the **60 s** default `proxy_read_timeout` — so it
+returned an HTML gateway page. The UI called `res.json()` *before* checking `res.ok`, which is how that
+became a JSON parse error.
+
+- `backfillOutcomeLabels` is one pass now: read once, compute in memory, **skip rows whose labels
+  already match**, then write in chunks of 500 with a single set-based `UPDATE … FROM (SELECT
+  unnest(…))` per chunk, plus one **batched** prediction resolution per chunk
+  (`resolvePredictionsForClosedOutcomes` — new: one SELECT, one set-based resolution update, one merged
+  stamp update, a rollup per distinct run) instead of 2–6 round trips per row. Predictions on the same
+  outcome have their stamp patches merged in JS so the result matches the sequential writer.
+- The route declares `maxDuration = 300` (its siblings already did) and reports `unchanged` next to
+  `updated`/`skipped_manual`.
+- The UI checks status and `content-type` **before** parsing, so a gateway page reads as
+  `Backfill failed (HTTP 504) — the request outlived the proxy; scope it to a domain or retry`, and the
+  success toast says how many rows were already current.
+- `nginx/conf.d/reloadsol.conf`: `proxy_read_timeout`/`proxy_send_timeout 120s` on `location /api/` as a
+  safety net — the efficiency work is the fix; this stops one slow-but-working request being misread as
+  a client bug.
+
+**User-labelled rugs, counted per dev (display only).** Labelling a token RUG from `/dev/signals`, the
+Live-tab button, the Tracker/Board dropdowns, Freeview, `/api/rug` or DLMM now also counts against that
+token's **developer**, beside the automated GMGN aggregates.
+
+- `db/init/53-dev-user-rugs.sql` (mirrored in `risk-store.ts`'s runtime `ENSURE_SQL`) adds
+  `user_rug_count` + `user_rug_tokens` to `dev_reputation`, keyed like every other dev aggregate on
+  `(chain, creator_address)`.
+- `recordUserRug` / `clearUserRug` dedupe **inside the statement** by token address and derive the count
+  from the stored array, so re-marking cannot double count and unmarking removes exactly one entry.
+- Attribution hangs off the single write path (`markTokenRug` / `unmarkTokenRug`), so every surface is
+  covered with no client change. Automated writers (`concentration`, `gmgn-radar`) are excluded, and a
+  token whose creator cannot be resolved is skipped rather than guessed.
+- Surfaced in `/dev/dev-reputation` (a `N user rugs` chip, with the tokens in the expanded row) and in
+  `GET /api/dev/reputation`. **The verdict is deliberately unchanged** — `scoreDevReputation` does not
+  read the count until the data justifies enforcement behind `DEV_REPUTATION_MODE`.
+
 ### Changed — the mcap sim loads the entry OHLC gate once per mint per run
 
 A full `phase=all` run measured 186 s (manage 29.8 s, open 126.5 s). The interval is **900 s

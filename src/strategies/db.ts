@@ -870,6 +870,40 @@ export async function loadOutcomesForMlDataset(params?: {
   return enrichOutcomeSymbols(deduped)
 }
 
+/** The feature keys `applyAutoOutcomeLabels` writes — a row already matching them is skipped. */
+const AUTO_LABEL_KEYS = [
+  'training_class',
+  'ml_label',
+  'ml_condition',
+  'ml_win',
+  'ml_r_bucket',
+  'ml_note',
+] as const
+
+/** Rows written per statement. One round trip per 500 rows instead of one per row. */
+const LABEL_WRITE_CHUNK = 500
+
+function autoLabelsEqual(
+  before: Record<string, unknown> | null | undefined,
+  after: Record<string, unknown> | null | undefined,
+): boolean {
+  for (const key of AUTO_LABEL_KEYS) {
+    if (JSON.stringify(before?.[key] ?? null) !== JSON.stringify(after?.[key] ?? null)) {
+      return false
+    }
+  }
+  return true
+}
+
+/**
+ * Recompute the auto ML labels.
+ *
+ * Rewritten for the table it actually runs on (~82k outcomes): one read, one in-memory pass that
+ * keeps only rows whose labels changed, then set-based chunked writes plus one batched prediction
+ * resolution per chunk. The previous version did one UPDATE and one `resolvePredictionsFor…`
+ * per row, with no change check, which is why the unscoped run outlived nginx's 60 s read timeout
+ * and surfaced as an HTML gateway page.
+ */
 export async function backfillOutcomeLabels(params?: {
   domain?: StrategyDomain
   strategyId?: string
@@ -877,6 +911,7 @@ export async function backfillOutcomeLabels(params?: {
   dryRun?: boolean
 }): Promise<{
   updated: number
+  unchanged: number
   skipped_manual: number
   preview: Record<'0' | '1' | '2' | '3' | '4' | 'null', number>
 }> {
@@ -894,8 +929,17 @@ export async function backfillOutcomeLabels(params?: {
     '4': 0,
     null: 0,
   }
-  let updated = 0
+  // The preview tallies every row; only `pending` is written.
+  const pending: Array<{
+    id: string
+    strategy_id: string
+    token_address: string
+    features: Record<string, unknown>
+    pnl_pct: number | null
+    status: string | null
+  }> = []
   let skippedManual = 0
+  let unchanged = 0
 
   for (const row of rows) {
     if (row.features?.ml_manual === true) {
@@ -912,24 +956,54 @@ export async function backfillOutcomeLabels(params?: {
     }
 
     if (params?.dryRun) continue
+    if (autoLabelsEqual(row.features, nextFeatures)) {
+      unchanged += 1
+      continue
+    }
+    pending.push({
+      id: row.id,
+      strategy_id: row.strategy_id,
+      token_address: row.token_address ?? '',
+      features: nextFeatures,
+      pnl_pct: row.pnl_pct,
+      status: row.status,
+    })
+  }
 
-    try {
-      await query(
-        `UPDATE strategy_outcomes SET features = $2 WHERE id = $1`,
-        [row.id, JSON.stringify(nextFeatures)],
-      )
-      updated += 1
-      if (row.token_address) {
+  let updated = 0
+  if (!params?.dryRun) {
+    for (let i = 0; i < pending.length; i += LABEL_WRITE_CHUNK) {
+      const chunk = pending.slice(i, i + LABEL_WRITE_CHUNK)
+      try {
+        await query(
+          `UPDATE strategy_outcomes o
+              SET features = v.features::jsonb
+             FROM (SELECT unnest($1::uuid[]) AS id, unnest($2::jsonb[]) AS features) v
+            WHERE o.id = v.id`,
+          [chunk.map((row) => row.id), chunk.map((row) => JSON.stringify(row.features))],
+        )
+        updated += chunk.length
+      } catch (error) {
+        console.warn(
+          '[strategies/db] backfillOutcomeLabels chunk write failed:',
+          errorMessage(error),
+        )
+      }
+
+      const resolvable = chunk.filter((row) => row.token_address)
+      if (resolvable.length > 0) {
         try {
-          const { resolvePredictionsForClosedOutcome } = await import('./eval-engine-db')
-          await resolvePredictionsForClosedOutcome({
-            outcomeId: row.id,
-            mint: row.token_address,
-            strategyId: row.strategy_id,
-            features: nextFeatures,
-            pnlPct: row.pnl_pct,
-            status: row.status,
-          })
+          const { resolvePredictionsForClosedOutcomes } = await import('./eval-engine-db')
+          await resolvePredictionsForClosedOutcomes(
+            resolvable.map((row) => ({
+              outcomeId: row.id,
+              mint: row.token_address,
+              strategyId: row.strategy_id,
+              features: row.features,
+              pnlPct: row.pnl_pct,
+              status: row.status,
+            })),
+          )
         } catch (error) {
           console.warn(
             '[strategies/db] resolve ML predictions on backfill failed:',
@@ -937,15 +1011,10 @@ export async function backfillOutcomeLabels(params?: {
           )
         }
       }
-    } catch (error) {
-      console.warn(
-        '[strategies/db] backfillOutcomeLabels update failed:',
-        errorMessage(error),
-      )
     }
   }
 
-  return { updated, skipped_manual: skippedManual, preview }
+  return { updated, unchanged, skipped_manual: skippedManual, preview }
 }
 
 async function enrichOutcomeSymbols(
