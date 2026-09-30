@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { summarizeLedger, summarizeLedgerPositions } from './ledger-pnl'
+import { modelledDragSol, summarizeLedger, summarizeLedgerPositions } from './ledger-pnl'
+import { resolveExecutionParams } from './execution-model'
 import type { TrackingRecord } from '@/utils/trading-tracker'
 
 /**
@@ -161,5 +162,62 @@ describe('summarizeLedger', () => {
     expect(empty.realizedPnlSol).toBe(0)
     expect(empty.winRatePct).toBe(0)
     expect(empty.profitFactor).toBeNull()
+  })
+})
+
+describe('modelledDragSol', () => {
+  it('is a real cost for a real position, and grows with size', () => {
+    const small = modelledDragSol(0.005)
+    const large = modelledDragSol(0.05)
+    expect(small).toBeGreaterThan(0)
+    expect(large).toBeGreaterThan(small)
+  })
+
+  it('is zero for a non-positive stake rather than NaN', () => {
+    for (const cost of [0, -1, Number.NaN]) {
+      expect(modelledDragSol(cost)).toBe(0)
+    }
+  })
+
+  it('is bounded by the stake plus the FIXED costs, which do not scale down', () => {
+    // The first version of this test asserted the drag is always smaller than the stake, and it
+    // failed — correctly. The fixed priority/tip cost is per side, so at the default
+    // SIM_PRIORITY_FEE_QUOTE=0.002 a 0.001 SOL position pays several times its own size in fixed
+    // costs. That is the model telling the truth about small positions rather than a bug, so the
+    // bound is stake + both sides' fixed cost.
+    const fixed = resolveExecutionParams().priorityFeeQuote * 2
+    for (const cost of [0.001, 0.005, 0.05, 0.5]) {
+      expect(modelledDragSol(cost)).toBeLessThan(cost + fixed + 1e-9)
+    }
+  })
+
+  it('shows the fixed cost dominating the smallest stake', () => {
+    // Worth pinning, because it is a real constraint on position sizing: at 0.005 SOL with the
+    // default 0.002 per side, the round trip alone consumes most of the position.
+    const fixed = resolveExecutionParams().priorityFeeQuote * 2
+    expect(modelledDragSol(0.005)).toBeGreaterThan(fixed * 0.9)
+  })
+})
+
+describe('summarizeLedger net figures', () => {
+  it('subtracts the modelled drag from the realized result', () => {
+    const positions = summarizeLedgerPositions([
+      record({ ts: 1_000, op: 'buy', mint: 'A', sol: 0.05, tokens: 100 }),
+      record({ ts: 2_000, op: 'close', mint: 'A', sol: 0.06, tokens: 100 }),
+    ])
+    const s = summarizeLedger(positions)
+    expect(s.realizedPnlSol).toBeCloseTo(0.01, 8)
+    expect(s.modelledDragSol).toBeGreaterThan(0)
+    expect(s.realizedNetSol).toBeCloseTo(0.01 - s.modelledDragSol, 10)
+    expect(s.realizedNetSol).toBeLessThan(s.realizedPnlSol)
+  })
+
+  it('applies no drag when nothing closed', () => {
+    const s = summarizeLedger(
+      summarizeLedgerPositions([record({ ts: 1_000, op: 'buy', mint: 'A', sol: 0.05, tokens: 100 })]),
+    )
+    expect(s.closed).toBe(0)
+    expect(s.modelledDragSol).toBe(0)
+    expect(s.realizedNetSol).toBe(0)
   })
 })

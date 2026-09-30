@@ -16,6 +16,13 @@
  * Amounts are in the chain's native unit (SOL for sol, ETH for the Robinhood twin) — never summed
  * across chains.
  */
+import {
+  computeBuyFill,
+  computeSellFill,
+  resolveDepth,
+  resolveExecutionParams,
+  type ExecutionParams,
+} from './execution-model'
 import type { TrackingRecord } from '@/utils/trading-tracker'
 
 export interface LedgerPosition {
@@ -162,6 +169,29 @@ export function summarizeLedgerPositions(records: TrackingRecord[]): LedgerPosit
   return done.sort((a, b) => (b.closedAt ?? b.openedAt) - (a.closedAt ?? a.openedAt))
 }
 
+/**
+ * The execution model's round-trip cost for a position of this size, at the assumed depth.
+ *
+ * Applied read-side, so the ledger view can show realized (as recorded) and modelled-net (after
+ * slippage, impact, fees and priority cost) side by side — without touching any write path.
+ */
+export function modelledDragSol(costSol: number, params?: ExecutionParams): number {
+  if (!(costSol > 0)) return 0
+  const exec = params ?? resolveExecutionParams()
+  const depth = resolveDepth({}, exec)
+  const entry = computeBuyFill({ side: 'buy', spotPrice: 1, notionalQuote: costSol, depth, params: exec })
+  const exit = computeSellFill({
+    side: 'sell',
+    spotPrice: 1,
+    notionalQuote: 0,
+    depth,
+    params: exec,
+    tokenAmount: entry.tokens,
+  })
+  // A flat round trip is a pure cost: what goes in minus what comes back.
+  return Math.max(0, entry.costQuote - exit.proceedsQuote)
+}
+
 export interface LedgerSummary {
   positions: number
   closed: number
@@ -178,6 +208,10 @@ export interface LedgerSummary {
   grossWinSol: number
   grossLossSol: number
   profitFactor: number | null
+  /** Sum of the modelled execution cost across the positions counted above. */
+  modelledDragSol: number
+  /** Realized minus modelled drag: what the same trades would net after slippage and impact. */
+  realizedNetSol: number
 }
 
 export function summarizeLedger(positions: LedgerPosition[]): LedgerSummary {
@@ -186,6 +220,7 @@ export function summarizeLedger(positions: LedgerPosition[]): LedgerSummary {
   const grossLossSol = closed.filter((p) => p.pnlSol < 0).reduce((s, p) => s + p.pnlSol, 0)
   const realizedCost = closed.reduce((s, p) => s + p.costSol, 0)
   const realizedPnlSol = grossWinSol + grossLossSol
+  const drag = closed.reduce((s, p) => s + modelledDragSol(p.costSol), 0)
   return {
     positions: positions.length,
     closed: closed.length,
@@ -201,5 +236,7 @@ export function summarizeLedger(positions: LedgerPosition[]): LedgerSummary {
     grossWinSol,
     grossLossSol,
     profitFactor: grossLossSol < 0 ? grossWinSol / Math.abs(grossLossSol) : null,
+    modelledDragSol: drag,
+    realizedNetSol: realizedPnlSol - drag,
   }
 }

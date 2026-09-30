@@ -128,6 +128,8 @@ interface LedgerSummary {
   grossWinSol: number
   grossLossSol: number
   profitFactor: number | null
+  modelledDragSol: number
+  realizedNetSol: number
 }
 
 interface LedgerPayload {
@@ -450,9 +452,10 @@ export default function PnlDashboardClient() {
                 tone={(ledger.summary.profitFactor ?? 0) >= 1 ? 'text-emerald-400' : 'text-red-400'}
               />
               <Stat
-                label="Positions"
-                value={`${ledger.summary.positions}`}
-                sub="reconstructed from buys and sells"
+                label="After modelled impact"
+                value={`${sol(ledger.summary.realizedNetSol)} SOL`}
+                sub={`−${sol(ledger.summary.modelledDragSol, 4)} SOL of modelled slippage, impact, fees and priority cost`}
+                tone={tone(ledger.summary.realizedNetSol)}
               />
             </div>
           ) : (
@@ -469,6 +472,7 @@ export default function PnlDashboardClient() {
                     <th className="py-1.5 pr-4">WR</th>
                     <th className="py-1.5 pr-4">Deployed</th>
                     <th className="py-1.5 pr-4">Realized SOL</th>
+                    <th className="py-1.5 pr-4">Net (modelled)</th>
                     <th className="py-1.5">PF</th>
                   </tr>
                 </thead>
@@ -481,6 +485,7 @@ export default function PnlDashboardClient() {
                       <td className="py-1.5 pr-4 text-gray-300">{pct(s.winRatePct, 0)}</td>
                       <td className="py-1.5 pr-4 text-gray-400">{sol(s.costSol, 3)}</td>
                       <td className={`py-1.5 pr-4 ${tone(s.realizedPnlSol)}`}>{sol(s.realizedPnlSol)}</td>
+                      <td className={`py-1.5 pr-4 ${tone(s.realizedNetSol)}`}>{sol(s.realizedNetSol)}</td>
                       <td className="py-1.5 text-gray-400">{s.profitFactor != null ? s.profitFactor.toFixed(2) : '—'}</td>
                     </tr>
                   ))}

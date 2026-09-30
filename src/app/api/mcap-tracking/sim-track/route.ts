@@ -523,12 +523,17 @@ async function closeSimPosition(params: {
   const exitMcap = params.snapshot.current_mcap
   const pnlPct = computeMcapSimPnlPct(params.entryMcap, exitMcap)
   const solPrice = await getNativeUsd(params.chain)
-  const sellPriceUsd = 0.000001
   const remaining = cycle.remainingTokenAmount
-  const solReceived =
-    sellPriceUsd && solPrice > 0
-      ? (remaining * sellPriceUsd) / solPrice
-      : cycle.totalSolBought * (1 + pnlPct / 100)
+  // Value the exit at the position's cost × the realized price ratio — the sim's own definition of
+  // what it is worth. This used the constant `sellPriceUsd = 0.000001`, so every sell record carried
+  // a NOMINAL SOL amount: the ledger then saw buys at real size against sells worth ~0, which is why
+  // this strategy family showed 0-1% win rates over hundreds of positions while its mcap-ratio
+  // outcome looked like a winner. One placeholder price, two contradictory stories.
+  const solReceived = Math.max(0, cycle.totalSolBought * (1 + pnlPct / 100))
+  // The implied exit price, consistent with that amount. No tokens or no SOL price means no
+  // meaningful price — left undefined rather than invented.
+  const sellPriceUsd =
+    remaining > 0 && solPrice > 0 ? (solReceived * solPrice) / remaining : undefined
 
   const record = buildTradingRecord({
     walletAddress: simWallet,
