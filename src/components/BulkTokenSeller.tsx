@@ -46,6 +46,7 @@ import {
   sellAmountRaw,
   sellQuoteAllFailedBanner,
 } from "@/utils/sell-quote-fallback";
+import { isQuoteUsable, quoteMatchesAmount } from "@/utils/quote-freshness";
 import { JUPITER_MAX_RPS } from "@/utils/jupiter-rps";
 import TokenAddressSearchField from "./TokenAddressSearchField";
 import { walletsMatch } from "@/utils/rh-wallet-holdings";
@@ -426,17 +427,25 @@ export default function BulkTokenSeller({
   const feeRates = getAllFeeRates();
 
   // Quote utilities
+  /**
+   * The quote map is keyed by MINT, but a quote is only meaningful for the amount it was taken at.
+   * Passing `amount` makes the lookup amount-aware: a quote fetched for a previous amount is treated
+   * as absent, so the estimate re-quotes instead of reporting a stale number. That mismatch is what
+   * showed ~4 SOL for a position whose live quote was ~6.46 — the USD side was fresh, the SOL side
+   * was a quote for an older quantity, and nothing compared the two.
+   */
   const getQuoteForToken = useCallback(
-    (mintAddress: string): QuoteData | null => {
-      return quotes[mintAddress] || null;
+    (mintAddress: string, amount?: string): QuoteData | null => {
+      const quote = quotes[mintAddress] || null;
+      if (!quote) return null;
+      if (amount !== undefined && !quoteMatchesAmount(quote, amount)) return null;
+      return quote;
     },
     [quotes],
   );
 
-  const isQuoteValid = useCallback((quote: QuoteData | null): boolean => {
-    if (!quote) return false;
-    const age = Date.now() - quote.timestamp;
-    return age < 30000; // Valid for 30 seconds
+  const isQuoteValid = useCallback((quote: QuoteData | null, amount?: string): boolean => {
+    return isQuoteUsable(quote, amount);
   }, []);
 
   // Quote fetching functions for different providers
@@ -1087,7 +1096,8 @@ export default function BulkTokenSeller({
     }
     const fromQuotes = selectedTokens.map((t) => {
       const q = quotes[t.mintAddress];
-      return q && isQuoteValid(q) ? q.priceImpact : null;
+      const amount = sellAmountRaw(t.sellAmount);
+      return q && isQuoteValid(q, amount) ? q.priceImpact : null;
     });
     const worst = worstImpactPct(fromQuotes);
     if (worst != null) return resolveTradeSlippageBps(slippage, worst);
@@ -3431,10 +3441,8 @@ export default function BulkTokenSeller({
                           <div className="text-green-400 font-bold text-lg">
                             {selectedTokens
                               .reduce((total, token) => {
-                                const quote = getQuoteForToken(
-                                  token.mintAddress,
-                                );
-                                if (quote && isQuoteValid(quote)) {
+                                const quote = getQuoteForToken(token.mintAddress, sellAmountRaw(token.sellAmount));
+                                if (quote && isQuoteValid(quote, sellAmountRaw(token.sellAmount))) {
                                   return (
                                     total +
                                     parseFloat(quote.outAmount) /
@@ -3455,19 +3463,15 @@ export default function BulkTokenSeller({
                             {selectedTokens.length > 0
                               ? (
                                   selectedTokens.reduce((total, token) => {
-                                    const quote = getQuoteForToken(
-                                      token.mintAddress,
-                                    );
-                                    if (quote && isQuoteValid(quote)) {
+                                    const quote = getQuoteForToken(token.mintAddress, sellAmountRaw(token.sellAmount));
+                                    if (quote && isQuoteValid(quote, sellAmountRaw(token.sellAmount))) {
                                       return total + quote.priceImpact;
                                     }
                                     return total;
                                   }, 0) /
                                   selectedTokens.filter((token) => {
-                                    const quote = getQuoteForToken(
-                                      token.mintAddress,
-                                    );
-                                    return quote && isQuoteValid(quote);
+                                    const quote = getQuoteForToken(token.mintAddress, sellAmountRaw(token.sellAmount));
+                                    return quote && isQuoteValid(quote, sellAmountRaw(token.sellAmount));
                                   }).length
                                 ).toFixed(2)
                               : "0.00"}
@@ -3481,10 +3485,8 @@ export default function BulkTokenSeller({
                           <div className="text-blue-400 font-bold text-lg">
                             {
                               selectedTokens.filter((token) => {
-                                const quote = getQuoteForToken(
-                                  token.mintAddress,
-                                );
-                                return quote && isQuoteValid(quote);
+                                const quote = getQuoteForToken(token.mintAddress, sellAmountRaw(token.sellAmount));
+                                return quote && isQuoteValid(quote, sellAmountRaw(token.sellAmount));
                               }).length
                             }
                             /{selectedTokens.length}
@@ -3555,40 +3557,44 @@ export default function BulkTokenSeller({
                               ? `Sell ${n} ${tokenWord} → ${sellOut.symbol} (~$${usd.toLocaleString(undefined, { maximumFractionDigits: 2 })})`
                               : `Sell ${n} ${tokenWord} → ${sellOut.symbol}`;
                           }
-                          const totalOut = selectedTokens.reduce(
+                          // `null` while any selected token lacks a quote for its CURRENT amount:
+                          // a partial sum must never be presented as the total.
+                          const totalOut = selectedTokens.reduce<number | null>(
                             (total, token) => {
+                              if (total === null) return null;
                               const quote = getQuoteForToken(
                                 token.mintAddress,
+                                sellAmountRaw(token.sellAmount),
                               );
-                              if (quote && isQuoteValid(quote)) {
+                              if (quote && isQuoteValid(quote, sellAmountRaw(token.sellAmount))) {
                                 return (
                                   total +
                                   parseFloat(quote.outAmount) /
                                     10 ** sellOut.decimals
                                 );
                               }
-                              return total;
+                              return null;
                             },
                             0,
                           );
 
                           if (compact) {
-                            return totalOut > 0
+                            return totalOut != null
                               ? `Reload ${n} ${tokenWord} to SOL (${totalOut.toFixed(4)})`
-                              : `Reload ${n} ${tokenWord} to SOL`;
+                              : `Reload ${n} ${tokenWord} to SOL (quoting…)`;
                           }
 
                           const willCloseZeroBalance =
                             selectedZeroBalanceTokens.length > 0;
 
                           if (willCloseZeroBalance) {
-                            return totalOut > 0
+                            return totalOut != null
                               ? `Sell ${n} ${tokenWord} → ${sellOut.symbol} (${totalOut.toFixed(4)}) & close dust`
-                              : `Sell ${n} ${tokenWord} → ${sellOut.symbol} & close dust`;
+                              : `Sell ${n} ${tokenWord} → ${sellOut.symbol} (quoting…) & close dust`;
                           }
-                          return totalOut > 0
+                          return totalOut != null
                             ? `Sell ${n} ${tokenWord} → ${sellOut.symbol} (${totalOut.toFixed(4)})`
-                            : `Sell ${n} ${tokenWord} → ${sellOut.symbol}`;
+                            : `Sell ${n} ${tokenWord} → ${sellOut.symbol} (quoting…)`;
                         })()}
                       </span>
                       <svg
