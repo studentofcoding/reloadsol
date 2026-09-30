@@ -223,7 +223,9 @@ export async function fetchJupiterSwapQuoteDirect(
     throw new JupiterSwapQuoteError('JUPITER_API_KEY is not set', 503)
   }
 
-  await throttleJupiterRps()
+  // `taker` set => this is the execution's prepare (quote + unsigned tx + requestId in one round
+  // trip). It must not queue behind background price lookups; a plain quote yields to it.
+  await throttleJupiterRps(params.taker ? 'trade' : 'background')
   const url = buildJupiterSwapQuoteUrl(params)
   const response = await fetch(url, { headers: jupiterApiHeaders() })
   const text = await response.text()
@@ -380,7 +382,8 @@ export async function executeJupiterSwapDirect(
   if (!key) {
     throw new JupiterSwapQuoteError('JUPITER_API_KEY is not set', 503)
   }
-  await throttleJupiterRps()
+  // The submission: the one call that must never wait behind background work.
+  await throttleJupiterRps('trade')
   return postJupiterExecute(JUPITER_SWAP_EXECUTE_URL, params, {
     ...jupiterApiHeaders(),
     'Content-Type': 'application/json',

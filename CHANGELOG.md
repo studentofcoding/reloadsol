@@ -8,6 +8,24 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — trades waited 5-6s on a Jupiter queue shared with background work
+
+The gate that keeps us inside Jupiter's quota was a single 2-second line
+(`MIN_INTERVAL_MS = 1000 / JUPITER_MAX_RPS` = 1000/0.5) shared by the trade path and everything else.
+Measured before the change: one idle quote 0.210s, but three concurrent callers took **2.01s / 4.00s /
+5.98s**, and a single `/order?taker=` prepare took **1.76s** because it queued behind background price
+lookups. A trade needs a prepare plus `/execute`, so it was paying the ~5-6s a user reported.
+
+- The gate is now a **token bucket** (`JUPITER_BURST`, default 4) refilled at `JUPITER_MAX_RPS` — which
+  matches the measured shape: the quota tolerates a short burst ("~6 rps sequential: 8 ok, then 429")
+  but rejects sustained concurrency, so the sustained rate is unchanged and only the burst is new.
+- **Priority lanes.** `trade` (a taker-scoped prepare, `/execute`, a Lite `/swap` build) may spend the
+  whole bucket; `background` (price lookups, sim sampling, UI quotes) yields whenever trade work is
+  waiting and must leave `JUPITER_TRADE_RESERVE` tokens untouched.
+- 10 unit tests pin the policy, including that background cannot spend the reserve — a bug the first
+  implementation had (`capacity - reserve` rather than `tokens - 1 >= reserve`) and the test caught.
+
+
 ### Documented — regime context on closes is a close-time stamp, not a column
 
 `market_regime_tags` is one row per day, and `insertStrategyOutcome` already stamps the value resolved
