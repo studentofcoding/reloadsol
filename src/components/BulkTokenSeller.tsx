@@ -375,6 +375,8 @@ export default function BulkTokenSeller({
 
   // Quote state (Raptor via /api/solanatracker/quote)
   const [autoQuote, setAutoQuote] = useState<boolean>(true);
+  /** Inside the 30s quote validity so the estimate never blanks between refreshes. */
+  const AUTO_QUOTE_REFRESH_MS = 25_000;
   const [quotes, setQuotes] = useState<Record<string, QuoteData>>({});
   const [isGettingQuotes, setIsGettingQuotes] = useState<boolean>(false);
   const [lastQuoteTime, setLastQuoteTime] = useState<number>(0);
@@ -555,7 +557,12 @@ export default function BulkTokenSeller({
 
   // ===== Auto-quote effect (Sol only) =====
   // 1. Runs immediately whenever token selection changes (or autoQuote toggles on)
-  // 2. Refreshes every 5 s as long as the selection stays the same
+  // 2. Refreshes on a slow interval, and only while the tab is visible.
+  //
+  // It used to re-quote every 5s, which spent the scarce Jupiter budget (0.5 rps measured-clean) on an
+  // unchanged selection. `JUPITER_QUOTE_CACHE_MS` coalesces repeats within a few seconds, and the
+  // interval is set inside the 30s quote-validity window so the estimate never goes blank between
+  // refreshes. A hidden tab does no quoting at all.
   const tokensHash = useMemo(
     () =>
       selectedTokens
@@ -577,12 +584,12 @@ export default function BulkTokenSeller({
     // Fetch immediately on mount / token change
     fetchAllQuotesRef.current();
 
-    // Poll every 5 seconds while the token list is unchanged
+    // Slow refresh while the token list is unchanged, paused while the tab is hidden.
     const interval = setInterval(() => {
-      if (autoQuote && selectedTokens.length > 0) {
-        fetchAllQuotesRef.current();
-      }
-    }, 5000);
+      if (!autoQuote || selectedTokens.length === 0) return;
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      fetchAllQuotesRef.current();
+    }, AUTO_QUOTE_REFRESH_MS);
 
     return () => clearInterval(interval);
   }, [isSolTrade, autoQuote, tokensHash, selectedTokens.length, sellOut.outputMint]);

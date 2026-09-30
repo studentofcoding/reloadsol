@@ -1,3 +1,4 @@
+import { resolveExecutionParams } from '@/strategies/execution-model'
 import { NextRequest, NextResponse, connection } from 'next/server'
 import { aggregateDailyPnl, loadOpenPaperPositions } from '@/strategies/db'
 import {
@@ -73,11 +74,15 @@ export async function GET(request: NextRequest) {
       success: true,
       range: { from, to, timezone: timeZone },
       config: { budgetSol, basePositionSizeSol, budgetHeadroom },
+
       regimes,
       daily: rows,
       open_positions: openPositions,
       sizing,
-      summary,
+      // The cost model the paper desk applies. Surfaced because it decides whether a paper edge is
+      // real: at feeBps 100 + spreadBps 50 per side it charged 300 bps round trip against a measured
+      // ~26 bps, which was the whole modelled drag.
+      summary: { ...summary, costModel: resolveExecutionParams() },
     })
   } catch (error) {
     return NextResponse.json(

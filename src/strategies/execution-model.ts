@@ -43,8 +43,13 @@ function num(raw: string | undefined, fallback: number): number {
 
 export function resolveExecutionParams(env: Record<string, string | undefined> = process.env): ExecutionParams {
   return {
-    feeBps: num(env.SIM_FEE_BPS, 100),
-    spreadBps: num(env.SIM_SPREAD_BPS, 50),
+    // Measured round trip on a live pair (STONK, buy 0.005 SOL vs sell 100 tokens): the quotes imply
+    // 0.00223860 vs 0.00223276 SOL/token — ~26 bps total, i.e. ~12 bps per side, which is the AMM fee
+    // at these sizes. The previous 100 + 50 per side modelled 300 bps round trip, 11.5x the real cost,
+    // and on an AMM route a spread term is not a separate cost at all — the fee already includes it.
+    // Single-pair sample: re-measure across more pairs before treating it as settled.
+    feeBps: num(env.SIM_FEE_BPS, 12),
+    spreadBps: num(env.SIM_SPREAD_BPS, 0),
     // The tip we actually pay, not a round number: the app sends 30,000 lamports (0.00003 SOL) per
     // transaction, and the chain's recent ask is ~0 — `getRecentPrioritizationFees` returned 0
     // micro-lamports/CU for 150 recent slots, both globally and for transactions touching the Jupiter

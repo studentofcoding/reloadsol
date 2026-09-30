@@ -217,9 +217,9 @@ export async function resolveSimFill(request: SimFillRequest): Promise<SimFillRe
   }
 
   try {
+    // No gate here: `fetchJupiterSwapQuote` (and the route behind it) charges the shared Jupiter gate
+    // itself, so charging again bought two slots per simulated fill across every sim strategy.
     const { fetchJupiterSwapQuote } = await import('@/utils/jupiter-swap-quote')
-    const { throttleJupiterRps } = await import('@/utils/jupiter-rps')
-    await throttleJupiterRps()
 
     const amountLamports = String(Math.max(1, Math.round(request.notionalQuote * 1e9)))
     const quote = await Promise.race([

@@ -8,6 +8,31 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — cost model calibrated to real quotes; Jupiter demand cut
+
+**The model charged 11.5x the real cost.** Measured on a live pair (STONK: buying 0.005 SOL implied
+0.00223860 SOL/token, selling 100 tokens implied 0.00223276) — a **~26 bps round trip**, i.e. ~12 bps
+per side, which is the AMM fee at these sizes. The model charged `SIM_FEE_BPS=100` + `SIM_SPREAD_BPS=50`
+**per side** = 300 bps, and on an AMM route a spread term is not a separate cost at all. Defaults are
+now `feeBps: 12`, `spreadBps: 0`, with the measurement and the single-pair caveat in the comment. It is
+exposed as `summary.costModel` and rendered as a "Cost model" card on `/dev/paper-trade`, so the desk's
+realism is visible rather than implied.
+
+**The scarce resource is the Jupiter quota (0.5 rps measured-clean), so the cheapest speed-up is asking
+less often:**
+
+- **Coalescing + a short cache** on `/order` (`withJupiterOrderQuote`, `JUPITER_QUOTE_CACHE_MS`, default
+  4s). Identical in-flight requests share one upstream call; a plain quote may reuse a result inside the
+  window; **a taker-scoped request is never cached or coalesced**, so the execution's prepare is always
+  live. Keyed on every input — mints, amount, slippage, taker, fees. 4 tests.
+- **The sim charged the gate twice** per fill: `sim-fill.ts` gated, then called a function that gates
+  again. Removed — that halved the sim's cost of the shared quota.
+- **The sell estimate re-quoted every 5s** on an unchanged selection. Now 25s (inside the 30s quote
+  validity, so the estimate never blanks between refreshes) and paused while the tab is hidden.
+- **The climate chip polled every 30s from every page** for a daily value — measured ~18 requests/min
+  across open tabs. Now 120s.
+
+
 ### Fixed — the closed tab took ~33 s because one bootstrap sorted every resample
 
 `/api/strategies/reports` was the entire cost of `/dev/algo-tester?tab=closed` (the tab is gated on one

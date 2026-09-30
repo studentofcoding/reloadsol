@@ -82,6 +82,12 @@ interface SizingRow {
 }
 
 interface Summary {
+  costModel?: {
+    feeBps: number
+    spreadBps: number
+    priorityFeeQuote: number
+    impactCoeff: number
+  }
   budgetSol: number
   basePositionSizeSol: number
   capacity: number
@@ -430,6 +436,12 @@ export default function PnlDashboardClient() {
             value={`${sol(summary?.velocityMaxSol ?? 0, 3)} SOL`}
             sub={`${summary?.peakConcurrent ?? 0} open at once · ${pct(summary?.peakBudgetUsedPct ?? 0, 0)} of budget`}
             tone={(summary?.peakBudgetUsedPct ?? 0) > 100 ? 'text-amber-400' : 'text-gray-200'}
+          />
+          <Stat
+            label="Cost model"
+            value={`${((summary?.costModel?.feeBps ?? 12) + (summary?.costModel?.spreadBps ?? 0)) * 2} bps round trip`}
+            sub={`fee ${summary?.costModel?.feeBps ?? 12}/side + spread ${summary?.costModel?.spreadBps ?? 0}/side · priority ${sol(summary?.costModel?.priorityFeeQuote ?? 0.00003, 5)} SOL/side — measured from live quotes (~26 bps); the old constants charged 300`}
+            tone="text-gray-200"
           />
           <Stat
             label="Trades"
