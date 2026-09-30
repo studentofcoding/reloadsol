@@ -39,6 +39,12 @@ export interface LedgerPosition {
   openedAt: number
   closedAt: number | null
   closed: boolean
+  /**
+   * Sell legs whose recorded price is the retired `0.000001` sentinel. The writer used to stamp that
+   * in place of a real exit valuation, so the proceeds on such a position are nominal — they are not a
+   * −99% trade and must not be summed as one. A genuine rug records a *real* tiny price, not this one.
+   */
+  nominalLegs: number
 }
 
 interface Working {
@@ -53,6 +59,7 @@ interface Working {
   buys: number
   sells: number
   openedAt: number
+  nominalLegs: number
 }
 
 function recordStrategy(record: TrackingRecord): string | null {
@@ -76,6 +83,13 @@ function tokenAmount(record: TrackingRecord, mintAddress: string): number {
   return Number.isFinite(amount) && amount > 0 ? amount : 0
 }
 
+/** The retired pre-fix sentinel: `const sellPriceUsd = 0.000001`. */
+const NOMINAL_PRICE_USD = 1e-6
+export function isNominalPrice(priceUsd: unknown): boolean {
+  const n = Number(priceUsd)
+  return Number.isFinite(n) && Math.abs(n - NOMINAL_PRICE_USD) < 1e-12
+}
+
 function toPosition(w: Working, closedAt: number | null): LedgerPosition {
   const pnlSol = w.proceedsSol - w.costSol
   return {
@@ -92,6 +106,7 @@ function toPosition(w: Working, closedAt: number | null): LedgerPosition {
     openedAt: w.openedAt,
     closedAt,
     closed: closedAt !== null,
+    nominalLegs: w.nominalLegs,
   }
 }
 
@@ -133,6 +148,7 @@ export function summarizeLedgerPositions(records: TrackingRecord[]): LedgerPosit
             buys: 0,
             sells: 0,
             openedAt: record.timestamp,
+            nominalLegs: 0,
           }
         working.costSol += tokenSol(record, mintAddress)
         working.tokensIn += tokenAmount(record, mintAddress)
@@ -146,6 +162,9 @@ export function summarizeLedgerPositions(records: TrackingRecord[]): LedgerPosit
       // started before this window, and counting them would show proceeds with no cost.
       const working = open.get(key)
       if (!working) continue
+      if (isNominalPrice((record.tokens ?? []).find((t) => t.mintAddress === mintAddress)?.priceUsd)) {
+        working.nominalLegs += 1
+      }
       working.proceedsSol += tokenSol(record, mintAddress)
       working.tokensOut += tokenAmount(record, mintAddress)
       working.sells += 1
@@ -212,22 +231,31 @@ export interface LedgerSummary {
   modelledDragSol: number
   /** Realized minus modelled drag: what the same trades would net after slippage and impact. */
   realizedNetSol: number
+  /**
+   * Positions whose proceeds are a pre-fix nominal stamp rather than a valuation. They are listed but
+   * excluded from every figure above — counting them would report a data defect as a −99% trade.
+   */
+  nominalPositions: number
 }
 
 export function summarizeLedger(positions: LedgerPosition[]): LedgerSummary {
-  const closed = positions.filter((p) => p.closed)
+  // Fail-closed: a nominal position is not evidence of a loss, so it is measured out of every aggregate
+  // and reported separately instead.
+  const counted = positions.filter((p) => p.nominalLegs === 0)
+  const closed = counted.filter((p) => p.closed)
   const grossWinSol = closed.filter((p) => p.pnlSol > 0).reduce((s, p) => s + p.pnlSol, 0)
   const grossLossSol = closed.filter((p) => p.pnlSol < 0).reduce((s, p) => s + p.pnlSol, 0)
   const realizedCost = closed.reduce((s, p) => s + p.costSol, 0)
   const realizedPnlSol = grossWinSol + grossLossSol
   const drag = closed.reduce((s, p) => s + modelledDragSol(p.costSol), 0)
   return {
-    positions: positions.length,
+    positions: counted.length,
     closed: closed.length,
-    open: positions.length - closed.length,
-    costSol: positions.reduce((s, p) => s + p.costSol, 0),
-    proceedsSol: positions.reduce((s, p) => s + p.proceedsSol, 0),
-    pnlSol: positions.reduce((s, p) => s + p.pnlSol, 0),
+    open: counted.length - closed.length,
+    costSol: counted.reduce((s, p) => s + p.costSol, 0),
+    proceedsSol: counted.reduce((s, p) => s + p.proceedsSol, 0),
+    pnlSol: counted.reduce((s, p) => s + p.pnlSol, 0),
+    nominalPositions: positions.length - counted.length,
     realizedPnlSol,
     realizedPnlPct: realizedCost > 0 ? (realizedPnlSol / realizedCost) * 100 : 0,
     won: closed.filter((p) => p.pnlSol > 0).length,
@@ -262,6 +290,8 @@ export interface StrategyReadiness {
   netPerTradeSol: number
   /** Peak simultaneous open positions — must fit `MAX_SOL_AT_RISK` at the live size. */
   peakConcurrent: number
+  /** Positions left out of the figures above because their proceeds are a pre-fix nominal stamp. */
+  excludedNominal: number
   verdict: 'candidate' | 'marginal' | 'not_viable'
 }
 
@@ -304,7 +334,7 @@ export function buildStrategyReadiness(
 
   const out: StrategyReadiness[] = []
   for (const [strategyId, list] of byStrategy) {
-    const closedPositions = list.filter((p) => p.closed)
+    const closedPositions = list.filter((p) => p.closed && p.nominalLegs === 0)
     if (closedPositions.length === 0) continue
     const grossSol = closedPositions.reduce((s, p) => s + p.pnlSol, 0)
     // The calibrated model, not an approximation: the same drag the ledger summary applies.
@@ -324,6 +354,7 @@ export function buildStrategyReadiness(
       netSol,
       netPerTradeSol,
       peakConcurrent: peakConcurrentPositions(list),
+      excludedNominal: list.filter((p) => p.nominalLegs > 0).length,
       // A candidate is one whose typical trade is positive *and* whose total survives the drag. Below
       // that it is not a sizing question — no size fixes a median that loses to its own fixed cost.
       verdict:

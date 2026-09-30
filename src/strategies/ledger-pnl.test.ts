@@ -222,7 +222,7 @@ describe('summarizeLedger net figures', () => {
   })
 })
 
-import { buildStrategyReadiness, peakConcurrentPositions } from './ledger-pnl'
+import { buildStrategyReadiness, isNominalPrice, peakConcurrentPositions } from './ledger-pnl'
 
 function pos(o: Partial<import('./ledger-pnl').LedgerPosition> & { strategyId: string }) {
   return {
@@ -238,6 +238,7 @@ function pos(o: Partial<import('./ledger-pnl').LedgerPosition> & { strategyId: s
     openedAt: 1_000,
     closedAt: 2_000,
     closed: true,
+    nominalLegs: 0,
     ...o,
   }
 }
@@ -279,5 +280,40 @@ describe('buildStrategyReadiness', () => {
       pos({ strategyId: 'open-only', closed: false, closedAt: null, pnlSol: 0 }),
     ])
     expect(out.map((s) => s.strategyId)).toEqual(['big', 'small'])
+  })
+})
+
+describe('pre-fix nominal proceeds are flagged, not summed', () => {
+  it('recognises the retired 0.000001 sentinel and nothing else', () => {
+    // The old writer stamped exactly this in place of an exit valuation.
+    expect(isNominalPrice(0.000001)).toBe(true)
+    // A genuine rug records a real tiny price — that is a real loss and must stay counted.
+    expect(isNominalPrice(0.000000001)).toBe(false)
+    expect(isNominalPrice(0)).toBe(false)
+    expect(isNominalPrice(undefined)).toBe(false)
+    expect(isNominalPrice('abc')).toBe(false)
+  })
+
+  it('excludes a nominal position from every summary figure and reports the count', () => {
+    const s = summarizeLedger([
+      pos({ strategyId: 'a', pnlSol: 0.0004, costSol: 0.005, pnlPct: 8 }),
+      pos({ strategyId: 'a', pnlSol: -0.0049, costSol: 0.005, pnlPct: -99, nominalLegs: 1 }),
+    ])
+    expect(s.positions).toBe(1)
+    expect(s.nominalPositions).toBe(1)
+    expect(s.realizedPnlSol).toBeCloseTo(0.0004, 6)
+    expect(s.lost).toBe(0)
+  })
+
+  it('excludes it from the readiness verdict too, and says how many', () => {
+    const out = buildStrategyReadiness([
+      pos({ strategyId: 'x', pnlSol: 0.0002, costSol: 0.005, pnlPct: 4 }),
+      pos({ strategyId: 'x', pnlSol: -0.0049, costSol: 0.005, pnlPct: -99, nominalLegs: 2 }),
+    ])
+    const x = out.find((r) => r.strategyId === 'x')!
+    expect(x.closed).toBe(1)
+    expect(x.excludedNominal).toBe(1)
+    expect(x.medianPnlPct).toBe(4)
+    expect(x.verdict).toBe('candidate')
   })
 })
