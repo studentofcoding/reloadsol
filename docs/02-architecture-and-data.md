@@ -159,6 +159,28 @@ Two operational facts worth knowing when reading it:
   rows exist, one of them from the automated path — so older closes are honestly left untagged rather
   than reconstructed.
 
+### Execution cost model (`src/strategies/execution-model.ts`)
+
+What the paper desk charges per fill, and why the defaults are what they are:
+
+| Constant | Default | Basis |
+| --- | --- | --- |
+| `SIM_FEE_BPS` | **12** | measured round trip on a live pair (STONK: buy 0.005 SOL implied 0.00223860 SOL/token, sell 100 tokens implied 0.00223276) — **~26 bps total**, ~12 bps/side, the AMM fee at those sizes |
+| `SIM_SPREAD_BPS` | **0** | on an AMM route the fee *is* the round-trip cost; a separate spread term double-counts it |
+| `SIM_PRIORITY_FEE_QUOTE` | **0.00003** | what the app actually sends (30,000 lamports); the chain's recent ask is ~0 (`getRecentPrioritizationFees` → 0 micro-lamports/CU over 150 slots, globally and for Jupiter-program transactions) |
+| `SIM_IMPACT_COEFF` / `_EXPONENT` | 1 / 1 | exact constant-product average-price impact |
+
+The previous defaults (100 bps fee + 50 bps spread **per side** = 300 bps, and a 0.002 priority fee)
+modelled **300 bps round trip against a measured 26**, and the priority term alone
+(`0.002 x 2 x 17,684 ≈ 70 SOL`) was the whole `-61.78` drag the 14-day ledger showed against a `+0.33`
+gross. That drag was a modelling artefact, which is why the ledger now exposes
+`summary.costModel` and `/dev/paper-trade` renders it: a paper edge is only real once the cost
+constants are.
+
+**Sizing follows the fixed cost.** A round trip costs ~0.00006 SOL in priority fee + tx fees regardless
+of size, so the fixed cost is ≤1% of a trade at **≥0.006 SOL**. The design size (0.005 SOL) sits at that
+edge; the desk's actual mean (~0.0017 SOL) is ~3x below it, which is where the remaining drag comes from.
+
 ## 4. Data flows (representative)
 
 | Flow | Path |

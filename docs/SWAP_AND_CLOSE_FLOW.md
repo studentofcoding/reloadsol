@@ -34,18 +34,44 @@ by highest `outAmount`, then lower impact, then `PROVIDER_TIE_RANK` (raptor → 
 jupiter_swap — the Raptor rank is unused while only Jupiter is collected). Fail-soft: a 429 on V2
 does not fail Lite.
 
-**Display surfaces must use this same picker.** A quote shown to a user (`BulkTokenSeller`'s
-estimate) has to be the candidate `prepareSwapTransaction` would trade. Quoting Raptor alone showed a
-single-hop, 38%-impact route for a two-pool token — 2.46 SOL below the executable route **and**
-above the gate, i.e. a sale the executor would have refused. `RAPTOR_MAX_HOPS` staying at its default
-`1` is deliberate: the conservative single-hop default is right for thin tokens, and route selection,
-not the hop ceiling, is where a better price comes from.
+**A display surface quotes the venue that will execute.** `BulkTokenSeller`'s estimate asks **Raptor
+first** — ungated, and the venue `prepareSwapTransaction` builds with `RAPTOR_DEV_FEE_ACCOUNT` — and
+escalates to the picker above **only when Raptor is unavailable or its own impact fails the gate**.
+That guardrail is load-bearing: at `RAPTOR_MAX_HOPS=1` a two-pool token quotes a single-hop,
+38%-impact route, 2.46 SOL below the executable route and above the gate — a sale the executor would
+refuse. `RAPTOR_MAX_HOPS` staying at `1` is deliberate; route selection, not the hop ceiling, is where
+a better price comes from.
 
-**Known nuances.** The estimate quotes `/order` without `taker` while prepare uses
-`/order?taker=<pubkey>`, so the two are not byte-identical inputs and the number can shift slightly at
-click time (the executor re-quotes at prepare, so nothing unsafe is executed). The failure banner in
-`sell-quote-fallback.ts` still says *"Failed to get quotes from Raptor"*, which misattributes the
-source now that this path is Jupiter-only.
+**Cost of the estimate, measured.** Quoting the picker per selected token is what made **bulk** slow:
+5 tokens took **14.87s** wall (one token 14.87s) against **0.69s** on Raptor, because each picker call
+is one Jupiter background-lane request and that lane is capped and shared with in-process callers (the
+sims and price lookups never appear in the nginx logs). A per-token estimate fan-out is therefore a
+Jupiter-budget decision, not a UI detail.
+
+### Rate control (`src/utils/jupiter-rps.ts`)
+
+One **token bucket** refilled at `JUPITER_MAX_RPS` (default **0.5**, the measured-clean rate), capacity
+`JUPITER_BURST` (default **8** — the measured tolerance: *"~6 rps sequential — 8 ok, then 429"*), with
+**priority lanes**:
+
+- **trade** — a taker-scoped `/order` prepare, `/execute`, a Lite `/swap` build — may spend the whole
+  bucket.
+- **background** — price lookups, sim sampling, UI quotes — yields whenever trade work is waiting and
+  must leave `JUPITER_TRADE_RESERVE` (default 2) tokens untouched.
+
+Fixed 2s spacing was the previous design and cost every caller 2s per queued request: three concurrent
+callers measured **2.01 / 4.00 / 5.98s**, and one prepare took **1.76s** instead of 0.21s. Repeats are
+coalesced and cached — `withJupiterOrderQuote`, `JUPITER_QUOTE_CACHE_MS` (default 4000) — keyed on every
+input (mints, amount, slippage, taker, fees). A **taker-scoped request is never cached or coalesced**,
+so the execution's prepare is always live.
+
+**Known nuances.** The estimate quotes without `taker` while prepare adds one, so the two are not
+byte-identical and the number can shift slightly at click time (the executor re-quotes at prepare, so
+nothing unsafe executes). The prefetch window is short — `SWAP_PREPARE_TTL_MS` is **8s** — so a
+page-load prefetch is usually stale by click time and the click rebuilds; the estimate cannot rely on
+it. **Token → token sells** use the same path: `sellOutputMint` resolves the custom output with its own
+symbol/decimals, and `swapPrepareCacheKey` includes `outputMint`, so a native-output swap can never be
+reused for a token-output quote.
 
 ## Raptor Swap Flow (arb only — `maxHops` set)
 

@@ -214,6 +214,11 @@ Copy from [`.env.docker.example`](.env.docker.example). Key groups:
 | `RPC_URL` | Comma-separated RPC URLs (max 5). Server `/api/rpc` proxy with failover. |
 | `NEXT_PUBLIC_RPC_URL` | Optional — browser uses `/api/rpc` proxy by default; set only for legacy direct-RPC paths. |
 | `RAPTOR_API_BASE` | Optional override for Solana Tracker Raptor swap API (default `https://raptor-beta.solanatracker.io`) |
+| `RAPTOR_MAX_HOPS` | Raptor route hops. Default `1`; arb uses `RAPTOR_MAX_HOPS_ARBITRAGE` |
+| `JUPITER_MAX_RPS` | Sustained Jupiter rate (default `0.5`, the measured-clean rate) |
+| `JUPITER_BURST` | Bucket capacity (default `8`; measured tolerance is ~8 sequential before 429) |
+| `JUPITER_TRADE_RESERVE` | Tokens held for the trade lane, never spent by background work (default `2`) |
+| `JUPITER_QUOTE_CACHE_MS` | Coalescing/quote cache window for non-taker quotes (default `4000`) |
 | `WALLET_SESSION_SECRET` | httpOnly wallet session cookie signing |
 
 ### Solana Tracker OHLC
