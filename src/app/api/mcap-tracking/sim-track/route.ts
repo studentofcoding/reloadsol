@@ -934,7 +934,9 @@ async function runSimTrack(request: NextRequest) {
       // #region debug (debug-mcap-sim-timing)
       const dbgStrategyStart = Date.now()
       let dbgManageMs = 0
+      let dbgManageStart = 0
       let dbgOpenMs = 0
+      let dbgOpenStart = 0
       let dbgOhlcCalls = 0
       let dbgOhlcMs = 0
       let dbgRecordsCalls = 0
@@ -1006,7 +1008,7 @@ async function runSimTrack(request: NextRequest) {
 
       if (runManage) {
       // #region debug (debug-mcap-sim-timing)
-      const dbgManageStart = Date.now()
+      dbgManageStart = Date.now()
       // #endregion
       for (const pos of openPositions) {
         const snapshot =
@@ -1108,7 +1110,7 @@ async function runSimTrack(request: NextRequest) {
 
       if (runOpen) {
       // #region debug (debug-mcap-sim-timing)
-      const dbgOpenStart = Date.now()
+      dbgOpenStart = Date.now()
       const dbgRecordsStart = Date.now()
       dbgRecordsCalls++
       // #endregion
