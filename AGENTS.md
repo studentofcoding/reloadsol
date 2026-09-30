@@ -36,13 +36,17 @@ Report each step verbosely (exit code + failures). Confirm `npm run start` boots
 2. `git pull` on `flowey-vps` — the post-merge hook rebuilds the docker stack.
 3. Smoke-test the exact endpoints with the real Host header (`Host: reloadsol.app`); bare-IP
    curls are dropped by nginx (`default_server` → 444).
-4. The VPS is <4Gi and refuses host `next build` — ship web builds with
+4. **Concurrent deploys are serialized** by `/tmp/reloadsol-deploy.lock`: both `docker-deploy.sh`
+   (post-merge hook) and `ship-standalone-to-vps.sh` take it, and the ship exits **75** when it is
+   held. If a recreate still leaves web `Dead` (nginx 502), use the recovery recipe in
+   `PRODUCTION_DEPLOYMENT.md` § "Concurrent deploys" — never leave the origin down.
+5. The VPS is <4Gi and refuses host `next build` — ship web builds with
    `bash scripts/ship-standalone-to-vps.sh` from a machine with RAM. The shipped tree must be
    stamped with the VPS `HEAD` (`.next/{standalone,static}/.deploy-git-sha`) or the next deploy is
    forced to rebuild. **If `git status` shows uncommitted changes you did not make, do not ship
    from that tree** — `npm run build` would bake another workstream's in-flight code into prod.
    Build from an isolated worktree at the commit (recipe in `PRODUCTION_DEPLOYMENT.md`).
-5. Migrations: `bash scripts/init-local-db.sh` applies `db/init/*.sql` idempotently, keeps going
+6. Migrations: `bash scripts/init-local-db.sh` applies `db/init/*.sql` idempotently, keeps going
    past a failing file, lists failures, and exits non-zero — so one bad file cannot silently skip
    the rest. `npm run db:check-migrations` applies the suite twice against a throwaway Postgres.
 

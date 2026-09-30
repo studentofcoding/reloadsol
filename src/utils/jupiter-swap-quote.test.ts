@@ -139,7 +139,7 @@ describe('sell quote fallback banner', () => {
 
   it('banners only when every mint failed both sources', () => {
     expect(sellQuoteAllFailedBanner(0)).toBe(
-      'Failed to get quotes from Raptor. Please try again.',
+      'Failed to get swap quotes. Please try again.',
     )
   })
 })

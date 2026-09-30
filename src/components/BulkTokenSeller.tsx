@@ -459,6 +459,36 @@ export default function BulkTokenSeller({
     async (token: TokenToSell): Promise<QuoteData | null> => {
       const amount = sellAmountRaw(token.sellAmount);
       if (!amount || amount === "0") return null;
+
+      // Prefer the prepared swap the executor would trade: it is built with the same `taker` the
+      // signed transaction uses, so the estimate and the executed route are the same object rather
+      // than two quotes that differ only in their inputs.
+      const publicKeyBase58 = publicKey?.toBase58();
+      if (publicKeyBase58) {
+        const prepared = peekFreshPreparedSwap({
+          userPublicKey: publicKeyBase58,
+          inputMint: token.mintAddress,
+          outputMint: sellOut.outputMint,
+          amount: token.sellAmount,
+          slippageBps: prefetchSlippageBps(slippage),
+          priorityFeeLamports: priorityFee,
+          feeAccount: RAPTOR_DEV_FEE_ACCOUNT,
+          feeBps: RAPTOR_DEV_FEE_BPS,
+        });
+        if (prepared?.outAmount) {
+          return {
+            provider:
+              prepared.provider === "raptor" ? "solanatracker" : "jupiter",
+            inputMint: token.mintAddress,
+            outputMint: sellOut.outputMint,
+            amount,
+            outAmount: prepared.outAmount,
+            priceImpact: impactToAbsPct(prepared.priceImpact),
+            timestamp: Date.now(),
+          };
+        }
+      }
+
       const picked = await pickParallelSwapQuote({
         inputMint: token.mintAddress,
         outputMint: sellOut.outputMint,
@@ -477,7 +507,7 @@ export default function BulkTokenSeller({
         route: picked.quote?.routePlan,
       };
     },
-    [slippage, sellOut.outputMint],
+    [slippage, priorityFee, publicKey, sellOut.outputMint],
   );
 
   const fetchAllQuotes = useCallback(async () => {

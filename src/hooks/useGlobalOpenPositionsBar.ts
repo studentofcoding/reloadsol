@@ -18,6 +18,8 @@ import {
 export const GLOBAL_OPEN_BAR_PRICES_KEY = 'global-open-bar-prices';
 /** Match PnL open marks — `/api/prices/open` (GMGN/Jupiter), not slow 60s Jupiter-only. */
 export const OPEN_BAR_PRICE_POLL_MS = 15_000;
+/** How long a last-seen price keeps a position visible across a missed poll. */
+export const OPEN_BAR_PRICE_GRACE_MS = 60_000;
 
 async function fetchOpenBarPrices(
   tokenAddresses: string[],
@@ -123,6 +125,28 @@ export function useGlobalOpenPositionsBar() {
   const currentPrices = pricesQuery.data ?? {};
 
   /**
+   * Visibility prices: the live feed, plus the last price seen for a mint within the grace window.
+   * A price that misses one poll must not make a real position flap out of the bar. Display never
+   * uses this — the percentage reads the live price only, so a held-over price shows `—` rather than
+   * a stale percentage. (Idempotent ref write, safe under a double render.)
+   */
+  const lastSeenPricesRef = useRef<Record<string, { price: number; at: number }>>({});
+  const visiblePrices = useMemo(() => {
+    const now = Date.now();
+    const out: Record<string, number> = {};
+    for (const [mint, seen] of Object.entries(lastSeenPricesRef.current)) {
+      if (now - seen.at <= OPEN_BAR_PRICE_GRACE_MS) out[mint] = seen.price;
+    }
+    for (const [mint, price] of Object.entries(currentPrices)) {
+      if (price > 0) {
+        out[mint] = price;
+        lastSeenPricesRef.current[mint] = { price, at: now };
+      }
+    }
+    return out;
+  }, [currentPrices]);
+
+  /**
    * Only priced positions make the bar. An unpriced hold is the signature of an airdropped clone —
    * relying on the price feed rather than on the symbol avoids hiding anything real, because a live
    * position is priced. Fail-open when the feed returned nothing at all, so a pricing outage cannot
@@ -131,8 +155,8 @@ export function useGlobalOpenPositionsBar() {
   const positions = useMemo(() => {
     if (candidates.length === 0) return candidates;
     if (Object.keys(currentPrices).length === 0) return candidates;
-    return candidates.filter((p) => (currentPrices[p.mintAddress] ?? 0) > 0);
-  }, [candidates, currentPrices]);
+    return candidates.filter((p) => (visiblePrices[p.mintAddress] ?? 0) > 0);
+  }, [candidates, currentPrices, visiblePrices]);
 
   // Live inputs (holdings or records) replace the provisional list as soon as they exist, so a
   // wallet with genuinely no positions does not keep stale chips on screen.

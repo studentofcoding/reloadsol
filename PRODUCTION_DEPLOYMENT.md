@@ -120,6 +120,35 @@ still passes the "matches HEAD" check on the next run and gets silently reused. 
 first, or set `SHIP_ALLOW_DIRTY=1` when the deviation is deliberate. Untracked files (e.g.
 `exports/`) never block a ship.
 
+### Concurrent deploys: one lock, and never finish while web is down
+
+Two deploys that reach `docker compose up` at the same time do not queue. The second gets
+`Conflict. The container name "/<hash>_reloadsol-web" is already in use`, and the failed recreate can
+leave `reloadsol-web` **Dead** while nginx answers **502** — this happened for real when an artifact
+ship (`ship-standalone-to-vps.sh`) and a pull-triggered deploy (`docker-deploy.sh`, via the post-merge
+hook) ran together.
+
+Both paths now hold the **same** lock, `/tmp/reloadsol-deploy.lock` (override with `DEPLOY_LOCK`):
+
+- `docker-deploy.sh` already did — `flock -n 9`, skipping when held.
+- `ship-standalone-to-vps.sh` now does too, around `build web && up -d --no-deps web`, and reports
+  **exit 75** ("deploy busy") instead of racing.
+- Its post-up smoke is now a **gate**: one `--force-recreate --no-build web` retry, then a non-zero
+  exit. A ship can no longer print "Ship complete" while `/api/health` is failing.
+
+Recovering a wedged origin:
+
+```bash
+ssh flowey-vps 'docker ps -a --filter name=reloadsol-web'          # find Dead / Created ones
+ssh flowey-vps 'docker rm -f <container>'                          # ONLY non-running ones
+ssh flowey-vps 'cd ~/reloadsol && docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-deps web'
+ssh flowey-vps 'docker exec reloadsol-web cat .deploy-git-sha'     # which commit it actually serves
+```
+
+Before bringing web up on a tree, confirm it contains your commit
+(`git merge-base --is-ancestor <your-sha> HEAD`) so the recovery does not silently drop your work;
+afterwards check `/api/health` and the real pages with the `Host: reloadsol.app` header.
+
 ## Memory & swap (3.7G VPS)
 
 Measured on `flowey-vps`: RAM use ~1.2G/3.7G is fine; the alarming number was swap at 46 %. It is

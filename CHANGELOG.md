@@ -8,6 +8,32 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a concurrent deploy could leave the origin down
+
+An artifact ship and a pull-triggered deploy reached `docker compose up` together, the recreate lost
+to a container-name conflict, and `reloadsol-web` was left **Dead** with nginx answering **502**.
+`ship-standalone-to-vps.sh` did not take the lock that `docker-deploy.sh` already holds, and its smoke
+test only warned.
+
+- The ship now takes the same `/tmp/reloadsol-deploy.lock` (override `DEPLOY_LOCK`) around
+  `build web && up -d --no-deps web` and exits **75** when another deploy holds it, instead of racing.
+- Its smoke is a **gate**: one `--force-recreate --no-build web` retry, then a non-zero exit — a ship
+  can no longer report success while `/api/health` fails.
+- Recovery recipe + the rule documented in `PRODUCTION_DEPLOYMENT.md`, with a pointer in `AGENTS.md`.
+
+### Changed — three follow-ups from the watchlist work
+
+- The sell failure banner no longer says *"Failed to get quotes from Raptor"* — the desk path quotes
+  Jupiter Swap V2 (Lite only if V2 fails) and Raptor is arbitrage-only, so the message misattributed
+  every failure. It now reads "Failed to get swap quotes."
+- The sell estimate prefers the **warmed prepared swap** — the exact object `prepareSwapTransaction`
+  signs, built with the same `taker` — over a separately-parameterised quote, so the estimate and the
+  executed route are the same artifact. The parallel picker remains the fallback when nothing is warm.
+- A price that misses one poll no longer makes a real position flap out of the open bar: the last
+  seen price keeps it visible for `OPEN_BAR_PRICE_GRACE_MS` (60s). Display still uses the live price
+  only, so a held-over price shows `—` rather than a stale percentage.
+
+
 ### Fixed — the open-positions chips showed the symbol twice
 
 `ChipFace` passed `alt={symbol}` to a logo rendered immediately before a `<span>{symbol}</span>`, so

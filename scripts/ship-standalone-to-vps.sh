@@ -57,6 +57,11 @@ SKIP_REMOTE_PULL="${SKIP_REMOTE_PULL:-0}"
 SKIP_SMOKE="${SKIP_SMOKE:-0}"
 SMOKE_URL="${SMOKE_URL:-https://reloadsol.app/api/health}"
 REMOTE_COMPOSE="docker compose -f docker-compose.yml -f docker-compose.prod.yml"
+# Concurrent deploys must not stack. scripts/docker-deploy.sh (the post-merge hook) already holds
+# this lock; this script did not, so an artifact ship and a pull-triggered deploy could reach
+# `compose up` together — observed as a container-name conflict that left web Dead and the site at
+# 502. Same path, so the two are now mutually exclusive.
+DEPLOY_LOCK="${DEPLOY_LOCK:-/tmp/reloadsol-deploy.lock}"
 
 ssh_vps() {
   ssh -o BatchMode=yes "$VPS_HOST" "$@"
@@ -187,8 +192,16 @@ rsync -az --delete \
 log "Stripping Darwin sharp binaries from shipped standalone (Dockerfile.web installs linux-x64 sharp) ..."
 ssh_vps "cd '${VPS_DIR}' && if [ -d .next/standalone/node_modules ]; then find .next/standalone/node_modules -type d \\( -name 'sharp-darwin-arm64' -o -name 'sharp-darwin-x64' -o -name 'sharp-libvips-darwin-arm64' -o -name 'sharp-libvips-darwin-x64' \\) -print0 | xargs -0 -r rm -rf; fi"
 
-log "Remote: ${REMOTE_COMPOSE} build web && up -d --no-deps web"
-ssh_vps "cd '${VPS_DIR}' && ${REMOTE_COMPOSE} build web && ${REMOTE_COMPOSE} up -d --no-deps web"
+log "Remote: ${REMOTE_COMPOSE} build web && up -d --no-deps web (lock ${DEPLOY_LOCK})"
+set +e
+ssh_vps "cd '${VPS_DIR}' && exec 9>'${DEPLOY_LOCK}' && if ! flock -n 9; then echo 'DEPLOY_BUSY' >&2; exit 75; fi; ${REMOTE_COMPOSE} build web && ${REMOTE_COMPOSE} up -d --no-deps web"
+remote_status=$?
+set -e
+if [[ ${remote_status} -eq 75 ]]; then
+  fail "another deploy is running on ${VPS_HOST} (lock ${DEPLOY_LOCK}) — nothing was changed, retry shortly"
+elif [[ ${remote_status} -ne 0 ]]; then
+  fail "remote build/up failed (exit ${remote_status})"
+fi
 
 log "Starting cron/social if they were left stopped by a failed host build ..."
 ssh_vps "docker start reloadsol-cron reloadsol-social-ingest 2>/dev/null || true"
@@ -196,15 +209,25 @@ ssh_vps "docker start reloadsol-cron reloadsol-social-ingest 2>/dev/null || true
 if [[ "$SKIP_SMOKE" == "1" ]]; then
   log "SKIP_SMOKE=1 — not curling /api/health"
 else
+  web_healthy() {
+    ssh_vps 'curl -fsS -H "Host: reloadsol.app" http://127.0.0.1/api/health >/dev/null'
+  }
+
   log "Smoke: remote curl http://127.0.0.1/api/health (Host: reloadsol.app)"
-  if ssh_vps 'curl -fsS -H "Host: reloadsol.app" http://127.0.0.1/api/health >/dev/null'; then
+  if web_healthy; then
     log "Remote /api/health OK"
   else
-    log "WARN: remote localhost health check failed — trying ${SMOKE_URL}"
-    if curl -fsS -H "Host: reloadsol.app" "$SMOKE_URL" >/dev/null; then
+    # A recreate that half-applies leaves the old container Dead — recover once before giving up,
+    # and never exit 0 while the origin is down.
+    log "WARN: /api/health failed after up — forcing one recreate of web"
+    ssh_vps "cd '${VPS_DIR}' && ${REMOTE_COMPOSE} up -d --no-deps --force-recreate --no-build web" || true
+    sleep 8
+    if web_healthy; then
+      log "Remote /api/health OK after forced recreate"
+    elif curl -fsS -H "Host: reloadsol.app" "$SMOKE_URL" >/dev/null; then
       log "Public health OK (${SMOKE_URL})"
     else
-      log "WARN: smoke curl failed (${SMOKE_URL}). Check: ssh ${VPS_HOST} 'docker logs --tail=80 reloadsol-web'"
+      fail "web is NOT healthy after a forced recreate — origin is degraded. Check: ssh ${VPS_HOST} 'docker logs --tail=80 reloadsol-web'"
     fi
   fi
 fi
