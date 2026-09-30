@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Strategy readiness — go-live assessment</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Fraunces:opsz,wght@9..144,400&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper:#fafaf7; --paper2:#f0efe9; --ink:#163b2a; --muted:#5b6b60;
+    --soft:#8a968d; --accent:#84cc16; --link:#2e5aa8;
+    --sans:'DM Sans', system-ui, sans-serif;
+    --serif:'Fraunces', serif;
+    --mono:'Geist Mono', ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { font-family:var(--sans); background:var(--paper); color:var(--ink); margin:0; padding:3rem 2rem 4rem; }
+  .wrap { max-width: 1080px; margin:0 auto; }
+  .eyebrow { font-family:var(--mono); font-size:.66rem; font-weight:500; letter-spacing:.18em; text-transform:uppercase; color:var(--muted); margin-bottom:.5rem; }
+  h1 { font-family:var(--serif); font-size:clamp(1.4rem,2.2vw + .5rem,2rem); font-weight:400; letter-spacing:-.02em; margin:0 0 .75rem; }
+  h2 { font-family:var(--serif); font-size:1.25rem; font-weight:400; margin:3rem 0 .35rem; }
+  .sub { color:var(--muted); font-size:.92rem; line-height:1.6; margin:0 0 2rem; max-width:70ch; }
+  .cards { display:grid; grid-template-columns:1.15fr 1fr .85fr; gap:1rem; margin:2rem 0 0; }
+  @media (max-width:820px){ .cards{ grid-template-columns:1fr; } }
+  .card { background:#fff; border:1px solid rgba(22,59,42,.12); border-radius:6px; padding:1.25rem; }
+  .card h3 { font-size:.95rem; font-weight:600; margin:0 0 .6rem; display:flex; align-items:center; gap:.5rem; }
+  .dot { width:7px; height:7px; border-radius:50%; display:inline-block; flex:none; }
+  .dot-coral { background:var(--accent); } .dot-ink{ background:var(--ink); } .dot-soft{ background:var(--soft); }
+  .card ul { margin:0; padding-left:1.1rem; }
+  .card li { font-size:.85rem; color:var(--muted); line-height:1.65; }
+  .card li b { color:var(--ink); font-weight:600; }
+  figure { margin:2.5rem 0 0; }
+  figcaption { font-family:var(--mono); font-size:.68rem; letter-spacing:.12em; text-transform:uppercase; color:var(--soft); margin-top:.9rem; }
+  .framed { background:var(--paper2); border:1px solid rgba(22,59,42,.12); border-radius:8px; padding:1.5rem; overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; margin-top:.5rem; }
+  caption { text-align:left; font-family:var(--mono); font-size:.68rem; letter-spacing:.12em; text-transform:uppercase; color:var(--soft); padding-bottom:.6rem; }
+  th { font-family:var(--mono); font-size:.62rem; font-weight:500; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); text-align:right; padding:.55rem .5rem; border-bottom:1px solid rgba(22,59,42,.28); white-space:nowrap; }
+  th:first-child, td:first-child { text-align:left; }
+  td { font-size:.82rem; padding:.5rem .5rem; border-bottom:1px solid rgba(22,59,42,.09); text-align:right; color:var(--muted); }
+  td.name { color:var(--ink); font-weight:500; }
+  td code { font-family:var(--mono); font-size:.72rem; color:var(--ink); background:none; }
+  .neg { color:#8a5a5a; }
+  .lead { color:var(--ink); font-weight:600; }
+  .focal-row td { background:rgba(132,204,22,.07); }
+  .stall { font-family:var(--mono); font-size:.68rem; color:#8a5a5a; }
+  .ok { font-family:var(--mono); font-size:.68rem; color:var(--muted); }
+  ul.findings { padding-left:1.1rem; margin:.5rem 0 0; }
+  ul.findings li { font-size:.88rem; color:var(--muted); line-height:1.75; margin-bottom:.5rem; }
+  ul.findings li b { color:var(--ink); }
+  footer { margin-top:4rem; padding-top:1.25rem; border-top:1px solid rgba(22,59,42,.12); font-family:var(--mono); font-size:.68rem; letter-spacing:.06em; color:var(--soft); line-height:1.8; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p class="eyebrow">Strategy readiness · go-live assessment</p>
+  <h1>Which strategies are ready to trade live</h1>
+  <p class="sub">Seven days to <strong>2026-09-30</strong>, read straight from <code>strategy_outcomes</code> on production.
+  Every one of the <strong>82,440</strong> recorded outcomes is simulated — there are <strong>zero</strong> real rows — so this
+  measures the paper desk, not live fills. Percentages are per trade; a mean here is a right-tail statistic and is
+  labelled as such.</p>
+
+  <div class="cards">
+    <div class="card">
+      <h3><span class="dot dot-coral"></span>The leader</h3>
+      <ul>
+        <li><b>search_mcap_first_seen</b>, all three TP variants: 55–56% win, median <b>+5.7 to +8.8%</b>, still closing minutes ago.</li>
+        <li>The family that was parked from the assessment is now the best-evidenced — its exits are valued properly and it records <code>features.exec</code>.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3><span class="dot dot-ink"></span>Not ready</h3>
+      <ul>
+        <li><b>gmgn_kol_momentum</b> and <b>gmgn_sm_kol_combined</b>: 13–15% win, medians <b>−51%</b> and <b>−60%</b>. Running, losing.</li>
+        <li><b>social_only_fomo_gt7</b>: 7.7% win, median −76.9%, last close 09-28.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3><span class="dot dot-soft"></span>Watch</h3>
+      <ul>
+        <li><b>31 of 85</b> closes in <b>mcap_enter_at_80</b> are exactly 0%.</li>
+        <li>Two strategies have silently stopped closing.</li>
+        <li><code>features.exec</code> covers ~20% of mcap closes.</li>
+      </ul>
+    </div>
+  </div>
+
+  <figure>
+    <div class="framed">
+      <svg viewBox="0 0 1000 560" width="100%" role="img" aria-labelledby="readiness-title readiness-desc">
+        <title id="readiness-title">Strategy readiness quadrant: win rate against median return</title>
+        <desc id="readiness-desc">Quadrant positioning eleven strategies by win rate (x) against median return per trade (y). The three search_mcap TP variants sit top-right with the highest win rates and positive medians; att_rh, mcap_enter_first_seen and mcap_enter_at_80 cluster around a break-even median; gmgn_kol_momentum, gmgn_sm_kol_combined and social_only_fomo_gt7 sit bottom-left with deeply negative medians.</desc>
+        <defs>
+          <marker id="readiness-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#5b6b60"/>
+          </marker>
+        </defs>
+        <rect width="100%" height="100%" fill="#f0efe9"/>
+
+        <!-- axes: 1px ink cross through the centre -->
+        <line x1="120" y1="272" x2="924" y2="272" stroke="#163b2a" stroke-width="1" marker-end="url(#readiness-arrow)"/>
+        <line x1="520" y1="484" x2="520" y2="88" stroke="#163b2a" stroke-width="1" marker-end="url(#readiness-arrow)"/>
+        <text x="924" y="260" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="start" dominant-baseline="middle" letter-spacing="0.18em">WINRATE</text>
+        <text x="520" y="76" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.18em">MEDIAN</text>
+        <text x="124" y="292" fill="#8a968d" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.1em">0% WIN</text>
+        <text x="908" y="292" fill="#8a968d" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end" letter-spacing="0.1em">80%</text>
+        <text x="532" y="108" fill="#8a968d" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.1em">+12%</text>
+        <text x="532" y="472" fill="#8a968d" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.1em">−80%</text>
+        <line x1="120" y1="272" x2="924" y2="272" stroke="rgba(22,59,42,.14)" stroke-width="1" stroke-dasharray="2,4"/>
+
+        <!-- focal item: the best median in the set -->
+        <circle cx="666" cy="113" r="6" fill="rgba(132,204,22,.18)" stroke="#84cc16" stroke-width="1.4"/>
+        <text x="676" y="117" fill="#163b2a" font-size="10" font-weight="600" font-family="'DM Sans',sans-serif">S150</text>
+
+        <circle cx="654" cy="115" r="4" fill="#163b2a"/><text x="664" y="111" fill="#163b2a" font-size="9" font-family="'Geist Mono',monospace">S200</text>
+        <circle cx="653" cy="125" r="4" fill="#163b2a"/><text x="643" y="140" fill="#163b2a" font-size="9" font-family="'Geist Mono',monospace" text-anchor="end">S300</text>
+        <circle cx="629" cy="145" r="4" fill="#163b2a"/><text x="619" y="149" fill="#163b2a" font-size="9" font-family="'Geist Mono',monospace" text-anchor="end">MFS</text>
+        <circle cx="851" cy="101" r="4" fill="#163b2a"/><text x="841" y="105" fill="#163b2a" font-size="9" font-family="'Geist Mono',monospace" text-anchor="end">SC</text>
+        <circle cx="578" cy="148" r="4" fill="#163b2a"/><text x="568" y="163" fill="#163b2a" font-size="9" font-family="'Geist Mono',monospace" text-anchor="end">RH</text>
+        <circle cx="430" cy="148" r="4" fill="#163b2a"/><text x="420" y="163" fill="#163b2a" font-size="9" font-family="'Geist Mono',monospace" text-anchor="end">M80</text>
+        <circle cx="265" cy="389" r="4" fill="#8a968d"/><text x="255" y="393" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="end">SMK</text>
+        <circle cx="249" cy="354" r="4" fill="#8a968d"/><text x="239" y="358" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="end">KOL</text>
+        <circle cx="195" cy="456" r="4" fill="#8a968d"/><text x="205" y="470" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace">FOMO</text>
+        <circle cx="124" cy="164" r="4" fill="#8a968d"/><text x="134" y="168" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace">DL</text>
+        <circle cx="580" cy="284" r="4" fill="#8a968d"/><text x="590" y="288" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace">ZD</text>
+
+        <line x1="120" y1="500" x2="924" y2="500" stroke="rgba(22,59,42,.12)" stroke-width="0.8"/>
+        <text x="120" y="516" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.14em">LEGEND</text>
+        <circle cx="200" cy="513" r="5" fill="rgba(132,204,22,.18)" stroke="#84cc16" stroke-width="1.4"/>
+        <text x="212" y="516" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">BEST MEDIAN</text>
+        <circle cx="330" cy="513" r="4" fill="#163b2a"/>
+        <text x="342" y="516" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">MEDIAN ≥ 0</text>
+        <circle cx="452" cy="513" r="4" fill="#8a968d"/>
+        <text x="464" y="516" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">MEDIAN &lt; 0</text>
+        <text x="600" y="516" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">ZD = ZERO-CLOSE-ZERO · CODES IN THE TABLE BELOW</text>
+      </svg>
+    </div>
+    <figcaption>One dot per strategy, 7 days · x = win rate, y = median return per trade</figcaption>
+  </figure>
+
+  <h2>Per strategy, last 7 days</h2>
+  <table>
+    <caption>strategy_outcomes · exit_at &gt; now() − interval '7 days' · simulated</caption>
+    <thead>
+      <tr><th>Strategy</th><th>Trades</th><th>Win</th><th>Win %</th><th>Median</th><th>Mean</th><th>Sum</th><th>Best</th><th>Worst</th><th>Exec</th><th>Last close</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="name">search_mcap_first_seen_sl_30_tp150_h48 <span class="ok">S150</span></td><td>191</td><td>107</td><td>56.0</td><td class="lead">+8.8</td><td>+134.0</td><td>+25,597</td><td>+5,062</td><td>−85</td><td>45</td><td class="ok">09-30 16:02</td></tr>
+      <tr><td class="name">search_mcap_first_seen_sl_30_tp200_h48 <span class="ok">S200</span></td><td>221</td><td>121</td><td>54.8</td><td class="lead">+8.3</td><td>+127.2</td><td>+28,113</td><td>+3,285</td><td>−81</td><td>43</td><td class="ok">09-30 16:35</td></tr>
+      <tr><td class="name">search_mcap_first_seen_sl_30_tp300_h48 <span class="ok">S300</span></td><td>201</td><td>110</td><td>54.7</td><td class="lead">+5.7</td><td>+97.4</td><td>+19,573</td><td>+2,043</td><td>−66</td><td>46</td><td class="ok">09-30 16:35</td></tr>
+      <tr><td class="name">mcap_enter_first_seen <span class="ok">MFS</span></td><td>69</td><td>36</td><td>52.2</td><td>+0.7</td><td>+126.2</td><td>+8,705</td><td>+2,811</td><td>−60</td><td>22</td><td class="ok">09-30 16:30</td></tr>
+      <tr><td class="name">scalper <span class="ok">SC</span></td><td>4</td><td>3</td><td>75.0</td><td>+11.7</td><td>+7.6</td><td>+30</td><td>+25</td><td>−19</td><td>0</td><td class="stall">09-24 (stalled)</td></tr>
+      <tr><td class="name">mcap_enter_at_80 <span class="ok">M80</span></td><td>85</td><td>27</td><td>31.8</td><td>0.0</td><td>+6.1</td><td>+523</td><td>+381</td><td>−80</td><td>30</td><td class="ok">09-30 16:34</td></tr>
+      <tr><td class="name">att_rh <span class="ok">RH</span></td><td>3,480</td><td>1,637</td><td>47.0</td><td>0.0</td><td>+2.3</td><td>+7,883</td><td>+9,528</td><td>−99</td><td class="neg">0</td><td class="ok">09-30 10:20</td></tr>
+      <tr><td class="name">dlmm_default <span class="ok">DL</span></td><td>1</td><td>0</td><td>0.0</td><td class="neg">−4.0</td><td>−4.0</td><td>−4</td><td>−4</td><td>−4</td><td>0</td><td class="stall">09-24</td></tr>
+      <tr><td class="name">gmgn_sm_kol_combined <span class="ok">SMK</span></td><td>47</td><td>7</td><td>14.9</td><td class="neg">−60.3</td><td>−0.3</td><td>−13</td><td>+2,161</td><td>−97</td><td class="neg">0</td><td class="ok">09-30 16:35</td></tr>
+      <tr><td class="name">gmgn_kol_momentum <span class="ok">KOL</span></td><td>38</td><td>5</td><td>13.2</td><td class="neg">−51.5</td><td>−25.7</td><td>−975</td><td>+675</td><td>−84</td><td class="neg">0</td><td class="ok">09-30 16:15</td></tr>
+      <tr><td class="name">social_only_fomo_gt7 <span class="ok">FOMO</span></td><td>13</td><td>1</td><td>7.7</td><td class="neg">−76.9</td><td>−61.4</td><td>−798</td><td>+74</td><td>−98</td><td class="neg">0</td><td class="stall">09-28 (stalled)</td></tr>
+    </tbody>
+  </table>
+  <p class="sub" style="margin-top:.9rem"><strong>Read the median, never the mean.</strong> att_rh averages +2.3% with a <em>break-even</em> median;
+  S150 averages +134% against a +8.8% median — both are one 5,000% winner carrying the sum. The mean is a right-tail artifact of a
+  long-tailed return distribution, not the expected trade.</p>
+
+  <h2>Daily activity</h2>
+  <table>
+    <caption>closed outcomes per day, same window</caption>
+    <thead><tr><th>Day</th><th>Trades</th><th>Win %</th><th>Median</th><th></th></tr></thead>
+    <tbody>
+      <tr><td class="name">09-23</td><td>469</td><td>46.5</td><td>0.0</td><td class="ok"></td></tr>
+      <tr><td class="name">09-24</td><td>1,795</td><td>46.6</td><td>0.0</td><td class="ok">peak churn</td></tr>
+      <tr><td class="name">09-25</td><td>866</td><td>49.3</td><td>0.0</td><td class="ok"></td></tr>
+      <tr><td class="name">09-26</td><td>129</td><td>36.4</td><td class="neg">−0.5</td><td class="ok">quiet stretch</td></tr>
+      <tr><td class="name">09-27</td><td>119</td><td>41.2</td><td class="neg">−0.2</td><td class="ok"></td></tr>
+      <tr><td class="name">09-28</td><td>128</td><td>38.3</td><td class="neg">−0.3</td><td class="ok"></td></tr>
+      <tr><td class="name">09-29</td><td>591</td><td>52.6</td><td class="lead">+1.5</td><td class="ok">recovery</td></tr>
+      <tr><td class="name">09-30</td><td>253</td><td>45.8</td><td>0.0</td><td class="ok">partial day</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Evidence behind the numbers</h2>
+  <table>
+    <caption>the two items that were pending on live data, now resolved</caption>
+    <thead><tr><th>Check</th><th>Result</th><th>How it was read</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="name">features.exec lands</td>
+        <td>181 rows</td>
+        <td>Always under <code>features.domain_features.exec</code> (top level: 0). Every recent mcap/search close carries it; roughly one close in five, because the model needs a sampled quote.</td>
+      </tr>
+      <tr>
+        <td class="name">mcap exits valued properly</td>
+        <td>+750% … −47%</td>
+        <td>Newest closes show a real spread. The old nominal <code>sellPriceUsd = 0.000001</code> pinned every exit near −100%, so a spread is the proof.</td>
+      </tr>
+      <tr>
+        <td class="name">real vs simulated</td>
+        <td>0 real</td>
+        <td>All 82,440 outcomes are <code>is_simulated = true</code>; the first live row is an unmeasured risk today.</td>
+      </tr>
+      <tr>
+        <td class="name">open positions</td>
+        <td>0</td>
+        <td>No rows with a null <code>exit_at</code> — every position in the window is closed.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Findings</h2>
+  <ul class="findings">
+    <li><b>The mean is not a result.</b> Every headline average in this table is dominated by a handful of outsized winners. Ranking by mean would put S200 (+127%) above S150 (+134% mean, +8.8% median) — ranking by median, S150 leads.</li>
+    <li><b>mcap/search is the only family with a positive median across variants</b> — and it is the one that was parked from the assessment until exits were valued and <code>features.exec</code> landed. Both now verified.</li>
+    <li><b>GMGN KOL is running and losing.</b> 13–15% win, medians −51% and −60%, no exec coverage. Nothing here is a small-sample accident: 85 trades combined, all on the wrong side.</li>
+    <li><b>31 of 85 closes in mcap_enter_at_80 are exactly 0%</b> — over a third. Zero-return closes inflate the trade count while contributing nothing, and they dilute the win rate. Worth tracing to the close path before that strategy is trusted.</li>
+    <li><b>att_rh is break-even at the median, not broken.</b> I flagged its 0.0 median as a data smell; the per-trade distribution says otherwise — only 9 of 3,480 closes are exactly zero, so the median is genuinely ≈0 (a −0.04 rounds to 0.0). It is a high-frequency, break-even desk whose total comes entirely from the right tail.</li>
+    <li><b>Two strategies are silently stalled</b> — social_only_fomo_gt7 (last close 09-28) and scalper (09-24) — and nothing surfaces that. A worker that stops is indistinguishable from a strategy that finds nothing.</li>
+    <li><b>exec coverage is absent for att_rh, both GMGN families, social and scalper</b> (0 rows each), so those families have no modelled-drag evidence at all — we cannot say what the realistic slippage would have been.</li>
+    <li><b>Regime context is a close-time stamp, not a column.</b> <code>market_regime_tags</code> is one row per day and the outcome writer resolves it at close, so no column is needed — but the daily row is written by the mcap sim worker, so a day it does not run has no regime at all. History is not backfillable.</li>
+  </ul>
+
+  <footer>
+    Source: <code>strategy_outcomes</code> on production (reloadsol_db) · window: exit_at &gt; now() − interval '7 days' · read: 2026-09-30<br>
+    82,440 outcomes all-time, 2026-07-02 → 2026-09-30, 19 distinct strategies · 0 real rows<br>
+    Nothing was changed by this analysis. Companion doc: <code>docs/02-architecture-and-data.md</code> (regime stamping) · <code>PRODUCTION_DEPLOYMENT.md</code> (deploy lock)
+  </footer>
+
+</div>
+</body>
+</html>

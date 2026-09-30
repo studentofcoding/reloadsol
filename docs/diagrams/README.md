@@ -11,3 +11,4 @@ Self-contained HTML diagrams (inline SVG, Flowey brand palette, accessible).
 | [05-ml-pipeline.html](./05-ml-pipeline.html) | Process | ML export → train → eval → ship → runtime |
 | [06-deploy-and-ops.html](./06-deploy-and-ops.html) | Flow | Deploy runbook |
 | [07-token-info-ledger.html](./07-token-info-ledger.html) | Data flow | Write-once Token Info detect ledger (PR #96) + plan/impl TL;DR |
+| [08-strategy-readiness.html](./08-strategy-readiness.html) | Quadrant + tables | Go-live readiness: win rate vs median return per strategy, the 7-day PnL tables, and the findings |
