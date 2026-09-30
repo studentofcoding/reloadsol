@@ -62,7 +62,19 @@ export type ConsensusTestResult = {
   seed: number
 }
 
-export const DEFAULT_SAMPLES = 10_000
+/**
+ * Resamples per CI. Measured: 10k made ONE median CI cost 16.4 s at n=4,521
+ * (the sort-dominated loop), which is what made `/api/strategies/reports` take
+ * ~33 s. 2k is within ~1 % of the 10k interval at 5x the speed; override with
+ * `CONSENSUS_BOOTSTRAP_SAMPLES`.
+ */
+export const DEFAULT_SAMPLES = 2_000
+
+/** Env-tunable resample count (>= 200, else the default). */
+export function consensusBootstrapSamples(): number {
+  const raw = Number(process.env.CONSENSUS_BOOTSTRAP_SAMPLES)
+  return Number.isFinite(raw) && raw >= 200 ? Math.floor(raw) : DEFAULT_SAMPLES
+}
 export const DEFAULT_SEED = 0x5eed
 export const DEFAULT_MIN_TOKENS_PER_BUCKET = 30
 const Z_95 = 1.959963984540054
@@ -86,6 +98,46 @@ export function median(values: readonly number[]): number | null {
   return sorted.length % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2
 }
 
+/** nth-element (Hoare partition) — O(n) average, in place. */
+function selectKth(a: number[], n: number, k: number): number {
+  let lo = 0
+  let hi = n - 1
+  while (lo < hi) {
+    const pivot = a[(lo + hi) >> 1]!
+    let i = lo
+    let j = hi
+    while (i <= j) {
+      while (a[i]! < pivot) i++
+      while (a[j]! > pivot) j--
+      if (i <= j) {
+        const t = a[i]!
+        a[i] = a[j]!
+        a[j] = t
+        i++
+        j--
+      }
+    }
+    if (k <= j) hi = j
+    else if (k >= i) lo = i
+    else break
+  }
+  return a[k]!
+}
+
+/**
+ * Median of the first `n` entries, **in place** — no copy and no full sort.
+ * The bootstrap calls this once per resample; `median([...v].sort())` made one
+ * CI O(samples · n log n) plus one array allocation per sample (measured 16.4 s
+ * at n=4,521), which dominated the reports endpoint.
+ */
+function medianInPlace(arr: number[], n: number): number {
+  const mid = n >> 1
+  if (n % 2 === 1) return selectKth(arr, n, mid)
+  const lo = selectKth(arr, n, mid - 1)
+  const hi = selectKth(arr, n, mid)
+  return (lo + hi) / 2
+}
+
 function percentile(sorted: readonly number[], p: number): number {
   if (sorted.length === 0) return NaN
   const idx = (sorted.length - 1) * p
@@ -104,7 +156,7 @@ export function bootstrapMedianCI(
   opts: { samples?: number; alpha?: number; rng?: () => number } = {},
 ): [number, number] | null {
   if (values.length === 0) return null
-  const samples = opts.samples ?? DEFAULT_SAMPLES
+  const samples = opts.samples ?? consensusBootstrapSamples()
   const alpha = opts.alpha ?? 0.05
   const rng = opts.rng ?? makeRng(DEFAULT_SEED)
   const n = values.length
@@ -112,7 +164,7 @@ export function bootstrapMedianCI(
   const draw: number[] = new Array(n)
   for (let s = 0; s < samples; s++) {
     for (let i = 0; i < n; i++) draw[i] = values[Math.floor(rng() * n)]!
-    medians[s] = median(draw)!
+    medians[s] = medianInPlace(draw, n)
   }
   medians.sort((a, b) => a - b)
   return [percentile(medians, alpha / 2), percentile(medians, 1 - alpha / 2)]
@@ -125,7 +177,7 @@ export function bootstrapMedianDiffCI(
   opts: { samples?: number; alpha?: number; rng?: () => number } = {},
 ): [number, number] | null {
   if (a.length === 0 || b.length === 0) return null
-  const samples = opts.samples ?? DEFAULT_SAMPLES
+  const samples = opts.samples ?? consensusBootstrapSamples()
   const alpha = opts.alpha ?? 0.05
   const rng = opts.rng ?? makeRng(DEFAULT_SEED)
   const deltas: number[] = new Array(samples)
@@ -134,7 +186,7 @@ export function bootstrapMedianDiffCI(
   for (let s = 0; s < samples; s++) {
     for (let i = 0; i < a.length; i++) drawA[i] = a[Math.floor(rng() * a.length)]!
     for (let i = 0; i < b.length; i++) drawB[i] = b[Math.floor(rng() * b.length)]!
-    deltas[s] = median(drawB)! - median(drawA)!
+    deltas[s] = medianInPlace(drawB, b.length) - medianInPlace(drawA, a.length)
   }
   deltas.sort((x, y) => x - y)
   return [percentile(deltas, alpha / 2), percentile(deltas, 1 - alpha / 2)]
@@ -167,7 +219,7 @@ export function runConsensusTest(
   tokens: readonly ConsensusTokenInput[],
   opts: { samples?: number; seed?: number; minTokensPerBucket?: number } = {},
 ): ConsensusTestResult {
-  const samples = opts.samples ?? DEFAULT_SAMPLES
+  const samples = opts.samples ?? consensusBootstrapSamples()
   const seed = opts.seed ?? DEFAULT_SEED
   const minTokensPerBucket =
     opts.minTokensPerBucket ?? DEFAULT_MIN_TOKENS_PER_BUCKET

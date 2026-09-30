@@ -8,7 +8,12 @@ import { parseStrategyChain } from '@/strategies/types'
 import type { StrategyDomain } from '@/strategies/types'
 import { cacheGet, cacheSet } from '@/utils/redis-cache'
 
-const REPORTS_CACHE_TTL_S = 30
+/**
+ * Reports are a 30-day analysis, not per-filter UI data, and a cold recompute is
+ * expensive (the consensus bootstrap dominates). A long TTL keeps the slow path
+ * rare; the per-filter cache key still makes each filter its own entry.
+ */
+const REPORTS_CACHE_TTL_S = 600
 
 export async function GET(request: NextRequest) {
   await connection()

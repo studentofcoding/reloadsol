@@ -193,6 +193,16 @@ mean +83 % vs median −39 % on first entries) plus a Wilson CI on the token win
 only follow a significant lift, shadow-first, mirroring the wallet-digger concurrence shape
 (`alpha_concurrence_signals`).
 
+**Cost note (fixed 2026-09-30):** the bootstrap is the expensive part of the reports aggregate, and it
+used to sort every resample (`median([...v].sort())` → O(samples · n log n) plus one array per sample).
+Measured in the production container at n=4,521: **16.4 s for ONE median CI**, and the endpoint runs a
+median CI per bucket plus a diff CI (both sides) per bucket → `/api/strategies/reports` took **32.7 s
+cold**, which is what made `?tab=closed` look like it never loaded (the DB part is only 721 ms). It now
+uses an **in-place nth-element selection** (same values for the same seed) with
+`DEFAULT_SAMPLES` 10,000 → **2,000** (`CONSENSUS_BOOTSTRAP_SAMPLES`) — one CI is **288 ms**, ~54× faster.
+The reports cache TTL is 600 s and the closed view fetches reports in its own query so the outcome table
+paints without waiting on the aggregate.
+
 **That gate now exists in its gated form** (`src/strategies/consensus-gate.ts`,
 `db/init/47-strategy-consensus-shadow.sql`). It decides whether a would-be open has enough
 independent families behind it, but `decideConsensusGate` returns `no_evidence` whenever the test
@@ -387,7 +397,7 @@ Legacy `/dev/strategies` redirects here (tab mapping in `proxy.ts`).
 ### API routes
 
 - `GET /api/strategies` — merged registry
-- `GET /api/strategies/reports` — breakdown + `coverage[]` + `best_trade_windows` (default tz `Asia/Bangkok`, `?tz=`), ranking by avg PnL, top/worst 8 trades
+- `GET /api/strategies/reports` — breakdown + `coverage[]` + `best_trade_windows` (default tz `Asia/Bangkok`, `?tz=`), ranking by avg PnL, top/worst 8 trades. Redis-cached **600 s** (per-filter key); a cold recompute is the consensus bootstrap, not the query (see the cost note above).
 - `GET /api/strategies/outcomes` — paginated outcomes
 - `PATCH /api/strategies/outcomes/[id]` — ML label merge
 - `GET /api/strategies/pnl-export` — token-level PnL spreadsheet for an inclusive day range (`?from=&to=&tz=`, `position_size` default `0.005`, `chain` optional and **omitted means all chains** because `parseStrategyChain` coerces to `sol` and would drop the Robinhood twin). CSV: `#` metadata block (range, timezone, chains, trades, won/lost, avg/median `pnl_pct`, gross win/loss, profit factor, `pnl_sol`, peak concurrent, peak capital, top-10 concentration) then one table with a `section` column — rank 1-10 winners, rank 1-10 losers, then every token. `format=json` for the same payload. Notional counts only per-position percentages, so it is never a portfolio return; when the range spans chains the CSV flags that the notional column mixes native units.

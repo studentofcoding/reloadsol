@@ -361,20 +361,22 @@ type StrategyAdminQueryData = {
   data: StrategiesResponse;
   outcomes: OutcomeRow[];
   outcomesTotal: number;
-  reports: {
-    breakdown: ReportBreakdown[];
-    coverage: CoverageRow[];
-    ab_pairs: AbPair[];
-    ranking: ReportBreakdown[];
-    ml_stats: MlLabelStats;
-    mcap_tracker_stats: McapTrackerReportStats | null;
-    best_trade_windows: BestTradeWindowRow[];
-    overlap: OverlapRow[];
-    pairs: PairOverlapRow[];
-    consensus: ConsensusResult | null;
-    capital: PaperCapitalSummary[];
-    timezone: string;
-  } | null;
+};
+
+/** Loaded by its own query — a cold recompute is seconds, the table is ~40 ms. */
+type StrategyReportsData = {
+  breakdown: ReportBreakdown[];
+  coverage: CoverageRow[];
+  ab_pairs: AbPair[];
+  ranking: ReportBreakdown[];
+  ml_stats: MlLabelStats;
+  mcap_tracker_stats: McapTrackerReportStats | null;
+  best_trade_windows: BestTradeWindowRow[];
+  overlap: OverlapRow[];
+  pairs: PairOverlapRow[];
+  consensus: ConsensusResult | null;
+  capital: PaperCapitalSummary[];
+  timezone: string;
 };
 
 type WorkerRow = {
@@ -779,18 +781,11 @@ export default function StrategyAdminHub({
     staleTime: 60_000,
   });
 
+  // Core view data: strategies + outcomes. Both are fast (~40 ms), so the table
+  // can paint immediately.
   const strategiesQuery = useQuery({
-    queryKey: strategyAdminQueryKey,
+    queryKey: [...strategyAdminQueryKey, "core"],
     queryFn: async () => {
-      const reportParams = new URLSearchParams();
-      reportParams.set("chain", network);
-      if (reportFrom) reportParams.set("from", reportFrom);
-      if (reportTo) reportParams.set("to", reportTo);
-      if (reportDomain) reportParams.set("domain", reportDomain);
-      if (reportStrategyId) reportParams.set("strategy_id", reportStrategyId);
-      if (reportSimulated) reportParams.set("is_simulated", reportSimulated);
-      reportParams.set("tz", reportTz);
-
       const outcomesQuery = buildOutcomesQuery({
         reportFrom,
         reportTo,
@@ -806,43 +801,63 @@ export default function StrategyAdminHub({
         tokenAddress: tokenSearch,
       });
 
-      const [strRes, outRes, repRes] = await Promise.all([
+      const [strRes, outRes] = await Promise.all([
         fetch(`/api/strategies?chain=${network}`),
         fetch(`/api/strategies/outcomes?${outcomesQuery}&chain=${network}`),
-        fetch(`/api/strategies/reports?${reportParams.toString()}`),
       ]);
       const strJson = await strRes.json();
       const outJson = await outRes.json();
-      const repJson = await repRes.json();
       if (!strJson.success) throw new Error(strJson.error || "Failed to load");
       return {
         data: strJson as StrategiesResponse,
         outcomes: (outJson.outcomes ?? []) as OutcomeRow[],
         outcomesTotal: (outJson.total ?? 0) as number,
-        reports: repJson.success
-          ? {
-              breakdown: repJson.breakdown ?? [],
-              coverage: (repJson.coverage ?? []) as CoverageRow[],
-              ab_pairs: repJson.ab_pairs ?? [],
-              ranking: repJson.ranking ?? [],
-              ml_stats: (repJson.ml_stats ?? {
-                total: 0,
-                unlabeled: 0,
-                by_label: {},
-                by_condition: {},
-              }) as MlLabelStats,
-              mcap_tracker_stats: repJson.mcap_tracker_stats ?? null,
-              best_trade_windows: (repJson.best_trade_windows ??
-                []) as BestTradeWindowRow[],
-              overlap: (repJson.overlap ?? []) as OverlapRow[],
-              pairs: (repJson.pairs ?? []) as PairOverlapRow[],
-              consensus: (repJson.consensus ?? null) as ConsensusResult | null,
-              capital: (repJson.capital ?? []) as PaperCapitalSummary[],
-              timezone: (repJson.timezone as string) ?? reportTz,
-            }
-          : null,
       };
     },
+  });
+
+  /**
+   * Reports (breakdown + coverage + consensus bootstrap + capital) are a SEPARATE
+   * request on purpose: a cold recompute takes seconds, and folding it into the
+   * blocking query above made the whole closed view look like it never loaded.
+   */
+  const reportsQuery = useQuery<StrategyReportsData | null>({
+    queryKey: [...strategyAdminQueryKey, "reports"],
+    queryFn: async () => {
+      const reportParams = new URLSearchParams();
+      reportParams.set("chain", network);
+      if (reportFrom) reportParams.set("from", reportFrom);
+      if (reportTo) reportParams.set("to", reportTo);
+      if (reportDomain) reportParams.set("domain", reportDomain);
+      if (reportStrategyId) reportParams.set("strategy_id", reportStrategyId);
+      if (reportSimulated) reportParams.set("is_simulated", reportSimulated);
+      reportParams.set("tz", reportTz);
+
+      const repRes = await fetch(`/api/strategies/reports?${reportParams.toString()}`);
+      const repJson = await repRes.json();
+      if (!repJson.success) return null;
+      return {
+        breakdown: repJson.breakdown ?? [],
+        coverage: (repJson.coverage ?? []) as CoverageRow[],
+        ab_pairs: repJson.ab_pairs ?? [],
+        ranking: repJson.ranking ?? [],
+        ml_stats: (repJson.ml_stats ?? {
+          total: 0,
+          unlabeled: 0,
+          by_label: {},
+          by_condition: {},
+        }) as MlLabelStats,
+        mcap_tracker_stats: repJson.mcap_tracker_stats ?? null,
+        best_trade_windows: (repJson.best_trade_windows ??
+          []) as BestTradeWindowRow[],
+        overlap: (repJson.overlap ?? []) as OverlapRow[],
+        pairs: (repJson.pairs ?? []) as PairOverlapRow[],
+        consensus: (repJson.consensus ?? null) as ConsensusResult | null,
+        capital: (repJson.capital ?? []) as PaperCapitalSummary[],
+        timezone: (repJson.timezone as string) ?? reportTz,
+      };
+    },
+    enabled: showReports,
     refetchInterval:
       showReports && backfillPhase !== "running"
         ? REPORTS_POLL_INTERVAL_MS
@@ -870,7 +885,7 @@ export default function StrategyAdminHub({
   const outcomesTotal = strategiesQuery.data?.outcomesTotal ?? 0;
   const selectedOutcome =
     selectedOutcomeIndex != null ? outcomes[selectedOutcomeIndex] ?? null : null;
-  const reports = strategiesQuery.data?.reports ?? null;
+  const reports = reportsQuery.data ?? null;
   const coverage = reports?.coverage ?? [];
   const loading = strategiesQuery.isLoading;
   const loadError = strategiesQuery.error
@@ -1020,7 +1035,7 @@ export default function StrategyAdminHub({
   const updateOutcomeInCache = useCallback(
     (updated: StrategyOutcomeRow, rowIndex?: number) => {
       queryClient.setQueryData<StrategyAdminQueryData | undefined>(
-        strategyAdminQueryKey,
+        [...strategyAdminQueryKey, "core"],
         (old) => {
           if (!old) return old;
           const idx = rowIndex ?? old.outcomes.findIndex((r) => r.id === updated.id);

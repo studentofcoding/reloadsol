@@ -2644,7 +2644,12 @@ export async function aggregateStrategyReports(params: {
   let rows: StrategyOutcomeRow[]
   try {
     const result = await query<Record<string, unknown>>(
-      `SELECT * FROM strategy_outcomes ${whereSql}`,
+      // Project what mapStrategyOutcomeRow actually reads: `SELECT *` pulled every
+      // row (82k across domains) with the whole features JSONB for a report that
+      // only needs these columns.
+      `SELECT id, strategy_id, domain, chain, token_address, entry_at, exit_at,
+              pnl_pct, status, is_simulated, features, created_at
+       FROM strategy_outcomes ${whereSql}`,
       values,
     )
     rows = dedupeStrategyOutcomeRows(result.rows.map(mapStrategyOutcomeRow))

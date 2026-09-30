@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  DEFAULT_SAMPLES,
   bootstrapMedianCI,
   bootstrapMedianDiffCI,
+  consensusBootstrapSamples,
   median,
   runConsensusTest,
   wilsonCI,
@@ -18,6 +20,30 @@ describe('median', () => {
     expect(median([3, 1, 2])).toBe(2)
     expect(median([1, 2, 3, 4])).toBe(2.5)
     expect(median([])).toBeNull()
+  })
+})
+
+describe('consensusBootstrapSamples', () => {
+  it('defaults to 2000 and honours a sane env override', () => {
+    const prev = process.env.CONSENSUS_BOOTSTRAP_SAMPLES
+    try {
+      delete process.env.CONSENSUS_BOOTSTRAP_SAMPLES
+      expect(DEFAULT_SAMPLES).toBe(2_000)
+      expect(consensusBootstrapSamples()).toBe(2_000)
+
+      process.env.CONSENSUS_BOOTSTRAP_SAMPLES = '500'
+      expect(consensusBootstrapSamples()).toBe(500)
+
+      // Below the sanity floor, and junk, both fall back to the default rather
+      // than silently producing a meaningless interval.
+      process.env.CONSENSUS_BOOTSTRAP_SAMPLES = '10'
+      expect(consensusBootstrapSamples()).toBe(2_000)
+      process.env.CONSENSUS_BOOTSTRAP_SAMPLES = 'nope'
+      expect(consensusBootstrapSamples()).toBe(2_000)
+    } finally {
+      if (prev === undefined) delete process.env.CONSENSUS_BOOTSTRAP_SAMPLES
+      else process.env.CONSENSUS_BOOTSTRAP_SAMPLES = prev
+    }
   })
 })
 

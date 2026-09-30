@@ -8,6 +8,29 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the closed tab took ~33 s because one bootstrap sorted every resample
+
+`/api/strategies/reports` was the entire cost of `/dev/algo-tester?tab=closed` (the tab is gated on one
+`Promise.all` of three fetches): measured on prod at **32.7 s cold / 0.009 s warm**. It was not the
+database — `SELECT *` over the 4,521-row mcap_tracker slice is **721 ms** — it was `bootstrapMedianCI`,
+which took each of its 10,000 resample medians with `median([...v].sort())`: it copied and sorted the
+whole sample 10,000 times, i.e. **O(samples · n log n)**. Measured in the production container at
+n=4,521: **16,350 ms for ONE CI**, and `runConsensusTest` runs a median CI *per bucket* plus a diff CI
+(which resamples both sides) *per bucket* → ~33 s, matching the observed latency. The 30 s cache meant
+it went cold constantly, and the view renders "Loading strategies…" until it resolves.
+
+- The bootstrap now uses an **in-place nth-element selection** (no copy, no full sort) and is
+  byte-identical for the same seed (asserted by the existing determinism test). One CI at n=4,521:
+  **15,571 ms → 1,456 ms**.
+- `DEFAULT_SAMPLES` 10,000 → **2,000** (env-tunable via `CONSENSUS_BOOTSTRAP_SAMPLES`), within ~1 % of
+  the 10k interval: **→ 288 ms** — **~54×** end to end.
+- Reports cache TTL **30 s → 600 s**; it is a 30-day analysis, not per-filter UI data, and the cache key
+  already makes each filter its own entry.
+- The closed view loads reports in a **separate query**, so the outcome table paints in ~40 ms instead
+  of being blocked by the aggregate (`StrategyAdminHub`).
+- The report read **projects the 12 columns** `mapStrategyOutcomeRow` actually reads instead of
+  `SELECT *` (the unfiltered case pulled 82k rows, `features` JSONB included).
+
 ### Fixed — trades waited 5-6s on a Jupiter queue shared with background work
 
 The gate that keeps us inside Jupiter's quota was a single 2-second line
