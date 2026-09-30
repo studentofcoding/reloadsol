@@ -268,9 +268,9 @@ describe('buildStrategyReadiness', () => {
     const flat = out.find((s) => s.strategyId === 'flat')!
     expect(good.netPerTradeSol).toBeGreaterThan(0)
     expect(good.medianPnlPct).toBe(8)
-    expect(good.verdict).toBe('candidate')
+    expect(good.verdictUngated).toBe('candidate')
     expect(flat.netPerTradeSol).toBeLessThan(0)
-    expect(flat.verdict).toBe('not_viable')
+    expect(flat.verdictUngated).toBe('not_viable')
   })
 
   it('sorts by net per trade and ignores strategies with nothing closed', () => {
@@ -314,6 +314,29 @@ describe('pre-fix nominal proceeds are flagged, not summed', () => {
     expect(x.closed).toBe(1)
     expect(x.excludedNominal).toBe(1)
     expect(x.medianPnlPct).toBe(4)
-    expect(x.verdict).toBe('candidate')
+    expect(x.verdictUngated).toBe('candidate')
+    expect(x.verdict).toBe('insufficient') // one counted close cannot clear the floor
+  })
+})
+
+describe('the sample floor gates the verdict, not the computation', () => {
+  const series = (n: number, pnlPct: number) =>
+    Array.from({ length: n }, (_, i) =>
+      pos({ strategyId: 's', pnlPct, pnlSol: 0.0005, costSol: 0.007, openedAt: i * 10, closedAt: i * 10 + 5 }),
+    )
+
+  it('reports insufficient below the floor, and the raw verdict stays available', () => {
+    const [r] = buildStrategyReadiness(series(10, 8), undefined, 30)
+    expect(r.verdict).toBe('insufficient')
+    expect(r.verdictUngated).toBe('candidate')
+    expect(r.minSample).toBe(30)
+  })
+
+  it('applies the real verdict at or above the floor', () => {
+    expect(buildStrategyReadiness(series(30, 8), undefined, 30)[0].verdict).toBe('candidate')
+  })
+
+  it('can be turned off — which is what the UI toggle does', () => {
+    expect(buildStrategyReadiness(series(10, 8), undefined, 0)[0].verdict).toBe('candidate')
   })
 })

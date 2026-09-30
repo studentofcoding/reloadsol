@@ -161,7 +161,11 @@ interface LedgerPayload {
     netSol: number
     netPerTradeSol: number
     peakConcurrent: number
-    verdict: 'candidate' | 'marginal' | 'not_viable'
+    excludedNominal: number
+    /** Gated by the sample floor; `verdictUngated` is the raw judgement, for the toggle. */
+    verdict: 'candidate' | 'marginal' | 'not_viable' | 'insufficient'
+    verdictUngated: 'candidate' | 'marginal' | 'not_viable'
+    minSample: number
   }>
   success: boolean
   records?: number
@@ -227,6 +231,9 @@ export default function PnlDashboardClient() {
   const [dayTrades, setDayTrades] = useState<Record<string, DayTrade[]>>({})
   const [dayLoading, setDayLoading] = useState<string | null>(null)
   const [ledger, setLedger] = useState<LedgerPayload | null>(null)
+  // The sample floor is a view, not a computation: both verdicts arrive from the API, so this toggle
+  // costs nothing and lets you see the table with the gate on, or everything ungated.
+  const [gateSample, setGateSample] = useState(true)
   const [showOpen, setShowOpen] = useState(false)
   const [showClosed, setShowClosed] = useState(false)
   const [climate, setClimate] = useState<Climate | null>(null)
@@ -468,9 +475,19 @@ export default function PnlDashboardClient() {
             gross of the drag. */}
         {(ledger?.readiness ?? []).length > 0 ? (
           <section className="mt-4">
-            <h2 className="text-sm text-gray-300 mb-2">
-              Strategy readiness <span className="text-gray-500">— net of the calibrated drag</span>
-            </h2>
+            <div className="flex items-baseline justify-between mb-2 gap-3">
+              <h2 className="text-sm text-gray-300">
+                Strategy readiness <span className="text-gray-500">— net of the calibrated drag</span>
+              </h2>
+              <button
+                type="button"
+                onClick={() => setGateSample((v) => !v)}
+                className="text-[10px] uppercase tracking-wide px-2 py-1 rounded border border-gray-700 text-gray-300 hover:border-gray-500"
+                title="Minimum-sample gate: below the floor the verdict reads 'insufficient', because a median on a handful of trades is noise."
+              >
+                sample gate: {gateSample ? `on (n≥${ledger!.readiness![0]?.minSample ?? 30})` : 'off'}
+              </button>
+            </div>
             <div className="overflow-x-auto rounded border border-gray-800">
               <table className="w-full text-xs">
                 <thead className="bg-gray-900 text-gray-400">
@@ -490,7 +507,14 @@ export default function PnlDashboardClient() {
                   {ledger!.readiness!.map((r) => (
                     <tr key={r.strategyId} className="border-t border-gray-800">
                       <td className="py-1 pl-2 pr-3 text-gray-200">{r.strategyId}</td>
-                      <td className="py-1 px-2 text-right text-gray-400">{r.closed}</td>
+                      <td className="py-1 px-2 text-right text-gray-400">
+                        {r.closed}
+                        {r.excludedNominal > 0 ? (
+                          <span className="text-gray-600" title="positions excluded as pre-fix nominal proceeds">
+                            {' '}(-{r.excludedNominal})
+                          </span>
+                        ) : null}
+                      </td>
                       <td className={`py-1 px-2 text-right ${r.medianPnlPct > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                         {pct(r.medianPnlPct)}
                       </td>
@@ -501,17 +525,27 @@ export default function PnlDashboardClient() {
                         {sol(r.netPerTradeSol, 6)}
                       </td>
                       <td className="py-1 px-2 text-right text-gray-400">{r.peakConcurrent}</td>
-                      <td
-                        className={`py-1 pl-2 ${
-                          r.verdict === 'candidate'
-                            ? 'text-emerald-400'
-                            : r.verdict === 'marginal'
-                              ? 'text-amber-400'
-                              : 'text-gray-500'
-                        }`}
-                      >
-                        {r.verdict}
-                      </td>
+                      {(() => {
+                        const v = gateSample ? r.verdict : r.verdictUngated
+                        return (
+                          <td
+                            className={`py-1 pl-2 ${
+                              v === 'candidate'
+                                ? 'text-emerald-400'
+                                : v === 'marginal'
+                                  ? 'text-amber-400'
+                                  : v === 'insufficient'
+                                    ? 'text-gray-500 italic'
+                                    : 'text-gray-500'
+                            }`}
+                          >
+                            {v}
+                            {gateSample && r.verdict === 'insufficient' ? (
+                              <span className="text-gray-600"> (n={r.closed})</span>
+                            ) : null}
+                          </td>
+                        )
+                      })()}
                     </tr>
                   ))}
                 </tbody>

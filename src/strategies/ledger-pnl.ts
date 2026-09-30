@@ -292,7 +292,16 @@ export interface StrategyReadiness {
   peakConcurrent: number
   /** Positions left out of the figures above because their proceeds are a pre-fix nominal stamp. */
   excludedNominal: number
-  verdict: 'candidate' | 'marginal' | 'not_viable'
+  /**
+   * The gate is a *view*, not a computation: both verdicts are returned so a UI can toggle between
+   * "trustworthy" and "everything" without another round trip. `verdict` applies the sample floor;
+   * `verdictUngated` is the raw judgement. Below the floor an underpowered sample says `insufficient`
+   * rather than `candidate` — "no result yet" must not read as a result.
+   */
+  verdict: 'candidate' | 'marginal' | 'not_viable' | 'insufficient'
+  verdictUngated: 'candidate' | 'marginal' | 'not_viable'
+  /** The floor this verdict was gated on, so the UI can state it. */
+  minSample: number
 }
 
 /** Maximum simultaneous open positions from interval overlap (openedAt → closedAt). */
@@ -320,9 +329,18 @@ function median(sorted: number[]): number {
   return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
 }
 
+/** Below this many counted closes, a verdict is noise. Env-tunable like the other thresholds. */
+export function resolveReadinessMinSample(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const parsed = Number(env.READINESS_MIN_SAMPLE)
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 30
+}
+
 export function buildStrategyReadiness(
   positions: LedgerPosition[],
   params?: ExecutionParams,
+  minSample: number = resolveReadinessMinSample(),
 ): StrategyReadiness[] {
   const byStrategy = new Map<string, LedgerPosition[]>()
   for (const p of positions) {
@@ -343,6 +361,12 @@ export function buildStrategyReadiness(
     const netPerTradeSol = netSol / closedPositions.length
     const medianPnlPct = median(closedPositions.map((p) => p.pnlPct).sort((a, b) => a - b))
     const medianSizeSol = median(closedPositions.map((p) => p.costSol).sort((a, b) => a - b))
+    const rawVerdict: StrategyReadiness['verdictUngated'] =
+      netPerTradeSol > 0 && medianPnlPct > 0
+        ? 'candidate'
+        : netPerTradeSol > 0
+          ? 'marginal'
+          : 'not_viable'
 
     out.push({
       strategyId,
@@ -357,12 +381,9 @@ export function buildStrategyReadiness(
       excludedNominal: list.filter((p) => p.nominalLegs > 0).length,
       // A candidate is one whose typical trade is positive *and* whose total survives the drag. Below
       // that it is not a sizing question — no size fixes a median that loses to its own fixed cost.
-      verdict:
-        netPerTradeSol > 0 && medianPnlPct > 0
-          ? 'candidate'
-          : netPerTradeSol > 0
-            ? 'marginal'
-            : 'not_viable',
+      verdictUngated: rawVerdict,
+      verdict: closedPositions.length < minSample ? 'insufficient' : rawVerdict,
+      minSample,
     })
   }
   return out.sort((a, b) => b.netPerTradeSol - a.netPerTradeSol)
