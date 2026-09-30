@@ -25,39 +25,28 @@ export type OpenBarPosition = {
   balanceRaw: number
   uiAmount: number
   decimals: number
-  /** Wallet hold with no live buy record. Percent uses the first spot seen. */
-  untracked?: boolean
 }
 
 /**
  * Real (non-sim) opens that are still in the wallet, with frozen cost basis
  * from the live trade cycle — watchlist-style marks use buyPriceUsd vs spot.
+ *
+ * A wallet hold with **no live buy record is not a position** and is not returned. That fallback
+ * used to render the last such hold, which is how an airdropped clone sharing a real token's ticker
+ * ("2 STONK") ended up looking like a position beside the real one. The caller additionally hides
+ * unpriced positions, since a clone is typically unpriced while a real hold is not.
  */
 export function listLiveOpenBarPositions(
   records: TrackingRecord[],
   holdingsByMint: Map<string, OpenBarHolding>,
 ): OpenBarPosition[] {
   const out: OpenBarPosition[] = []
-  // ponytail: "last" is the last non-quote hold in wallet-list order, not chain time.
-  let lastUntracked: OpenBarPosition | null = null
 
   for (const [mint, holding] of holdingsByMint) {
     if (holding.uiAmount <= DUST_UI || holding.balanceRaw <= 0) continue
     if (QUOTE_MINTS.has(mint)) continue
     const cycle = computeOpenTradeCycle(records, mint, 'live')
-    if (!cycle || cycle.weightedBuyPriceUsd <= 0) {
-      lastUntracked = {
-        mintAddress: mint,
-        symbol: holding.symbol || mint.slice(0, 6),
-        logoURI: holding.logoURI || null,
-        buyPriceUsd: 0,
-        balanceRaw: holding.balanceRaw,
-        uiAmount: holding.uiAmount,
-        decimals: holding.decimals,
-        untracked: true,
-      }
-      continue
-    }
+    if (!cycle || cycle.weightedBuyPriceUsd <= 0) continue
 
     out.push({
       mintAddress: mint,
@@ -70,6 +59,5 @@ export function listLiveOpenBarPositions(
     })
   }
 
-  if (lastUntracked) out.push(lastUntracked)
   return out
 }

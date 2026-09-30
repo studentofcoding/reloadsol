@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTradingData } from '@/components/TradingDataProvider';
 import { useWallet, useConnection } from '@/components/WalletProvider';
@@ -84,58 +84,48 @@ export function useGlobalOpenPositionsBar() {
     return map;
   }, [holdings.allTokens]);
 
-  const positions = useMemo(
+  const candidates = useMemo(
     () => (enabled ? listLiveOpenBarPositions(records, holdingsByMint) : []),
     [enabled, records, holdingsByMint],
   );
 
-  const mintsKey = positions.map((p) => p.mintAddress).join(',');
+  const mintsKey = candidates.map((p) => p.mintAddress).join(',');
   const pricesQuery = useQuery({
     queryKey: [GLOBAL_OPEN_BAR_PRICES_KEY, walletAddress, network, mintsKey],
     queryFn: () =>
       fetchOpenBarPrices(
-        positions.map((p) => p.mintAddress),
+        candidates.map((p) => p.mintAddress),
         network === 'robinhood' ? 'robinhood' : 'sol',
       ),
-    enabled: enabled && positions.length > 0,
+    enabled: enabled && candidates.length > 0,
     staleTime: OPEN_BAR_PRICE_POLL_MS - 2_000,
     refetchInterval: OPEN_BAR_PRICE_POLL_MS,
   });
 
   const currentPrices = pricesQuery.data ?? {};
-  const [untrackedBaseline, setUntrackedBaseline] = useState<
-    Record<string, number>
-  >({});
 
-  useEffect(() => {
-    setUntrackedBaseline((prev) => {
-      let changed = false;
-      const next = { ...prev };
-      for (const p of positions) {
-        if (!p.untracked || next[p.mintAddress]) continue;
-        const spot = currentPrices[p.mintAddress];
-        if (spot != null && spot > 0) {
-          next[p.mintAddress] = spot;
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
-    });
-  }, [positions, currentPrices]);
+  /**
+   * Only priced positions make the bar. An unpriced hold is the signature of an airdropped clone —
+   * relying on the price feed rather than on the symbol avoids hiding anything real, because a live
+   * position is priced. Fail-open when the feed returned nothing at all, so a pricing outage cannot
+   * empty the bar.
+   */
+  const positions = useMemo(() => {
+    if (candidates.length === 0) return candidates;
+    if (Object.keys(currentPrices).length === 0) return candidates;
+    return candidates.filter((p) => (currentPrices[p.mintAddress] ?? 0) > 0);
+  }, [candidates, currentPrices]);
 
   const priceChangePct = useMemo(() => {
     const result: Record<string, number | null> = {};
     for (const p of positions) {
-      const basis = p.untracked
-        ? untrackedBaseline[p.mintAddress]
-        : p.buyPriceUsd;
       result[p.mintAddress] = pctFromBaseline(
-        basis,
+        p.buyPriceUsd,
         currentPrices[p.mintAddress],
       );
     }
     return result;
-  }, [positions, currentPrices, untrackedBaseline]);
+  }, [positions, currentPrices]);
 
   return {
     positions,

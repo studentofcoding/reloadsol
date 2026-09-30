@@ -62,25 +62,38 @@ describe('listLiveOpenBarPositions', () => {
     expect(open[0].uiAmount).toBe(1000)
   })
 
-  it('appends the last untracked wallet hold and skips quote mints', () => {
+  // A hold with no live buy record is not a position. The old fallback rendered the last such hold,
+  // which is how an airdropped clone sharing a real token's ticker ("2 STONK") appeared in the bar.
+  it('drops wallet holds with no live buy record', () => {
     const holdings = new Map([
       [
         'MintEarly',
         { balanceRaw: 10, uiAmount: 2, decimals: 6, symbol: 'EARLY' },
       ],
       [
-        'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-        { balanceRaw: 1_000_000, uiAmount: 1, decimals: 6, symbol: 'USDC' },
-      ],
-      [
         'MintLast',
         { balanceRaw: 20, uiAmount: 3, decimals: 6, symbol: 'LAST' },
       ],
     ])
-    const open = listLiveOpenBarPositions([], holdings)
-    expect(open).toHaveLength(1)
-    expect(open[0].mintAddress).toBe('MintLast')
-    expect(open[0].untracked).toBe(true)
-    expect(open[0].buyPriceUsd).toBe(0)
+    expect(listLiveOpenBarPositions([], holdings)).toEqual([])
+  })
+
+  it('skips quote mints and dust even when a buy record exists', () => {
+    const usdc = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
+    const holdings = new Map([
+      [
+        usdc,
+        { balanceRaw: 1_000_000, uiAmount: 1, decimals: 6, symbol: 'USDC' },
+      ],
+      [
+        'MintDust',
+        { balanceRaw: 1, uiAmount: 0.0000001, decimals: 6, symbol: 'DUST' },
+      ],
+    ])
+    const open = listLiveOpenBarPositions(
+      [buy(usdc, 0.05), buy('MintDust', 0.05)],
+      holdings,
+    )
+    expect(open).toEqual([])
   })
 })

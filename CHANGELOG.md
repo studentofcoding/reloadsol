@@ -8,6 +8,25 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — the open-positions bar shows positions, not wallet holds
+
+A wallet hold with no live buy record used to be rendered as "untracked" (at most one, appended at
+the end). That is how two airdropped clones sharing a real ticker turned into a confusing duplicate:
+the wallet holds two different mints both named **STONK** — one real (priced $0.2731, 7 live buys)
+and one 9→6-decimal clone with no price and no records — and the bar drew both as "STONK".
+
+- `listLiveOpenBarPositions` now returns **live positions only**: a hold with no net-open live buy
+  cycle is not a position and is not returned. The `untracked` field and the first-seen baseline it
+  relied on are gone (`open-bar-positions.ts`).
+- The bar additionally hides **unpriced** positions once the price feed answers — an unpriced hold is
+  the signature of a clone, and a live position is priced — while failing open when the feed returns
+  nothing at all, so a pricing outage cannot empty the bar (`useGlobalOpenPositionsBar.ts`).
+- Verified against production: the real STONK mint has 7 live buys and stays; the clone has zero
+  records and no price, so both rules drop it.
+- Trade-off worth knowing: a real position whose price momentarily fails now drops out of the bar
+  until the next poll (15s) rather than staying put — the alternative was keeping the clone.
+
+
 ### Added — buy value estimate + exact amounts on trade outcomes
 
 - **The buy CTA states the value.** `BulkTokenBuyer`'s button now appends `(≈ $X)`: the input amount
