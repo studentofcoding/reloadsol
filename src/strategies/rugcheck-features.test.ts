@@ -79,4 +79,35 @@ describe('mapRugcheckReport', () => {
     expect(mapRugcheckReport({ mint: 'm', lpLockedPct: 88 }).lpLockedPct).toBe(88)
     expect(mapRugcheckReport({ mint: 'm', lp: { lpLockedPct: 42 } }).lpLockedPct).toBe(42)
   })
+
+  it('reads the per-market lpLockedPct and takes the max (the real shape)', () => {
+    // Live shape: the full report has NO top-level lpLockedPct — it is per market.
+    const f = mapRugcheckReport({
+      mint: 'm',
+      markets: [
+        { marketType: 'meteoraDlmm', lp: { lpLockedPct: 0 } },
+        { marketType: 'raydium_cpmm', lp: { lpLockedPct: 97.06 } },
+        { marketType: 'other', lp: {} },
+      ],
+    })
+    expect(f.lpLockedPct).toBeCloseTo(97.06, 5)
+  })
+
+  it('leaves lpLockedPct null when no market carries it', () => {
+    const f = mapRugcheckReport({ mint: 'm', markets: [{ marketType: 'x' }] })
+    expect(f.lpLockedPct).toBeNull()
+  })
+
+  it('sums lockers[].usdcLocked into lpLockedUsd', () => {
+    const f = mapRugcheckReport({
+      mint: 'm',
+      lockers: {
+        a: { usdcLocked: 593.63, type: 'raydium_locker' },
+        b: { usdcLocked: 925329.77, type: 'raydium_locker' },
+        c: { type: 'raydium_locker' },
+      },
+    })
+    expect(f.lpLockedUsd).toBeCloseTo(925923.4, 1)
+    expect(mapRugcheckReport({ mint: 'm' }).lpLockedUsd).toBeNull()
+  })
 })

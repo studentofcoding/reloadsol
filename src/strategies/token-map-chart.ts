@@ -25,6 +25,7 @@ import {
 } from '@/utils/market-brain'
 import { cacheGet, cacheSet } from '@/utils/redis-cache'
 import { acquireSolanaTrackerOhlcSlot } from '@/utils/solanatracker-ohlc-limit'
+import { fetchGmgnWebCandles } from '@/utils/gmgn-web-extra'
 
 /** ponytail: 10m collapses Freeview+Telegram+shadow bursts; last-good covers 429 */
 export const OHLC_24H_1M_CACHE_TTL_SEC = 600
@@ -699,21 +700,45 @@ async function fetchTokenOhlcUpstream(params: {
   }
 
   // GMGN kline fallback — skipped when Redis already holds a full 24h series.
-  if (params.skipGmgn) return { candles: [], source: 'none' }
-  try {
-    const candles = await fetchGmgnKlinePaged({
-      chain: 'sol',
-      address: params.tokenAddress,
-      resolution: params.type,
-      timeFrom: params.timeFrom,
-      timeTo: params.timeTo,
-      deadlineMs: params.deadlineMs,
-    })
-    if (candles.length === 0) return { candles: [], source: 'none' }
-    return { candles, source: 'gmgn' }
-  } catch {
-    return { candles: [], source: 'none' }
+  if (!params.skipGmgn) {
+    try {
+      const candles = await fetchGmgnKlinePaged({
+        chain: 'sol',
+        address: params.tokenAddress,
+        resolution: params.type,
+        timeFrom: params.timeFrom,
+        timeTo: params.timeTo,
+        deadlineMs: params.deadlineMs,
+      })
+      if (candles.length > 0) return { candles, source: 'gmgn' }
+    } catch {
+      // fall through to the internal web candles
+    }
   }
+
+  // GMGN **internal web** candles — free, keyless, tunnelled by our worker.
+  // The last live source before giving up (SolanaTracker is out of credits).
+  // Sol only; soft-fail. See docs/GMGN_INTERNAL_API.md.
+  if (params.gmgnChain === 'sol') {
+    const web = await fetchGmgnWebCandles(params.tokenAddress, params.type).catch(
+      () => null,
+    )
+    if (web && web.length > 0) {
+      return {
+        candles: web.map((b) => ({
+          time: b.t,
+          open: b.o,
+          high: b.h,
+          low: b.l,
+          close: b.c,
+          ...(b.v != null ? { volume: b.v } : {}),
+        })),
+        source: 'gmgn-web',
+      }
+    }
+  }
+
+  return { candles: [], source: 'none' }
 }
 
 export function tokenOhlcToRugBars(candles: TokenOhlcBar[]): OhlcRugBar[] {

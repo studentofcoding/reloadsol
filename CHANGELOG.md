@@ -8,6 +8,26 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — RugCheck LP-lock was always null (0/417); added GMGN internal-web sources
+
+- **The LP-lock axis was silently dead.** `rugcheck_lp_locked_pct` was populated **0 of 417** rows:
+  the full `/v1/tokens/{id}/report` carries **no top-level `lpLockedPct`** (and no top-level `lp`),
+  so the reader looked in places the API never fills. The value is **per market** at
+  `markets[].lp.lpLockedPct` (verified live: `0` for a DLMM, **97.06** for the same token's
+  raydium_cpmm). Now read as the max across markets, and `lockers[].usdcLocked` is summed into a new
+  `rugcheck_lp_locked_usd` (migration 50).
+- **GMGN internal web API: reverse-engineered, and three endpoints adopted.** gmgn.ai 403s every path
+  to a non-browser client (curl, both machines) — it is **not public**; only our `gmgn-web-proxy`
+  Worker reaches it. A real-Chrome capture of the token page recorded **31 API calls**; through the
+  Worker (no browser) these verify 200: `token_mcap_candles` (**OHLCV**), `meme_quote_info` (batch
+  `is_honeypot`/`is_safe`/`liquidity`), `token_stat` (rat/bundler/entrapment/bot-degen %). The
+  internal multiplexer `batch_handler` answers `403 Endpoint not allowed` for us. Inventory:
+  [docs/GMGN_INTERNAL_API.md](docs/GMGN_INTERNAL_API.md).
+- **Adopted, fail-soft and shadow-only.** `src/utils/gmgn-web-extra.ts` shares the existing web gate;
+  the candles are a **free OHLC fallback** in the chart ladder (`source: 'gmgn-web'`, valuable because
+  SolanaTracker is out of credits), and batch safety + token_stat land in `token_risk_features`
+  (migration 51) and the `(shadow)` chip (`safe` / `honeypot` / `bundler N%`). Nothing gates.
+
 ### Changed — the open-positions bar shows positions, not wallet holds
 
 A wallet hold with no live buy record used to be rendered as "untracked" (at most one, appended at

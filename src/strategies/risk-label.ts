@@ -10,16 +10,39 @@ import type { DevReputation, DevVerdict } from '@/strategies/dev-reputation'
 
 export type RiskLabel = {
   rugcheck: string | null
+  /** GMGN internal web extras (safety + token_stat), when available. */
+  gmgn: string | null
   devRep: string | null
   verdict: DevVerdict
   shadow: boolean
   reasons: string[]
 }
 
+/** Structural subset of the GMGN web extras (kept local to avoid a cycle). */
+export type RiskGmgnInput = {
+  isSafe?: boolean | null
+  isHoneypot?: boolean | null
+  bundlerPct?: number | null
+  ratPct?: number | null
+  entrapmentPct?: number | null
+  botDegenPct?: number | null
+}
+
 export type RiskChipTone = 'red' | 'amber' | 'emerald' | 'gray'
+
+function gmgnParts(gmgn?: RiskGmgnInput | null): string[] {
+  const parts: string[] = []
+  if (gmgn?.isHoneypot === true) parts.push('honeypot')
+  else if (gmgn?.isSafe === true) parts.push('safe')
+  if (gmgn?.bundlerPct != null && gmgn.bundlerPct > 0) {
+    parts.push(`bundler ${gmgn.bundlerPct.toFixed(1)}%`)
+  }
+  return parts
+}
 
 export function composeRiskLabel(params: {
   rugcheck?: RugcheckFeatures | null
+  gmgn?: RiskGmgnInput | null
   dev?: DevReputation | null
   shadow: boolean
 }): RiskLabel {
@@ -53,14 +76,17 @@ export function composeRiskLabel(params: {
 
   const rugcheckText = rugParts.length > 0 ? rugParts.join(' · ') : null
   const devRepText = devParts.length > 0 ? devParts.join(' · ') : null
+  const gmgnText = gmgnParts(params.gmgn).join(' · ') || null
 
   return {
     rugcheck: rugcheckText,
+    gmgn: gmgnText,
     devRep: devRepText,
     verdict: dev?.verdict ?? 'unknown',
     shadow,
     reasons: [
       ...(rugcheckText ? [`rugcheck ${rugcheckText}`] : []),
+      ...(gmgnText ? [`gmgn ${gmgnText}`] : []),
       ...(devRepText ? [`dev ${devRepText}`] : []),
     ],
   }
@@ -81,12 +107,14 @@ export function riskLabelChip(
   const parts: string[] = []
   if (label.verdict !== 'unknown') parts.push(`dev ${label.verdict}`)
   if (label.rugcheck) parts.push(label.rugcheck)
+  if (label.gmgn) parts.push(label.gmgn)
   if (parts.length === 0) return null
   const suffix = label.shadow ? ' (shadow)' : ''
   return { text: `${parts.join(' · ')}${suffix}`, tone: riskTone(label) }
 }
 
 function riskTone(label: RiskLabel): RiskChipTone {
+  if (label.gmgn?.includes('honeypot')) return 'red'
   if (label.verdict === 'ban') return 'red'
   if (label.verdict === 'good') return 'emerald'
   return 'gray'

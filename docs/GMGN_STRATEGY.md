@@ -227,6 +227,11 @@ stays off. Details: [specs/SPEC-dev-reputation-rugcheck-v1.md](./specs/SPEC-dev-
 
 GMGN leaky bucket (~20 capacity). Per poll tick: **2** track calls (SM + KOL). Per sim tick: 1–2 track + up to **5** candidates × (info + security).
 
+The internal web client (`GMGN_TOKEN_INFO_SOURCE=web`) is capped by `GMGN_WEB_MAX_POST_PER_SEC`
+(default 0.4), and the extra internal endpoints (candles / batch safety / token_stat) share that
+same gate — see [GMGN_INTERNAL_API.md](./GMGN_INTERNAL_API.md) for the recorded inventory and which
+of them work server-side.
+
 On 429, HTTP client waits once using `reset_at` / `X-RateLimit-Reset`.
 
 ## Entry features (analysis + ML logging)

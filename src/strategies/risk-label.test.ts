@@ -43,4 +43,26 @@ describe('risk label', () => {
     expect(label.reasons).toEqual([])
     expect(riskLabelChip(label)).toBeNull()
   })
+
+  it('adds the GMGN web extras (safety + bundler) and tones a honeypot red', () => {
+    const label = composeRiskLabel({
+      rugcheck,
+      gmgn: { isSafe: true, isHoneypot: false, bundlerPct: 0.94 },
+      dev,
+      shadow: true,
+    })
+    expect(label.gmgn).toContain('safe')
+    expect(label.gmgn).toContain('bundler 0.9%')
+    const chip = riskLabelChip(label)
+    expect(chip?.text).toContain('safe')
+
+    const honeypot = composeRiskLabel({
+      rugcheck: null,
+      gmgn: { isHoneypot: true },
+      dev: null,
+      shadow: false,
+    })
+    expect(honeypot.gmgn).toBe('honeypot')
+    expect(riskLabelChip(honeypot)?.tone).toBe('red')
+  })
 })

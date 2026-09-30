@@ -21,6 +21,11 @@ import type {
   DevVerdict,
 } from '@/strategies/dev-reputation'
 import {
+  fetchGmgnWebSafety,
+  fetchGmgnWebTokenStat,
+  gmgnWebExtrasConfigured,
+} from '@/utils/gmgn-web-extra'
+import {
   composeRiskLabel,
   type RiskChipTone,
   type RiskLabel,
@@ -72,6 +77,22 @@ CREATE TABLE IF NOT EXISTS dev_reputation (
 );
 ALTER TABLE dev_reputation
   ADD COLUMN IF NOT EXISTS tokens JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE token_risk_features
+  ADD COLUMN IF NOT EXISTS rugcheck_lp_locked_usd NUMERIC;
+ALTER TABLE token_risk_features
+  ADD COLUMN IF NOT EXISTS gmgn_is_safe BOOLEAN;
+ALTER TABLE token_risk_features
+  ADD COLUMN IF NOT EXISTS gmgn_is_honeypot BOOLEAN;
+ALTER TABLE token_risk_features
+  ADD COLUMN IF NOT EXISTS gmgn_liquidity_usd NUMERIC;
+ALTER TABLE token_risk_features
+  ADD COLUMN IF NOT EXISTS gmgn_bundler_pct REAL;
+ALTER TABLE token_risk_features
+  ADD COLUMN IF NOT EXISTS gmgn_rat_pct REAL;
+ALTER TABLE token_risk_features
+  ADD COLUMN IF NOT EXISTS gmgn_entrapment_pct REAL;
+ALTER TABLE token_risk_features
+  ADD COLUMN IF NOT EXISTS gmgn_bot_degen_pct REAL;
 `
 
 let ensurePromise: Promise<void> | null = null
@@ -97,6 +118,17 @@ export type RiskShadowResult = {
   mode: 'shadow' | 'enforce'
 }
 
+/** GMGN web extras (batch safety + token-stat percentages). */
+export type RiskGmgnExtra = {
+  isSafe: boolean | null
+  isHoneypot: boolean | null
+  liquidityUsd: number | null
+  bundlerPct: number | null
+  ratPct: number | null
+  entrapmentPct: number | null
+  botDegenPct: number | null
+}
+
 function persist(input: {
   chain: string
   tokenAddress: string
@@ -105,23 +137,28 @@ function persist(input: {
   dev: DevReputation | null
   label: RiskLabel
   mode: 'shadow' | 'enforce'
+  gmgn?: RiskGmgnExtra | null
 }): Promise<unknown> {
-  const { rugcheck, dev, label, mode } = input
+  const { rugcheck, dev, label, mode, gmgn } = input
   return query(
     `INSERT INTO token_risk_features (
        chain, token_address, creator_address,
        rugcheck_score, rugcheck_score_norm, rugcheck_risk_names, rugcheck_risk_points,
-       rugcheck_insiders, rugcheck_lp_locked_pct, rugcheck_locker_status,
+       rugcheck_insiders, rugcheck_lp_locked_pct, rugcheck_lp_locked_usd, rugcheck_locker_status,
        rugcheck_mutable_meta, rugcheck_rugged, creator_balance,
+       gmgn_is_safe, gmgn_is_honeypot, gmgn_liquidity_usd,
+       gmgn_bundler_pct, gmgn_rat_pct, gmgn_entrapment_pct, gmgn_bot_degen_pct,
        dev_verdict, dev_sample, dev_graduation_ratio, dev_ath_mc, dev_reasons,
        risk_label, risk_reasons, mode, evaluated_at, updated_at
      ) VALUES (
        $1, $2, $3,
        $4, $5, $6::text[], $7,
-       $8, $9, $10,
-       $11, $12, $13,
-       $14, $15, $16, $17, $18::text[],
-       $19, $20::text[], $21, NOW(), NOW()
+       $8, $9, $10, $11,
+       $12, $13, $14,
+       $15, $16, $17,
+       $18, $19, $20, $21,
+       $22, $23, $24, $25, $26::text[],
+       $27, $28::text[], $29, NOW(), NOW()
      )
      ON CONFLICT (chain, token_address) DO UPDATE SET
        creator_address = EXCLUDED.creator_address,
@@ -131,10 +168,18 @@ function persist(input: {
        rugcheck_risk_points = EXCLUDED.rugcheck_risk_points,
        rugcheck_insiders = EXCLUDED.rugcheck_insiders,
        rugcheck_lp_locked_pct = EXCLUDED.rugcheck_lp_locked_pct,
+       rugcheck_lp_locked_usd = EXCLUDED.rugcheck_lp_locked_usd,
        rugcheck_locker_status = EXCLUDED.rugcheck_locker_status,
        rugcheck_mutable_meta = EXCLUDED.rugcheck_mutable_meta,
        rugcheck_rugged = EXCLUDED.rugcheck_rugged,
        creator_balance = EXCLUDED.creator_balance,
+       gmgn_is_safe = EXCLUDED.gmgn_is_safe,
+       gmgn_is_honeypot = EXCLUDED.gmgn_is_honeypot,
+       gmgn_liquidity_usd = EXCLUDED.gmgn_liquidity_usd,
+       gmgn_bundler_pct = EXCLUDED.gmgn_bundler_pct,
+       gmgn_rat_pct = EXCLUDED.gmgn_rat_pct,
+       gmgn_entrapment_pct = EXCLUDED.gmgn_entrapment_pct,
+       gmgn_bot_degen_pct = EXCLUDED.gmgn_bot_degen_pct,
        dev_verdict = EXCLUDED.dev_verdict,
        dev_sample = EXCLUDED.dev_sample,
        dev_graduation_ratio = EXCLUDED.dev_graduation_ratio,
@@ -154,10 +199,18 @@ function persist(input: {
       rugcheck?.riskPoints ?? null,
       rugcheck?.graphInsidersDetected ?? null,
       rugcheck?.lpLockedPct ?? null,
+      rugcheck?.lpLockedUsd ?? null,
       rugcheck?.lockerScanStatus ?? null,
       rugcheck?.mutableMetadata ?? null,
       rugcheck?.rugged ?? null,
       rugcheck?.creatorBalance ?? null,
+      gmgn?.isSafe ?? null,
+      gmgn?.isHoneypot ?? null,
+      gmgn?.liquidityUsd ?? null,
+      gmgn?.bundlerPct ?? null,
+      gmgn?.ratPct ?? null,
+      gmgn?.entrapmentPct ?? null,
+      gmgn?.botDegenPct ?? null,
       dev?.verdict ?? 'unknown',
       dev?.sample ?? null,
       dev?.graduationRatio ?? null,
@@ -253,11 +306,38 @@ export async function attachRiskShadow(params: {
     }
   }
 
-  const label = composeRiskLabel({ rugcheck, dev, shadow: mode === 'shadow' })
+  // GMGN internal web extras (batch safety + token_stat). Soft-fail; inert
+  // without GMGN_WEB_HOST, so it never burns a call at a Cloudflare 403.
+  let gmgn: RiskGmgnExtra | null = null
+  if (gmgnWebExtrasConfigured()) {
+    const [safetyRows, stat] = await Promise.all([
+      fetchGmgnWebSafety([params.tokenAddress]).catch(() => []),
+      fetchGmgnWebTokenStat(params.tokenAddress).catch(() => null),
+    ])
+    const safety = safetyRows[0]
+    if (safety || stat) {
+      gmgn = {
+        isSafe: safety?.isSafe ?? null,
+        isHoneypot: safety?.isHoneypot ?? null,
+        liquidityUsd: safety?.liquidityUsd ?? null,
+        bundlerPct: stat?.bundlerPct ?? null,
+        ratPct: stat?.ratPct ?? null,
+        entrapmentPct: stat?.entrapmentPct ?? null,
+        botDegenPct: stat?.botDegenPct ?? null,
+      }
+    }
+  }
 
-  // Nothing to store when both upstreams were unavailable (e.g. GMGN rate
+  const label = composeRiskLabel({
+    rugcheck,
+    gmgn,
+    dev,
+    shadow: mode === 'shadow',
+  })
+
+  // Nothing to store when every upstream was unavailable (e.g. GMGN rate
   // limited AND RugCheck down) — avoid writing empty rows.
-  const hasSignal = Boolean(rugcheck?.available) || Boolean(dev)
+  const hasSignal = Boolean(rugcheck?.available) || Boolean(dev) || gmgn != null
   if (hasSignal) {
     try {
       await ensureRiskTables()
@@ -269,6 +349,7 @@ export async function attachRiskShadow(params: {
         dev,
         label,
         mode,
+        gmgn,
       })
       if (creator && dev) {
         await persistDevReputation({ chain: params.chain, creator, dev, mode })

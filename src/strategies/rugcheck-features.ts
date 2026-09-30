@@ -20,6 +20,8 @@ export type RugcheckFeatures = {
   creatorBalance: number | null
   graphInsidersDetected: number | null
   lpLockedPct: number | null
+  /** Sum of `lockers[].usdcLocked` — locked liquidity in USD. */
+  lpLockedUsd: number | null
   lockerScanStatus: string | null
   mutableMetadata: boolean | null
   rugged: boolean
@@ -37,6 +39,7 @@ export const EMPTY_RUGCHECK_FEATURES: RugcheckFeatures = {
   creatorBalance: null,
   graphInsidersDetected: null,
   lpLockedPct: null,
+  lpLockedUsd: null,
   lockerScanStatus: null,
   mutableMetadata: null,
   rugged: false,
@@ -79,13 +82,49 @@ function readRisks(raw: unknown): { names: string[]; points: number } {
   return { names, points }
 }
 
-/** `lpLockedPct` appears on /report/summary; the full report nests it under `lp`. */
+/**
+ * LP-locked percent. The full `/report` carries no top-level `lpLockedPct` (and
+ * no top-level `lp`) — the value is **per market** at `markets[].lp.lpLockedPct`,
+ * so take the max across markets (verified live: 0 for a DLMM, 97.06 for the
+ * raydium_cpmm of the same token). `/report/summary` has an aggregate but is a
+ * second call, kept as the last fallback.
+ */
 function readLpLockedPct(root: Record<string, unknown>): number | null {
   const top = num(root.lpLockedPct)
   if (top != null) return top
   const lp = root.lp
-  if (isRecord(lp)) return num(lp.lpLockedPct)
+  if (isRecord(lp)) {
+    const nested = num(lp.lpLockedPct)
+    if (nested != null) return nested
+  }
+  const markets = root.markets
+  if (Array.isArray(markets)) {
+    let best: number | null = null
+    for (const market of markets) {
+      if (!isRecord(market) || !isRecord(market.lp)) continue
+      const pct = num((market.lp as Record<string, unknown>).lpLockedPct)
+      if (pct == null) continue
+      if (best == null || pct > best) best = pct
+    }
+    if (best != null) return best
+  }
   return null
+}
+
+/** Locked liquidity in USD, summed over `lockers[].usdcLocked`. */
+function readLpLockedUsd(root: Record<string, unknown>): number | null {
+  const lockers = root.lockers
+  if (!isRecord(lockers)) return null
+  let sum = 0
+  let seen = false
+  for (const locker of Object.values(lockers)) {
+    if (!isRecord(locker)) continue
+    const usd = num(locker.usdcLocked)
+    if (usd == null) continue
+    sum += usd
+    seen = true
+  }
+  return seen ? sum : null
 }
 
 export function mapRugcheckReport(raw: unknown): RugcheckFeatures {
@@ -109,6 +148,7 @@ export function mapRugcheckReport(raw: unknown): RugcheckFeatures {
     creatorBalance: num(raw.creatorBalance),
     graphInsidersDetected: num(raw.graphInsidersDetected),
     lpLockedPct: readLpLockedPct(raw),
+    lpLockedUsd: readLpLockedUsd(raw),
     lockerScanStatus: str(raw.lockerScanStatus),
     mutableMetadata: tokenMeta ? bool(tokenMeta.mutable) : null,
     rugged: raw.rugged === true,
