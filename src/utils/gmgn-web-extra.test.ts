@@ -5,6 +5,7 @@ import {
   fetchGmgnWebSafety,
   fetchGmgnWebTokenStat,
   gmgnWebExtrasConfigured,
+  normalizeGmgnWebResolution,
 } from '@/utils/gmgn-web-extra'
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -67,6 +68,25 @@ describe('gmgn-web-extra', () => {
       jsonResponse({ code: 40000300, reason: 'P_GMGN_IN_INVALID_ARGUMENT', data: null }),
     )
     expect(await fetchGmgnWebCandles('Mint', 'bogus')).toBeNull()
+  })
+
+  it('maps window resolutions the endpoint rejects onto supported ones', async () => {
+    // Live: 6h and 24h return P_GMGN_IN_INVALID_ARGUMENT; 1h/4h/1d are accepted.
+    expect(normalizeGmgnWebResolution('6h')).toBe('1h')
+    expect(normalizeGmgnWebResolution('12h')).toBe('4h')
+    expect(normalizeGmgnWebResolution('24h')).toBe('1d')
+    expect(normalizeGmgnWebResolution('1m')).toBe('1m')
+    expect(normalizeGmgnWebResolution('nope')).toBeNull()
+
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(jsonResponse({ code: 0, data: { list: [] } }))
+    await fetchGmgnWebCandles('Mint', '6h')
+    expect(String(fetchSpy.mock.calls[0][0])).toContain('resolution=1h')
+
+    fetchSpy.mockClear()
+    expect(await fetchGmgnWebCandles('Mint', 'weird')).toBeNull()
+    expect(fetchSpy).not.toHaveBeenCalled()
   })
 
   it('parses batch safety rows', async () => {

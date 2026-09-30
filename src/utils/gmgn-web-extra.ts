@@ -134,16 +134,39 @@ export type GmgnWebCandle = {
   v?: number
 }
 
-/** OHLCV candles. `resolution` is required by the upstream (1m / 5m / 1h / …). */
+/** Resolutions the endpoint accepts (verified live). */
+const SUPPORTED_RESOLUTIONS = new Set(['1m', '5m', '15m', '30m', '1h', '4h', '1d'])
+/** Window-derived values that are NOT supported → nearest supported bar. */
+const RESOLUTION_ALIASES: Record<string, string> = {
+  '2h': '1h',
+  '3h': '1h',
+  '6h': '1h',
+  '8h': '4h',
+  '12h': '4h',
+  '24h': '1d',
+  '48h': '1d',
+  '7d': '1d',
+  '1w': '1d',
+}
+
+/** Map a requested resolution to one the endpoint accepts, or null to skip. */
+export function normalizeGmgnWebResolution(resolution: string): string | null {
+  const r = resolution.trim().toLowerCase()
+  if (SUPPORTED_RESOLUTIONS.has(r)) return r
+  return RESOLUTION_ALIASES[r] ?? null
+}
+
+/** OHLCV candles. `resolution` is required by the upstream (1m / 5m / 1h / 4h / 1d / …). */
 export async function fetchGmgnWebCandles(
   mint: string,
   resolution: string,
 ): Promise<GmgnWebCandle[] | null> {
   const address = mint.trim()
-  if (!address || !resolution.trim()) return null
+  const res = normalizeGmgnWebResolution(resolution)
+  if (!address || !res) return null
   const json = await callJson(
     'GET',
-    `/api/v1/token_mcap_candles/sol/${encodeURIComponent(address)}?resolution=${encodeURIComponent(resolution)}`,
+    `/api/v1/token_mcap_candles/sol/${encodeURIComponent(address)}?resolution=${encodeURIComponent(res)}`,
   )
   if (!json || !isRecord(json.data)) return null
   const list = json.data.list
