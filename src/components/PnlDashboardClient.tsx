@@ -132,11 +132,23 @@ interface LedgerSummary {
   realizedNetSol: number
 }
 
+interface ClosedPosition {
+  strategyId: string | null
+  symbol: string | null
+  mintAddress: string
+  costSol: number
+  proceedsSol: number
+  pnlSol: number
+  pnlPct: number
+  closedAt: number | null
+}
+
 interface LedgerPayload {
   success: boolean
   records?: number
   summary?: LedgerSummary
   strategies?: Array<LedgerSummary & { strategyId: string }>
+  recentClosed?: ClosedPosition[]
   error?: string
 }
 
@@ -196,6 +208,8 @@ export default function PnlDashboardClient() {
   const [dayTrades, setDayTrades] = useState<Record<string, DayTrade[]>>({})
   const [dayLoading, setDayLoading] = useState<string | null>(null)
   const [ledger, setLedger] = useState<LedgerPayload | null>(null)
+  const [showOpen, setShowOpen] = useState(false)
+  const [showClosed, setShowClosed] = useState(false)
   const [climate, setClimate] = useState<Climate | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -504,12 +518,18 @@ export default function PnlDashboardClient() {
         {/* Open positions, from the SL/TP tracker the sims register into */}
         <section className="rounded border border-gray-800 bg-gray-900 p-4">
           <div className="flex items-baseline justify-between">
-            <h2 className="font-semibold">Open positions</h2>
+            <button
+              onClick={() => setShowOpen((v) => !v)}
+              className="font-semibold text-left hover:text-emerald-300"
+            >
+              {showOpen ? '▾' : '▸'} Open positions
+            </button>
             <span className="text-xs text-gray-500">
               {openPositions.length} tracked ·{' '}
               {sol(openPositions.reduce((s, p) => s + Number(p.position_size || 0), 0), 4)} SOL at risk
             </span>
           </div>
+          {showOpen ? (
           <div className="mt-3 overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -551,10 +571,68 @@ export default function PnlDashboardClient() {
               </tbody>
             </table>
           </div>
+          ) : null}
           <p className="text-xs text-gray-500 mt-3">
             Paper positions registered by the strategies with their own stop and target. The monitor
             evaluates them every cycle and records triggers — it never executes on-chain for a
             simulated position.
+          </p>
+        </section>
+
+        {/* Closed positions, from the ledger reconstruction */}
+        <section className="rounded border border-gray-800 bg-gray-900 p-4">
+          <div className="flex items-baseline justify-between">
+            <button
+              onClick={() => setShowClosed((v) => !v)}
+              className="font-semibold text-left hover:text-emerald-300"
+            >
+              {showClosed ? '▾' : '▸'} Closed positions
+            </button>
+            <span className="text-xs text-gray-500">
+              {(ledger?.recentClosed ?? []).length} most recent · realized SOL per position
+            </span>
+          </div>
+          {showClosed ? (
+            <div className="mt-3 max-h-96 overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-gray-400 text-left border-b border-gray-800">
+                    <th className="py-1.5 pr-4">Token</th>
+                    <th className="py-1.5 pr-4">Strategy</th>
+                    <th className="py-1.5 pr-4">Cost</th>
+                    <th className="py-1.5 pr-4">Proceeds</th>
+                    <th className="py-1.5 pr-4">PnL SOL</th>
+                    <th className="py-1.5 pr-4">PnL %</th>
+                    <th className="py-1.5">Closed</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(ledger?.recentClosed ?? []).map((p, i) => (
+                    <tr key={`${p.mintAddress}-${p.strategyId}-${i}`} className="border-b border-gray-800/50">
+                      <td className="py-1.5 pr-4 text-gray-300">{p.symbol || p.mintAddress.slice(0, 6)}</td>
+                      <td className="py-1.5 pr-4 text-gray-500">{p.strategyId ?? '—'}</td>
+                      <td className="py-1.5 pr-4 text-gray-400">{sol(p.costSol, 4)}</td>
+                      <td className="py-1.5 pr-4 text-gray-400">{sol(p.proceedsSol, 4)}</td>
+                      <td className={`py-1.5 pr-4 ${tone(p.pnlSol)}`}>{sol(p.pnlSol, 5)}</td>
+                      <td className={`py-1.5 pr-4 ${tone(p.pnlPct)}`}>{pct(p.pnlPct, 1)}</td>
+                      <td className="py-1.5 text-gray-500">
+                        {p.closedAt ? new Date(p.closedAt).toISOString().slice(0, 16).replace('T', ' ') : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                  {(ledger?.recentClosed ?? []).length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="py-3 text-gray-500">Nothing closed in this range.</td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+          <p className="text-xs text-gray-500 mt-3">
+            Reconstructed read-side from <code>trading_records</code> — each position from its own
+            simulated buys and sells, scoped per strategy. Positions closed before the exit-valuation
+            fix still carry nominal sell amounts, so the mcap family&apos;s history here is distorted.
           </p>
         </section>
 
