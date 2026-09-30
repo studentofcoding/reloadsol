@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useState } from "react";
-import { formatTradeAmount } from "@/utils/trade-display";
+import { formatTradeAmount, symbolsLabel } from "@/utils/trade-display";
 
 export type TradeOutcomeOperation = 'buy' | 'sell' | 'close';
 
@@ -18,6 +18,12 @@ export type TradeOutcomeState = {
   operation: TradeOutcomeOperation;
   isSimulation?: boolean;
   tokenSymbol?: string;
+  /**
+   * Every traded token's symbol. Preferred over `tokenSymbol`: a batch reports all the names rather
+   * than "3 tokens", and a single trade reports the real symbol instead of a placeholder. Entries
+   * may be missing (metadata not resolved) — `symbolsLabel` drops them and the caller falls back.
+   */
+  tokenSymbols?: readonly (string | null | undefined)[];
   mintAddress?: string;
   solAmount?: number;
   /**
@@ -97,6 +103,7 @@ export default function TradeOutcomeModal({
   operation,
   isSimulation = false,
   tokenSymbol,
+  tokenSymbols,
   mintAddress,
   solAmount,
   tokenAmount,
@@ -110,6 +117,7 @@ export default function TradeOutcomeModal({
 
   const modeLabel = isSimulation ? 'Simulation' : 'Live';
   const tokenLabel =
+    symbolsLabel(tokenSymbols) ||
     tokenSymbol ||
     (mintAddress
       ? `${mintAddress.slice(0, 4)}…${mintAddress.slice(-4)}`

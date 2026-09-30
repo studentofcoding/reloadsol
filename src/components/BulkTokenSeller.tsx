@@ -1169,8 +1169,7 @@ export default function BulkTokenSeller({
         success,
         operation: "sell",
         isSimulation: false,
-        tokenSymbol:
-          ok.length === 1 ? ok[0]?.symbol : `${ok.length} tokens`,
+        tokenSymbols: ok.map((r) => r.symbol),
         amountUnit:
           sellOut.symbol === "SOL" ||
           sellOut.symbol === "ETH" ||
@@ -1455,14 +1454,11 @@ export default function BulkTokenSeller({
           success: sellResult.success,
           operation: "sell",
           isSimulation: false,
-          tokenSymbol:
-            sellResult.successfulSwaps.length === 1
-              ? selectedTokens.find(
-                  (t) =>
-                    t.mintAddress ===
-                    sellResult.successfulSwaps[0]?.mintAddress,
-                )?.symbol
-              : `${sellResult.successfulSwaps.length} tokens`,
+          tokenSymbols: sellResult.successfulSwaps.map(
+            (s) =>
+              selectedTokens.find((t) => t.mintAddress === s.mintAddress)
+                ?.symbol,
+          ),
           solAmount: sellResult.totalReceived,
           // Exact quantity that left the wallet (base units -> UI) for the single-token case. The
           // swap is exact-in, so the requested amount is the filled amount.

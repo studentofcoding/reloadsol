@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { estimateBuyUsdValue, formatTradeAmount } from "./trade-display";
+import { estimateBuyUsdValue, formatTradeAmount, symbolsLabel } from "./trade-display";
 
 describe("formatTradeAmount", () => {
   it("keeps a real fill legible instead of rounding it to zero", () => {
@@ -46,5 +46,30 @@ describe("estimateBuyUsdValue", () => {
     expect(estimateBuyUsdValue({ amount: 0, currency: "SOL", nativePriceUsd: 118.51 })).toBeNull();
     expect(estimateBuyUsdValue({ amount: -1, currency: "SOL", nativePriceUsd: 118.51 })).toBeNull();
     expect(estimateBuyUsdValue({ amount: Number.NaN, currency: "SOL", nativePriceUsd: 118.51 })).toBeNull();
+  });
+});
+
+describe("symbolsLabel", () => {
+  it("names a single token", () => {
+    expect(symbolsLabel(["BONK"])).toBe("BONK");
+  });
+
+  it("names two", () => {
+    expect(symbolsLabel(["BONK", "WIF"])).toBe("BONK and WIF");
+  });
+
+  it("names all of them for a batch", () => {
+    expect(symbolsLabel(["BONK", "WIF", "POPCAT"])).toBe("BONK, WIF and POPCAT");
+    expect(symbolsLabel(["A", "B", "C", "D"])).toBe("A, B, C and D");
+  });
+
+  it("drops blanks instead of leaving separators behind", () => {
+    expect(symbolsLabel(["BONK", "", "   ", null, undefined, "WIF"])).toBe("BONK and WIF");
+  });
+
+  it("returns null when nothing can be named, so the caller can fall back", () => {
+    expect(symbolsLabel([])).toBeNull();
+    expect(symbolsLabel(undefined)).toBeNull();
+    expect(symbolsLabel([null, ""])).toBeNull();
   });
 });

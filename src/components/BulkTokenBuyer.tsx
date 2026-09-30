@@ -1058,10 +1058,7 @@ export default function BulkTokenBuyer() {
         success,
         operation: "buy",
         isSimulation: false,
-        tokenSymbol:
-          ok.length === 1
-            ? ok[0]?.symbol
-            : `${ok.length} tokens`,
+        tokenSymbols: ok.map((r) => r.symbol),
         solAmount: parseFloat(solAmount),
         amountUnit: spendUnit,
         error: success
@@ -1408,19 +1405,17 @@ export default function BulkTokenBuyer() {
         (buyResult.successfulPurchases.length > 0 ||
           buyResult.failedPurchases.length > 0)
       ) {
-        const firstSymbol =
-          buyResult.successfulPurchases[0]?.symbol ||
-          tokenList.find(
-            (t) => t.address === buyResult.successfulPurchases[0]?.mintAddress,
-          )?.symbol;
         showOutcome({
           success: buyResult.success,
           operation: "buy",
           isSimulation: false,
-          tokenSymbol:
-            buyResult.successfulPurchases.length === 1
-              ? firstSymbol
-              : `${buyResult.successfulPurchases.length} tokens`,
+          // `purchase.symbol` is never populated by executeBulkBuy, so resolve from the merged
+          // search+metadata list; the modal falls back to the mint when that is empty too.
+          tokenSymbols: buyResult.successfulPurchases.map(
+            (p) =>
+              p.symbol ||
+              mergedTokenList.find((t) => t.address === p.mintAddress)?.symbol,
+          ),
           // The amount actually routed (excludes fees). USDC keeps the requested figure:
           // totalSpent is lamport-denominated, so it would be wrong for a 6-decimal input.
           solAmount:

@@ -21,8 +21,14 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   sell's quantity comes from the executed base amount and the mint's decimals. Multi-token batches
   show the native side only, since one symbol cannot describe the mix. Both are rendered through
   `formatTradeAmount` so a small fill never reads as `0.00`.
-- 8 unit tests cover the fail-closed estimate (missing/zero price → `null`, so no number is shown)
-  and the amount formatting. Helpers live in `src/utils/trade-display.ts`.
+- **The outcome names the tokens, all of them.** The modal reported "You've successfully bought
+  Token" (the symbol was never resolved — `executeBulkBuy` does not populate `successfulPurchases[].symbol`)
+  and "3 tokens" for a batch. It now lists the real symbols — `BONK`, `BONK and WIF`,
+  `BONK, WIF and POPCAT` — resolved from the merged search+metadata list on the buy side and the
+  selected tokens on the sell side, via `symbolsLabel`, which drops unresolved names and returns
+  `null` so the caller falls back to the mint rather than printing a blank.
+- Unit tests cover the fail-closed estimate (missing/zero price → `null`, so no number is shown),
+  the amount formatting, and the name joining. Helpers live in `src/utils/trade-display.ts`.
 
 ### Fixed — sell estimate quoted a route the executor would refuse
 

@@ -40,3 +40,22 @@ export function estimateBuyUsdValue(params: {
   if (!nativePriceUsd || !Number.isFinite(nativePriceUsd) || nativePriceUsd <= 0) return null;
   return amount * nativePriceUsd;
 }
+
+/**
+ * Names, not a count: "BONK", "BONK and WIF", "BONK, WIF and POPCAT".
+ *
+ * A batch outcome used to read "3 tokens", which tells the user nothing about what they just
+ * traded. Empty/blank symbols are dropped rather than rendered as separators, and `null` means
+ * "no name available" so the caller can fall back instead of printing a blank.
+ */
+export function symbolsLabel(
+  symbols?: readonly (string | null | undefined)[],
+): string | null {
+  const list = (symbols ?? [])
+    .map((s) => (typeof s === "string" ? s.trim() : ""))
+    .filter((s) => s.length > 0);
+  if (list.length === 0) return null;
+  if (list.length === 1) return list[0];
+  if (list.length === 2) return `${list[0]} and ${list[1]}`;
+  return `${list.slice(0, -1).join(", ")} and ${list[list.length - 1]}`;
+}
