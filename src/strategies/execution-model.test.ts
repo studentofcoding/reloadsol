@@ -205,3 +205,11 @@ describe('the stored execution record', () => {
     expect(resolveExecutionParams({ SIM_EXECUTION_MODEL: 'off' }).enabled).toBe(false)
   })
 })
+
+describe('resolveExecutionParams: the priority fee is what we pay', () => {
+  it('defaults to the send fee rather than a round number', () => {
+    // The app sends 30,000 lamports per tx and the chain's recent ask is ~0. A larger default is not a
+    // conservative choice — it fabricates a cost that dominates every modelled result.
+    expect(resolveExecutionParams({}).priorityFeeQuote).toBe(0.00003)
+  })
+})

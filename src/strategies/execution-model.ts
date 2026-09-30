@@ -45,7 +45,13 @@ export function resolveExecutionParams(env: Record<string, string | undefined> =
   return {
     feeBps: num(env.SIM_FEE_BPS, 100),
     spreadBps: num(env.SIM_SPREAD_BPS, 50),
-    priorityFeeQuote: num(env.SIM_PRIORITY_FEE_QUOTE, 0.002),
+    // The tip we actually pay, not a round number: the app sends 30,000 lamports (0.00003 SOL) per
+    // transaction, and the chain's recent ask is ~0 — `getRecentPrioritizationFees` returned 0
+    // micro-lamports/CU for 150 recent slots, both globally and for transactions touching the Jupiter
+    // program. Modelling 0.002 charged a fabricated 2,000,000 lamports per side, which by itself
+    // produced the entire modelled drag on the 14-day ledger (-61.78 SOL against +0.33 gross).
+    // Raise this if we raise the send fee, or when congestion returns.
+    priorityFeeQuote: num(env.SIM_PRIORITY_FEE_QUOTE, 0.00003),
     impactCoeff: num(env.SIM_IMPACT_COEFF, 1),
     impactExponent: num(env.SIM_IMPACT_EXPONENT, 1) || 1,
     assumedDepthQuote: num(env.SIM_ASSUMED_DEPTH_QUOTE, 30),

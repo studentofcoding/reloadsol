@@ -344,11 +344,19 @@ Runbook for the first real fill:
 6. Record the first fill against what the sim predicted for the same signal (see the exec-model note in
    the changelog). A fill you cannot compare to a prediction teaches nothing.
 
-**Sizing warning before arming anything.** The execution model charges
-`SIM_PRIORITY_FEE_QUOTE=0.002` SOL **per side** (0.004 round trip) plus `SIM_FEE_BPS=100` and
-`SIM_SPREAD_BPS=50`. On a 0.005 SOL position the fixed priority fee alone is ~80% of the stake — which
-is why the 14-day ledger shows gross `+0.33` SOL but a modelled drag of `-61.78` SOL. Size trades from
-the fee floor, not from the budget: ~0.05 SOL makes the fixed cost ~8% of the stake, ~0.1 SOL ~4%.
+**Cost model — corrected.** `SIM_PRIORITY_FEE_QUOTE` defaulted to 0.002 SOL **per side**, which is
+nothing like what we pay: the app sends 30,000 lamports (0.00003 SOL), and the chain's recent ask is
+~0 (`getRecentPrioritizationFees` → 0 micro-lamports/CU over 150 slots, globally and for Jupiter
+program transactions). At 0.002 the priority term alone was `0.002 x 2 x 17,684 ≈ 70 SOL` — the whole
+`-61.78` drag on a `+0.33` gross ledger, so that drag was a modelling artefact rather than a cost
+signal. The default is now 0.00003, matching the send fee.
+
+With the real fee the drag falls to roughly -2 SOL, still against the +0.33 gross — because
+`SIM_FEE_BPS=100` plus `SIM_SPREAD_BPS=50` model a 3% round trip against a desk whose gross edge is
+~2% (`realizedPnlPct` +1.97 over 14 days). Whether that 50 bps spread is real or double-counting the
+AMM fee is the next calibration question, and it is what the quote-calibration path exists to answer.
+**Size is not the problem:** at 0.005 SOL the real fixed cost is ~1.2%, so the fee floor is ~0.0001 SOL
+and current sizes are fee-viable.
 
 ## SSL / HTTPS
 
