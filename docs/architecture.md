@@ -144,6 +144,7 @@ Registered in [`worker_tracker.go`](../worker_tracker.go), scheduled in [`main.g
 | `dlmm_screen` | every 300s | `POST /api/dlmm/screen` | algo |
 | `dlmm_manage` | every 60s | `POST /api/dlmm/manage` | algo |
 | `strategy_report` | daily (0=off) | `POST /api/strategies/report-digest` | algo |
+| `report_precompute` | every 6h (0=off) | `POST /api/report-precompute/refresh` | algo |
 | `sltp_monitor` | every 60s | `GET /api/sl-tp-monitor` | infra |
 | `daily_summary` | 00:00 UTC | `POST /api/trending/summary` | infra |
 | `pnl_update` | 02:00 UTC | `POST /api/pnl/update` | infra |

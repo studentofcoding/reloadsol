@@ -193,23 +193,37 @@ mean +83 % vs median −39 % on first entries) plus a Wilson CI on the token win
 only follow a significant lift, shadow-first, mirroring the wallet-digger concurrence shape
 (`alpha_concurrence_signals`).
 
-**Cost note (fixed 2026-09-30):** the bootstrap is the expensive part of the reports aggregate, and it
-used to sort every resample (`median([...v].sort())` → O(samples · n log n) plus one array per sample).
-Measured in the production container at n=4,521: **16.4 s for ONE median CI**, and the endpoint runs a
-median CI per bucket plus a diff CI (both sides) per bucket → `/api/strategies/reports` took **32.7 s
-cold**, which is what made `?tab=closed` look like it never loaded (the DB part is only 721 ms). It now
-uses an **in-place nth-element selection** (same values for the same seed) with
-`DEFAULT_SAMPLES` 10,000 → **2,000** (`CONSENSUS_BOOTSTRAP_SAMPLES`) — one CI is **288 ms**, ~54× faster.
-The reports cache TTL is 600 s and the closed view fetches reports in its own query so the outcome table
-paints without waiting on the aggregate. **The bootstrap was only part of it:** the cold path is still
-~6 s, and a CPU profile (`node --cpu-prof` on a second instance inside the container) attributes
-**~0 CPU** to the request — it is waiting, not computing — with per-section timing showing the cost is
-**spread across ~8 sections** rather than concentrated (outcomes read ~1 s, consensus ~1 s, mcap-stats
-~0.5 s, best-trade-windows ~0.5 s, open-sim-positions ~0.45 s, paper-capital ~0.3 s). Two notes from
-that work: `getTrackingHealthStats` no longer reads all 31,316 `token_mcap_tracking` rows (one SQL
-aggregate row, 509 ms → ~20 ms, output verified identical), and bounding the sim-wallet read with
-`sinceLastClose` was **tried and reverted** — it changes the reconstructed open positions for 4 of the
-7 active mcap strategies, so that read stays unbounded.
+**Cost note (walked down 2026-09-30, 32.7 s → 2.45 s cold; the full trail is in `CHANGELOG.md`).**
+Four separate causes, each found by measuring rather than reading:
+
+1. **The bootstrap sorted every resample** (`median([...v].sort())` → O(samples · n log n) plus one array
+   per sample). Measured in the production container at n=4,521: **16.4 s for ONE median CI**, and the
+   endpoint runs a median CI per bucket plus a diff CI (both sides) per bucket → **32.7 s cold**, which
+   is what made `?tab=closed` look like it never loaded (the DB part is only 721 ms). Now an **in-place
+   nth-element selection** with `DEFAULT_SAMPLES` 10,000 → **2,000** (`CONSENSUS_BOOTSTRAP_SAMPLES`):
+   16.4 s → 288 ms.
+2. **A quadratic reconstruction called 14× per request.** A report over a **1-hour** window still took
+   6.65 s while single-query endpoints answered in 6-63 ms, which pinned ~6.6 s to filter-independent
+   work: `getOpenMcapPositions` ran `records.find(...)` per token over the whole sim history
+   (O(records × mints)), and it was invoked once per mcap definition for coverage counts *and* again per
+   definition for the open-positions list. The lookup is now a Map, and it runs **once per request**:
+   floor 6.65 s → 0.46 s.
+3. **The sim read is now bounded, per (strategy, mint).** Keying the last full close on the **mint**
+   alone looked free and was wrong — it changes the reconstructed open set for **4 of the 7** mcap
+   strategies, because each strategy holds its own cycle on a mint. Keying per **(strategy, mint)** is
+   exact (0 of 7 differ, 2,095 records instead of 5,283) and is a superset of the per-mint bound.
+4. **`consensus` + `capital` are precomputed** (`strategy_report_precompute`, worker `report_precompute`,
+   6 h) since neither depends on the report's row filters. The endpoint reads the stored row whenever
+   there is no `from`/`to`/`strategy_id`, reports its age as `precompute.computed_at`, and computes both
+   live for a custom range. `getTrackingHealthStats` no longer reads all 31,316 `token_mcap_tracking`
+   rows (one SQL aggregate row, 509 ms → ~20 ms), `computeBestTradeWindows` no longer builds a
+   `Intl.DateTimeFormat` per row, and the route is now **stale-while-revalidate** (`X-Report-Cache`).
+
+Measured end state: **cold 2.45 s** (the UI's no-range request), narrow range 0.47 s, **warm 11 ms**,
+filter-independent floor 0.46 s. What remains is the outcome read plus DB round-trip waits — a
+`node --cpu-prof` of the cold path attributes ~0 CPU to the request, so the JS side is not the cost and
+pushing those aggregates into SQL was deliberately **not** done (it would only add round trips).
+
 
 **That gate now exists in its gated form** (`src/strategies/consensus-gate.ts`,
 `db/init/47-strategy-consensus-shadow.sql`). It decides whether a would-be open has enough
