@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTradingData } from '@/components/TradingDataProvider';
 import { useWallet, useConnection } from '@/components/WalletProvider';
@@ -9,6 +9,11 @@ import { useWalletTokens } from '@/hooks/useWalletTokens';
 import { listLiveOpenBarPositions } from '@/utils/open-bar-positions';
 import { pctFromBaseline } from '@/utils/watchlist/pct';
 import { mergeTokensByMint } from '@/components/signals/shared/row-holdings';
+import { useIsClient } from '@/hooks/useIsClient';
+import {
+  readOpenBarPositionsCache,
+  writeOpenBarPositionsCache,
+} from '@/utils/open-positions-cache';
 
 export const GLOBAL_OPEN_BAR_PRICES_KEY = 'global-open-bar-prices';
 /** Match PnL open marks — `/api/prices/open` (GMGN/Jupiter), not slow 60s Jupiter-only. */
@@ -42,6 +47,8 @@ export function useGlobalOpenPositionsBar() {
   const { records } = useTradingData();
   const isSol = network === 'sol';
   const enabled = isSol && !!walletAddress && !!connection;
+  const chain: 'sol' | 'robinhood' = network === 'robinhood' ? 'robinhood' : 'sol';
+  const isClient = useIsClient();
 
   // Deliberately the DEFAULT `includeZeroBalance` (true), not false.
   //
@@ -89,6 +96,17 @@ export function useGlobalOpenPositionsBar() {
     [enabled, records, holdingsByMint],
   );
 
+  // Provisional first paint: the last list observed for this wallet+chain, so chips render before
+  // the holdings fetch resolves — which is the whole reload delay. `useIsClient` keeps the server
+  // and hydration renders identical (empty), so seeding cannot cause a hydration mismatch.
+  const cachedPositions = useMemo(
+    () =>
+      isClient && enabled && walletAddress
+        ? readOpenBarPositionsCache(walletAddress, chain)
+        : [],
+    [isClient, enabled, walletAddress, chain],
+  );
+
   const mintsKey = candidates.map((p) => p.mintAddress).join(',');
   const pricesQuery = useQuery({
     queryKey: [GLOBAL_OPEN_BAR_PRICES_KEY, walletAddress, network, mintsKey],
@@ -116,19 +134,38 @@ export function useGlobalOpenPositionsBar() {
     return candidates.filter((p) => (currentPrices[p.mintAddress] ?? 0) > 0);
   }, [candidates, currentPrices]);
 
+  // Live inputs (holdings or records) replace the provisional list as soon as they exist, so a
+  // wallet with genuinely no positions does not keep stale chips on screen.
+  const hasLiveInputs = holdings.allTokens.length > 0 || records.length > 0;
+  const shownPositions =
+    !hasLiveInputs && cachedPositions.length > 0 ? cachedPositions : positions;
+
+  // Write only on change — this list is polled, and an unconditional write would churn storage.
+  // Never written from `cachedPositions`, so a provisional list cannot refresh its own age.
+  const lastWrittenRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!enabled || !walletAddress || !hasLiveInputs) return;
+    const signature = positions
+      .map((p) => `${p.mintAddress}:${p.balanceRaw}:${p.buyPriceUsd}`)
+      .join('|');
+    if (signature === lastWrittenRef.current) return;
+    lastWrittenRef.current = signature;
+    writeOpenBarPositionsCache(walletAddress, chain, positions);
+  }, [enabled, walletAddress, chain, hasLiveInputs, positions]);
+
   const priceChangePct = useMemo(() => {
     const result: Record<string, number | null> = {};
-    for (const p of positions) {
+    for (const p of shownPositions) {
       result[p.mintAddress] = pctFromBaseline(
         p.buyPriceUsd,
         currentPrices[p.mintAddress],
       );
     }
     return result;
-  }, [positions, currentPrices]);
+  }, [shownPositions, currentPrices]);
 
   return {
-    positions,
+    positions: shownPositions,
     priceChangePct,
     enabled,
     refetchHoldings: holdings.refetchFresh,

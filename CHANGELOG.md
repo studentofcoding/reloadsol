@@ -8,6 +8,30 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the open-positions chips showed the symbol twice
+
+`ChipFace` passed `alt={symbol}` to a logo rendered immediately before a `<span>{symbol}</span>`, so
+whenever the image had not painted the browser drew the alt text: `STONK STONK —`. It hit exactly the
+tokens whose logo sits behind an Arweave/Irys gateway — measured `302` for STONK/CLOUD/MASK against
+`200 image/png` for a working one — which is why a structural-looking duplication only affected some
+tokens. The logo is decorative (the symbol is already the adjacent label), so it now carries `alt=""`,
+which cannot render in any loading state.
+
+### Added — the bar paints from a cached list before the network answers
+
+- `useGlobalOpenPositionsBar` seeds from the last observed list for the wallet **and chain**
+  (`src/utils/open-positions-cache.ts`, 10-minute expiry), so chips appear on the first client paint
+  instead of waiting on the Shyft holdings fetch — the actual reload delay.
+- Stale-while-revalidate, not a second source of truth: the cache is dropped the moment live inputs
+  exist (a wallet with genuinely no positions does not keep stale chips), it is never written from
+  itself, percentages stay `—` until live prices land, and writes happen only when the list changes
+  (the bar polls every 15s, so an unconditional write would churn storage).
+- `useIsClient` (`useSyncExternalStore`) keeps the server and hydration renders identical, so the
+  seed cannot cause a hydration mismatch.
+- 7 unit tests: round-trip, wallet isolation, **chain isolation** (a Solana entry must never answer a
+  Robinhood read), expiry, malformed storage, and a throwing `localStorage`.
+
+
 ### Fixed — RugCheck LP-lock was always null (0/417); added GMGN internal-web sources
 
 - **The LP-lock axis was silently dead.** `rugcheck_lp_locked_pct` was populated **0 of 417** rows:
