@@ -8,6 +8,30 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — the mcap sim loads the entry OHLC gate once per mint per run
+
+A full `phase=all` run measured 186 s (manage 29.8 s, open 126.5 s). The interval is **900 s
+(15 min)**, not the 120 s the docs claimed, so the job is not back-to-back — but per-strategy timing of
+a live run showed the open phase is dominated by `attachOhlcRugShadow`: 22 calls / 23.5 s and 24 calls /
+3.9 s on the two strategies that evaluate candidates. The seven mcap strategies evaluate the **same**
+candidate mints, so each mint's bars were fetched and evaluated once per strategy.
+
+- The expensive, entry-feature-independent half (fetch bars + evaluate rules) is now
+  `loadOhlcRugShadowBase`, and a run passes one memo Map so it happens **once per mint** — measured
+  46 → 15 calls across the strategies. The memo is created per request on purpose: it gates an entry,
+  so it must not go stale across requests the way a TTL cache would.
+- The per-caller merge, the reject/skip decision and the counterfactual log are unchanged, and
+  `attachOhlcRugShadow` keeps its signature (the memo is optional).
+- **What this does not fix:** the remaining calls still cost up to the OHLC budget (observed ~12 s per
+  call, vs 0.7 s for the rate gate), i.e. they are waiting out `TOKEN_MAP_CHART_OHLC_BUDGET_MS` when
+  brain/ST/GMGN have no bars. That is a separate problem in the OHLC path — a circuit breaker or a
+  negative cache for a failing upstream — and wants its own measurement.
+
+Also fixed the temporary instrumentation's scope error before it could matter: `dbgManageStart` /
+`dbgOpenStart` were declared inside the phase branches, so the log line would have thrown at runtime.
+`SKIP_BUILD_CHECKS` (which the ship sets) meant only `tsc` caught it — worth remembering that a green
+ship does not imply a type-checked build.
+
 ### Changed — the mcap tracker list no longer rebuilds every statistic per request
 
 `GET /api/mcap-tracking?action=list` is a page render (TrackerTab / BoardTab on load and on every
