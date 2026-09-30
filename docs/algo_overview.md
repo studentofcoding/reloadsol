@@ -358,6 +358,7 @@ Process: [`main.go`](../main.go) — container `reloadsol-cron`, port **8080** (
 | `DLMM_MANAGE_INTERVAL` | 60 | dlmm manage |
 | `RH_CLMM_MANAGE_INTERVAL` | 300 | rh_clmm_manage (alert-only RH CLMM cycle) |
 | `STRATEGY_REPORT_INTERVAL` | 86400 (0=off) | report digest |
+| `REPORT_PRECOMPUTE_INTERVAL` | 21600 (0=off) | refresh of the stored consensus + capital sections (`strategy_report_precompute`) |
 | `CRON_SERVICE_URL` | `http://cron:8080` in Docker compose | Next.js proxy to cron |
 | `TELEGRAM_BOT_TOKEN` | — | Sim open copy-trade alerts (with `TELEGRAM_ALERT_CHAT_ID`) |
 | `TELEGRAM_ALERT_CHAT_ID` | — | Telegram destination for strategy/sim alerts |
@@ -405,7 +406,7 @@ Legacy `/dev/strategies` redirects here (tab mapping in `proxy.ts`).
 ### API routes
 
 - `GET /api/strategies` — merged registry
-- `GET /api/strategies/reports` — breakdown + `coverage[]` + `best_trade_windows` (default tz `Asia/Bangkok`, `?tz=`), ranking by avg PnL, top/worst 8 trades. Redis-cached **600 s** (per-filter key); a cold recompute is the consensus bootstrap, not the query (see the cost note above).
+- `GET /api/strategies/reports` — breakdown + `coverage[]` + `best_trade_windows` (default tz `Asia/Bangkok`, `?tz=`), ranking by avg PnL, top/worst 8 trades. Redis-cached **600 s** per-filter key, served **stale-while-revalidate** (`X-Report-Cache: fresh|stale|miss`). `consensus` and `capital` come from the `strategy_report_precompute` table (refreshed every `REPORT_PRECOMPUTE_INTERVAL`, 6 h) whenever the request has no `from`/`to`/`strategy_id`; the response carries `precompute.computed_at`, and a custom range computes both live.
 - `GET /api/strategies/outcomes` — paginated outcomes
 - `PATCH /api/strategies/outcomes/[id]` — ML label merge
 - `GET /api/strategies/pnl-export` — token-level PnL spreadsheet for an inclusive day range (`?from=&to=&tz=`, `position_size` default `0.005`, `chain` optional and **omitted means all chains** because `parseStrategyChain` coerces to `sol` and would drop the Robinhood twin). CSV: `#` metadata block (range, timezone, chains, trades, won/lost, avg/median `pnl_pct`, gross win/loss, profit factor, `pnl_sol`, peak concurrent, peak capital, top-10 concentration) then one table with a `section` column — rank 1-10 winners, rank 1-10 losers, then every token. `format=json` for the same payload. Notional counts only per-position percentages, so it is never a portfolio return; when the range spans chains the CSV flags that the notional column mixes native units.

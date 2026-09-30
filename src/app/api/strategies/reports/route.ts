@@ -6,6 +6,10 @@ import {
 } from '@/strategies/best-trade-windows'
 import { parseStrategyChain } from '@/strategies/types'
 import type { StrategyChain, StrategyDomain } from '@/strategies/types'
+import {
+  loadReportPrecompute,
+  reportPrecomputeKey,
+} from '@/strategies/report-precompute'
 import { cacheGet, cacheSet } from '@/utils/redis-cache'
 
 /**
@@ -45,6 +49,20 @@ async function buildReportBody(
   raw: RawFilters,
   params: ReportParams,
 ): Promise<ReportBody> {
+  // `consensus` and `capital` are whole-analysis sections the worker stores per filter shape.
+  // A custom range or a single strategy has no stored row, so those stay live.
+  const precomputed =
+    !raw.from && !raw.to && !params.strategyId
+      ? await loadReportPrecompute(
+          reportPrecomputeKey({
+            chain: params.chain ?? 'sol',
+            domain: params.domain ?? null,
+            isSimulated: params.isSimulated ?? null,
+            timeZone: params.timeZone,
+          }),
+        )
+      : null
+
   const {
     breakdown,
     abPairs,
@@ -59,7 +77,10 @@ async function buildReportBody(
     consensus,
     capital,
     timezone,
-  } = await aggregateStrategyReports(params)
+  } = await aggregateStrategyReports({
+    ...params,
+    precomputed: precomputed ?? undefined,
+  })
 
   const totalTrades = breakdown.reduce((s, b) => s + b.trade_count, 0)
   const totalWins = breakdown.reduce((s, b) => s + b.win_count, 0)
@@ -99,6 +120,8 @@ async function buildReportBody(
     // Paper-trade capital + R:R per chain (native units differ — never summed).
     capital,
     timezone,
+    // Age of the stored consensus/capital rows, or null when they were computed live.
+    precompute: precomputed ? { computed_at: precomputed.computed_at } : null,
     filters: {
       domain: raw.domain,
       strategy_id: params.strategyId,

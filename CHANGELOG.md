@@ -8,6 +8,25 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — the report's two whole-analysis sections are precomputed
+
+`consensus` (a seeded bootstrap over the report window) and `capital` (a 3-day paper-capital sweep) do
+not depend on the report's row-level filters, yet they were recomputed on every cold request — the
+majority of what was left of `/api/strategies/reports` after the quadratic reconstruction was fixed.
+
+- New `strategy_report_precompute` table (`db/init/52-…sql`): `key` = `chain:domain:sim:tz`, with the
+  `payload` JSONB and `computed_at`.
+- `POST /api/report-precompute/refresh` recomputes every filter shape (2 chains × 7 domains × 2
+  timezones = 28, bounded) and upserts. Per-target failures are collected, never fatal, so one bad
+  shape cannot stop the sweep and a stale row always beats no row.
+- Scheduled as the `report_precompute` worker (`REPORT_PRECOMPUTE_INTERVAL`, default 6 h, `0` disables)
+  with `WorkerMeta` + `/trigger/report-precompute`, mirroring the existing worker checklist.
+- The endpoint reads the stored row when the request carries no `from`/`to`/`strategy_id` and reports
+  its age as `precompute.computed_at`; a custom range still computes both live. `aggregateStrategyReports`
+  takes a `precomputed` argument, so the values are produced by the same loaders with the same filters.
+
+Verified: tsc clean, go build + go test pass, new unit tests for the key/target set/refresh failure path.
+
 ### Fixed — bulk buy/sell waited on a per-token Jupiter fan-out
 
 Measured with the production wallet, 3 and 5 tokens back to back (read-only: quotes and unsigned

@@ -16,6 +16,7 @@ export type WorkerId =
   | 'dlmm_sim_track'
   | 'dlmm_manage'
   | 'strategy_report'
+  | 'report_precompute'
   | 'sltp_monitor'
   | 'daily_summary'
   | 'pnl_update'
@@ -43,6 +44,7 @@ export const WORKER_TRIGGER_PATHS: Record<WorkerId, string> = {
   dlmm_sim_track: '/trigger/dlmm-sim-track',
   dlmm_manage: '/trigger/dlmm-manage',
   strategy_report: '/trigger/strategy-report',
+  report_precompute: '/trigger/report-precompute',
   sltp_monitor: '/trigger/sltp',
   daily_summary: '/trigger/summary',
   pnl_update: '/trigger/pnl',

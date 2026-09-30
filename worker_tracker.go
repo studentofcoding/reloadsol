@@ -259,6 +259,7 @@ func (cs *CronService) initWorkerRegistry() {
 		{ID: "ohlc_sampler", Name: "OHLC 1m sampler", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.OhlcSampleInterval, TriggerPath: "/trigger/ohlc-sampler", CanTrigger: true, Disabled: cs.config.OhlcSampleInterval <= 0},
 		{ID: "fomo_ws", Name: "FOMO trenches WS", Domain: "algo", Schedule: "always-on", IntervalSec: 0, TriggerPath: "/trigger/fomo-ws", CanTrigger: true, Disabled: !cs.config.FomoWsEnabled},
 		{ID: "strategy_report", Name: "Strategy report digest", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.StrategyReportInterval, TriggerPath: "/trigger/strategy-report", CanTrigger: true, Disabled: cs.config.StrategyReportInterval <= 0},
+		{ID: "report_precompute", Name: "Report precompute (consensus + capital)", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.ReportPrecomputeInterval, TriggerPath: "/trigger/report-precompute", CanTrigger: true, Disabled: cs.config.ReportPrecomputeInterval <= 0},
 		{ID: "sltp_monitor", Name: "SL/TP monitor", Domain: "infra", Schedule: "every Ns", IntervalSec: cs.config.SLTPMonitorInterval, TriggerPath: "/trigger/sltp", CanTrigger: true},
 		{ID: "daily_summary", Name: "Daily summary", Domain: "infra", Schedule: "daily 00:00 UTC", IntervalSec: 86400, TriggerPath: "/trigger/summary", CanTrigger: true},
 		{ID: "pnl_update", Name: "PnL update", Domain: "infra", Schedule: "daily 02:00 UTC", IntervalSec: 86400, TriggerPath: "/trigger/pnl", CanTrigger: true},

@@ -236,6 +236,7 @@ type Config struct {
     GmgnRosterWatchInterval int // seconds (0 = disabled)
     SocialSimInterval    int    // seconds
     StrategyReportInterval int  // seconds (0 = disabled)
+    ReportPrecomputeInterval int // seconds (0 = disabled)
     DLMMScreenInterval int    // seconds
     DLMMSimTrackInterval int // seconds
     DLMMManageInterval int    // seconds
@@ -362,6 +363,14 @@ func NewCronService() *CronService {
                 }
             }
             return 86400 // default daily (86400s); set 0 to disable
+        }(),
+        ReportPrecomputeInterval: func() int {
+            if v := os.Getenv("REPORT_PRECOMPUTE_INTERVAL"); v != "" {
+                if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
+                    return iv
+                }
+            }
+            return 21600 // default every 6h; set 0 to disable
         }(),
         DLMMScreenInterval: func() int {
             if v := os.Getenv("DLMM_SCREEN_INTERVAL"); v != "" {
@@ -624,6 +633,17 @@ func (cs *CronService) Start() {
         cs.workers.BindEntry(reportEntryID, "strategy_report")
     }
 
+    // Report precompute – the consensus + paper-capital sections the reports endpoint reads.
+    if cs.config.ReportPrecomputeInterval > 0 {
+        precomputeSpec := everySpec(cs.config.ReportPrecomputeInterval)
+        precomputeEntryID, err := cs.cron.AddFunc(precomputeSpec, cs.runReportPrecompute)
+        if err != nil {
+            cs.logger.Error(fmt.Sprintf("Failed to add report precompute cron job: %v", err))
+            log.Fatal("Failed to add report precompute cron job:", err)
+        }
+        cs.workers.BindEntry(precomputeEntryID, "report_precompute")
+    }
+
     // DLMM screen – every N seconds (default 300)
     dlmmScreenSpec := everySpec(cs.config.DLMMScreenInterval)
     dlmmScreenEntryID, err := cs.cron.AddFunc(dlmmScreenSpec, cs.runDLMMScreen)
@@ -729,6 +749,7 @@ func (cs *CronService) Start() {
     http.HandleFunc("/trigger/social-cleanup", cs.requireTriggerSecret(cs.manualSocialCleanupTrigger))
     http.HandleFunc("/trigger/social-wallet-poll", cs.requireTriggerSecret(cs.manualSocialWalletPollTrigger))
     http.HandleFunc("/trigger/strategy-report", cs.requireTriggerSecret(cs.manualStrategyReportTrigger))
+    http.HandleFunc("/trigger/report-precompute", cs.requireTriggerSecret(cs.manualReportPrecomputeTrigger))
     http.HandleFunc("/trigger/dlmm-screen", cs.requireTriggerSecret(cs.manualDLMMScreenTrigger))
     http.HandleFunc("/trigger/dlmm-sim-track", cs.requireTriggerSecret(cs.manualDLMMSimTrackTrigger))
     http.HandleFunc("/trigger/dlmm-manage", cs.requireTriggerSecret(cs.manualDLMMManageTrigger))
@@ -1076,6 +1097,23 @@ func (cs *CronService) runStrategyReportDigest() {
     cs.workers.Success("strategy_report")
 }
 
+// runReportPrecompute refreshes the stored `consensus` + `capital` sections the reports
+// endpoint reads (strategy_report_precompute). They are a 30-day bootstrap and a 3-day
+// capital sweep, so they do not need to be recomputed per request.
+func (cs *CronService) runReportPrecompute() {
+    cs.workers.Begin("report_precompute")
+    cs.logger.Info("🧮 Running strategy report precompute...")
+    url := fmt.Sprintf("%s/api/report-precompute/refresh?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
+    resp, err := cs.makeRequest("POST", url, nil)
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("❌ Report precompute failed: %v", err))
+        cs.workers.Fail("report_precompute", err.Error())
+        return
+    }
+    cs.logger.Success(fmt.Sprintf("✅ Report precompute completed (%s)", strings.TrimSpace(string(resp))))
+    cs.workers.Success("report_precompute")
+}
+
 func (cs *CronService) manualSignalsSimTrackTrigger(w http.ResponseWriter, r *http.Request) {
     if r.Method != "POST" {
         http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1254,6 +1292,20 @@ func (cs *CronService) manualStrategyReportTrigger(w http.ResponseWriter, r *htt
     json.NewEncoder(w).Encode(map[string]interface{}{
         "success": true,
         "message": "Strategy report digest triggered",
+        "timestamp": time.Now().UTC().Format(time.RFC3339),
+    })
+}
+
+func (cs *CronService) manualReportPrecomputeTrigger(w http.ResponseWriter, r *http.Request) {
+    if r.Method != "POST" {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    cs.logger.Info("🔧 Manual report precompute trigger")
+    go cs.runReportPrecompute()
+    json.NewEncoder(w).Encode(map[string]interface{}{
+        "success": true,
+        "message": "Report precompute triggered",
         "timestamp": time.Now().UTC().Format(time.RFC3339),
     })
 }

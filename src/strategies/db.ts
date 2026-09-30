@@ -2652,6 +2652,15 @@ export async function aggregateStrategyReports(params: {
   from?: string
   to?: string
   timeZone?: string
+  /**
+   * Sections the caller already has (the `report_precompute` worker stores them per filter
+   * shape). Supplying one skips its DB round trips; the values are identical because they
+   * are produced by the same loaders with the same filters.
+   */
+  precomputed?: {
+    consensus?: ConsensusTestResult | null
+    capital?: PaperCapitalSummary[] | null
+  }
 }): Promise<{
   breakdown: StrategyReportBreakdown[]
   abPairs: import('./types').StrategyAbPair[]
@@ -2908,14 +2917,16 @@ export async function aggregateStrategyReports(params: {
   const [overlap, pairs, consensus] = await Promise.all([
     loadTokenStrategyOverlap(params),
     loadStrategyPairOverlap(params),
-    loadConsensusTest(params),
+    params.precomputed?.consensus
+      ? Promise.resolve(params.precomputed.consensus)
+      : loadConsensusTest(params),
   ])
   // Chain-scoped like the rest of the report (parseStrategyChain always resolves one), so
   // the RH/ETH block appears with ?chain=robinhood. Units differ per chain, so a single
   // block is the honest shape.
-  const capital = [
-    await loadPaperCapital({ chain: params.chain ?? 'sol', days: 3, timeZone }),
-  ]
+  const capital = params.precomputed?.capital?.length
+    ? params.precomputed.capital
+    : [await loadPaperCapital({ chain: params.chain ?? 'sol', days: 3, timeZone })]
 
   return {
     breakdown,
