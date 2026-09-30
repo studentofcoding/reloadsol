@@ -8,6 +8,15 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Documented — regime context on closes is a close-time stamp, not a column
+
+`market_regime_tags` is one row per day, and `insertStrategyOutcome` already stamps the value resolved
+by the exit date, so a `regime_tag_at_exit` column would add nothing. Recorded in
+`docs/02-architecture-and-data.md`, with the two facts that matter when reading it: the daily row is
+written by the mcap sim worker (a market-wide value owned by one strategy's worker — worth a
+strategy-agnostic writer), and history is not backfillable, so older closes stay honestly untagged.
+
+
 ### Changed — GMGN rate budget calibrated to measurement, plus priority lanes
 
 - **We were not rate limited — we were ~7× under the quota.** Measured live (bounded ramp, stop at the

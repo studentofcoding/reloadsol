@@ -135,6 +135,30 @@ price taken from this same source, which is why history stays valid when the cur
 Enforced by `npm run verify:no-hardcoded-sol-price` (part of the verify gate): it scans
 `src/**` for a literal feeding a price expression, so the retired `145` sentinel cannot come back.
 
+### Strategy-outcome regime context: stamped at close, not a column
+
+`market_regime_tags` is keyed by `tag_date` (`DATE PRIMARY KEY`) — **one regime per day**. The outcome
+writer stamps it at close: `insertStrategyOutcome` (`src/strategies/db.ts`) resolves
+`loadRegimeTagForDate(exitAt.slice(0, 10))` and records it with the row.
+
+So there is deliberately **no `regime_tag_at_exit` column**, and per-close analysis does not need one:
+
+- The stamped value is the regime **at the moment of that close**. The table's row for the same day
+  holds the day's *latest* state (the writer rewrites it whenever the climate moves). The stamp is
+  therefore the more accurate of the two, not a cache of it.
+- A dedicated column would carry identical resolution and gain a second thing to keep in sync.
+
+Two operational facts worth knowing when reading it:
+
+- **The daily row is written by the mcap sim worker** (`/api/mcap-tracking/sim-track`, plus the
+  on-demand `POST /api/strategies/regime`). That is a market-wide value recorded by one strategy's
+  worker, so a day on which that worker does not run has no row, and its closes carry no regime. A
+  strategy-agnostic daily writer (the `pnl_update` worker is the natural home) would remove that
+  coupling.
+- **History is not backfillable.** The climate was not recorded before the upsert existed — only 5
+  rows exist, one of them from the automated path — so older closes are honestly left untagged rather
+  than reconstructed.
+
 ## 4. Data flows (representative)
 
 | Flow | Path |
