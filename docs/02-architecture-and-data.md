@@ -61,7 +61,7 @@ Key tables (02-schema + migrations):
 | `token_operations` | Per-wallet aggregates: swap/close counts, sol balance, `trade_pnl` |
 | `wallet_watchlist` | Per-wallet watchlist; unique per `(wallet, token, chain)` |
 | `trading_signals`, `token_rug_list`, `dlmm_potential_list` | Label lists — all chain-stamped (23) |
-| `token_risk_features`, `dev_reputation` | Shadow risk (48/49): per-token RugCheck features + per-creator dev verdict (with top-10 tokens by ATH). Display-only, `mode` is `shadow` until the correlation is significant |
+| `token_risk_features`, `dev_reputation` | Shadow risk (48/49/53): per-token RugCheck features + per-creator dev verdict (with top-10 tokens by ATH, and the user-labelled rug count). Display-only, `mode` is `shadow` until the correlation is significant |
 | `trending_token_tracker` (+`_dev`), `trending_token_summary` | Bot tracking rows: status `waiting/tracking/won/lost/skipped/stopped`, `trading_simulation`, `price_history`; daily rollups |
 | `sl_tp_positions` | Manual/bot stop-loss & take-profit positions |
 | `strategy_definitions`, `strategy_outcomes` | Strategy overrides (`chain` since 24) + closed-trade results for Reports/ML |

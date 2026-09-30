@@ -272,7 +272,7 @@ Live candles come from **Solana Tracker** (`fetchTokenOhlc` / `GET /api/gmgn/tok
 |-------|---------|
 | `token_detect_snapshots` | Freeview / concentration last-10×1m OHLC bars + rug-rule eval. Not Token Info tiles — that ledger is specified in [SPEC-token-info-universal-ledger-v1.md](./specs/SPEC-token-info-universal-ledger-v1.md) and is not built yet |
 | `signal_ohlc_labels` | Rising / Rug snapshots for the kanban tag (gallery `/dev/ohlc-labels`). Store key `rising` (legacy `potential` migrated). Not ML `v2-potential`. |
-| `token_risk_features`, `dev_reputation` | Shadow risk (migrations 48/49): per-token RugCheck features (score / named risks / insider graph / LP lock / creator balance) + per-creator dev verdict with top-10 tokens by ATH. Display-only — `mode` stays `shadow` until the correlation is significant; see [SPEC-dev-reputation-rugcheck-v1.md](./specs/SPEC-dev-reputation-rugcheck-v1.md) |
+| `token_risk_features`, `dev_reputation` | Shadow risk (migrations 48/49/53): per-token RugCheck features (score / named risks / insider graph / LP lock / creator balance) + per-creator dev verdict with top-10 tokens by ATH and the count of tokens a **user** labelled rug. Display-only — `mode` stays `shadow` until the correlation is significant; see [SPEC-dev-reputation-rugcheck-v1.md](./specs/SPEC-dev-reputation-rugcheck-v1.md) |
 
 ### Legacy / optional
 

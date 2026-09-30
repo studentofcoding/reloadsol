@@ -50,6 +50,11 @@ The verdict is rendered as a **label on every surface we already have**, suffixe
   `risk-store.ts` mirrors them.
 - `db/init/49-dev-reputation-tokens.sql` — adds `dev_reputation.tokens jsonb` (top ≤10 by ATH),
   mirrored as a runtime `ALTER … ADD COLUMN IF NOT EXISTS`.
+- `db/init/53-dev-user-rugs.sql` — adds `dev_reputation.user_rug_count` + `user_rug_tokens` (user-labelled
+  rugs, mirroring `tokens`), also mirrored at runtime. Written by `recordUserRug`/`clearUserRug`
+  (`risk-store.ts`) from the single rug write path (`markTokenRug`/`unmarkTokenRug`, user sources only)
+  and shown on `/dev/dev-reputation`. **Not an input to `scoreDevReputation` yet** — display-only, like
+  the rest of the shadow posture.
 - Both applied to prod; additive and idempotent.
 
 ### Env flags (default off, shadow)
