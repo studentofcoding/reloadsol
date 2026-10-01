@@ -8,6 +8,84 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — one exit evaluator, one exit worker, and one entry price
+
+The exit path had four per-family closers, each with its own evaluator, running on the 900s entry
+scan. `sltp_monitor` ran a *second* opinion on the same positions at 60s. The two could disagree
+about one position, and did — because they read the same thresholds as different units.
+
+**The take-profit had never fired: `Finished: 211 (SL: 211, TP1: 0, TP2: 0, TP3: 0)`.**
+
+Not the basis, as first assumed. `checkSLTPTriggers` sent `position_type === 'bot'` rows down a path
+reading **only** `tp1/2/3_percentage`, while `take_profit_percentage` was read **only** by the
+`manual` branch — and the sim registered `bot` with **no ladder**. The target was a field the worker
+never evaluated.
+
+- **`evaluateExit`** (`src/utils/exit-evaluator.ts`) is now the only evaluator, extracted from
+  `checkSLTPTriggers`, which becomes a thin row→decision adapter. Pure: no I/O, no clock, no cache.
+  It reads the basis **off the row** and reports `basisUsed`, so a result can no longer be read in
+  the wrong unit. A stale input closes nothing and says `stale` rather than holding.
+- **The 60s worker owns every exit.** The manage phases in the mcap, gmgn, signals and social
+  routes are **deleted** — with their `shouldClose*` evaluators and ~600 lines of route-local
+  closers — so no family keeps a second opinion. The loops stay: they write the monitor snapshots
+  the peak-gain logic reads.
+- **Every open stamps its exit contract** (`registerSimExitContract`): the reference value, the
+  basis, and the **effective** thresholds — the cl/brain-adjusted ones the trade was actually
+  opened under, not the strategy's base. A `bot` row with no ladder now falls back to
+  `take_profit_percentage`, so the target is reachable.
+- **One entry price.** `prepareTargetMachinePaperOpen` returns the **impact-included** fill as
+  `priceUsd`; `impactedPriceUsd` is gone. The record, the entry features and the contract all read
+  one number — previously the record valued the position at the market quote while the exit measured
+  from the fill, so recorded PnL and the trigger disagreed by exactly the impact.
+- **Three families now honour the brain's TP/SL.** `applyBrainRiskToExit` was called by signals and
+  trending only; mcap, gmgn and social stamped `brain_stop_loss_pct` on ~92% of rows while opening
+  against the raw strategy exit — a risk control recorded as though it were in effect.
+- **Coverage: 3 of 9 → 8 of 9.** `mcap_enter_at_80` — the most robust strategy on the book — had no
+  stop at all. `att_rh` remains a deliberate gap.
+- **The cron's "SL/TP monitor API returned error:" with a blank message** was a **held job lock**
+  (409, `skipped:true, reason`) logged as a failure with an empty reason, because Go read `message`
+  and the route sends `reason`. It marked a healthy worker FAILED every ~2 minutes. Now
+  `isSkippedBody` → `workers.Skipped`, matching `trending_tracker` and `dlmm_manage`.
+
+**The register, re-derived on price-validated PnL** (`docs/specs/SPEC-strategy-exit-standard-v1.md`).
+The record overstated by half, and the strongest strategy was the one it penalised:
+
+| strategy | rec avg | **real avg** | real win | real median | win/loss |
+|---|---|---|---|---|---|
+| `search_mcap…tp300` | +106.7 | **+29.9** | 27.7% | −70.0 | +305 / −75 |
+| `search_mcap…tp200` | +83.3 | **+23.5** | 28.6% | −59.2 | +260 / −71 |
+| **`mcap_enter_at_80`** | +7.8 | **+18.7** | **32.3%** | **−12.9** | +149 / −43 |
+| `search_mcap…tp150` | +90.5 | **+9.9** | 27.0% | −67.4 | +232 / −72 |
+| `gmgn_kol_momentum` | −32.5 | **+0.8** | 26.3% | −19.1 | +134 / −47 |
+
+The mcap family is a **lottery ticket**: ~27% wins, median trade loses ~70%, mean carried entirely by
+a ~4:1 payoff. `mcap_enter_at_80` leads on three independent measures — best median, best win rate,
+shallowest average loss — and the register called it *marginal* because its **recorded** average was
+the family's lowest. `tp150` is overstated by **80 pp**.
+
+**Verified live:** `TP1` is no longer 0 — `search_mcap…tp150` closed at **+299.36%** with
+`close_reason: take_profit`, the first take-profit close this system has produced. Producer and
+consumer both migrated: `db/init/57-sl-tp-exit-contract.sql` applied to prod (510 rows backfilled),
+web shipped, cron rebuilt.
+
+**Still open:** `att_rh` ownership (its own RH ladder still closes it) · the mcap→price conversion
+assumes constant supply — **unverified**, and the direct measurement is owed · `scalper` never opened.
+
+### Fixed — a fifth of SOL→token quotes failed on the hop ceiling
+
+The per-pair hop ceiling was chosen from an assumption: *a route touching SOL/USDC/USDT has a direct pool*,
+so those pairs get `maxHops=1`. Measured on the **buy** direction — 40 real mints, SOL→token — that
+assumption is **direction-dependent**: **8 mints had no direct SOL pool** and answered
+`500 "No direct route found and maxHops=1"`, while all 8 quoted fine at 2. It holds for token→SOL, where it
+was originally validated; nobody had tested the reverse.
+
+Each failure escalated to the **keyed Jupiter picker**, spending the 0.5 rps execution budget on a *display*
+quote — the same cascade the token→token hop fix removed, sitting on the direction that was never measured.
+
+A no-route answer now triggers **one wider retry on Raptor's free lane** (`escalateRaptorHops`, applied at
+both fetch sites — `/quote` and `/quote-and-swap`). No larger constant would have been right, because the
+pair alone cannot tell you which direction has a direct pool.
+
 ### Fixed — a swap built with no priority fee, and a venue refusal the browser could not see
 
 Two live defects, both found by auditing rather than by a report.

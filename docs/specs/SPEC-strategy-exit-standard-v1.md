@@ -104,7 +104,7 @@ Two consequences already visible in the same data: the `stop_loss` cohort exits 
 −32% threshold (the trigger evaluates a stale value too, just not frozen), and `sltp_monitor` has fired
 **`TP1: 0, TP2: 0, TP3: 0` across 211 finishes**.
 
-**The take-profit has never fired — and the cause is a dead branch, not the basis.** `checkSLTPTriggers`
+**The take-profit had never fired — and the cause was a dead branch, not the basis.** `checkSLTPTriggers`
 (`sl-tp-tracker.ts:588`) sends `position_type === 'bot'` rows down a path that reads **only**
 `tp1_percentage` / `tp2_percentage` / `tp3_percentage` (`:605`). `take_profit_percentage` is read **only** in
 the `manual` branch (`:644`), which a `bot` row can never reach. And `registerSimulatedSlTp`
