@@ -13,12 +13,19 @@ export const JUPITER_SWAP_EXECUTE_URL = 'https://api.jup.ag/swap/v2/execute'
 const JUPITER_SWAP_EXECUTE_TIMEOUT_MS = 30_000
 
 export class JupiterSwapQuoteError extends Error {
-  constructor(
-    message: string,
-    public statusCode?: number,
-  ) {
+  statusCode?: number
+  /**
+   * The venue itself declined the swap — `/order` answers 200 with an empty `transaction` and an
+   * `errorMessage` (e.g. `"Insufficient funds"`). This is a decision, not a transport failure, so no
+   * other lane can know better and callers must not paper over it by falling back.
+   */
+  venueRefused?: boolean
+
+  constructor(message: string, statusCode?: number, options?: { venueRefused?: boolean }) {
     super(message)
     this.name = 'JupiterSwapQuoteError'
+    this.statusCode = statusCode
+    this.venueRefused = options?.venueRefused
   }
 }
 
@@ -245,6 +252,21 @@ export async function fetchJupiterSwapQuoteDirect(
       throw new JupiterSwapQuoteError(
         err.errorMessage || err.error || `Jupiter quote HTTP ${response.status}`,
         response.status,
+      )
+    }
+
+    // `/order` reports a venue refusal as HTTP 200 with an empty `transaction`. Catch it here, while the
+    // venue's own reason is still in hand, so callers can abort instead of falling to a lane that cannot
+    // simulate and would happily build a transaction that can never land.
+    const refusal =
+      body && typeof body === 'object'
+        ? (body as { errorMessage?: unknown; transaction?: unknown })
+        : null
+    if (refusal && typeof refusal.errorMessage === 'string' && refusal.errorMessage.length > 0) {
+      throw new JupiterSwapQuoteError(
+        `Jupiter refused the order: ${refusal.errorMessage}`,
+        422,
+        { venueRefused: true },
       )
     }
 

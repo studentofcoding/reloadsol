@@ -14,8 +14,10 @@ import { prepareJupiterLiteSwap } from "@/utils/jupiter-lite-swap";
 import {
   executeJupiterSwap,
   executeJupiterSwapDirect,
+  JupiterSwapQuoteError,
   prepareJupiterSwapOrder,
 } from "@/utils/jupiter-swap-quote";
+import { withTransferFeeFloor } from "@/utils/token-transfer-fee";
 import {
   getSwapQuoteMaxImpactPct,
   impactToAbsPct,
@@ -238,6 +240,10 @@ async function prepareDeskSwap(params: PrepareSwapParams): Promise<PreparedSwap>
     return await prepareJupiterSwapPrepared(params);
   } catch (error) {
     if (error instanceof SwapImpactGateError) throw error;
+    // A venue refusal is a decision, not a fault: `/order` answered 200 with no transaction and its own
+    // reason (e.g. "Insufficient funds"). Lite cannot simulate and would build a transaction that can
+    // never land, so falling back here would turn a clean refusal into a failed on-chain swap.
+    if (error instanceof JupiterSwapQuoteError && error.venueRefused) throw error;
     const message = error instanceof Error ? error.message : String(error);
     console.warn("[swap] Jupiter V2 /order failed, falling back to Lite:", message);
   }
@@ -291,11 +297,21 @@ async function prepareShyftStackSwap(
 export async function prepareSwapTransaction(
   params: PrepareSwapParams,
 ): Promise<PreparedSwap> {
+  // A Token-2022 transfer fee is invisible to impact-derived slippage (`resolveAutoSlippageBps` floors at
+  // 20 bps while DEW's fee alone is 100), and the router's own post-check then fails with 6001 on every
+  // build. Raise the budget here, once, so every lane below inherits it. No-op for classic SPL mints.
+  const { slippageBps } = await withTransferFeeFloor(
+    params.inputMint,
+    params.slippageBps,
+  );
+  const withFloor: PrepareSwapParams =
+    slippageBps === params.slippageBps ? params : { ...params, slippageBps };
+
   // Live arb passes maxHops and must keep Raptor hops, not the desk Jupiter path.
-  if (params.maxHops != null) {
-    return prepareArbSwap(params);
+  if (withFloor.maxHops != null) {
+    return prepareArbSwap(withFloor);
   }
-  return prepareDeskSwap(params);
+  return prepareDeskSwap(withFloor);
 }
 
 export async function prefetchSwapTransaction(
