@@ -30,19 +30,61 @@ export type TokenMetricsSource =
   | 'cache_copy'
   | 'snapshot'
 
-/** A candle's volume as read from any vendor: `t` is unix seconds. */
-export type CandleVolume = { t: number; v?: number | null }
+/**
+ * A 1m candle as read from any vendor: `t` is unix seconds, everything else optional.
+ *
+ * The four price fields are stored **independently of volume** — a source that only has a rolling
+ * volume figure may omit them, and a missing field stays NULL rather than becoming 0.
+ */
+export type CandleVolume = {
+  t: number
+  v?: number | null
+  o?: number | null
+  h?: number | null
+  l?: number | null
+  c?: number | null
+}
+
+/** One minute slot. `value` is the volume (the gate for whether the minute is written at all). */
+export type HourSlot = {
+  slot: number
+  value: number
+  o?: number | null
+  h?: number | null
+  l?: number | null
+  c?: number | null
+}
 
 export type HourPlan = {
   /** UTC hour start, ISO (what Postgres stores). */
   hourIso: string
-  /** 1-based slot → volume, ascending, deduped (first wins within the batch). */
-  slots: Array<{ slot: number; value: number }>
+  /** 1-based slot → candle, ascending, deduped (first wins within the batch). */
+  slots: HourSlot[]
 }
 
 export type MetricsHourRow = {
   hour_bucket: string
   vol_min: Array<number | null> | null
+  o_min?: Array<number | null> | null
+  h_min?: Array<number | null> | null
+  l_min?: Array<number | null> | null
+  c_min?: Array<number | null> | null
+}
+
+/** One observed minute of the OHLCV series. An absent field is `null`, never 0. */
+export type OhlcvMinute = {
+  t: number
+  o: number | null
+  h: number | null
+  l: number | null
+  c: number | null
+  v: number | null
+}
+
+function slotValue(arr: Array<number | null> | null | undefined, index: number): number | null {
+  if (!Array.isArray(arr)) return null
+  const value = arr[index]
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
 export type FiveMinBucket = { t: number; volume: number | null }
@@ -72,18 +114,21 @@ export function hourBucketIso(at: Date): string {
 }
 
 /**
- * Group candle volumes into per-hour slot plans.
+ * Group candles into per-hour slot plans, carrying each minute's full OHLCV.
  *
  * Every rule here is an edge case that has a test:
  *  - buckets by **the candle's own timestamp**, never by wall-clock (a candle at 12:59 written at
  *    13:00 must land in the 12:00 row);
- *  - drops non-finite and negative volumes (invariant 6);
- *  - drops candles with no volume at all rather than writing a 0;
+ *  - **volume is the gate**: a candle with no finite volume is skipped entirely, so a missing minute
+ *    is never written as a 0 (an observed 0 is still written — that is data);
+ *  - drops non-finite and negative values (invariant 6), for prices as well as volume;
  *  - dedupes within a batch, first wins (consistent with the DB-side first-writer-wins);
+ *  - OHLC rides along with the volume slot; an absent price stays absent rather than defaulting to
+ *    the volume's presence;
  *  - returns one plan per distinct hour, so a multi-hour backlog writes several rows.
  */
 export function planSlotWrites(candles: CandleVolume[]): HourPlan[] {
-  const byHour = new Map<string, Map<number, number>>()
+  const byHour = new Map<string, Map<number, HourSlot>>()
 
   for (const candle of candles) {
     const volume = finiteVolume(candle.v)
@@ -99,15 +144,27 @@ export function planSlotWrites(candles: CandleVolume[]): HourPlan[] {
       slots = new Map()
       byHour.set(hourIso, slots)
     }
-    if (!slots.has(slot)) slots.set(slot, volume)
+    if (slots.has(slot)) continue
+    const o = finiteVolume(candle.o)
+    const h = finiteVolume(candle.h)
+    const l = finiteVolume(candle.l)
+    const c = finiteVolume(candle.c)
+    slots.set(slot, {
+      slot,
+      value: volume,
+      // Only carry prices that were actually observed — an absent one stays absent rather than
+      // becoming an explicit null the DB would have to distinguish from "not written".
+      ...(o != null ? { o } : {}),
+      ...(h != null ? { h } : {}),
+      ...(l != null ? { l } : {}),
+      ...(c != null ? { c } : {}),
+    })
   }
 
   return [...byHour.entries()]
     .map(([hourIso, slots]) => ({
       hourIso,
-      slots: [...slots.entries()]
-        .map(([slot, value]) => ({ slot, value }))
-        .sort((a, b) => a.slot - b.slot),
+      slots: [...slots.values()].sort((a, b) => a.slot - b.slot),
     }))
     .sort((a, b) => (a.hourIso < b.hourIso ? -1 : 1))
 }
@@ -163,15 +220,25 @@ export function derive5mVolume(rows: MetricsHourRow[]): FiveMinBucket[] {
 
 const INSERT_HOUR_SQL = `
 INSERT INTO token_metrics_history (
-  token_address, chain, hour_bucket, vol_min, sources, updated_at
-) VALUES ($1, $2, $3::timestamptz, array_fill(NULL::float8, ARRAY[60]), $4::text[], NOW())
+  token_address, chain, hour_bucket, vol_min, o_min, h_min, l_min, c_min, sources, updated_at
+) VALUES (
+  $1, $2, $3::timestamptz,
+  array_fill(NULL::float8, ARRAY[60]), array_fill(NULL::float8, ARRAY[60]),
+  array_fill(NULL::float8, ARRAY[60]), array_fill(NULL::float8, ARRAY[60]),
+  array_fill(NULL::float8, ARRAY[60]), $4::text[], NOW()
+)
 ON CONFLICT (token_address, chain, hour_bucket) DO NOTHING
 `
 
 /**
- * Fill slots on one hour row, atomically. `COALESCE(vol_min[slot], value)` is the first-writer-wins
- * rule: an existing minute is never overwritten, so a duplicate write is a no-op and two vendors
- * cannot clobber each other's candles.
+ * Fill slots on one hour row, atomically — volume and OHLC, each field independently.
+ *
+ * `COALESCE(<field>[slot], incoming)` is the first-writer-wins rule **per field**: an existing
+ * minute is never overwritten, a duplicate write is a no-op, and two sources cannot clobber each
+ * other. `COALESCE` is what keeps an absent incoming price from erasing a stored one.
+ *
+ * Every column is written in the same statement, so a row can never carry a volume with a stale
+ * price from a different write.
  */
 const MERGE_SLOTS_SQL = `
 UPDATE token_metrics_history
@@ -180,8 +247,28 @@ UPDATE token_metrics_history
            FROM generate_series(1, 60) AS i
            LEFT JOIN unnest($4::int[], $5::float8[]) AS u(slot, v) ON u.slot = i
        ),
+       o_min = (
+         SELECT array_agg(COALESCE(o_min[i], u.o) ORDER BY i)
+           FROM generate_series(1, 60) AS i
+           LEFT JOIN unnest($4::int[], $6::float8[]) AS u(slot, o) ON u.slot = i
+       ),
+       h_min = (
+         SELECT array_agg(COALESCE(h_min[i], u.h) ORDER BY i)
+           FROM generate_series(1, 60) AS i
+           LEFT JOIN unnest($4::int[], $7::float8[]) AS u(slot, h) ON u.slot = i
+       ),
+       l_min = (
+         SELECT array_agg(COALESCE(l_min[i], u.l) ORDER BY i)
+           FROM generate_series(1, 60) AS i
+           LEFT JOIN unnest($4::int[], $8::float8[]) AS u(slot, l) ON u.slot = i
+       ),
+       c_min = (
+         SELECT array_agg(COALESCE(c_min[i], u.c) ORDER BY i)
+           FROM generate_series(1, 60) AS i
+           LEFT JOIN unnest($4::int[], $9::float8[]) AS u(slot, c) ON u.slot = i
+       ),
        sources = (
-         SELECT array_agg(DISTINCT s) FROM unnest(sources || $6::text[]) AS s
+         SELECT array_agg(DISTINCT s) FROM unnest(sources || $10::text[]) AS s
        ),
        updated_at = NOW()
  WHERE token_address = $1 AND chain = $2 AND hour_bucket = $3::timestamptz
@@ -219,6 +306,10 @@ export async function recordMetricHours(params: {
     for (const plan of plans) {
       const slots = plan.slots.map((s) => s.slot)
       const values = plan.slots.map((s) => s.value)
+      const opens = plan.slots.map((s) => s.o ?? null)
+      const highs = plan.slots.map((s) => s.h ?? null)
+      const lows = plan.slots.map((s) => s.l ?? null)
+      const closes = plan.slots.map((s) => s.c ?? null)
       slotsAttempted += slots.length
 
       await query(INSERT_HOUR_SQL, [tokenAddress, chain, plan.hourIso, [params.source]])
@@ -228,6 +319,10 @@ export async function recordMetricHours(params: {
         plan.hourIso,
         slots,
         values,
+        opens,
+        highs,
+        lows,
+        closes,
         [params.source],
       ])
       if ((rowCount ?? 0) > 0) hoursWritten++
@@ -316,7 +411,7 @@ export async function loadMetricsHours(params: {
   toIso: string
 }): Promise<MetricsHourRow[]> {
   const { rows } = await query<MetricsHourRow>(
-    `SELECT hour_bucket, vol_min
+    `SELECT hour_bucket, vol_min, o_min, h_min, l_min, c_min
        FROM token_metrics_history
       WHERE token_address = $1 AND chain = $2
         AND hour_bucket >= date_trunc('hour', $3::timestamptz)
@@ -335,6 +430,45 @@ export async function load5mVolumeSeries(params: {
   toIso: string
 }): Promise<FiveMinBucket[]> {
   return derive5mVolume(await loadMetricsHours(params))
+}
+
+/**
+ * Expand hour rows into per-minute candles, ascending by time.
+ *
+ * A minute is emitted when **any** of its five fields was observed: a minute where only the volume
+ * is known still carries a real bar, and dropping it would throw the volume away. An absent field
+ * comes back as `null` — never 0 — so a consumer can tell a flat minute from an unobserved one.
+ * Mirrors `filledSlots`' rule of reading the array rather than trusting a stored count.
+ */
+export function expandHourRowsToOhlcv(rows: MetricsHourRow[]): OhlcvMinute[] {
+  const out: OhlcvMinute[] = []
+
+  for (const row of rows) {
+    const hourMs = Date.parse(row.hour_bucket)
+    if (!Number.isFinite(hourMs)) continue
+
+    for (let i = 0; i < SLOTS_PER_HOUR; i++) {
+      const o = slotValue(row.o_min, i)
+      const h = slotValue(row.h_min, i)
+      const l = slotValue(row.l_min, i)
+      const c = slotValue(row.c_min, i)
+      const v = slotValue(row.vol_min, i)
+      if (o == null && h == null && l == null && c == null && v == null) continue
+      out.push({ t: Math.floor((hourMs + i * 60_000) / 1000), o, h, l, c, v })
+    }
+  }
+
+  return out.sort((a, b) => a.t - b.t)
+}
+
+/** The 1m OHLCV series for one token — the full candle the copier captured. */
+export async function load1mOhlcv(params: {
+  tokenAddress: string
+  chain?: string
+  fromIso: string
+  toIso: string
+}): Promise<OhlcvMinute[]> {
+  return expandHourRowsToOhlcv(await loadMetricsHours(params))
 }
 
 export type MetricsHistoryStats = {

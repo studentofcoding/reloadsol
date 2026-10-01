@@ -3,6 +3,7 @@ import {
   FIVE_MIN_PER_HOUR,
   SLOTS_PER_HOUR,
   derive5mVolume,
+  expandHourRowsToOhlcv,
   filledSlots,
   hourBucketIso,
   hourBucketUtc,
@@ -207,5 +208,98 @@ describe('differential — derived 5m volume === the shipped aggregateTo5m rule 
 
     const aggregated = aggregateTo5m(barsFromSlots(HOUR_START_SEC, slots))
     expect(aggregated[0]!.v).toBe(0)
+  })
+})
+
+describe('token-metrics-history — OHLCV slots', () => {
+  it('carries OHLC alongside the volume slot', () => {
+    const plans = planSlotWrites([
+      { t: Date.parse('2026-10-01T12:05:00Z') / 1000, v: 10, o: 1.5, h: 2.5, l: 1.2, c: 2.0 },
+    ])
+    expect(plans).toEqual([
+      {
+        hourIso: '2026-10-01T12:00:00.000Z',
+        slots: [{ slot: 6, value: 10, o: 1.5, h: 2.5, l: 1.2, c: 2.0 }],
+      },
+    ])
+  })
+
+  it('keeps an absent price absent, and still gates the slot on volume', () => {
+    const lastMinute = Date.parse('2026-10-01T12:59:00Z') / 1000
+
+    // A volume-only candle (e.g. a rolling-window source) writes no prices at all.
+    const plans = planSlotWrites([{ t: lastMinute, v: 5 }])
+    expect(plans[0]!.slots[0]).toEqual({ slot: 60, value: 5 })
+
+    // A candle with prices but no volume is dropped entirely — never a fabricated 0-volume bar.
+    expect(planSlotWrites([{ t: lastMinute, o: 1, h: 2, l: 0.5, c: 1.5 }])).toEqual([])
+  })
+
+  it('drops non-finite and negative prices without dropping the volume slot', () => {
+    const plans = planSlotWrites([
+      {
+        t: Date.parse('2026-10-01T12:59:00Z') / 1000,
+        v: 5,
+        o: Number.NaN,
+        h: -1,
+        l: 1.2,
+        c: Number.POSITIVE_INFINITY,
+      },
+    ])
+    expect(plans[0]!.slots[0]).toEqual({ slot: 60, value: 5, l: 1.2 })
+  })
+})
+
+describe('token-metrics-history — OHLCV expansion', () => {
+  const base = Date.parse('2026-10-01T12:00:00Z') / 1000
+  const row = (over: Partial<MetricsHourRow>): MetricsHourRow => ({
+    hour_bucket: '2026-10-01T12:00:00.000Z',
+    vol_min: Array(SLOTS_PER_HOUR).fill(null),
+    ...over,
+  })
+  const slots = (entries: Array<[number, number]>): Array<number | null> => {
+    const arr = Array(SLOTS_PER_HOUR).fill(null)
+    for (const [slot, value] of entries) arr[slot] = value
+    return arr
+  }
+
+  it('emits a candle per observed minute, with absent fields as null (never 0)', () => {
+    const rows = [
+      row({
+        vol_min: slots([[0, 10], [2, 30]]),
+        o_min: slots([[0, 1.5], [2, 3.5]]),
+        h_min: slots([[0, 2], [2, 4]]),
+      }),
+    ]
+    expect(expandHourRowsToOhlcv(rows)).toEqual([
+      { t: base, o: 1.5, h: 2, l: null, c: null, v: 10 },
+      { t: base + 120, o: 3.5, h: 4, l: null, c: null, v: 30 },
+    ])
+  })
+
+  it('still emits a minute that has only a price, and skips minutes with nothing', () => {
+    const rows = [row({ c_min: slots([[5, 9.9]]) })]
+    expect(expandHourRowsToOhlcv(rows)).toEqual([
+      { t: base + 300, o: null, h: null, l: null, c: 9.9, v: null },
+    ])
+  })
+
+  it('tolerates pre-migration rows whose OHLC arrays are NULL', () => {
+    const rows = [row({ vol_min: slots([[0, 10]]) })]
+    expect(expandHourRowsToOhlcv(rows)).toEqual([
+      { t: base, o: null, h: null, l: null, c: null, v: 10 },
+    ])
+  })
+
+  it('orders ascending across hour rows given out of order', () => {
+    const later: MetricsHourRow = {
+      hour_bucket: '2026-10-01T13:00:00.000Z',
+      vol_min: slots([[0, 1]]),
+    }
+    const earlier = row({ vol_min: slots([[59, 2]]) })
+    expect(expandHourRowsToOhlcv([later, earlier]).map((c) => c.t)).toEqual([
+      base + 3540,
+      base + 3600,
+    ])
   })
 })

@@ -260,3 +260,30 @@ describe('metrics copier — candle mapping', () => {
     ])
   })
 })
+
+describe('metrics copier — OHLC carried through', () => {
+  it('maps the cache bar\'s whole candle, not just the volume', () => {
+    const candles = toCandleVolumes([
+      { time: 1790751960, open: 1.5, high: 2.5, low: 1.2, close: 2.0, volume: 10 },
+    ])
+    expect(candles).toEqual([{ t: 1790751960, o: 1.5, h: 2.5, l: 1.2, c: 2.0, v: 10 }])
+  })
+
+  it('keeps OHLC through the window clip', () => {
+    const inWindow = { t: nowSec - 60, o: 1, h: 2, l: 0.5, c: 1.5, v: 7 }
+    const out = clipCandlesToWindow(
+      [inWindow, { t: Date.parse('2024-09-16T14:00:00Z') / 1000, o: 9, h: 9, l: 9, c: 9, v: 9 }],
+      { now: NOW, windowSeconds: COPY_BAR_LIMIT * COPY_RESOLUTION_SECONDS },
+    )
+    expect(out).toEqual([inWindow])
+  })
+
+  it('writes the OHLC into the slot', () => {
+    const plans = planSlotWrites(
+      toCandleVolumes([
+        { time: Date.parse('2026-10-01T12:05:00Z') / 1000, open: 1.5, high: 2.5, low: 1.2, close: 2.0, volume: 10 },
+      ]),
+    )
+    expect(plans[0]!.slots[0]).toEqual({ slot: 6, value: 10, o: 1.5, h: 2.5, l: 1.2, c: 2.0 })
+  })
+})

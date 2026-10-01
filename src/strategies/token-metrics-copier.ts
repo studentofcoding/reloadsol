@@ -31,7 +31,14 @@ export const COPY_BAR_LIMIT = 501
 export const COPY_RESOLUTION_SECONDS = 60
 
 /** A bar as the 24h chart cache stores it (`TokenOhlcBar`, structurally typed to avoid a cycle). */
-export type CopierCacheBar = { time: number; volume?: number }
+export type CopierCacheBar = {
+  time: number
+  open?: number
+  high?: number
+  low?: number
+  close?: number
+  volume?: number
+}
 
 /**
  * How long a single call covers. Guarded against nonsense: a zero window would otherwise make
@@ -139,15 +146,25 @@ export function planCopyTargets(input: CopyPlanInput): CopyPlan {
 }
 
 /**
- * Cached bars → the writer's candle shape. A missing or non-numeric `volume` is dropped by
- * `planSlotWrites`, which is the single place that rule lives — so this is a pure rename, not a
- * second validation site.
+ * Cached bars → the writer's candle shape, carrying **the whole candle**, not just the volume.
+ *
+ * The cache's bars already hold open/high/low/close alongside volume, and the copy lane's
+ * `GmgnWebCandle` is already `{t, o, h, l, c, v}` — both fit this shape structurally, so nothing is
+ * dropped between the source and the row. A missing or non-numeric field is dropped by
+ * `planSlotWrites`, which is the single place that rule lives.
  */
 export function toCandleVolumes(bars: CopierCacheBar[]): CandleVolume[] {
   const out: CandleVolume[] = []
   for (const bar of bars) {
     if (!Number.isFinite(bar?.time)) continue
-    out.push({ t: bar.time, v: bar.volume })
+    out.push({
+      t: bar.time,
+      o: bar.open,
+      h: bar.high,
+      l: bar.low,
+      c: bar.close,
+      v: bar.volume,
+    })
   }
   return out
 }

@@ -65,15 +65,18 @@ For genuinely active tokens the series is effectively **one bar per minute** (50
 ### G2 — A durable per-token metric series
 No table stores a per-token mcap/liquidity series. `token_mcap_tracking` is one overwritten row; `token_risk_features` is one overwritten row.
 
-**Fix (as built, 2026-10-01):** `token_metrics_history` — **one row per (token, chain, UTC hour) carrying 60 one-minute slots** (`db/init/54-token-metrics-history.sql`), written by `src/strategies/token-metrics-history.ts`:
+**Fix (as built, 2026-10-01):** `token_metrics_history` — **one row per (token, chain, UTC hour) carrying five one-minute arrays** (`db/init/54-token-metrics-history.sql` + `db/init/55-token-metrics-ohlcv.sql`), written by `src/strategies/token-metrics-history.ts`:
 
 ```
-token_address, chain, hour_bucket, vol_min float8[60], mcap_close,
-liquidity_close, price_close, holders, sources text[], updated_at
+token_address, chain, hour_bucket,
+vol_min float8[60], o_min float8[60], h_min float8[60], l_min float8[60], c_min float8[60],
+mcap_close, liquidity_close, price_close, holders, sources text[], updated_at
 -- PK (token_address, chain, hour_bucket); slot i = minute (i-1); NULL = NOT OBSERVED
 ```
 
-The hour-array shape was chosen on **measured** byte costs (prod, 2026-10-01): `float8[60]` = 504 B vs `numeric[60]` 744 B vs jsonb array 968 B vs jsonb object 1,320 B; an all-NULL `float8[60]` is 32 B. A row-per-minute would be 440k rows/day → 4.6–8.7 GB per 30 days against 11 GB free disk, and its index could never stay resident in a 256 MB `shared_buffers` (existing indexes already total 817 MB). Per-token window reads touch ~2 rows instead of ~100.
+**The full 1m candle, not just the volume.** 54 stored volume alone because that is what the scorer's band needed; the vendor actually returns complete OHLCV per bar and the fetch already parsed open/high/low/close — the writer was discarding them. 55 keeps them, so one row now carries the whole candle and no join is needed. The four price arrays are **per-minute**; the `*_close` columns are **end-of-hour snapshots** of different quantities (market cap, pool liquidity) and must never be read as per-minute. First-writer-wins applies **per field**, so an absent incoming price never erases a stored one.
+
+The hour-array shape was chosen on **measured** byte costs (prod, 2026-10-01): `float8[60]` = 504 B vs `numeric[60]` 744 B vs jsonb array 968 B vs jsonb object 1,320 B; an all-NULL `float8[60]` is 32 B. A row-per-minute would be 440k rows/day → 4.6–8.7 GB per 30 days against 11 GB free disk, and its index could never stay resident in a 256 MB `shared_buffers` (existing indexes already total 817 MB). Per-token window reads touch ~2 rows instead of ~100. Carrying all five arrays costs ~2.5 KB/row when full (~0.5 GB per 30 days at 300 tokens × 720 h) against 11 GB free; `ADD COLUMN` with a NULL default does not rewrite the table, so 55 applies instantly on a live database.
 
 Coverage is **derived, never stored**: `count(x) FROM unnest(vol_min)`. `slots_filled` was deliberately dropped mid-build — it would duplicate that expression, and `array_remove(v, NULL)` does not actually remove NULLs.
 
