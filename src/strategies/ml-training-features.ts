@@ -1,43 +1,26 @@
 import { computeTrainingClass, gateClassFromTrainingClass, potentialTierFromTrainingClass } from './outcome-labeling'
 import { isLabeledTrainingClass, readTrainingClass } from './outcome-features'
 import { toCanonicalEntryFeatures } from './canonical-features'
+import {
+  ENTRY_MCAP_BANDS,
+  ML_NUMERIC_FEATURE_KEYS,
+  ML_SOCIAL_FEATURE_KEYS,
+  ML_V2_FEATURE_KEYS,
+} from './feature-registry'
 import type { StrategyDomain, StrategyOutcomeRow, TrainingClass } from './types'
 
 /** Minimum labeled outcomes before ML gate enforce mode is recommended. */
 export const ML_MIN_LABELED_OUTCOMES = 200
 
-export const ENTRY_MCAP_BANDS = [
-  'under50k',
-  '51-100k',
-  '101-200k',
-  '201-500k',
-  '501k-1M',
-  'over1M',
-] as const
+// Declared once in the feature registry; re-exported here so importers are unchanged.
+export {
+  ENTRY_MCAP_BANDS,
+  ML_NUMERIC_FEATURE_KEYS,
+  ML_SOCIAL_FEATURE_KEYS,
+  ML_V2_FEATURE_KEYS,
+}
 
 export type EntryMcapBandId = (typeof ENTRY_MCAP_BANDS)[number]
-
-export const ML_NUMERIC_FEATURE_KEYS = [
-  'log_entry_mcap',
-  'organic_score',
-  'top_holders_pct',
-  'token_age_hours',
-  'log_volume_at_entry',
-  'entry_template_milestone_80',
-] as const
-
-export const ML_SOCIAL_FEATURE_KEYS = [
-  'log_telegram_mention_count_30m',
-  'telegram_unique_channels_30m',
-  'minutes_since_first_mention',
-  'smart_wallet_buy_count_1h',
-  'has_smart_wallet_buy',
-] as const
-
-export const ML_V2_FEATURE_KEYS = [
-  ...ML_NUMERIC_FEATURE_KEYS,
-  ...ML_SOCIAL_FEATURE_KEYS,
-] as const
 
 export type MlNumericFeatureKey = (typeof ML_NUMERIC_FEATURE_KEYS)[number]
 

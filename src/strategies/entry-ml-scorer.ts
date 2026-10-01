@@ -2,6 +2,8 @@ export type MlModelMeta = {
   version?: string
   model_type?: 'binary' | 'potential_tier'
   stage?: 'gate' | 'potential'
+  /** Registry version the columns were trained against. Missing ⇒ checked by column set only. */
+  feature_schema_version?: number
   feature_columns: string[]
   num_classes?: number
   potential_tier_min?: number

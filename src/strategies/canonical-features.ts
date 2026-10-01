@@ -1,7 +1,9 @@
 import type { StrategyDomain } from './types'
 import { computeTokenAgeHours } from './entry-feature-snapshot'
+import { FEATURE_SCHEMA_VERSION } from './feature-registry'
 
-export const FEATURE_SCHEMA_VERSION = 1 as const
+// Declared once in the feature registry; re-exported here so importers are unchanged.
+export { FEATURE_SCHEMA_VERSION }
 
 export type InstrumentKind = 'spot_token' | 'dlmm_lp'
 

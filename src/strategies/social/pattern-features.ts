@@ -1,19 +1,10 @@
 import type { CombinedInternalExport } from './combined-pattern'
+import { PATTERN_FEATURE_KEYS } from '../feature-registry'
 
 export const PATTERN_TOP_SOURCE_GMGN_FOMO = 'GMGN_Smart_Money_FOMO'
 
-export const PATTERN_FEATURE_KEYS = [
-  'log_first_mcap',
-  'log_mention_count_30m',
-  'unique_channels_30m',
-  'minutes_to_first_mention',
-  'smart_wallet_buy_count_1h',
-  'has_smart_wallet_buy',
-  'source_gmgn_smart_money_fomo',
-  'gmgn_activity_score_60m',
-  'log_gmgn_sm_wallets_60m',
-  'has_gmgn_hot_before_entry',
-] as const
+// Declared once in the feature registry; re-exported here so importers are unchanged.
+export { PATTERN_FEATURE_KEYS }
 
 export type PatternFeatureKey = (typeof PATTERN_FEATURE_KEYS)[number]
 

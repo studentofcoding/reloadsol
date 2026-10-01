@@ -5,37 +5,23 @@ from __future__ import annotations
 import math
 from typing import Any
 
-ENTRY_MCAP_BANDS = [
-    "under50k",
-    "51-100k",
-    "101-200k",
-    "201-500k",
-    "501k-1M",
-    "over1M",
-]
+from feature_schema import stage_columns, schema_version
 
-NUMERIC_FEATURES = [
-    "log_entry_mcap",
-    "organic_score",
-    "top_holders_pct",
-    "token_age_hours",
-    "log_volume_at_entry",
-    "entry_template_milestone_80",
-]
+# Derived from the committed registry mirror (ml/feature-schema.json). Do not re-declare these
+# lists by hand — edit src/strategies/feature-registry.ts and run `npm run ml:export-schema`.
+_ENTRY_V1 = stage_columns("entry", "v1")
+_ENTRY_V2 = stage_columns("entry", "v2")
 
-SOCIAL_FEATURES = [
-    "log_telegram_mention_count_30m",
-    "telegram_unique_channels_30m",
-    "minutes_since_first_mention",
-    "smart_wallet_buy_count_1h",
-    "has_smart_wallet_buy",
-]
-
-BAND_FEATURES = [f"band_{band}" for band in ENTRY_MCAP_BANDS]
+BAND_FEATURES = [column for column in _ENTRY_V1 if column.startswith("band_")]
+NUMERIC_FEATURES = [column for column in _ENTRY_V1 if not column.startswith("band_")]
+ENTRY_MCAP_BANDS = [column[len("band_") :] for column in BAND_FEATURES]
+SOCIAL_FEATURES = [column for column in _ENTRY_V2 if column not in set(_ENTRY_V1)]
 
 FEATURE_COLUMNS = NUMERIC_FEATURES + BAND_FEATURES
 
 FEATURE_COLUMNS_V2 = FEATURE_COLUMNS + SOCIAL_FEATURES
+
+FEATURE_SCHEMA_VERSION = schema_version()
 
 MIN_LABELED_OUTCOMES = 200
 

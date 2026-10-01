@@ -36,10 +36,11 @@ async function getPatternModel(): Promise<LoadedPatternModel | null> {
     const artifactDir = patternMeta.resolvePatternArtifactDir()
     const meta = await patternMeta.readPatternModelMeta()
     if (!meta) {
-      console.warn(
-        `[ml-pattern] shadow scoring disabled: model.meta.json missing or invalid in ${artifactDir}`,
-      )
-      setPatternLoadError(`model.meta.json missing or invalid in ${artifactDir}`)
+      const schemaError = patternMeta.getLastPatternSchemaError()
+      const reason =
+        schemaError ?? `model.meta.json missing or invalid in ${artifactDir}`
+      console.warn(`[ml-pattern] shadow scoring disabled: ${reason}`)
+      setPatternLoadError(reason)
       setPatternModelCache(null)
       return null
     }
@@ -124,10 +125,12 @@ export async function getPatternModelVersion(): Promise<string | null> {
 
 export async function getPatternRuntimeLoadStatus(): Promise<PatternRuntimeLoadStatus> {
   const loaded = await getPatternModel()
+  const patternMeta = await getPatternArtifactMeta()
   return patternRuntimeStatus({
     meta: loaded?.meta ?? null,
     loadError: getPatternLoadError(),
     modelVersion: loaded ? (loaded.meta.version ?? path.basename(loaded.artifactDir)) : null,
+    schemaError: patternMeta.getLastPatternSchemaError(),
   })
 }
 

@@ -80,4 +80,27 @@ describe('patternRuntimeStatus', () => {
     const status = patternRuntimeStatus({ meta: null, loadError: null, modelVersion: null })
     expect(status.error).toBe('pattern model not loaded')
   })
+
+  it('marks schema_ok true when nothing was refused', () => {
+    const status = patternRuntimeStatus({
+      meta: { feature_columns: ['a'], metrics: { pattern_ready: true } },
+      loadError: null,
+      modelVersion: 'pattern-gate',
+    })
+    expect(status.schema_ok).toBe(true)
+    expect(status.schema_error).toBeNull()
+  })
+
+  it('carries the named schema refusal and does not report a loaded model', () => {
+    const status = patternRuntimeStatus({
+      meta: null,
+      loadError: '7 columns match no pattern set · missing vs default: gmgn_activity_score_60m',
+      modelVersion: null,
+      schemaError: '7 columns match no pattern set · missing vs default: gmgn_activity_score_60m',
+    })
+    expect(status.schema_ok).toBe(false)
+    expect(status.schema_error).toContain('missing vs default')
+    expect(status.runtime_loaded).toBe(false)
+    expect(status.error).toContain('missing vs default')
+  })
 })

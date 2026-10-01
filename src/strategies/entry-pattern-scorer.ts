@@ -4,6 +4,8 @@ export type PatternModelMeta = {
   version?: string
   model_type?: 'binary'
   stage?: 'pattern-gate'
+  /** Registry version the columns were trained against. Missing ⇒ checked by column set only. */
+  feature_schema_version?: number
   feature_columns: string[]
   metrics?: {
     pattern_ready?: boolean
@@ -116,6 +118,9 @@ export type PatternRuntimeLoadStatus = {
   runtime_loaded: boolean
   pattern_ready: boolean
   model_version: string | null
+  /** False when the model's columns do not match a named registry set — scores are refused. */
+  schema_ok: boolean
+  schema_error: string | null
   error: string | null
 }
 
@@ -124,17 +129,24 @@ export type PatternRuntimeLoadStatus = {
  * axis. Conflating them made the daily pipeline log a phantom reload failure
  * (`runtime_loaded=false` + "pattern model not loaded") for every model that
  * had not yet cleared the macro-F1 bar.
+ *
+ * `schema_ok` is a third axis: a model can be present and ready-but-mismatched. A mismatch
+ * refuses scoring rather than feeding the model a vector it was not trained on.
  */
 export function patternRuntimeStatus(params: {
   meta: PatternModelMeta | null
   loadError: string | null
   modelVersion: string | null
+  schemaError?: string | null
 }): PatternRuntimeLoadStatus {
   const loaded = params.meta != null
+  const schemaError = params.schemaError ?? null
   return {
     runtime_loaded: loaded,
     pattern_ready: isPatternModelReady(params.meta),
     model_version: loaded ? params.modelVersion : null,
+    schema_ok: schemaError == null,
+    schema_error: schemaError,
     error: loaded ? null : (params.loadError ?? 'pattern model not loaded'),
   }
 }

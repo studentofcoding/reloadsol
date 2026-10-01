@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "stages": {
+    "entry": {
+      "v1": [
+        "log_entry_mcap",
+        "organic_score",
+        "top_holders_pct",
+        "token_age_hours",
+        "log_volume_at_entry",
+        "entry_template_milestone_80",
+        "band_under50k",
+        "band_51-100k",
+        "band_101-200k",
+        "band_201-500k",
+        "band_501k-1M",
+        "band_over1M"
+      ],
+      "v2": [
+        "log_entry_mcap",
+        "organic_score",
+        "top_holders_pct",
+        "token_age_hours",
+        "log_volume_at_entry",
+        "entry_template_milestone_80",
+        "band_under50k",
+        "band_51-100k",
+        "band_101-200k",
+        "band_201-500k",
+        "band_501k-1M",
+        "band_over1M",
+        "log_telegram_mention_count_30m",
+        "telegram_unique_channels_30m",
+        "minutes_since_first_mention",
+        "smart_wallet_buy_count_1h",
+        "has_smart_wallet_buy"
+      ]
+    },
+    "pattern": {
+      "default": [
+        "log_first_mcap",
+        "log_mention_count_30m",
+        "unique_channels_30m",
+        "minutes_to_first_mention",
+        "smart_wallet_buy_count_1h",
+        "has_smart_wallet_buy",
+        "source_gmgn_smart_money_fomo",
+        "gmgn_activity_score_60m",
+        "log_gmgn_sm_wallets_60m",
+        "has_gmgn_hot_before_entry"
+      ]
+    },
+    "closed_loop": {
+      "default": [
+        "band_under50k",
+        "band_51-100k",
+        "band_101-200k",
+        "band_201-500k",
+        "band_501k-1M",
+        "band_over1M",
+        "adjuster_presence",
+        "jaccard",
+        "ohlc_pattern",
+        "combined",
+        "rug_trip",
+        "principal_score",
+        "entry_template_milestone_80"
+      ]
+    }
+  }
+}

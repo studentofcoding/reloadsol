@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ReloadSOL · Cross-strategy data pipeline</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --paper:#fafaf7; --paper2:#f0efe9; --ink:#163b2a; --muted:#5b6b60;
+    --soft:#8a968d; --accent:#84cc16; --link:#2e5aa8; --rule:rgba(22,59,42,0.14);
+    --sans:'DM Sans', system-ui, sans-serif;
+    --serif:'Fraunces', serif;
+    --mono:'Geist Mono', ui-monospace, monospace;
+  }
+  body { font-family:var(--sans); background:var(--paper); color:var(--ink); line-height:1.5; }
+  .wrap { max-width:1200px; margin:0 auto; padding:3.5rem 2rem 4rem; }
+  .eyebrow { font-family:var(--mono); font-size:.68rem; font-weight:500; letter-spacing:.2em; text-transform:uppercase; color:var(--muted); }
+  h1 { font-family:var(--serif); font-weight:400; font-size:clamp(1.6rem,3vw,2.4rem); letter-spacing:-.02em; margin:.4rem 0 .6rem; }
+  .lede { color:var(--muted); max-width:74ch; font-size:1rem; margin-bottom:2.25rem; }
+  .lede code, p code, li code { font-family:var(--mono); font-size:.8rem; color:var(--ink); background:rgba(22,59,42,0.05); padding:.05rem .28rem; border-radius:3px; }
+
+  .diagram { margin-bottom:1.75rem; overflow-x:auto; }
+  svg { width:100%; min-width:1000px; display:block; }
+
+  h2 { font-family:var(--mono); font-weight:500; font-size:.7rem; letter-spacing:.2em; text-transform:uppercase; color:var(--soft); margin:2.5rem 0 1rem; }
+  h2 .rule { display:inline-block; width:2.5rem; height:1px; background:var(--rule); vertical-align:middle; margin-right:.75rem; }
+
+  .callout { font-family:var(--serif); font-style:italic; font-size:1rem; color:var(--muted); margin:-.5rem 0 2rem; }
+  .callout b { font-style:normal; font-weight:600; color:var(--ink); }
+
+  .cards { display:grid; grid-template-columns:1.1fr 1fr 0.9fr; gap:1rem; }
+  @media (max-width:900px) { .cards { grid-template-columns:1fr; } }
+  .card { background:#fff; border:1px solid rgba(22,59,42,0.12); border-radius:6px; padding:1.25rem; }
+  .card .eyebrow { color:var(--soft); font-size:.62rem; }
+  .card-head { display:flex; align-items:center; gap:.5rem; margin:.45rem 0 .7rem; }
+  .card-head h3 { font-size:1rem; font-weight:600; }
+  .dot { width:7px; height:7px; border-radius:50%; flex:none; }
+  .dot.coral { background:var(--accent); } .dot.ink { background:var(--ink); } .dot.muted { background:var(--muted); }
+  .card ul { list-style:none; }
+  .card li { font-size:.86rem; color:var(--muted); padding-left:.9rem; position:relative; margin-bottom:.4rem; }
+  .card li::before { content:"—"; position:absolute; left:0; color:var(--soft); }
+  .card code { font-family:var(--mono); font-size:.78rem; color:var(--ink); background:rgba(22,59,42,0.05); padding:.05rem .28rem; border-radius:3px; }
+
+  .footer { margin-top:3rem; padding-top:1rem; border-top:1px solid var(--rule); font-family:var(--mono); font-size:.72rem; color:var(--soft); display:flex; justify-content:space-between; flex-wrap:wrap; gap:.5rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">ReloadSOL · SPEC-strategy-data-pipeline-v1</p>
+  <h1>The standard we already have — twice, and disagreeing</h1>
+  <p class="lede">The canonical feature spine is real and it <em>is</em> applied: ~82,800 of 82,861 outcome rows carry it, because
+  <code>insertStrategyOutcome</code> canonicalizes on every write. The problem is what sits beside it. Measured on prod:
+  <b>113</b> distinct top-level keys over 2.65M key instances, one domain carrying 101 of them — and
+  <code>domain_features</code> holding a near-complete <b>second copy</b> of the same fields, with no rule naming which copy wins.</p>
+
+  <h2><span class="rule"></span>One row, two copies — the double-booked blob</h2>
+  <div class="diagram">
+  <svg viewBox="0 0 1160 440" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="sp-title sp-desc">
+    <title id="sp-title">One outcome row storing its features twice</title>
+    <desc id="sp-desc">One strategy_outcomes.features row drawn as a container holding two boxes with the same five field names: a top-level canonical spine and a nested domain_features copy. token_symbol appears in both on 79,736 rows and the two copies disagree on 3,130 of them; training_class appears in both on 79,841 rows and disagrees on 3,021. No rule names the authoritative copy.</desc>
+    <defs>
+      <marker id="arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#5b6b60"/></marker>
+    </defs>
+    <rect width="100%" height="100%" fill="#fafaf7"/>
+
+    <!-- outer container = one row -->
+    <rect x="80" y="64" width="1000" height="300" rx="8" fill="rgba(22,59,42,0.03)" stroke="rgba(22,59,42,0.25)" stroke-width="1"/>
+    <text x="100" y="92" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.16em">STRATEGY_OUTCOMES.FEATURES</text>
+    <text x="100" y="112" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif">one row per outcome</text>
+    <text x="1060" y="92" fill="#8a968d" font-size="9" font-family="'Geist Mono',monospace" text-anchor="end">82,861 rows · 112 MB · avg 1,418 B</text>
+
+    <!-- left: canonical top level -->
+    <rect x="112" y="136" width="400" height="150" rx="6" fill="#ffffff" stroke="#163b2a" stroke-width="1"/>
+    <rect x="124" y="146" width="72" height="12" rx="2" fill="transparent" stroke="rgba(22,59,42,0.40)" stroke-width="0.8"/>
+    <text x="160" y="155" fill="#163b2a" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">TOP LEVEL</text>
+    <text x="124" y="180" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif">Canonical spine</text>
+    <text x="124" y="200" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace">feature_schema_version</text>
+    <text x="124" y="218" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace">entry_mcap</text>
+    <text x="124" y="236" fill="#84cc16" font-size="9" font-family="'Geist Mono',monospace">token_symbol</text>
+    <text x="124" y="254" fill="#84cc16" font-size="9" font-family="'Geist Mono',monospace">training_class</text>
+    <text x="124" y="272" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace">volume_at_entry</text>
+
+    <!-- right: nested duplicate -->
+    <rect x="560" y="136" width="488" height="150" rx="6" fill="rgba(91,107,96,0.08)" stroke="#5b6b60" stroke-width="1" stroke-dasharray="4,3"/>
+    <rect x="572" y="146" width="56" height="12" rx="2" fill="transparent" stroke="rgba(91,107,96,0.45)" stroke-width="0.8"/>
+    <text x="600" y="155" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">NESTED</text>
+    <text x="572" y="180" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif">domain_features</text>
+    <text x="572" y="200" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace">feature_schema_version</text>
+    <text x="572" y="218" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace">entry_mcap</text>
+    <text x="572" y="236" fill="#84cc16" font-size="9" font-family="'Geist Mono',monospace">token_symbol</text>
+    <text x="572" y="254" fill="#84cc16" font-size="9" font-family="'Geist Mono',monospace">training_class</text>
+    <text x="572" y="272" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace">volume_at_entry</text>
+
+    <!-- divergence strip -->
+    <rect x="112" y="300" width="936" height="52" rx="6" fill="rgba(132,204,22,0.08)" stroke="rgba(132,204,22,0.50)" stroke-width="1"/>
+    <rect x="124" y="308" width="84" height="12" rx="2" fill="transparent" stroke="rgba(132,204,22,0.55)" stroke-width="0.8"/>
+    <text x="166" y="317" fill="#84cc16" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">DIVERGENCE</text>
+    <text x="124" y="332" fill="#163b2a" font-size="9" font-family="'Geist Mono',monospace">token_symbol      both 79,736  ·  the two copies DIFFER on 3,130</text>
+    <text x="124" y="346" fill="#163b2a" font-size="9" font-family="'Geist Mono',monospace">training_class    both 79,841  ·  the two copies DIFFER on 3,021</text>
+    <text x="1036" y="332" fill="#5b6b60" font-size="9" font-family="'DM Sans',sans-serif" text-anchor="end" font-style="italic">no rule names</text>
+    <text x="1036" y="346" fill="#5b6b60" font-size="9" font-family="'DM Sans',sans-serif" text-anchor="end" font-style="italic">the authoritative copy</text>
+
+    <!-- legend -->
+    <line x1="80" y1="396" x2="1080" y2="396" stroke="rgba(22,59,42,0.10)" stroke-width="0.8"/>
+    <text x="80" y="416" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.18em">LEGEND</text>
+    <rect x="172" y="408" width="14" height="10" rx="2" fill="#ffffff" stroke="#163b2a" stroke-width="1"/>
+    <text x="192" y="416" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">canonical (written by the choke point)</text>
+    <rect x="470" y="408" width="14" height="10" rx="2" fill="rgba(91,107,96,0.08)" stroke="#5b6b60" stroke-width="1"/>
+    <text x="490" y="416" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">nested duplicate</text>
+    <rect x="672" y="408" width="14" height="10" rx="2" fill="rgba(132,204,22,0.08)" stroke="rgba(132,204,22,0.50)" stroke-width="1"/>
+    <text x="692" y="416" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">same field, two values</text>
+  </svg>
+  </div>
+  <p class="callout">That is the whole problem in one picture. It is not that we lack a standard — it is that the standard is
+  <b>duplicated inside every row</b>, and on ~3% of rows the duplicate disagrees with the original. Any consumer reading one
+  copy and not the other is silently wrong on those rows.</p>
+
+  <h2><span class="rule"></span>The target — four layers, and what must land first</h2>
+  <div class="diagram">
+  <svg viewBox="0 0 1160 420" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="sl-title sl-desc">
+    <title id="sl-title">Four-layer target for the cross-strategy data pipeline</title>
+    <desc id="sl-desc">Four stacked layers: L1 capture, one canonical builder adopted by all eleven writer sites; L2 contract, a single feature registry with a generated Python mirror and a schema version checked at model load, marked as the layer that must land first; L3 history, the token metrics series; and L4 backfill, a staged dual-write, alias-read, normalize, drop-legacy migration over 82,861 rows.</desc>
+    <defs>
+      <marker id="arr2" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#5b6b60"/></marker>
+    </defs>
+    <rect width="100%" height="100%" fill="#fafaf7"/>
+
+    <!-- L1 -->
+    <rect x="80" y="56" width="760" height="64" rx="6" fill="#ffffff" stroke="#163b2a" stroke-width="1"/>
+    <rect x="92" y="66" width="32" height="14" rx="3" fill="transparent" stroke="rgba(22,59,42,0.40)" stroke-width="0.8"/>
+    <text x="108" y="76" fill="#163b2a" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">L1</text>
+    <text x="140" y="86" fill="#163b2a" font-size="13" font-weight="600" font-family="'DM Sans',sans-serif">Capture</text>
+    <text x="140" y="104" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace">one canonical builder · all 11 writer sites · stamped feature_schema_version</text>
+    <text x="872" y="86" fill="#5b6b60" font-size="9.5" font-family="'Geist Mono',monospace">canonical at the source,</text>
+    <text x="872" y="102" fill="#5b6b60" font-size="9.5" font-family="'Geist Mono',monospace">not only at the outcome write</text>
+
+    <!-- L2 (focal) -->
+    <rect x="80" y="136" width="760" height="64" rx="6" fill="rgba(132,204,22,0.12)" stroke="#84cc16" stroke-width="1"/>
+    <rect x="92" y="146" width="32" height="14" rx="3" fill="transparent" stroke="rgba(132,204,22,0.55)" stroke-width="0.8"/>
+    <text x="108" y="156" fill="#84cc16" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">L2</text>
+    <text x="140" y="166" fill="#163b2a" font-size="13" font-weight="600" font-family="'DM Sans',sans-serif">Contract</text>
+    <text x="140" y="184" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace">one registry (TS source of truth) → generated Python mirror · version checked at load</text>
+    <text x="872" y="166" fill="#84cc16" font-size="9.5" font-family="'Geist Mono',monospace">MUST LAND FIRST —</text>
+    <text x="872" y="182" fill="#5b6b60" font-size="9.5" font-family="'Geist Mono',monospace">else a rename zero-fills silently</text>
+
+    <!-- L3 -->
+    <rect x="80" y="216" width="760" height="64" rx="6" fill="rgba(22,59,42,0.05)" stroke="#5b6b60" stroke-width="1"/>
+    <rect x="92" y="226" width="32" height="14" rx="3" fill="transparent" stroke="rgba(91,107,96,0.45)" stroke-width="0.8"/>
+    <text x="108" y="236" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">L3</text>
+    <text x="140" y="246" fill="#163b2a" font-size="13" font-weight="600" font-family="'DM Sans',sans-serif">History</text>
+    <text x="140" y="264" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace">token_metrics_history · append-only · the series the rug backtest needs</text>
+    <text x="872" y="246" fill="#5b6b60" font-size="9.5" font-family="'Geist Mono',monospace">today there is no</text>
+    <text x="872" y="262" fill="#5b6b60" font-size="9.5" font-family="'Geist Mono',monospace">per-token metric series</text>
+
+    <!-- L4 -->
+    <rect x="80" y="296" width="760" height="64" rx="6" fill="rgba(22,59,42,0.02)" stroke="rgba(22,59,42,0.25)" stroke-width="1" stroke-dasharray="4,3"/>
+    <rect x="92" y="306" width="32" height="14" rx="3" fill="transparent" stroke="rgba(22,59,42,0.30)" stroke-width="0.8"/>
+    <text x="108" y="316" fill="#8a968d" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">L4</text>
+    <text x="140" y="326" fill="#163b2a" font-size="13" font-weight="600" font-family="'DM Sans',sans-serif">Backfill — staged, one-shot</text>
+    <text x="140" y="344" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace">dual-write → alias reads → normalize 82,861 rows → drop legacy</text>
+    <text x="872" y="326" fill="#5b6b60" font-size="9.5" font-family="'Geist Mono',monospace">dry-run by default,</text>
+    <text x="872" y="342" fill="#5b6b60" font-size="9.5" font-family="'Geist Mono',monospace">backup, re-run = no-op</text>
+
+    <!-- legend -->
+    <line x1="80" y1="380" x2="1080" y2="380" stroke="rgba(22,59,42,0.10)" stroke-width="0.8"/>
+    <text x="80" y="400" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.18em">LEGEND</text>
+    <rect x="172" y="392" width="14" height="10" rx="2" fill="rgba(132,204,22,0.12)" stroke="#84cc16" stroke-width="1"/>
+    <text x="192" y="400" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">the blocking layer</text>
+    <rect x="344" y="392" width="14" height="10" rx="2" fill="#ffffff" stroke="#163b2a" stroke-width="1"/>
+    <text x="364" y="400" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">code change</text>
+    <rect x="500" y="392" width="14" height="10" rx="2" fill="rgba(22,59,42,0.05)" stroke="#5b6b60" stroke-width="1"/>
+    <text x="520" y="400" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">new store</text>
+    <rect x="648" y="392" width="14" height="10" rx="2" fill="rgba(22,59,42,0.02)" stroke="rgba(22,59,42,0.25)" stroke-width="1"/>
+    <text x="668" y="400" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">staged / one-shot migration</text>
+  </svg>
+  </div>
+
+  <h2><span class="rule"></span>What it costs — census, blast radius, order</h2>
+  <div class="cards">
+    <div class="card">
+      <p class="eyebrow">CENSUS (PROD, 2026-10-01)</p>
+      <div class="card-head"><span class="dot coral"></span><h3>113 keys, per-domain shape</h3></div>
+      <ul>
+        <li><b>113</b> distinct top-level keys · <b>2.65M</b> key instances · <b>112 MB</b> (avg 1,418 B/row).</li>
+        <li><code>mcap_tracker</code> alone carries <b>101</b> of the 113; <code>signals</code> 66; <code>trending_bot</code> 59 (on 77,431 rows); <code>gmgn</code>/<code>social</code> 49; <code>dlmm</code> 31.</li>
+        <li>The blob is shaped <b>per domain</b>, not shared — so a single flat schema has to reconcile six shapes.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <p class="eyebrow">BLAST RADIUS</p>
+      <div class="card-head"><span class="dot ink"></span><h3>11 writers, 4 schemas, 3 models</h3></div>
+      <ul>
+        <li><b>11</b> write sites — incl. the one script that bypasses the choke point (<code>replay-mcap-first-seen-14d</code>).</li>
+        <li>Schema defined <b>4×</b>: TS entry, TS closed-loop (a different 13-col set), Python <code>features.py</code>, Python <code>pattern_features.py</code>.</li>
+        <li>Key names hardcoded in every TS reader + Python exporter + UI; the pattern meta already drifts (7 cols on disk vs 10 in code).</li>
+        <li>Retrain triggers: <code>v2-gate</code>, <code>v2-potential</code>, <code>pattern-gate</code>, closed-loop.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <p class="eyebrow">ORDER</p>
+      <div class="card-head"><span class="dot muted"></span><h3>Registry before rename</h3></div>
+      <ul>
+        <li>P1 registry + version check → P2 one builder → P3 alias reads → P4 history → P5 backfill → P6 <b>retrain</b>.</li>
+        <li>Landing a rename before the retrain makes the gate read renamed features as <b>missing</b> — zero-filled, no error.</li>
+        <li>Status: both SPECs written, docs-only. <b>No code changed</b>, nothing committed.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>ReloadSOL · docs/diagrams/14-strategy-data-pipeline.html</span>
+    <span>113 keys · 82,861 rows · 112 MB · one builder, one registry, one authority per field</span>
+  </div>
+</div>
+</body>
+</html>

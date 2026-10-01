@@ -35,6 +35,7 @@ import {
 import { evaluateGmgnSecurity } from './gmgn-security-gate'
 import { attachRiskShadow } from './risk-store'
 import { riskLabelLines } from './risk-label'
+import { detectRugSignal } from './rug-signal-detect'
 import { fetchJupiterMarketHints } from '@/utils/jupiter-metadata'
 
 function positive(v: unknown): number | null {
@@ -216,6 +217,15 @@ export async function gateGmgnCandidates(params: {
       info,
     })
     const riskLines = riskLabelLines(riskShadow.label)
+
+    // Rug signal (staircase / manufactured ramp). Env-gated (RUG_SIGNAL_ENABLED,
+    // default off); on trip writes `rug` straight through the rug list. Never throws.
+    await detectRugSignal({
+      chain,
+      tokenAddress: candidate.tokenAddress,
+      tokenSymbol: candidate.symbol,
+      info,
+    })
 
     const since = new Date(Date.now() - RADAR_ACCUMULATE_WINDOW_MS).toISOString()
     const priorEvents = await fetchSocialEventsForTokenSince(

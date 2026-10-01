@@ -29,7 +29,11 @@ export type MarkTokenRugInput = {
  * board, tracker, dlmm, freeview, …) is a user label and counts toward the dev's user-rug total.
  * A new automated writer must be added here, or its verdicts will read as user signals.
  */
-const AUTOMATED_RUG_SOURCES: ReadonlySet<string> = new Set(['gmgn-radar', 'concentration'])
+const AUTOMATED_RUG_SOURCES: ReadonlySet<string> = new Set([
+  'gmgn-radar',
+  'concentration',
+  'rug-signal',
+])
 
 /** The token's creator: what the risk shadow already stored, else the Jupiter last resort. */
 async function resolveTokenDev(chain: string, tokenAddress: string): Promise<string | null> {
