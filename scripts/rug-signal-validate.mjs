@@ -14,12 +14,20 @@
  *     becomes fiction.
  *   * **`inconclusive` is a verdict.** Below the sample floor the script prints that, never a number
  *     that could be mistaken for a result.
- *   * **Weeks must agree.** A pooled number can hide one good week; the acceptance rule is agreement
- *     across weeks, per the SPEC.
+ *   * **Days must agree.** A pooled number can hide one good day; the acceptance rule is agreement
+ *     across days, per the SPEC.
  *
  * Run: `bash scripts/run-rug-signal-validate-on-vps.sh [days]` (or `node` inside the web container).
+ *
+ * Plain JS on purpose: it executes inside the production web container, which ships no TypeScript
+ * toolchain. Types here would be a syntax error, not documentation.
  */
-import { Client } from 'pg'
+import { createRequire } from 'node:module'
+
+// `pg` resolves through NODE_PATH inside the web container, which only applies to CJS require —
+// ESM bare imports resolve from the *file's* directory tree, and this file lives in /tmp.
+const require = createRequire(import.meta.url)
+const { Client } = require('pg')
 
 const DAYS = Number(process.argv[2] || 3)
 const EVENT_DROP = Number(process.env.RUG_EVENT_DROP || 0.6)
@@ -28,18 +36,9 @@ const THRESHOLD = Number(process.env.RUG_SIG_THRESHOLD || 80)
 const MIN_LABELLED = Number(process.env.RUG_VALIDATE_MIN_ROWS || 30)
 const MIN_POSITIVES = Number(process.env.RUG_VALIDATE_MIN_POSITIVES || 5)
 
-type ShadowRow = {
-  token_address: string
-  created_at: string
-  score: number | null
-  decision: string
-  bars_source: string
-  breakdown: { volume?: number; staircase?: number; liquidity?: number; dump?: number } | null
-}
-
 /** Minute closes for a token: [{t, c}], ascending, from the market-cap candle arrays. */
-function expandCloses(rows: Array<{ hour_bucket: string; c_min: number[] | null }>): Array<{ t: number; c: number }> {
-  const out: Array<{ t: number; c: number }> = []
+function expandCloses(rows) {
+  const out = []
   for (const row of rows) {
     const hourMs = Date.parse(row.hour_bucket)
     if (!Number.isFinite(hourMs) || !Array.isArray(row.c_min)) continue
@@ -54,23 +53,26 @@ function expandCloses(rows: Array<{ hour_bucket: string; c_min: number[] | null 
 }
 
 /** Wilson score interval — honest at small n, which is exactly where this starts. */
-function wilson(successes: number, n: number): { lo: number; hi: number } {
+function wilson(successes, n) {
   if (n === 0) return { lo: 0, hi: 1 }
   const z = 1.96
   const p = successes / n
   const denominator = 1 + (z * z) / n
   const centre = p + (z * z) / (2 * n)
   const spread = z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))
-  return { lo: Math.max(0, (centre - spread) / denominator), hi: Math.min(1, (centre + spread) / denominator) }
+  return {
+    lo: Math.max(0, (centre - spread) / denominator),
+    hi: Math.min(1, (centre + spread) / denominator),
+  }
 }
 
-const pct = (v: number) => `${(v * 100).toFixed(1)}%`
+const pct = (v) => `${(v * 100).toFixed(1)}%`
 
-async function main(): Promise<void> {
+async function main() {
   const client = new Client({ connectionString: process.env.DATABASE_URL })
   await client.connect()
   try {
-    const { rows: shadow } = await client.query<ShadowRow>(
+    const { rows: shadow } = await client.query(
       `SELECT token_address, created_at::text, score, decision, bars_source, breakdown
          FROM rug_signal_shadow
         WHERE created_at > NOW() - make_interval(days => $1::int)
@@ -80,15 +82,17 @@ async function main(): Promise<void> {
     console.log(`shadow rows (last ${DAYS}d): ${shadow.length}`)
     if (shadow.length === 0) {
       console.log('')
-      console.log('VERDICT: inconclusive — no shadow rows yet. Arm the detector in shadow ' +
-        '(RUG_SIGNAL_ENABLED=1, RUG_SIGNAL_MODE=shadow) and let the sweep run.')
+      console.log(
+        'VERDICT: inconclusive — no shadow rows yet. Arm the detector in shadow ' +
+          '(RUG_SIGNAL_ENABLED=1, RUG_SIGNAL_MODE=shadow) and let the sweep run.',
+      )
       return
     }
-    const byDecision = shadow.reduce<Record<string, number>>((acc, r) => {
+    const byDecision = shadow.reduce((acc, r) => {
       acc[r.decision] = (acc[r.decision] ?? 0) + 1
       return acc
     }, {})
-    const byBarsSource = shadow.reduce<Record<string, number>>((acc, r) => {
+    const byBarsSource = shadow.reduce((acc, r) => {
       acc[r.bars_source] = (acc[r.bars_source] ?? 0) + 1
       return acc
     }, {})
@@ -97,9 +101,9 @@ async function main(): Promise<void> {
 
     // Label each row by looking FORWARD from its own timestamp.
     const tokens = [...new Set(shadow.map((r) => r.token_address))]
-    const closes = new Map<string, Array<{ t: number; c: number }>>()
+    const closes = new Map()
     for (const token of tokens) {
-      const { rows } = await client.query<{ hour_bucket: string; c_min: number[] | null }>(
+      const { rows } = await client.query(
         `SELECT hour_bucket::text, c_min
            FROM token_metrics_history
           WHERE token_address = $1 AND hour_bucket > NOW() - make_interval(days => $2::int)
@@ -109,15 +113,15 @@ async function main(): Promise<void> {
       closes.set(token, expandCloses(rows))
     }
 
-    const labelled: Array<{ row: ShadowRow; tripped: boolean; collapsed: boolean; dayKey: string }> = []
+    const labelled = []
     let unlabellable = 0
     const windowSec = EVENT_WINDOW_MIN * 60
     for (const row of shadow) {
       if (row.score == null) continue
       const series = closes.get(row.token_address) ?? []
       const at = Math.floor(Date.parse(row.created_at) / 1000)
-      let baseline: number | null = null
-      let trough: number | null = null
+      let baseline = null
+      let trough = null
       for (const point of series) {
         if (point.t <= at) baseline = point.c
         else if (point.t <= at + windowSec) trough = trough == null ? point.c : Math.min(trough, point.c)
@@ -126,13 +130,11 @@ async function main(): Promise<void> {
         unlabellable++
         continue
       }
-      const drop = (baseline - trough) / baseline
-      const dayKey = row.created_at.slice(0, 10)
       labelled.push({
         row,
         tripped: row.score >= THRESHOLD,
-        collapsed: drop >= EVENT_DROP,
-        dayKey,
+        collapsed: (baseline - trough) / baseline >= EVENT_DROP,
+        dayKey: row.created_at.slice(0, 10),
       })
     }
 
@@ -144,7 +146,11 @@ async function main(): Promise<void> {
     console.log(`collapses (label=1): ${positives.length}   trips (score>=${THRESHOLD}): ${trips.length}`)
     if (labelled.length === 0) {
       console.log('')
-      console.log('VERDICT: inconclusive — nothing labellable yet (no market-cap candles after the evaluations).')
+      console.log(
+        `VERDICT: inconclusive — nothing labellable yet (${unlabellable} rows have no market-cap ` +
+          'candles after their timestamp). This is the expected state right after arming: the label ' +
+          `needs ${EVENT_WINDOW_MIN} minutes of forward candles per row.`,
+      )
       return
     }
 
@@ -156,8 +162,12 @@ async function main(): Promise<void> {
     const bCi = wilson(positives.length, labelled.length)
     console.log('')
     console.log(`base rate        ${pct(baseRate)}  [${pct(bCi.lo)}, ${pct(bCi.hi)}]`)
-    console.log(`precision @${THRESHOLD}   ${pct(precision)}  [${pct(pCi.lo)}, ${pct(pCi.hi)}]  (${truePositives.length}/${trips.length})`)
-    console.log(`recall    @${THRESHOLD}   ${pct(recall)}  [${pct(rCi.lo)}, ${pct(rCi.hi)}]  (${truePositives.length}/${positives.length})`)
+    console.log(
+      `precision @${THRESHOLD}   ${pct(precision)}  [${pct(pCi.lo)}, ${pct(pCi.hi)}]  (${truePositives.length}/${trips.length})`,
+    )
+    console.log(
+      `recall    @${THRESHOLD}   ${pct(recall)}  [${pct(rCi.lo)}, ${pct(rCi.hi)}]  (${truePositives.length}/${positives.length})`,
+    )
 
     // Per-day agreement — a pooled number can hide one good day.
     const days = [...new Set(labelled.map((l) => l.dayKey))].sort()
@@ -192,10 +202,10 @@ async function main(): Promise<void> {
     const lift = precision > baseRate
     console.log(
       lift
-        ? `VERDICT: the trip carries signal — precision ${pct(precision)} against a base rate of ${pct(baseRate)}` +
-            ` (${daysClearing}/${daysWithFloor} days with enough trips agree). Anchors may be called FITTED only if that agreement holds.`
+        ? `VERDICT: the trip carries signal — precision ${pct(precision)} against a base rate of ${pct(baseRate)} ` +
+            `(${daysClearing}/${daysWithFloor} days with enough trips agree). Anchors may be called FITTED only if that agreement holds.`
         : `VERDICT: no lift — precision ${pct(precision)} is not above the base rate of ${pct(baseRate)}. ` +
-            `The trip is not evidence of a coming collapse; do NOT enforce.`,
+            'The trip is not evidence of a coming collapse; do NOT enforce.',
     )
   } finally {
     await client.end()
