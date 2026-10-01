@@ -7,7 +7,7 @@ Arbitration-only domain: `SOL → A → B → SOL`. No directional strategies (g
 | Item | Choice |
 |------|--------|
 | MVP | Sequential three-leg loop (three txs), abort + hold inventory if a mid-leg fails |
-| Hops | `RAPTOR_MAX_HOPS_ARBITRAGE` on arb Raptor calls only; global `RAPTOR_MAX_HOPS` stays default `1` |
+| Hops | `RAPTOR_MAX_HOPS_ARBITRAGE` on arb Raptor calls only. Non-arb calls resolve per pair (`src/utils/raptor-hops.ts`): `RAPTOR_MAX_HOPS` (default `1`) when either side is SOL/USDC/USDT, `RAPTOR_TOKEN_TOKEN_HOPS` (default `3`) when neither is |
 | Multi-wallet | Out of scope |
 | Atomic single-tx | Phase 3 — needs instruction compose (see below) |
 
@@ -38,7 +38,8 @@ Min edge gate (scanner): `netSolLamports >= SOL_ARB_MIN_EDGE_LAMPORTS` (default 
 | Var | Purpose | Default |
 |-----|---------|---------|
 | `RAPTOR_MAX_HOPS_ARBITRAGE` | maxHops for arb Raptor quote/swap only | `3` |
-| `RAPTOR_MAX_HOPS` | all other bots | `1` |
+| `RAPTOR_MAX_HOPS` | hop ceiling for a non-arb route touching SOL/USDC/USDT | `1` |
+| `RAPTOR_TOKEN_TOKEN_HOPS` | hops for a non-arb token→token pair (no direct pool) | `3` |
 | `SOL_ARB_PAIRS` | JSON array `[{"mintA":"...","mintB":"...","label":"CRX/SCX"}]` | empty |
 | `SOL_ARB_AMOUNT_LAMPORTS` | scanner quote size | `100000000` (0.1 SOL) |
 | `SOL_ARB_SLIPPAGE_BPS` | default slippage | `300` |
@@ -86,6 +87,7 @@ Ladder: **L0 sequential (MVP)** → **L1 Jupiter instruction compose** → L2 on
 ## Non-goals
 
 - Directional strategy domains
-- Global `RAPTOR_MAX_HOPS` bump
+- Bumping the global `RAPTOR_MAX_HOPS`. It is the *verified-mint* ceiling only; a token→token pair is
+  handled per pair by `RAPTOR_TOKEN_TOKEN_HOPS` (`src/utils/raptor-hops.ts`), not by raising this
 - Multi-wallet wash choreography
 - Custom on-chain arb program / flash loan unless separately requested

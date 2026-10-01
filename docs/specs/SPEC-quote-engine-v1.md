@@ -34,9 +34,10 @@ RowTradePanel `:158`) · 25 s interval (Seller `AUTO_QUOTE_REFRESH_MS:379`) · 3
 
 **(d) There is no shared hook.** `useQuote` / `useSwapQuote` / `QuoteProvider`: **0 matches**.
 
-**(e) A primitive has drifted from its use.** The exported `fetchRaptorQuote`
-(`solanatracker-raptor.ts:311`) has **no production caller**; `BulkTokenSeller:461` re-implements an
-equivalent locally.
+**(e) A primitive had drifted from its use.** The exported `fetchRaptorQuote`
+(`solanatracker-raptor.ts:311`) had **no production caller**, while `BulkTokenSeller:461` re-implemented
+an equivalent locally. The engine adopted the real primitive, so the two are back in sync — and the
+local copy is gone.
 
 ## 3. Design
 

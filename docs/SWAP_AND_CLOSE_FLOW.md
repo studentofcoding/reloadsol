@@ -34,9 +34,13 @@ by highest `outAmount`, then lower impact, then `PROVIDER_TIE_RANK` (raptor → 
 jupiter_swap — the Raptor rank is unused while only Jupiter is collected). Fail-soft: a 429 on V2
 does not fail Lite.
 
-**A display surface quotes the venue that will execute.** `BulkTokenSeller`'s estimate asks **Raptor
-first** — ungated, and the venue `prepareSwapTransaction` builds with `RAPTOR_DEV_FEE_ACCOUNT` — and
-escalates to the picker above **only when Raptor is unavailable or its own impact fails the gate**.
+**A display surface quotes through the shared engine, not a local fetch.** `BulkTokenSeller`'s estimate
+now asks `src/utils/quote-engine.ts` for a `purpose: 'estimate'` quote: **Raptor first** — ungated, and
+it answers a whole batch in well under a second — escalating to the picker above **only when Raptor is
+unavailable or its own impact fails the gate**. `purpose: 'execute'` is a different lane entirely (see
+the desk path above) and is never cached.
+
+The engine resolves Raptor's hop ceiling **per pair** too, which is what fixed the token→token 500 below.
 That guardrail is load-bearing: at `maxHops=1` a two-pool token quotes a single-hop, 38%-impact route,
 2.46 SOL below the executable route and above the gate — a sale the executor would refuse.
 
@@ -125,8 +129,9 @@ Per [Solana Tracker Swap API](https://docs.solanatracker.io/guides/swap-api):
 ## Providers and Flow
 
 - **Solana Tracker Raptor (arb swaps; not the desk)**
-  - Quote: `GET /api/solanatracker/quote` → Raptor `GET /quote` (`maxHops` defaults to
-    `RAPTOR_MAX_HOPS`; callers may override per request)
+  - Quote: `GET /api/solanatracker/quote` → Raptor `GET /quote` (`maxHops` defaults to the pair policy
+    in `src/utils/raptor-hops.ts` — `RAPTOR_MAX_HOPS` for a route touching SOL/USDC/USDT,
+    `RAPTOR_TOKEN_TOKEN_HOPS` otherwise; callers may override per request)
   - Swap: `POST /api/solanatracker/swap` → Raptor `POST /quote-and-swap`
   - Send: `POST /api/solanatracker/send` → Raptor `POST /send-transaction`
   - Status: `GET /api/solanatracker/transaction/[signature]` (Raptor-built txs)

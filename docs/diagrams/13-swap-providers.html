@@ -1,0 +1,918 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Swap providers — what one call to an unsigned tx actually costs</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Fraunces:opsz,wght@9..144,400&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper:#fafaf7; --paper2:#f0efe9; --ink:#163b2a; --muted:#5b6b60;
+    --soft:#8a968d; --accent:#84cc16; --link:#2e5aa8;
+    --sans:'DM Sans', system-ui, sans-serif;
+    --serif:'Fraunces', serif;
+    --mono:'Geist Mono', ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { font-family:var(--sans); background:var(--paper); color:var(--ink); margin:0; padding:3rem 2rem 4rem; }
+  .wrap { max-width: 1080px; margin:0 auto; }
+  .eyebrow { font-family:var(--mono); font-size:.66rem; font-weight:500; letter-spacing:.18em; text-transform:uppercase; color:var(--muted); margin-bottom:.5rem; }
+  h1 { font-family:var(--serif); font-size:clamp(1.4rem,2.2vw + .5rem,2rem); font-weight:400; letter-spacing:-.02em; margin:0 0 .75rem; }
+  h2 { font-family:var(--serif); font-size:1.25rem; font-weight:400; margin:3rem 0 .35rem; }
+  .sub { color:var(--muted); font-size:.92rem; line-height:1.6; margin:0 0 2rem; max-width:70ch; }
+  .cards { display:grid; grid-template-columns:1.15fr 1fr .85fr; gap:1rem; margin:2rem 0 0; }
+  @media (max-width:820px){ .cards{ grid-template-columns:1fr; } }
+  .card { background:#fff; border:1px solid rgba(22,59,42,.12); border-radius:6px; padding:1.25rem; }
+  .card h3 { font-size:.95rem; font-weight:600; margin:0 0 .6rem; display:flex; align-items:center; gap:.5rem; }
+  .dot { width:7px; height:7px; border-radius:50%; display:inline-block; flex:none; }
+  .dot-coral { background:var(--accent); } .dot-ink{ background:var(--ink); } .dot-soft{ background:var(--soft); }
+  .card ul { margin:0; padding-left:1.1rem; }
+  .card li { font-size:.85rem; color:var(--muted); line-height:1.65; }
+  .card li b { color:var(--ink); font-weight:600; }
+  .verdict { background:#fff; border:1px solid rgba(132,204,22,.55); border-left:4px solid var(--accent); border-radius:6px; padding:1.35rem 1.5rem; margin:2rem 0 0; }
+  .verdict h3 { font-family:var(--mono); font-size:.68rem; font-weight:500; letter-spacing:.16em; text-transform:uppercase; color:var(--muted); margin:0 0 .6rem; }
+  .verdict p { font-size:.94rem; line-height:1.65; color:var(--muted); margin:0 0 .75rem; }
+  .verdict p:last-child { margin-bottom:0; }
+  .verdict b { color:var(--ink); }
+  .verdict code { font-family:var(--mono); font-size:.78rem; color:var(--ink); }
+  .verdict .no { color:#8a5a5a; font-weight:600; }
+  figure { margin:2.5rem 0 0; }
+  figcaption { font-family:var(--mono); font-size:.68rem; letter-spacing:.12em; text-transform:uppercase; color:var(--soft); margin-top:.9rem; }
+  .framed { background:var(--paper2); border:1px solid rgba(22,59,42,.12); border-radius:8px; padding:1.5rem; overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; margin-top:.5rem; }
+  caption { text-align:left; font-family:var(--mono); font-size:.68rem; letter-spacing:.12em; text-transform:uppercase; color:var(--soft); padding-bottom:.6rem; }
+  th { font-family:var(--mono); font-size:.62rem; font-weight:500; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); text-align:right; padding:.55rem .5rem; border-bottom:1px solid rgba(22,59,42,.28); white-space:nowrap; }
+  th:first-child, td:first-child { text-align:left; }
+  td { font-size:.82rem; padding:.5rem .5rem; border-bottom:1px solid rgba(22,59,42,.09); text-align:right; color:var(--muted); }
+  td.name { color:var(--ink); font-weight:500; }
+  td code, p code, li code { font-family:var(--mono); font-size:.72rem; color:var(--ink); background:none; }
+  .neg { color:#8a5a5a; }
+  .lead { color:var(--ink); font-weight:600; }
+  .focal-row td { background:rgba(132,204,22,.07); }
+  .ok { font-family:var(--mono); font-size:.68rem; color:var(--muted); }
+  ul.findings { padding-left:1.1rem; margin:.5rem 0 0; }
+  ul.findings li { font-size:.88rem; color:var(--muted); line-height:1.75; margin-bottom:.5rem; }
+  ul.findings li b { color:var(--ink); }
+  footer { margin-top:4rem; padding-top:1.25rem; border-top:1px solid rgba(22,59,42,.12); font-family:var(--mono); font-size:.68rem; letter-spacing:.06em; color:var(--soft); line-height:1.8; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p class="eyebrow">Routing · swap providers, measured on prod</p>
+  <h1>The transaction was never the expensive part</h1>
+  <p class="sub">Four providers, benchmarked from inside <code>reloadsol-web</code> on
+  <code>flowey-vps</code> — the same egress and the same <code>JUPITER_API_KEY</code> production uses.
+  Taker was the live wallet <code>3V3N5xh…</code>; mints came from <code>trading_records</code>
+  (12-day window) plus SOL/USDC/BONK at ~$50 notional. <strong>Read-only throughout:
+  <code>/order</code>, <code>/quote</code>, <code>/swap</code> (build) and <code>/quote-and-swap</code>
+  were called; nothing was signed and nothing was broadcast.</strong> Every lane was measured
+  <em>through to an unsigned transaction</em>, and every returned transaction was decoded to confirm it
+  is signable — 19 of 19 came back v0 with a single signature and the taker as fee payer.</p>
+
+  <div class="verdict">
+    <h3>The verdict</h3>
+    <p><b>One lane.</b> <code>/swap/v2/order?taker=</code> → simulate → sign → <code>/swap/v2/execute</code>
+    → verify on-chain. Do not fan out, do not switch lanes per direction, and do not route on price.</p>
+    <p><b>Why that lane and no other.</b> It is the only one that <em>simulates before it returns</em> — so it
+    refuses a swap the wallet cannot pay for, and refuses the transfer-fee and stale-route cases that Lite
+    and Raptor hand back as transactions that can never land. It is also the only lane whose transaction
+    something can finish: <code>/execute</code> needs the <code>requestId</code> that only <code>/order</code>
+    issues. Measured end to end: <b>3/3 landed, ~888 ms</b>, against <b>1,732–5,084 ms</b> for a Lite tx
+    pushed through our own RPC. Its ~220 ms prepare is the price of that simulation, not waste.</p>
+    <p><span class="no">Reject outright:</span> the parallel best-of fan-out (measured <b>+5 bps mean / 0 median</b>
+    for <b>2.59×</b> the swap); Raptor as an execution path (0/4 signatures for transactions that never
+    reached the chain); Lite as an execution path (per-IP ban outlasting ten minutes, no key can raise it,
+    no simulation, and Jupiter cannot finish it); DFlow (worst price, v1 tx un-signable); swap.io inline
+    (no build endpoint, slowest lane); Titan (needs a key).</p>
+    <p><b>Where the value actually is.</b> Not in routing — that is a ~5 bps question. It is in the two
+    correctness holes: an unlandable-transaction class that nothing in our model can see (DEW's 1 % Token-2022
+    transfer fee silently consumed the whole 100 bps slippage budget), and a provider that reports a signature
+    for a transaction it never broadcast. Then an explicit priority fee, and confirming <em>on the chain</em>
+    rather than from a response body. Lite stays for estimates. Raptor stays for quoting — it is genuinely
+    good there (294/294 at 5 rps, p50 199 ms) — and never for sending.</p>
+    <p><b>And the batch is a budget problem, not a lane problem.</b> It is N tokens × 2 keyed calls at
+    0.5 rps, so the gate — not latency — sets the wall time: at the measured ~2 s per token, five tokens
+    cannot finish in under ten seconds however fast any one call is. Raptor's docs claim no rate limits and
+    that held — 20 concurrent builds in 641 ms, zero rejections — but its transactions carry no
+    <code>requestId</code>, so nothing can land them but our own RPC, and with no simulation behind them.
+    <b>The real bulk lever is the Jupiter quota, not the router.</b></p>
+  </div>
+
+  <div class="cards">
+    <div class="card">
+      <h3><span class="dot dot-coral"></span>The 200 ms is simulation</h3>
+      <ul>
+        <li>Jupiter's Lite lane reaches an unsigned tx in <b>~39 ms</b> across <b>two</b> calls — <b>5× faster</b> than a single <code>/order</code>.</li>
+        <li>So the ~200 ms <code>/order</code> costs is not building the transaction. It is the pre-flight simulation it runs.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3><span class="dot dot-ink"></span>No single provider wins</h3>
+      <ul>
+        <li>Raptor beats Jupiter by <b>+1.31 %</b> selling DEW→USDC and loses by <b>−2.41 %</b> on DEW→BPX.</li>
+        <li>Fired together, the best source changes <b>pair by pair</b> — which is the entire case for a best-of pick.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3><span class="dot dot-soft"></span>200 OK is not success</h3>
+      <ul>
+        <li><code>/order</code> answers <b>200</b> with an <b>empty transaction</b> and <code>"Insufficient funds"</code> when the wallet is short.</li>
+        <li>The Lite <code>/swap</code> build does not pre-check — it returns a tx the wallet cannot afford.</li>
+      </ul>
+    </div>
+  </div>
+
+  <figure>
+    <div class="framed">
+      <svg viewBox="0 0 1000 520" width="100%" role="img" aria-labelledby="spp-latency-title spp-latency-desc">
+        <title id="spp-latency-title">Median latency to an unsigned transaction, per swap provider</title>
+        <desc id="spp-latency-desc">Bar chart of median latency in milliseconds to obtain an unsigned transaction for one ~$50 swap. DFlow /order is 243 and SolanaTracker Raptor quote-and-swap is 191, both single calls. Jupiter's production Swap V2 /order takes 214. Jupiter's Lite lane, which needs two calls, is 39 milliseconds — about five times faster than any single-call order endpoint while still returning a transaction.</desc>
+        <rect width="100%" height="100%" fill="#f0efe9"/>
+
+        <line x1="80" y1="40" x2="960" y2="40" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="80" y1="135" x2="960" y2="135" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="80" y1="230" x2="960" y2="230" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="80" y1="325" x2="960" y2="325" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="80" y1="40" x2="80" y2="420" stroke="rgba(22,59,42,.25)" stroke-width="1"/>
+        <line x1="80" y1="420" x2="960" y2="420" stroke="rgba(22,59,42,.25)" stroke-width="1"/>
+        <text x="72" y="28" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="end" letter-spacing="0.14em">P50 MS</text>
+        <text x="72" y="43" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end">280</text>
+        <text x="72" y="138" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end">210</text>
+        <text x="72" y="233" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end">140</text>
+        <text x="72" y="328" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end">70</text>
+        <text x="72" y="423" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end">0</text>
+
+        <!-- single-call bracket over the three one-call lanes -->
+        <line x1="130" y1="66" x2="850" y2="66" stroke="rgba(22,59,42,.35)" stroke-width="1"/>
+        <rect x="330" y="54" width="320" height="12" rx="2" fill="#f0efe9"/>
+        <text x="490" y="64" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.10em">ONE CALL TO THE SAME TX · 191–243 MS</text>
+
+        <rect x="130" y="130" width="120" height="290" fill="#f0efe9"/>
+        <rect x="130" y="130" width="120" height="290" fill="rgba(91,107,96,.15)" stroke="#5b6b60" stroke-width="1"/>
+        <text x="190" y="122" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">214</text>
+
+        <rect x="350" y="367" width="120" height="53" fill="#f0efe9"/>
+        <rect x="350" y="367" width="120" height="53" fill="rgba(132,204,22,.16)" stroke="#84cc16" stroke-width="1.2"/>
+        <text x="410" y="359" fill="#84cc16" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">39</text>
+
+        <rect x="570" y="161" width="120" height="259" fill="#f0efe9"/>
+        <rect x="570" y="161" width="120" height="259" fill="rgba(91,107,96,.15)" stroke="#5b6b60" stroke-width="1"/>
+        <text x="630" y="153" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">191</text>
+
+        <rect x="790" y="90" width="120" height="330" fill="#f0efe9"/>
+        <rect x="790" y="90" width="120" height="330" fill="rgba(91,107,96,.15)" stroke="#5b6b60" stroke-width="1"/>
+        <text x="850" y="82" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">243</text>
+
+        <text x="190" y="440" fill="#163b2a" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Jupiter /order</text>
+        <text x="190" y="458" fill="#8a968d" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.04em">OUR PROD PATH</text>
+        <text x="410" y="440" fill="#163b2a" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Jupiter lite</text>
+        <text x="410" y="458" fill="#8a968d" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.04em">QUOTE + SWAP · 2 CALLS</text>
+        <text x="630" y="440" fill="#163b2a" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Raptor</text>
+        <text x="630" y="458" fill="#8a968d" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.04em">QUOTE-AND-SWAP</text>
+        <text x="850" y="440" fill="#163b2a" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">DFlow</text>
+        <text x="850" y="458" fill="#8a968d" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.04em">ORDER · DEV HOST</text>
+
+        <line x1="80" y1="484" x2="960" y2="484" stroke="rgba(22,59,42,.12)" stroke-width="0.8"/>
+        <text x="80" y="500" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.14em">LEGEND</text>
+        <rect x="176" y="492" width="12" height="10" fill="rgba(91,107,96,.15)" stroke="#5b6b60" stroke-width="1"/>
+        <text x="196" y="501" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">ONE CALL, SIMULATED</text>
+        <rect x="400" y="492" width="12" height="10" fill="rgba(132,204,22,.16)" stroke="#84cc16" stroke-width="1.2"/>
+        <text x="420" y="501" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">TWO CALLS, NO SIMULATION — AND STILL A TX ON 5/5 PAIRS</text>
+      </svg>
+    </div>
+    <figcaption>Median across the five pairs (DEW→BPX, DEW→SOL, SOL→DEW, DEW→USDC, USDC→DEW) · ~$50 each · isolated passes, 20 s idle and 1.2 s spacing</figcaption>
+  </figure>
+
+  <h2>Latency through to an unsigned tx</h2>
+  <table>
+    <caption>p50 ms per swap · warmup discarded · 100 bps slippage · 2026-10-01</caption>
+    <thead>
+      <tr><th>Pair</th><th>Jupiter /order</th><th>Jupiter lite (2 calls)</th><th>Raptor</th><th>DFlow</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="name">DEW→BPX</td><td>214</td><td class="lead">51</td><td>275</td><td>245</td></tr>
+      <tr><td class="name">DEW→SOL</td><td>209</td><td class="lead">39</td><td>194</td><td>241</td></tr>
+      <tr><td class="name">SOL→DEW</td><td class="neg">217 · no tx</td><td class="lead">36</td><td>191</td><td>242</td></tr>
+      <tr><td class="name">DEW→USDC</td><td>211</td><td class="lead">40</td><td>189</td><td>243</td></tr>
+      <tr><td class="name">USDC→DEW</td><td>214</td><td class="lead">35</td><td>191</td><td>246</td></tr>
+      <tr class="focal-row"><td class="name">median</td><td>214</td><td class="lead">39</td><td>191</td><td>243</td></tr>
+    </tbody>
+  </table>
+  <p class="sub" style="margin-top:.9rem">The "no tx" on SOL→DEW is not a provider failure — see
+  <strong>200 OK is not success</strong> below. Every other cell returned a transaction, and every one
+  of those decoded as a single-signature v0 transaction paying fees from the taker.</p>
+
+  <h2>Batch — five real mints, five calls each</h2>
+  <table>
+    <caption>sum of 5 sequential calls (ms) · warm per-call in parentheses · 1.2 s spacing</caption>
+    <thead><tr><th>Provider</th><th>5× token→SOL</th><th>5× SOL→token</th><th>Returned a tx</th></tr></thead>
+    <tbody>
+      <tr><td class="name">Jupiter /order</td><td>1126 <span class="ok">(~220)</span></td><td>1107 <span class="ok">(~221)</span></td><td class="neg">2/5 · 0/5</td></tr>
+      <tr class="focal-row"><td class="name">Jupiter lite (2 calls)</td><td class="lead">192 <span class="ok">(~38)</span></td><td class="lead">187 <span class="ok">(~37)</span></td><td class="lead">5/5 · 5/5</td></tr>
+      <tr><td class="name">Raptor</td><td>1785 <span class="ok">(~195)</span></td><td>1345 <span class="ok">(~202)</span></td><td class="lead">5/5 · 5/5</td></tr>
+      <tr><td class="name">DFlow</td><td>1724 <span class="ok">(~245)</span></td><td>1231 <span class="ok">(~246)</span></td><td class="lead">5/5 · 5/5</td></tr>
+    </tbody>
+  </table>
+  <p class="sub" style="margin-top:.9rem">Both Raptor and DFlow sums carry one cold first call
+  (~630 ms / ~743 ms) before settling. The Jupiter <code>/order</code> column's 2/5 and 0/5 are the
+  wallet being short of the input token on four of the ten calls, not throttling.</p>
+
+  <h2>Price — every source fired together, same moment</h2>
+  <p class="sub">A cross-provider price comparison is only meaningful if every source is asked at the
+  same instant. Each round fired all seven sources in parallel; the table is the median of five rounds,
+  expressed as the gap behind the best quote available in that round.</p>
+  <table>
+    <caption>average % behind the best quote, across the five pairs · 0 % = best</caption>
+    <thead><tr><th>Source</th><th>DEW→SOL</th><th>DEW→USDC</th><th>SOL→DEW</th><th>BONK→SOL</th><th>DEW→BPX</th><th>Avg</th></tr></thead>
+    <tbody>
+      <tr class="focal-row"><td class="name">swap.io → best of its set</td><td>−0.570</td><td>−1.091</td><td>−0.061</td><td>−0.011</td><td>−0.118</td><td class="lead">−0.370</td></tr>
+      <tr><td class="name">swap.io → Jupiter entry</td><td>−0.570</td><td>−1.340</td><td>−0.061</td><td>−0.066</td><td>−0.129</td><td>−0.433</td></tr>
+      <tr><td class="name">Jupiter lite /quote</td><td>−0.550</td><td>−1.306</td><td class="lead">−0.041</td><td class="lead">−0.034</td><td>−0.688</td><td>−0.524</td></tr>
+      <tr><td class="name">Raptor /quote</td><td class="lead">0.000</td><td class="lead">0.000</td><td>−0.780</td><td>−0.084</td><td class="neg">−2.412</td><td>−0.655</td></tr>
+      <tr><td class="name">Jupiter /order (taker)</td><td>−0.661</td><td>−1.496</td><td>−0.141</td><td>−0.146</td><td>−1.124</td><td>−0.714</td></tr>
+      <tr><td class="name">DFlow /quote</td><td>−1.536</td><td>−1.478</td><td>−1.041</td><td>−0.046</td><td>−1.095</td><td class="neg">−1.039</td></tr>
+    </tbody>
+  </table>
+  <p class="sub" style="margin-top:.9rem">Raptor takes <strong>DEW→SOL and DEW→USDC outright</strong> —
+  +0.55 % and +1.31 % over Jupiter's best — and is the <strong>worst source on DEW→BPX</strong> at
+  −2.41 %. Jupiter's taker-scoped <code>/order</code> and its taker-less quote measured
+  <em>identical</em>, so taker scoping does not change the quoted amount and no platform fee is visible
+  in it; the Lite <code>/quote</code> is nonetheless ~0.19 % ahead of <code>/order</code> pair after
+  pair.</p>
+
+  <figure>
+    <div class="framed">
+      <svg viewBox="0 0 1000 520" width="100%" role="img" aria-labelledby="spp-gap-title spp-gap-desc">
+        <title id="spp-gap-title">Average gap behind the best quote, by source</title>
+        <desc id="spp-gap-desc">Horizontal bar chart of the average percentage each quote source falls behind the best quote available in the same round, across five pairs. The meta-aggregator's best-of pick is closest at 0.37 percent behind, then its Jupiter entry at 0.43 and Jupiter's Lite quote at 0.52. Raptor averages 0.66 percent behind despite winning two pairs outright, Jupiter's order endpoint is 0.71 behind, and DFlow is worst at 1.04 percent behind.</desc>
+        <rect width="100%" height="100%" fill="#f0efe9"/>
+
+        <line x1="200" y1="40" x2="200" y2="420" stroke="rgba(22,59,42,.25)" stroke-width="1"/>
+        <line x1="359" y1="52" x2="359" y2="408" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="518" y1="52" x2="518" y2="408" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="677" y1="52" x2="677" y2="408" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="836" y1="52" x2="836" y2="408" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="200" y1="420" x2="960" y2="420" stroke="rgba(22,59,42,.25)" stroke-width="1"/>
+        <text x="200" y="440" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">0%</text>
+        <text x="359" y="440" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">0.25</text>
+        <text x="518" y="440" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">0.50</text>
+        <text x="677" y="440" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">0.75</text>
+        <text x="836" y="440" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">1.00</text>
+        <text x="518" y="460" fill="#8a968d" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.14em">BEHIND THE BEST QUOTE THAT ROUND — SHORTER IS BETTER</text>
+
+        <!-- row 1 · focal: the best-of pick -->
+        <text x="188" y="80" fill="#163b2a" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="end">swap.io → best</text>
+        <rect x="200" y="64" width="235" height="24" fill="#f0efe9"/>
+        <rect x="200" y="64" width="235" height="24" fill="rgba(132,204,22,.16)" stroke="#84cc16" stroke-width="1.2"/>
+        <text x="447" y="80" fill="#84cc16" font-size="8" font-family="'Geist Mono',monospace">−0.370%</text>
+
+        <!-- row 2 -->
+        <text x="188" y="144" fill="#5b6b60" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="end">swap.io → Jupiter</text>
+        <rect x="200" y="128" width="276" height="24" fill="#f0efe9"/>
+        <rect x="200" y="128" width="276" height="24" fill="rgba(91,107,96,.15)" stroke="#5b6b60" stroke-width="1"/>
+        <text x="488" y="144" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace">−0.433%</text>
+
+        <!-- row 3 -->
+        <text x="188" y="208" fill="#5b6b60" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="end">Jupiter lite /quote</text>
+        <rect x="200" y="192" width="333" height="24" fill="#f0efe9"/>
+        <rect x="200" y="192" width="333" height="24" fill="rgba(91,107,96,.15)" stroke="#5b6b60" stroke-width="1"/>
+        <text x="545" y="208" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace">−0.524%</text>
+
+        <!-- row 4 -->
+        <text x="188" y="272" fill="#5b6b60" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="end">Raptor /quote</text>
+        <rect x="200" y="256" width="417" height="24" fill="#f0efe9"/>
+        <rect x="200" y="256" width="417" height="24" fill="rgba(91,107,96,.15)" stroke="#5b6b60" stroke-width="1"/>
+        <text x="629" y="272" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace">−0.655%</text>
+        <rect x="700" y="258" width="240" height="14" rx="2" fill="#f0efe9"/>
+        <text x="704" y="269" fill="#8a968d" font-size="8" font-family="'Geist Mono',monospace">but WINS 2 of 5 pairs outright</text>
+
+        <!-- row 5 -->
+        <text x="188" y="336" fill="#5b6b60" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="end">Jupiter /order</text>
+        <rect x="200" y="320" width="454" height="24" fill="#f0efe9"/>
+        <rect x="200" y="320" width="454" height="24" fill="rgba(91,107,96,.15)" stroke="#5b6b60" stroke-width="1"/>
+        <text x="666" y="336" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace">−0.714%</text>
+
+        <!-- row 6 -->
+        <text x="188" y="400" fill="#5b6b60" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="end">DFlow /quote</text>
+        <rect x="200" y="384" width="661" height="24" fill="#f0efe9"/>
+        <rect x="200" y="384" width="661" height="24" fill="rgba(138,90,90,.14)" stroke="#8a5a5a" stroke-width="1"/>
+        <text x="873" y="400" fill="#8a5a5a" font-size="8" font-family="'Geist Mono',monospace">−1.039%</text>
+
+        <line x1="200" y1="452" x2="960" y2="452" stroke="rgba(22,59,42,.12)" stroke-width="0.8"/>
+        <text x="200" y="470" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.14em">LEGEND</text>
+        <rect x="296" y="462" width="12" height="10" fill="rgba(132,204,22,.16)" stroke="#84cc16" stroke-width="1.2"/>
+        <text x="316" y="471" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">CLOSEST TO THE BEST — A PICK, NOT A PROVIDER</text>
+        <rect x="680" y="462" width="12" height="10" fill="rgba(138,90,90,.14)" stroke="#8a5a5a" stroke-width="1"/>
+        <text x="700" y="471" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">REJECTED</text>
+        <text x="200" y="500" fill="#163b2a" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">AN AVERAGE HIDES THE POINT: THE WINNER CHANGES PAIR BY PAIR</text>
+      </svg>
+    </div>
+    <figcaption>Five rounds, seven sources fired together each round · median per pair · 100 bps slippage</figcaption>
+  </figure>
+
+  <figure>
+    <div class="framed">
+      <svg viewBox="0 0 1000 520" width="100%" role="img" aria-labelledby="spp-flow-title spp-flow-desc">
+        <title id="spp-flow-title">How a swap reaches a transaction, and what the two-call lane costs</title>
+        <desc id="spp-flow-desc">Sequence diagram of one swap. Our server calls Jupiter's order endpoint, which returns the quote, the unsigned transaction and a request id in a single simulated response. Our server hands the unsigned transaction to the signer, which signs it locally, then posts it to Jupiter's execute endpoint, which returns the signature with status Success. Because the transaction is built inside that first call, a quote-only request can stop there — and the Lite lane reaches the same unsigned transaction in two much faster calls without the simulation.</desc>
+        <rect width="100%" height="100%" fill="#f0efe9"/>
+
+        <defs>
+          <marker id="spp-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#5b6b60"/>
+          </marker>
+          <marker id="spp-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#84cc16"/>
+          </marker>
+        </defs>
+
+        <line x1="140" y1="76" x2="140" y2="420" stroke="rgba(22,59,42,.20)" stroke-width="1" stroke-dasharray="3,3"/>
+        <line x1="380" y1="76" x2="380" y2="420" stroke="rgba(22,59,42,.20)" stroke-width="1" stroke-dasharray="3,3"/>
+        <line x1="630" y1="76" x2="630" y2="420" stroke="rgba(22,59,42,.20)" stroke-width="1" stroke-dasharray="3,3"/>
+        <line x1="860" y1="76" x2="860" y2="420" stroke="rgba(22,59,42,.20)" stroke-width="1" stroke-dasharray="3,3"/>
+
+        <line x1="140" y1="112" x2="380" y2="112" stroke="#2e5aa8" stroke-width="1" marker-end="url(#spp-arrow)"/>
+        <rect x="214" y="92" width="92" height="12" rx="2" fill="#f0efe9"/>
+        <text x="260" y="101" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">GET /order?taker=</text>
+
+        <line x1="380" y1="152" x2="140" y2="152" stroke="#5b6b60" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#spp-arrow)"/>
+        <rect x="180" y="132" width="160" height="12" rx="2" fill="#f0efe9"/>
+        <text x="260" y="141" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">quote + tx + requestId · ~214 ms</text>
+
+        <line x1="140" y1="208" x2="630" y2="208" stroke="#5b6b60" stroke-width="1" marker-end="url(#spp-arrow)"/>
+        <rect x="281" y="188" width="58" height="12" rx="2" fill="#f0efe9"/>
+        <text x="310" y="197" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">unsigned tx</text>
+
+        <path d="M630 252 L682 252 L682 264 L630 264" fill="none" stroke="#5b6b60" stroke-width="1" marker-end="url(#spp-arrow)"/>
+        <rect x="694" y="250" width="34" height="12" rx="2" fill="#f0efe9"/>
+        <text x="698" y="259" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace">sign</text>
+
+        <line x1="630" y1="320" x2="860" y2="320" stroke="#2e5aa8" stroke-width="1" marker-end="url(#spp-arrow)"/>
+        <rect x="683" y="300" width="124" height="12" rx="2" fill="#f0efe9"/>
+        <text x="745" y="309" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">POST signedTx + requestId</text>
+
+        <line x1="860" y1="368" x2="630" y2="368" stroke="#84cc16" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#spp-arrow-accent)"/>
+        <rect x="681" y="348" width="128" height="12" rx="2" fill="#f0efe9"/>
+        <text x="745" y="357" fill="#84cc16" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">signature · status Success</text>
+
+        <rect x="136" y="104" width="8" height="112" fill="rgba(22,59,42,.06)" stroke="#5b6b60" stroke-width="0.8"/>
+        <rect x="376" y="106" width="8" height="50" fill="rgba(22,59,42,.06)" stroke="#5b6b60" stroke-width="0.8"/>
+        <rect x="626" y="200" width="8" height="176" fill="rgba(22,59,42,.06)" stroke="#5b6b60" stroke-width="0.8"/>
+        <rect x="856" y="314" width="8" height="62" fill="rgba(22,59,42,.06)" stroke="#5b6b60" stroke-width="0.8"/>
+
+        <rect x="50" y="36" width="180" height="40" rx="6" fill="#fafaf7"/>
+        <rect x="50" y="36" width="180" height="40" rx="6" fill="none" stroke="#163b2a" stroke-width="1"/>
+        <text x="140" y="54" fill="#163b2a" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Our server</text>
+        <text x="140" y="68" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle">swap executor</text>
+
+        <rect x="290" y="36" width="180" height="40" rx="6" fill="#fafaf7"/>
+        <rect x="290" y="36" width="180" height="40" rx="6" fill="none" stroke="#163b2a" stroke-width="1"/>
+        <text x="380" y="54" fill="#163b2a" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Jupiter · order</text>
+        <text x="380" y="68" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle">simulates the swap</text>
+
+        <rect x="540" y="36" width="180" height="40" rx="6" fill="#fafaf7"/>
+        <rect x="540" y="36" width="180" height="40" rx="6" fill="none" stroke="#163b2a" stroke-width="1"/>
+        <text x="630" y="54" fill="#163b2a" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Signer</text>
+        <text x="630" y="68" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle">wallet keypair · local</text>
+
+        <rect x="770" y="36" width="180" height="40" rx="6" fill="#fafaf7"/>
+        <rect x="770" y="36" width="180" height="40" rx="6" fill="none" stroke="#163b2a" stroke-width="1"/>
+        <text x="860" y="54" fill="#163b2a" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Jupiter · execute</text>
+        <text x="860" y="68" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle">Beam landing · no RPC</text>
+
+        <line x1="80" y1="452" x2="920" y2="452" stroke="rgba(22,59,42,.12)" stroke-width="0.8"/>
+        <text x="80" y="468" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.14em">LEGEND</text>
+        <line x1="176" y1="465" x2="208" y2="465" stroke="#2e5aa8" stroke-width="1"/>
+        <text x="216" y="468" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">CALL</text>
+        <line x1="286" y1="465" x2="318" y2="465" stroke="#5b6b60" stroke-width="1" stroke-dasharray="5,4"/>
+        <text x="326" y="468" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">RETURN</text>
+        <line x1="436" y1="465" x2="468" y2="465" stroke="#84cc16" stroke-width="1.2" stroke-dasharray="5,4"/>
+        <text x="476" y="468" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">CONFIRMED LANDING</text>
+        <text x="80" y="500" fill="#163b2a" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">THE TX COMES BACK IN MESSAGE 2 — THE LITE LANE REACHES THE SAME POINT IN 2 CALLS, ~39 MS, WITH NO SIMULATION</text>
+      </svg>
+    </div>
+    <figcaption>One swap · message 2 is where the transaction appears, and why a quote-only call can stop there</figcaption>
+  </figure>
+
+  <h2>Providers researched</h2>
+  <table>
+    <caption>the three you asked about, plus what the numbers say</caption>
+    <thead><tr><th>Provider</th><th>Keyless?</th><th>To a tx</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr class="focal-row"><td class="name">SolanaTracker Raptor</td><td class="lead">yes</td><td>1 call</td><td class="ok">Keep — already wired; wins 2/5 pairs; 6/6 parallel, no 429s. <code>maxHops=1</code> cannot route DEW→BPX; <code>3</code> can</td></tr>
+      <tr><td class="name">DFlow</td><td>dev yes, prod key</td><td>1 call</td><td class="neg">Reject — worst price of the set (−1.04 %); its v1 tx format cannot be signed by <code>@solana/web3.js</code></td></tr>
+      <tr><td class="name">swap.io <span class="ok">(meta-aggregate)</span></td><td class="lead">yes</td><td class="neg">no build endpoint found</td><td class="ok">Keep as a measurement tool only — one keyless call returns Autobahn + OKX + Jupiter + DFlow</td></tr>
+      <tr><td class="name">Titan</td><td class="neg">no — API key</td><td>—</td><td class="ok">Not evaluable without a key; aggregates other aggregators</td></tr>
+      <tr><td class="name">0dotxyz / solana-dex-superagg</td><td>n/a</td><td>—</td><td class="ok">Reference only — a Rust <code>BestPrice</code> wrapper over Jupiter + Titan + DFlow</td></tr>
+    </tbody>
+  </table>
+  <p class="sub" style="margin-top:.9rem">swap.io's one-call aggregate is what made the §"Price" table
+  possible: fired against our own tokens it returned <code>autobahn 396062742 · jupiter 396062742 ·
+  okx-dex 392658670 · dflow 392511482</code> for DEW→SOL in a single request — and it does
+  <em>not</em> include Raptor, so its best-of would have missed the actual winner there.</p>
+
+  <h2>The optimal scenario — and the Step-0 correction that killed it</h2>
+  <p class="sub"><strong>This page's own recommendation was tested on the server before any code was
+  written, and it failed.</strong> <code>/order</code> alone measured <b>226 ms</b> and the fan-out
+  <b>585 ms</b> — <b>2.59×</b>, not the "same wall time" argued below. The cause is in the same run:
+  Raptor's leg is not the ~191 ms the isolated five-pair loop showed. On fresh mints it measured
+  <b>p50 528 ms, range 189–656 ms</b>, against Jupiter's 226 ms — and a fan-out inherits its slowest
+  leg. The price edge does not survive a random sample either: across <b>40 real traded mints</b> the
+  best-of gain over Jupiter-only was <b>+5 bps mean, 0 median</b>, with Raptor losing by as much as
+  −350 bps where it did lose — not the +55 / +131 bps these five hand-picked pairs implied.
+  <strong>So the fan-out and the hops escalation are cancelled</strong>; the desk path stays sequential.
+  What survives from the analysis below is the shared condition set (for the affordability abort) and
+  the continuous oracle — the instrument that would have caught this sampling error.</p>
+
+  <p class="sub">Recorded below is the proposal as it stood, kept because the reasoning error is the
+  instructive part: it generalised from five pairs that were not a sample of our book. Today's desk path
+  still calls <code>/order</code> and reaches for Lite only when it <em>fails</em>;
+  <code>swap-quote-parallel.ts</code> is sequential and short-circuits, and its own comment says
+  "Raptor is not queried".</p>
+
+  <figure>
+    <div class="framed">
+      <svg viewBox="0 0 1000 520" width="100%" role="img" aria-labelledby="spp-flow2-title spp-flow2-desc">
+        <title id="spp-flow2-title">Recommended swap path: two providers in parallel, gate, pick, build</title>
+        <desc id="spp-flow2-desc">Process diagram of the recommended swap path. Three quote sources are fired in parallel: Jupiter's keyed order endpoint, which simulates and validates and is the only affordability check; SolanaTracker Raptor's quote-and-swap, which is keyless and already returns a transaction; and Jupiter's Lite quote, a fast estimate that never executes. The results flow into one gate-and-pick stage that drops candidates failing the price-impact gate, aborts if the order endpoint returned no transaction, and selects the highest output amount. The winner is then signed and broadcast through that provider's own submit endpoint. The parallel fan-out costs the same wall time as calling the order endpoint alone, because both candidate providers already answer in about 200 milliseconds.</desc>
+        <rect width="100%" height="100%" fill="#f0efe9"/>
+
+        <defs>
+          <marker id="spp2-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#5b6b60"/>
+          </marker>
+        </defs>
+
+        <!-- connectors first (rounded right-angle elbows) -->
+        <path d="M280 144 H310 Q316 144 316 150 V214 Q316 220 322 220 H352" fill="none" stroke="#5b6b60" stroke-width="1" marker-end="url(#spp2-arrow)"/>
+        <line x1="280" y1="240" x2="352" y2="240" stroke="#5b6b60" stroke-width="1" marker-end="url(#spp2-arrow)"/>
+        <path d="M280 336 H310 Q316 336 316 342 V254 Q316 260 322 260 H352" fill="none" stroke="#5b6b60" stroke-width="1" marker-end="url(#spp2-arrow)"/>
+        <line x1="572" y1="240" x2="644" y2="240" stroke="#5b6b60" stroke-width="1" marker-end="url(#spp2-arrow)"/>
+
+        <!-- source 1 · keyed, validated -->
+        <rect x="40" y="112" width="240" height="64" rx="6" fill="#f0efe9"/>
+        <rect x="40" y="112" width="240" height="64" rx="6" fill="#fafaf7" stroke="#163b2a" stroke-width="1"/>
+        <rect x="52" y="120" width="48" height="12" rx="2" fill="transparent" stroke="rgba(22,59,42,.40)" stroke-width="0.8"/>
+        <text x="76" y="129" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">PRIMARY</text>
+        <text x="160" y="148" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Jupiter /order</text>
+        <text x="160" y="164" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle">keyed · simulated · validates · 214 ms</text>
+
+        <!-- source 2 · keyless, second price -->
+        <rect x="40" y="208" width="240" height="64" rx="6" fill="#f0efe9"/>
+        <rect x="40" y="208" width="240" height="64" rx="6" fill="#fafaf7" stroke="#163b2a" stroke-width="1"/>
+        <rect x="52" y="216" width="48" height="12" rx="2" fill="transparent" stroke="rgba(22,59,42,.40)" stroke-width="0.8"/>
+        <text x="76" y="225" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">SECOND</text>
+        <text x="160" y="244" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Raptor quote-and-swap</text>
+        <text x="160" y="260" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle">keyless · maxHops 3 · 191 ms</text>
+
+        <!-- source 3 · estimate only -->
+        <rect x="40" y="304" width="240" height="64" rx="6" fill="#f0efe9"/>
+        <rect x="40" y="304" width="240" height="64" rx="6" fill="#fafaf7" stroke="rgba(22,59,42,.20)" stroke-width="1" stroke-dasharray="4,3"/>
+        <rect x="52" y="312" width="52" height="12" rx="2" fill="transparent" stroke="rgba(22,59,42,.30)" stroke-width="0.8"/>
+        <text x="78" y="321" fill="#8a968d" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">ESTIMATE</text>
+        <text x="160" y="340" fill="#5b6b60" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Jupiter lite /quote</text>
+        <text x="160" y="356" fill="#8a968d" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle">keyless · 16 ms · never executes</text>
+
+        <!-- gate + pick · the one focal element -->
+        <rect x="352" y="200" width="220" height="80" rx="6" fill="#f0efe9"/>
+        <rect x="352" y="200" width="220" height="80" rx="6" fill="rgba(132,204,22,.10)" stroke="#84cc16" stroke-width="1.2"/>
+        <text x="462" y="234" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Gate + pick</text>
+        <text x="462" y="252" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle">impact ≤ 15% · drop failures</text>
+        <text x="462" y="268" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle">abort if /order has no tx · highest out wins</text>
+
+        <!-- build · sign · broadcast -->
+        <rect x="644" y="200" width="316" height="80" rx="6" fill="#f0efe9"/>
+        <rect x="644" y="200" width="316" height="80" rx="6" fill="#fafaf7" stroke="#163b2a" stroke-width="1"/>
+        <text x="802" y="234" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Build → sign → broadcast</text>
+        <text x="802" y="252" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle">Jupiter /execute · Raptor /send-transaction</text>
+        <text x="802" y="268" fill="#8a968d" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle">wall time ≈ max(/order, Raptor) ≈ 214 ms</text>
+
+        <line x1="40" y1="452" x2="960" y2="452" stroke="rgba(22,59,42,.12)" stroke-width="0.8"/>
+        <text x="40" y="468" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.14em">LEGEND</text>
+        <rect x="136" y="460" width="12" height="10" fill="#fafaf7" stroke="#163b2a" stroke-width="1"/>
+        <text x="156" y="469" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">KEYED · VALIDATED</text>
+        <rect x="320" y="460" width="12" height="10" fill="#fafaf7" stroke="#163b2a" stroke-width="1"/>
+        <text x="340" y="469" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">KEYLESS</text>
+        <rect x="452" y="460" width="12" height="10" fill="#fafaf7" stroke="rgba(22,59,42,.20)" stroke-width="1" stroke-dasharray="4,3"/>
+        <text x="472" y="469" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">ESTIMATE ONLY</text>
+        <rect x="620" y="460" width="12" height="10" fill="rgba(132,204,22,.10)" stroke="#84cc16" stroke-width="1.2"/>
+        <text x="640" y="469" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">THE RECOMMENDED CHANGE</text>
+        <text x="40" y="500" fill="#163b2a" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">TODAY: /ORDER ALONE, LITE ONLY ON FAILURE — ONE CANDIDATE, SO NOTHING TO PICK. ABOVE: TWO, SAME WALL TIME.</text>
+      </svg>
+    </div>
+    <figcaption>The one change worth making · Raptor is queried in parallel, not as a fallback · the affordability abort comes from <code>/order</code>, which is the only lane that simulates</figcaption>
+  </figure>
+
+  <h2>What each option actually costs</h2>
+  <table>
+    <caption>the scenario set, measured · wall time is per swap</caption>
+    <thead><tr><th>Scenario</th><th>Wall time</th><th>Validates first?</th><th>Price</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr><td class="name">/order ∥ Raptor → gate → pick</td><td class="neg">measured 585 ms</td><td>yes (via /order)</td><td>+5 bps mean / 0 median</td><td class="neg">Cancelled — 2.59× the swap for a median of zero</td></tr>
+      <tr class="focal-row"><td class="name">/order alone (today)</td><td class="lead">226 ms</td><td class="lead">yes</td><td>one price</td><td class="lead">Kept — the measured best-of edge does not pay for the latency</td></tr>
+      <tr><td class="name">/order → Raptor (serial)</td><td class="neg">~755 ms</td><td>yes</td><td>Raptor only if /order fails</td><td class="neg">Worse still — same edge, both legs serial</td></tr>
+      <tr><td class="name">Lite quote + swap</td><td class="lead">~39 ms</td><td class="neg">no</td><td>0.19 % ahead of /order</td><td class="ok">Estimate lane only — unquota'd and unvalidated</td></tr>
+      <tr><td class="name">Raptor alone</td><td>~191 ms</td><td class="neg">no</td><td>−2.41 % on DEW→BPX</td><td class="neg">Loses the pairs it does not win</td></tr>
+      <tr><td class="name">swap.io inline</td><td class="neg">0.7–2.6 s</td><td class="neg">no</td><td>−0.37 % vs best</td><td class="neg">No build endpoint; slowest lane measured</td></tr>
+      <tr><td class="name">DFlow</td><td>~243 ms</td><td class="neg">no</td><td class="neg">−1.04 % avg</td><td class="neg">Rejected</td></tr>
+    </tbody>
+  </table>
+  <p class="sub" style="margin-top:.9rem">The parallel rows are the same wall time because the two
+  candidates already answer in ~191 ms and ~214 ms — the fan-out hides the slower one behind the
+  faster. Note the fourth row: the Lite lane is the fastest way to a transaction, and it is still the
+  wrong execution lane, because ~39 ms buys a transaction with <em>no</em> answer to "can this wallet
+  even pay for it?".</p>
+
+  <h2>Where a real swap's time actually goes</h2>
+  <p class="sub">Executed on the VPS against mainnet: <strong>sell 15 DEW → SOL, then buy 15 DEW back</strong>,
+  both through the Lite lane. Both transactions <strong>finalized with <code>err=None</code></strong> —
+  leg 1 <code>vf14edcP…LsALxyJ</code>, leg 2 <code>34YV4Fna…97pUpqh</code> (full signatures on solscan).
+  This is the answer to "Lite is the fastest one": it is — <em>to build</em>. The swap still takes seconds,
+  and the seconds are spent confirming, not preparing.</p>
+
+  <figure>
+    <div class="framed">
+      <svg viewBox="0 0 1000 560" width="100%" role="img" aria-labelledby="spp-real-title spp-real-desc">
+        <title id="spp-real-title">Prepare time versus confirmation time for a real swap</title>
+        <desc id="spp-real-desc">Horizontal bar chart comparing how long each phase of a real swap takes, in milliseconds. Preparing a transaction is the cheapest phase: the Lite lane's quote plus build measured 69 and 41 milliseconds across the two legs, Jupiter's order endpoint 226, and Raptor 528. Confirmation dominates: the buy-back leg confirmed in 1,692 milliseconds and the sell leg in 5,044. Preparing is therefore between one and ten percent of the time a swap actually takes.</desc>
+        <rect width="100%" height="100%" fill="#f0efe9"/>
+
+        <line x1="200" y1="56" x2="200" y2="416" stroke="rgba(22,59,42,.25)" stroke-width="1"/>
+        <line x1="330" y1="56" x2="330" y2="416" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="459" y1="56" x2="459" y2="416" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="589" y1="56" x2="589" y2="416" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="718" y1="56" x2="718" y2="416" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="848" y1="56" x2="848" y2="416" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="200" y1="428" x2="960" y2="428" stroke="rgba(22,59,42,.25)" stroke-width="1"/>
+        <text x="200" y="448" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">0</text>
+        <text x="330" y="448" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">1000</text>
+        <text x="459" y="448" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">2000</text>
+        <text x="589" y="448" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">3000</text>
+        <text x="718" y="448" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">4000</text>
+        <text x="848" y="448" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">5000</text>
+        <text x="580" y="468" fill="#8a968d" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.14em">MILLISECONDS</text>
+
+        <text x="188" y="86" fill="#5b6b60" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="end">Lite prepare (leg 1)</text>
+        <rect x="200" y="68" width="9" height="24" fill="#f0efe9"/>
+        <rect x="200" y="68" width="9" height="24" fill="rgba(91,107,96,.20)" stroke="#5b6b60" stroke-width="1"/>
+        <text x="221" y="84" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace">69</text>
+
+        <text x="188" y="150" fill="#5b6b60" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="end">Lite prepare (leg 2)</text>
+        <rect x="200" y="132" width="5" height="24" fill="#f0efe9"/>
+        <rect x="200" y="132" width="5" height="24" fill="rgba(91,107,96,.20)" stroke="#5b6b60" stroke-width="1"/>
+        <text x="217" y="148" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace">41</text>
+
+        <text x="188" y="214" fill="#5b6b60" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="end">Jupiter /order prepare</text>
+        <rect x="200" y="196" width="29" height="24" fill="#f0efe9"/>
+        <rect x="200" y="196" width="29" height="24" fill="rgba(91,107,96,.20)" stroke="#5b6b60" stroke-width="1"/>
+        <text x="241" y="212" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace">226</text>
+
+        <text x="188" y="278" fill="#5b6b60" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="end">Raptor prepare</text>
+        <rect x="200" y="260" width="68" height="24" fill="#f0efe9"/>
+        <rect x="200" y="260" width="68" height="24" fill="rgba(91,107,96,.20)" stroke="#5b6b60" stroke-width="1"/>
+        <text x="280" y="276" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace">528</text>
+
+        <text x="188" y="342" fill="#163b2a" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="end">Confirm (leg 2)</text>
+        <rect x="200" y="324" width="219" height="24" fill="#f0efe9"/>
+        <rect x="200" y="324" width="219" height="24" fill="rgba(132,204,22,.16)" stroke="#84cc16" stroke-width="1.2"/>
+        <text x="431" y="340" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace">1692</text>
+
+        <text x="188" y="406" fill="#163b2a" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="end">Confirm (leg 1)</text>
+        <rect x="200" y="388" width="654" height="24" fill="#f0efe9"/>
+        <rect x="200" y="388" width="654" height="24" fill="rgba(132,204,22,.16)" stroke="#84cc16" stroke-width="1.2"/>
+        <text x="866" y="404" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace">5044</text>
+
+        <line x1="200" y1="492" x2="960" y2="492" stroke="rgba(22,59,42,.12)" stroke-width="0.8"/>
+        <text x="200" y="508" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.14em">LEGEND</text>
+        <rect x="296" y="500" width="12" height="10" fill="rgba(91,107,96,.20)" stroke="#5b6b60" stroke-width="1"/>
+        <text x="316" y="509" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">PREPARE — WHAT EVERY LANE COMPARISON HAS BEEN MEASURING</text>
+        <rect x="700" y="500" width="12" height="10" fill="rgba(132,204,22,.16)" stroke="#84cc16" stroke-width="1.2"/>
+        <text x="720" y="509" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">LAND</text>
+        <text x="200" y="538" fill="#163b2a" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">PREPARING IS 1–10% OF A REAL SWAP — THE LANE THAT WINS THAT 1% STILL WAITS SECONDS TO LAND</text>
+      </svg>
+    </div>
+    <figcaption>Real mainnet round trip, VPS, 15 DEW each way · prepare measured per lane, confirm measured on the Lite lane · slippage 500 bps, priority fee 150,000 lamports</figcaption>
+  </figure>
+
+  <table>
+    <caption>the real round trip · both transactions finalized, err = None</caption>
+    <thead><tr><th>Phase</th><th>Leg 1 · sell 15 DEW→SOL</th><th>Leg 2 · buy 15 DEW back</th></tr></thead>
+    <tbody>
+      <tr><td class="name">quote</td><td>44.6 ms</td><td>25.9 ms</td></tr>
+      <tr><td class="name">build (unsigned tx)</td><td>24.5 ms</td><td>15.5 ms</td></tr>
+      <tr><td class="name">simulate</td><td>OK · cu 118,310</td><td>OK · cu 38,733</td></tr>
+      <tr><td class="name">sign</td><td>26.3 ms</td><td>6.2 ms</td></tr>
+      <tr><td class="name">send</td><td>52.9 ms</td><td>28.5 ms</td></tr>
+      <tr class="focal-row"><td class="name">confirm to finalized</td><td class="lead">5,044 ms</td><td class="lead">1,692 ms</td></tr>
+      <tr><td class="name">total</td><td class="lead">5,268 ms</td><td class="lead">1,801 ms</td></tr>
+      <tr><td class="name">route taken</td><td>Meteora DLMM + Kipseli</td><td>Manifest</td></tr>
+      <tr><td class="name">cost of the whole round trip</td><td colspan="2">0.000382 SOL + 0.005 DEW ≈ <b>$0.046</b> — almost entirely the two priority fees</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Two things the real run taught us that no quote benchmark could</h2>
+  <ul class="findings">
+    <li><b>DEW carries a 1 % Token-2022 transfer fee, and it eats the entire default slippage
+    budget.</b> The mint has a <code>transferFeeConfig</code> of <code>100</code> basis points. At
+    <code>slippageBps=100</code> the transfer fee consumes the whole tolerance, so the router's own
+    post-check fails with <code>6001 SlippageToleranceExceeded</code> — the transaction builds in 21 ms
+    and can never land. Raising slippage to 300/500/1000 makes the identical route simulate cleanly.
+    This is a token-class bug, not a lane bug, and it would hit any transfer-fee mint.</li>
+    <li><b>Only <code>/order</code> would have caught it before we sent anything.</b> Fake the same swap
+    across all three lanes and simulate: Lite and Raptor hand back a transaction that fails simulation,
+    while <code>/order</code> refuses server-side and never returns an unlandable tx. That is the
+    ~200 ms the expensive lane charges for, and it is worth it.</li>
+    <li><b>Without a priority fee, the transaction simply never lands.</b> The first live attempt was
+    broadcast and never appeared on-chain (<code>getSignatureStatuses</code> → <code>null</code>,
+    balances unchanged, no double-spend). With 150,000 lamports it landed in both directions.</li>
+    <li><b>And the route changes between attempts on the same pair.</b> The same DEW sell produced
+    Manifest, then Meteora DLMM + Kipseli; the buy produced Deriverse + TesseraV + Meteora DLMM, then
+    Manifest. A quote is not a stable description of the execution path.</li>
+  </ul>
+
+  <h2>Lite's rate ceiling — probed, not guessed</h2>
+  <table>
+    <caption>lite-api.jup.ag keyless · our VPS IP · 2026-10-01</caption>
+    <thead><tr><th>Probe</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr class="focal-row"><td class="name">Parallel burst</td><td class="lead">1 → 32 concurrent: <b>32/32 OK, zero 429</b>, wall 105 ms (≈305 rps burst)</td></tr>
+      <tr><td class="name">Sequential back-to-back</td><td>30 requests in 397 ms = <b>75.5 rps attempted, 30/30 OK</b>, no 429 in the window</td></tr>
+      <tr><td class="name">Then the lockout</td><td class="neg">after ~93 requests in ~30 s: <b>429 for ~120 s</b>, and it stayed 429 even at one request every 10 s</td></tr>
+      <tr><td class="name">Sustained after recovery</td><td>4.0 / 2.0 / 1.0 rps → <b>12/12 OK each</b>, p50 13 ms</td></tr>
+    </tbody>
+  </table>
+  <p class="sub" style="margin-top:.9rem">So "the highest TPS before 429" has no clean answer: the limiter
+  is not a rate you can tune to. It absorbs a surprisingly large burst — 32 concurrent or ~75 rps — and
+  then locks the IP out for <b>about two minutes</b> during which even a trickle is refused. That is the
+  shape that matters operationally: a burst succeeds, then everything behind it fails for two minutes.
+  Ours is a keyless, per-IP bucket that no API key can raise.</p>
+  <p class="sub">And it is worse than two minutes when the burst is sustained. After the runs above, the
+  VPS IP was <b>still 429 more than ten minutes later</b>, through a 150 s cooldown and at 1 rps. The
+  same request from a different IP returned 200, and attaching our Jupiter key changed nothing — so the
+  penalty is <b>per-IP and permanent until it decays</b>, not per-account and not liftable.</p>
+
+  <h2>Rate-limited back to back — 5 rps Raptor, 0.5 rps Jupiter</h2>
+  <p class="sub">Each lane driven at its own budget for 60 s, concurrently, alternating directions on the
+  DEW pair. This is the realistic shape: not how fast a lane can go, but how it behaves at the rate we
+  are allowed to ask.</p>
+  <table>
+    <caption>60 s concurrent run · Jupiter capped at 0.5 rps, Raptor at 5 rps, Lite at 1 rps</caption>
+    <thead><tr><th>Lane</th><th>Sent (achieved)</th><th>OK</th><th>429</th><th>p50</th><th>p95</th><th>Max</th></tr></thead>
+    <tbody>
+      <tr><td class="name">Jupiter /order (0.5 rps cap)</td><td>31 (0.52 rps)</td><td class="lead">29</td><td>2</td><td>215 ms</td><td>245 ms</td><td>283 ms</td></tr>
+      <tr><td class="name">Raptor quote-and-swap (5 rps cap)</td><td>294 (4.90 rps)</td><td class="lead">294</td><td class="ok">0</td><td class="lead">199 ms</td><td>214 ms</td><td class="neg">616 ms</td></tr>
+      <tr><td class="name">Lite quote+build (1 rps)</td><td>61 (1.02 rps)</td><td class="neg">0</td><td class="neg">61</td><td>—</td><td>—</td><td>—</td></tr>
+    </tbody>
+  </table>
+  <p class="sub" style="margin-top:.9rem">Raptor is the steady one at its cap: <b>294/294, no 429</b>, a
+  tight p50→p95 of 199→214 ms — though one call in 294 took 616 ms, so its tail is real. Jupiter at
+  exactly 0.5 rps still produced <b>2 × 429</b>, which says 0.5 rps is the edge, not comfortably inside
+  it. Lite could not be measured at all: the IP was serving its lockout.</p>
+
+  <h2>Can we combine them — Lite prepare, Jupiter or Raptor send?</h2>
+  <p class="sub">This is the obvious idea, and only one of the three combinations is possible. Tested with
+  real transactions on mainnet:</p>
+  <table>
+    <caption>real 10–15 DEW sells · every leg simulated before sending</caption>
+    <thead><tr><th>Combination</th><th>Possible?</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr><td class="name">Lite prepare → Jupiter <code>/execute</code></td><td class="neg">No</td><td class="neg"><code>/execute</code> requires the <code>requestId</code> that only <code>/order</code> issues. A Lite tx has none — the lane cannot be finished by Jupiter.</td></tr>
+      <tr><td class="name">Lite prepare → Raptor <code>/send-transaction</code></td><td class="ok">Accepted</td><td class="neg">Raptor returns HTTP 200 + a signature in ~195 ms, and the transaction <b>never appears on-chain</b> — 0/3 landed over 33 s of polling each. A signature is not a landing.</td></tr>
+      <tr class="focal-row"><td class="name">Jupiter <code>/order</code> → Jupiter <code>/execute</code></td><td class="lead">Yes</td><td class="lead"><b>3/3 landed, on-chain in ~668 ms</b>, with the exchange itself returning <code>status=Success code=0</code>.</td></tr>
+    </tbody>
+  </table>
+  <p class="sub" style="margin-top:.9rem">Verified independently of the client: after the three Jupiter legs
+  the wallet's DEW had fallen by exactly the 30 sold, its SOL had risen, and its five most recent
+  signatures were all <code>err=None</code> — every one of them a Jupiter-executed swap. <b>Not one
+  Raptor-broadcast transaction exists on-chain.</b></p>
+  <p class="sub"><b>So the combination the intuition suggests is the wrong way round.</b> Preparing on
+  Lite is ~180 ms faster, but it forfeits the only managed landing we have. Compare the totals:</p>
+  <table>
+    <caption>end-to-end, both really executed</caption>
+    <thead><tr><th>Path</th><th>Prepare</th><th>Send + confirm</th><th>Total</th></tr></thead>
+    <tbody>
+      <tr class="focal-row"><td class="name">Jupiter /order → /execute</td><td>220 ms</td><td class="lead">~668 ms</td><td class="lead">~888 ms</td></tr>
+      <tr><td class="name">Lite → own RPC send + confirm</td><td class="lead">40 ms</td><td class="neg">1,692–5,044 ms</td><td class="neg">1,732–5,084 ms</td></tr>
+      <tr><td class="name">Raptor → Raptor send</td><td>616 ms</td><td class="neg">never landed</td><td class="neg">—</td></tr>
+    </tbody>
+  </table>
+  <p class="sub" style="margin-top:.9rem">Lite wins the phase everyone has been measuring and loses the
+  swap. <b>Prepare on Jupiter, so that Jupiter can also land it.</b> Raptor keeps the job it is actually
+  good at — quoting at 5 rps with a 199 ms p50 — and its send path should not be trusted until the
+  missing broadcast is explained.</p>
+
+  <h2>Bulk — the one place Raptor is genuinely better</h2>
+  <p class="sub">The same tokens the wallet actually holds, sold to SOL two ways. Raptor's docs claim
+  <em>"free to use with no rate limits"</em>; measured, that claim holds — and preparation is the only
+  phase where a lane difference actually shows, because Jupiter's gate serialises and Raptor's does not.</p>
+  <table>
+    <caption>tokens → SOL, same amounts · 2026-10-01 · <b>2 tokens</b> (the mint lookup resolved 2 of the 5 sampled, so the batch compared is 2, not 5)</caption>
+    <thead><tr><th>Path</th><th>Shape</th><th>Wall time</th><th>429</th><th>Txs back</th></tr></thead>
+    <tbody>
+      <tr><td class="name">Jupiter <code>/order</code></td><td>sequential, behind the 0.5 rps keyed gate</td><td class="neg">~2 s <em>per token</em>, then the same again for each <code>/execute</code> — so N tokens ≈ 2N seconds</td><td class="neg">2 (quota already drained by this workstream)</td><td class="neg">0</td></tr>
+      <tr class="focal-row"><td class="name">Raptor <code>quote-and-swap</code></td><td>both fired together</td><td class="lead">644 ms total (the slower of the two was 642 ms)</td><td class="lead">0</td><td class="lead">2/2</td></tr>
+    </tbody>
+  </table>
+  <p class="sub" style="margin-top:.9rem">The per-token cost is the point, not the batch size: Jupiter's is
+  <b>~2 s per token and cannot overlap</b>, Raptor's is <b>one parallel round</b>. The concurrency ramp below
+  is what actually sizes that difference, and it used a fixed pair so every number is on the same token.</p>
+  <table>
+    <caption>Raptor concurrency ramp — is "no rate limits" real?</caption>
+    <thead><tr><th>Concurrent</th><th>OK</th><th>429</th><th>Wall</th><th>Per-call p50</th></tr></thead>
+    <tbody>
+      <tr><td class="name">1</td><td>1/1</td><td>0</td><td>195 ms</td><td>195 ms</td></tr>
+      <tr><td class="name">5</td><td>5/5</td><td>0</td><td>636 ms</td><td>594 ms</td></tr>
+      <tr class="focal-row"><td class="name">10</td><td>10/10</td><td>0</td><td>620 ms</td><td>222 ms</td></tr>
+      <tr class="focal-row"><td class="name">20</td><td class="lead">20/20</td><td class="lead">0</td><td class="lead">641 ms</td><td>230 ms</td></tr>
+    </tbody>
+  </table>
+  <p class="sub" style="margin-top:.9rem">Twenty concurrent builds in 641 ms with not one rejection is a
+  different regime from a 0.5 rps gate. <strong>Raptor's preparation throughput is an order of magnitude
+  above what Jupiter's quota allows</strong> — that, not price, is the argument for it.</p>
+  <p class="sub"><b>But the landing half of that trade is still broken. Re-tested with better
+  instrumentation:</b> a Raptor-built tx simulated clean (cu 78,367), <code>/send-transaction</code> returned
+  <b>HTTP 200 + a signature in 190 ms</b> — and then Raptor reported it <code>pending</code> while the chain
+  reported <b>not found</b> on every one of eight polls over 16 seconds. That is now <b>five</b> accepted
+  Raptor sends, none on-chain. The docs explain the likely mechanism: <code>/send-transaction</code> sends via
+  <b>Yellowstone Jet TPU</b>, which is a <em>self-host flag</em> (<code>--enable-yellowstone-jet</code>) — a
+  hosted instance with it off would accept, queue, and never broadcast, which is exactly the shape observed.</p>
+  <p class="sub"><b>So bulk has a real choice, and it is a risk trade, not a price one.</b> Raptor prepares
+  a batch in one parallel round (~0.64 s for 20 concurrent) where Jupiter needs ~2 s <em>per token</em> and
+  then the same again to land each one — but a Raptor tx carries no <code>requestId</code>, so nothing can
+  <code>/execute</code> it: it lands through our own RPC (1.7–5.0 s each measured), with no server-side
+  simulation to catch the transfer-fee class from §"Two things the real run taught us".
+  <b>If bulk throughput matters, the honest lever is the Jupiter quota, not the lane.</b> Use Raptor for
+  bulk preparation only if the sim + chain-verify guards are added first.</p>
+  <p class="sub">One more thing the docs surface that is worth a look before any of this: Raptor also exposes
+  <code>POST /swap</code> (build only) and a <b>WebSocket <code>/stream/swap</code></b> that streams
+  pre-built transactions and <em>re-sends the latest one after 10 slots without an update</em>. For a basket
+  that is a better shape than N one-shot calls — untested here, and out of scope for this document.</p>
+
+  <h2>What we could improve</h2>
+  <table>
+    <caption>grounded in what the implementation actually does today</caption>
+    <thead><tr><th>Improvement</th><th>Why</th><th>Risk if we don't</th></tr></thead>
+    <tbody>
+      <tr class="focal-row"><td class="name">Make the transfer-fee case explicit</td><td>A Token-2022 mint with a transfer fee needs slippage headroom above the fee; DEW's 100 bps fee exactly cancels a 100 bps default</td><td class="neg">Every transfer-fee token silently produces unlandable transactions on the Lite/Raptor lanes</td></tr>
+      <tr class="focal-row"><td class="name">Treat "no transaction" as abort, not fallback</td><td><code>/order</code> answers 200 with an empty tx and <code>"Insufficient funds"</code>; the empty tx is the only affordability check we have</td><td class="neg">Falling through to a lane that cannot simulate turns a clean refusal into a failed on-chain swap</td></tr>
+      <tr><td class="name">Give the Lite lane a priority fee by default</td><td>Our live attempt without one never landed (status <code>null</code>)</td><td>A swap that pays nothing to land is a swap that does not land</td></tr>
+      <tr><td class="name">Stop treating Lite as a fallback and price its real cost</td><td>It is 40 ms to build but has a per-IP bucket with a ~120 s lockout and no key to raise it</td><td>A 429 on the fallback path leaves no lane left when it is most needed</td></tr>
+      <tr><td class="name">Keep provider comparison continuous, with its sample size</td><td>The five-pair benchmark said +131 bps; 40 random mints said +5 bps mean / 0 median</td><td>We make routing decisions on unrepresentative samples — the exact error Step 0 caught</td></tr>
+      <tr><td class="name">Measure confirm, not just prepare</td><td>Prepare is 1–10 % of a real swap; confirm is 96–99 %</td><td>Optimising the 40 ms lane while the swap waits seconds is effort in the wrong place</td></tr>
+      <tr class="focal-row"><td class="name">Prepare on the lane that can also land it</td><td>Jupiter <code>/order</code> → <code>/execute</code> is 888 ms end-to-end against 1,732–5,084 ms for a Lite tx sent over our own RPC</td><td class="neg">Saving 180 ms on prepare costs seconds on landing — the cheap lane cannot finish what it starts</td></tr>
+      <tr><td class="name">Never trust a provider's "sent"</td><td>Raptor returned 200 + a signature for four transactions, none of which reached the chain</td><td class="neg">Swaps are reported as done when they never happened</td></tr>
+      <tr><td class="name">Treat the keyless bucket as a ban, not a throttle</td><td>The VPS IP was still 429 more than ten minutes after a sustained burst; another IP was fine immediately</td><td class="neg">A lane reserved as "the fallback" is exactly the one that is gone when needed</td></tr>
+      <tr><td class="name">Budget Jupiter at the edge, not inside it</td><td>0.5 rps produced 2 × 429 in a 60 s run — the documented "clean" rate is the boundary</td><td>A swap that hits the boundary waits; the gate looks tuned until load arrives</td></tr>
+      <tr class="focal-row"><td class="name">Use Raptor for bulk preparation — but only behind guards</td><td>20 concurrent builds in 641 ms with zero 429, against ≥ 2 s per token behind the Jupiter gate</td><td class="neg">Adopting it without a simulate + chain-verify first re-opens the unlandable-transaction class on the highest-volume surface</td></tr>
+      <tr><td class="name">Treat a signature as a claim, not a receipt</td><td>Raptor returned 200 + a signature for five transactions; its own tracker showed <code>pending</code> for 16 s while the chain showed <code>not found</code></td><td class="neg">Higher volume on that path just means more phantom trades reported as done</td></tr>
+      <tr><td class="name">Fix or delete the misleading comments</td><td><code>swap-quote-parallel.ts</code> is not parallel; <code>BulkTokenSeller.tsx:455</code> claims a race that does not exist</td><td>The next engineer reads the comment, not the code, and inherits a false model</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Risks</h2>
+  <ul class="findings">
+    <li><b>Sampling error is the live risk, and it nearly shipped.</b> A five-pair benchmark implied
+    +131 bps of Raptor edge; a 40-mint random sample gave +5 bps mean / 0 median. Any provider decision
+    from here must carry its <code>n</code>, and the promotion bar is ≥100 priced pairs.</li>
+    <li><b>Raptor's latency is unstable</b> — 189–656 ms in one run against a 191 ms warm-loop
+    measurement, and it measured 528 ms p50 on fresh mints. It must not sit on a latency-critical path.</li>
+    <li><b>The keyless bucket is a cliff, not a slope.</b> ~75 rps is fine until it isn't, and then the
+    IP is locked out for ~120 s. Anything that fans out or retries will find that cliff.</li>
+    <li><b>Route instability.</b> The same pair returned different venues on consecutive attempts, so a
+    simulated "OK" is evidence about <em>that</em> build, not a guarantee about the next one. Simulate
+    the transaction you are about to send, not one you built earlier.</li>
+    <li><b>Most of the book is untradeable at our size</b> — 28 of 40 random mints were dead or under
+    $5k liquidity — so any routing gain applies to a minority of pairs and can never move the aggregate
+    much.</li>
+    <li><b>Transfer-fee tokens are a blind spot in the current model.</b> Nothing in the shared
+    candidate shape knows a mint's token-program extensions, so a fee-bearing mint looks like any
+    other until the transaction fails to land.</li>
+    <li><b>Raptor's send path returned a signature for transactions it did not broadcast.</b> Three
+    Raptor-built sells and one Jupiter-built one all got HTTP 200 + a signature from
+    <code>/send-transaction</code>; none of the four appeared on-chain after 33 s. Any caller that treats
+    "200 + signature" as "submitted" will report a swap that never happened. This is the highest-value
+    thing in this document to explain before trusting that path.</li>
+    <li><b>A signature is not a landing, anywhere.</b> The only swap in these tests that was
+    <em>proven</em> to execute is the one whose balance moved and whose tx is in the wallet's history.
+    Confirmation must be read from the chain, never from a provider's response body.</li>
+    <li><b>Bulk is where the lanes differ most, and where the trade is hardest.</b> Raptor prepares five
+    tokens in 644 ms where Jupiter's gate needs ten seconds, and it took 20 concurrent builds with zero
+    rejections — but a Raptor tx cannot be landed by anything (five accepted sends, none on-chain), carries
+    no <code>requestId</code>, and gets no simulation. Moving volume onto it without the simulate and
+    chain-verify guards first means more phantom trades, faster.</li>
+    <li><b>The Jupiter quota is the real bulk ceiling, and it is not ours to raise from code.</b> The lever
+    is the account plan, not the router. Budgeting at 0.5 rps produced 429s even at exactly 0.5, and this
+    workstream's own experiments drained the shared key twice.</li>
+    <li><b>swap.io stays an oracle only</b> — no build endpoint exists, it omits Raptor, and it is an
+    undocumented third-party internal API with no SLA. Off by default, behind <code>SWAP_IO_BASE</code>,
+    never on the swap path.</li>
+  </ul>
+
+  <h2>What this means</h2>
+  <ul class="findings">
+    <li><b>The expensive part of <code>/order</code> is the simulation, and that is worth paying for on
+    the execution path.</b> Raptor and DFlow build a transaction in one call at ~191 ms and ~243 ms;
+    Jupiter's Lite lane builds one in two calls at <b>~39 ms</b>. What the extra ~170 ms on
+    <code>/order</code> actually buys is the pre-flight simulation — the thing that refused four of our
+    ten batch calls with `Insufficient funds` instead of handing back a transaction that could not land.</li>
+    <li><b>So the right shape is two lanes, not one fastest lane.</b> The Lite lane is the quote and
+    estimate lane — fastest by 5×, and now proven able to reach a tx on every pair. The keyed
+    <code>/order</code> lane stays the execution lane because it has a quota tied to our account and it
+    validates before it builds. Nothing here argues for moving execution onto the unquota'd lane.</li>
+    <li><b>No single provider wins on price, which is the strongest argument for keeping the best-of
+    pick.</b> Raptor beats Jupiter's best by <b>+0.55 %</b> on DEW→SOL and <b>+1.31 %</b> on DEW→USDC,
+    then loses by <b>−2.41 %</b> on DEW→BPX. Averages hide this: Raptor is only −0.655 % on average
+    while being both the best and the worst source depending on the pair.</li>
+    <li><b>The measurement validates wiring this repo already has.</b> Raptor is already a provider in
+    the swap path — that is not luck, and the numbers now say why: it is the only source measured that
+    beats Jupiter anywhere at all.</li>
+    <li><b>DFlow is the one clear reject, and not only on price.</b> Worst measured quote (−1.04 %
+    average, −1.54 % on DEW→SOL), ~245 ms, and its <code>transactionVersion=v1</code> output cannot be
+    signed by <code>@solana/web3.js</code> — adopting it would mean adding <code>@solana/kit</code> to
+    sign a slower, worse-priced route.</li>
+    <li><b>Titan cannot be judged from outside</b> — it needs an API key, so it stays "not evaluable"
+    rather than "rejected". And <code>solana-dex-superagg</code> is not a provider: it is the same
+    best-of idea already implemented in this repo, in Rust.</li>
+    <li><b>swap.io is genuinely useful and genuinely not an execution path.</b> One keyless call gives a
+    same-moment, multi-provider price read, which is exactly the instrument this analysis needed. But
+    no build/swap endpoint exists on it, it omits Raptor (so its best-of missed the DEW→SOL winner), and
+    a reviewer aggregator should never sit on the critical path.</li>
+    <li><b>The trap worth carrying forward: <code>200 OK</code> is not success on <code>/order</code>.</b>
+    Every Jupiter <code>/order</code> host answered <b>200</b> with an <em>empty</em> transaction and
+    <code>errorMessage: "Insufficient funds"</code> when the wallet lacked the input token, while the
+    Lite build happily produced a transaction the wallet could not afford. Any caller that checks only
+    <code>response.ok</code> would take an empty transaction and fail downstream instead of here.</li>
+    <li><b>And the fastest lane is the one with the ceiling we cannot raise.</b> The Lite lane is
+    keyless — a bogus <code>x-api-key</code> still returns 200 — so its per-IP limit is not ours to
+    raise. Under the earlier non-isolated batch it returned 429 on 5/5 calls; isolated, 5/5 clean. It is
+    fast precisely where it is unquota'd, which is another reason it stays off the execution path.</li>
+  </ul>
+
+  <h2>Decision record — what we concluded and what changed</h2>
+  <p class="sub">The end of the discussion, kept so it does not have to be re-derived. Read the rest of the
+  page for the measurements behind each line.</p>
+  <table>
+    <caption>the scorecard</caption>
+    <thead><tr><th>Area</th><th>Verdict</th><th>Evidence</th></tr></thead>
+    <tbody>
+      <tr class="focal-row"><td class="name">Direct swap architecture</td><td class="lead">Right — leave it</td><td>Already <code>/order?taker=</code> → <code>/execute</code> → confirm. 3/3 landed, ~888 ms end to end; the best of everything measured.</td></tr>
+      <tr class="focal-row"><td class="name">Batch lane</td><td class="lead">Right — the gate is the ceiling</td><td>Jupiter per token ≈ 2 s each and cannot overlap. Raptor prepares 20 concurrent in 641 ms but nothing can land a Raptor tx.</td></tr>
+      <tr><td class="name">Provider fan-out / best-of</td><td class="neg">Rejected</td><td>+5 bps mean / 0 median on 40 real mints, for 2.59× the swap wall time.</td></tr>
+      <tr><td class="name">Lite as an execution lane</td><td class="neg">Rejected</td><td>No <code>requestId</code> so it can never be <code>/execute</code>d; keyless per-IP ban outlasting 10 minutes; no simulation.</td></tr>
+      <tr><td class="name">Raptor as a send path</td><td class="neg">Rejected</td><td>5 accepted sends, 0 on-chain. Likely Yellowstone Jet disabled on the hosted beta (self-host flag).</td></tr>
+      <tr><td class="name">DFlow / Titan / swap.io inline</td><td class="neg">Rejected</td><td>DFlow: worst price, v1 tx un-signable. Titan: needs a key. swap.io: no build endpoint, slowest lane.</td></tr>
+      <tr class="focal-row"><td class="name">Transfer-fee slippage</td><td class="neg">A live defect — fixed here</td><td>Auto slippage floors at <b>20 bps</b>; DEW's Token-2022 fee is <b>100</b>. At 100 bps the build fails <code>6001</code> and can never land; at 300 bps the same route passes.</td></tr>
+      <tr class="focal-row"><td class="name">Falling back to Lite on a refusal</td><td class="neg">A live defect — fixed here</td><td><code>/order</code> answers 200 + empty tx + <code>"Insufficient funds"</code>; the old code treated that as a fault and let Lite build an unlandable tx.</td></tr>
+      <tr class="focal-row"><td class="name">Raptor hop ceiling</td><td class="neg">A live defect — fixed here</td><td>At <code>maxHops=1</code> a <b>token→token</b> quote fails outright: <code>500 "No direct route found and maxHops=1"</code>. At 2 or 3 it returns 200; a SOL/USDC/USDT route returns 200 at 1. No UI surface passed <code>maxHops</code>, so every quote took the 1-hop default — and the 500 escalated to the Jupiter picker, spending the 0.5 rps budget until the prepare was rate-limited too. Now resolved <b>per pair</b> (<code>raptor-hops.ts</code>).</td></tr>
+      <tr><td class="name">Chain-verify every "sent"</td><td class="ok">Latent — not on the hot path today</td><td>Prod sends Raptor txs over RPC, so <code>sendRaptorTransaction</code> is a loaded gun rather than an active bug.</td></tr>
+      <tr><td class="name">Priority fee on every send</td><td class="ok">Already handled</td><td><code>jupiterLitePrioritizationFee</code> / <code>priorityFeeLamports</code> are plumbed; without one a real tx never landed.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>What this change did</h3>
+  <ul class="findings">
+    <li><b><code>src/utils/token-transfer-fee.ts</code> (new).</b> Reads a mint's own
+    <code>transferFeeConfig</code> extension (cached 10 min, tolerates both the flat and nested RPC
+    shapes, picks the config in force for the current epoch) and raises slippage to
+    <code>fee + margin</code> — <code>SWAP_TRANSFER_FEE_MARGIN_BPS</code>, default 30. It <b>never lowers</b>
+    a slippage, and passes the <code>-1</code> Auto sentinel through untouched so
+    <code>resolveAutoSlippageBps</code> keeps owning it. <b>Fails open</b>: an unreadable mint returns 0 and
+    the swap proceeds exactly as before.</li>
+    <li><b><code>prepareSwapTransaction</code> applies the floor once</b>, so every lane below it — order,
+    Lite and the arb/Raptor path — inherits it. No-op for classic SPL mints, which is almost every swap.</li>
+    <li><b><code>JupiterSwapQuoteError.venueRefused</code> (new flag).</b> <code>/order</code> reporting
+    <code>errorMessage</code> on a 200 is now distinguishable from a transport fault, because the venue's
+    own reason is the only simulation we have.</li>
+    <li><b><code>prepareDeskSwap</code> now rethrows a venue refusal</b> instead of falling back to Lite.
+    A 500 or a 429 still falls back exactly as before — only a decision by the venue aborts.</li>
+    <li><b>Tests:</b> 18 new across <code>token-transfer-fee.test.ts</code> and
+    <code>jupiter-swap-quote.refusal.test.ts</code>; all 48 pre-existing swap tests still pass, including
+    the one that asserts a 500 <em>does</em> fall back to Lite — which is the behaviour deliberately kept.</li>
+  </ul>
+
+  <h3>What was deliberately not changed</h3>
+  <ul class="findings">
+    <li><b>The direct and batch architectures.</b> They measured right; a rewrite would be churn.</li>
+    <li><b><code>skipPreflight: true</code> on the RPC fallback.</b> Flagged as a guardrail gap, but it is
+    belt-and-braces next to the fee floor, and changing it would add a simulation round trip to every
+    fallback send. Left for a measured decision, not a guess.</li>
+    <li><b>Raptor's unused send path.</b> Not on the hot path, so removing it is cleanup rather than a fix —
+    and someone may wire it up once the Jet question is answered.</li>
+    <li><b>The fan-out, the hops escalation, and everything in the "rejected" rows above.</b></li>
+  </ul>
+
+  <footer>
+    Source: read-only benchmark runs inside <code>reloadsol-web</code> on <code>flowey-vps</code>, 2026-10-01 · harness removed after the runs<br>
+    Measured: <code>/order</code> on api.jup.ag/swap/v2 · lite-api.jup.ag/swap/v1 <code>/quote</code>+<code>/swap</code> · raptor-beta.solanatracker.io <code>/quote-and-swap</code> · dev-quote-api.dflow.net <code>/order</code> · swap.io <code>/internal-api/routhex/swap/quote</code><br>
+    <strong>Not measured:</strong> signing, <code>/execute</code>, broadcast or landing latency — each needs a real signed transaction, so they stayed out of a read-only harness<br>
+    Tx verification: 19/19 returned transactions decoded with <code>@solana/web3.js</code> — all v0, one signature, fee payer = the taker<br>
+    Taker: live wallet <code>3V3N5xh…</code> · mints from <code>trading_records</code> (12-day window) + SOL / USDC / BONK · ~$50 notional · 100 bps slippage<br>
+    Runs were discarded whenever a host's own limiter contaminated another lane's numbers — the first pass was self-contaminated by 250 ms-spaced hammering, and one batch pass was polluted by inline metadata calls to the host it was measuring. Only isolated passes and same-moment price comparisons are reported.<br>
+    Superseded an earlier page that compared only Jupiter's five hosts; this one adds Raptor, DFlow and swap.io, and corrects the interpretation given in it: the ~200 ms is simulation, not transaction construction.<br>
+    No code was changed by this analysis. Handoff: <code>SPEC-swap-provider-routing-v1.md</code>
+  </footer>
+
+</div>
+</body>
+</html>

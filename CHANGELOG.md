@@ -8,6 +8,46 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — token→token swaps failed on a one-hop ceiling (`d5d214a`)
+
+At `RAPTOR_MAX_HOPS=1` a token→token quote did not quote badly, it **failed**:
+
+```
+500 {"error":"Failed to get quote: No direct route found and maxHops=1"}
+```
+
+Measured live: `maxHops=2` and `3` return `200` for the same pair, and a route through SOL / USDC / USDT
+returns `200` at `1`. **No UI surface passed `maxHops`** (`grep maxHops src/components src/hooks` → 0
+matches), so every quote silently took the 1-hop default — which is exactly why SOL↔token worked and
+token↔token did not.
+
+It was not a cosmetic error. Raptor `500` → the surface escalated to the Jupiter picker → those
+escalations spent the **0.5 rps** keyed budget → the *prepare* was rate limited too → it fell back to a
+Lite lane that is per-IP banned on this host. One wrong hop count, a 429 cascade.
+
+One global value cannot serve both route kinds, so `src/utils/raptor-hops.ts` resolves it **per pair**:
+`RAPTOR_MAX_HOPS` (`1`) when either side is SOL / USDC / USDT, `RAPTOR_TOKEN_TOKEN_HOPS` (`3`) when
+neither is. All three Raptor call sites — the direct quote, the proxied quote and the swap build — go
+through it, so a caller that omits `maxHops` can no longer pick wrong. Setting
+`RAPTOR_TOKEN_TOKEN_HOPS=1` restores the old behaviour exactly. Verified on prod: DEW→BPX `500 → 200`,
+DEW→SOL unchanged at `200`.
+
+### Added — one Solana quote engine, and the sell surface derives from it (`ff09c16`)
+
+Every trade surface rolled its own quote fetch, cache and timer: no shared hook existed
+(`useQuote`/`QuoteProvider`: 0 matches), the same sell estimate was fetched by three components, and six
+refresh policies covered one concept. Worse, a *display* number drew the scarce Jupiter trade lane —
+`BulkTokenBuyer`'s prefetch is a taker-scoped prepare on the **0.5 rps** bucket, and its `outAmount` is
+what the UI shows.
+
+`src/utils/quote-engine.ts` makes **`purpose`** first-class. `estimate` asks Raptor first (ungated) and
+escalates to the picker only when Raptor errs or its impact fails the gate — the guardrail the sell
+surface already documented, lifted so buy, signals and PnL inherit it. `execute` is `/order?taker=` and
+is **never cached**. Built on the installed react-query rather than a fourth cache beside the 4 s quote
+cache and the 8 s prepared cache; freshness gates the fetch, so a re-edit inside the TTL costs zero
+requests. `BulkTokenSeller` adopts it (its local Raptor client is gone). Buyer, signals and PnL are
+specced (`SPEC-quote-engine-v1.md`) but open — the buyer renders a raw, unformatted `outAmount`.
+
 ### Added — the 1m volume backbone actually fills now (`metrics_copier`)
 
 `token_ohlc_bars.volume` is NULL on **875,535/875,535** rows, which left the rug scorer's 30-point volume
@@ -242,13 +282,13 @@ prepares, nothing signed or sent):
 The estimate fanned out one **background-lane** quote per selected token; that lane is capped at
 `capacity - reserve` and starved by in-process callers (the sims and price lookups run inside the app,
 so they never appear in the nginx logs), and a single token's quote waited up to 29s. The trade lane's
-prepares then paid one 2s refill each past the reserve of 2. Raptor — the venue this path executes on —
-answered all five in 0.65s.
+prepares then paid one 2s refill each past the reserve of 2. Raptor — the *display* source for this path,
+not the executor; the desk build is Jupiter — answered all five in 0.65s.
 
-- The seller's estimate now asks **Raptor first** (ungated, and the venue `prepareSwapTransaction`
-  builds with `RAPTOR_DEV_FEE_ACCOUNT`), escalating to the Jupiter picker **only when Raptor is
-  unavailable or its own impact fails the gate** — the guardrail that keeps the 38%-impact single-hop
-  route out of the estimate at `RAPTOR_MAX_HOPS=1`.
+- The seller's estimate now asks **Raptor first** (ungated), escalating to the Jupiter picker **only when
+  Raptor is unavailable or its own impact fails the gate** — the guardrail that keeps a 38%-impact
+  single-hop route out of the estimate. *Updated 2026-10-01:* that fetch now goes through
+  `src/utils/quote-engine.ts` with `purpose: 'estimate'`, and Raptor's hops are resolved per pair.
 - `JUPITER_BURST` default 4 → **8**, the measured tolerance ("~6 rps sequential — 8 ok, then 429"), so a
   bulk batch of prepares fits one burst instead of dribbling out at 2s per call.
 - The token→token sell is covered and unchanged: `sellOutputMint` resolves the custom output with its
@@ -529,9 +569,11 @@ So the estimate was 2.46 SOL (38%) low *and* unexecutable — `SWAP_QUOTE_MAX_IM
   that already reports percent, inflating "Avg Price Impact" 100x and making any gate check
   unreliable. Normalised once through `impactToAbsPct` instead.
 - Deleted the bypassed provider helpers (~72 lines) and the now-dead `quotesRef`.
-- `RAPTOR_MAX_HOPS` stays at its documented `1`: the conservative single-hop default is right for
-  thin tokens, and the fix belongs in route selection, not the hop ceiling (verified live — thin
-  tokens route single-pool either way).
+- `RAPTOR_MAX_HOPS` stays at `1` for a route touching SOL / USDC / USDT. **Corrected 2026-10-01:** the
+  claim originally written here — "the fix belongs in route selection, not the hop ceiling" — was wrong
+  for token→token. At `1` such a pair does not route single-pool, it returns
+  `500 "No direct route found and maxHops=1"`, and that failure spent the Jupiter budget. Hops are now
+  resolved per pair (`src/utils/raptor-hops.ts` — see the entry at the top of this section).
 
 ### Fixed — no hardcoded SOL price anywhere (live price only)
 

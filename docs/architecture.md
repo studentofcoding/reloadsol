@@ -302,7 +302,7 @@ Default `npm run docker:deploy` uses `--auto` from git diff.
 
 | Service | Used for |
 |---------|----------|
-| **Solana Tracker Raptor** | Arbitrage swaps (`maxHops`) and status polling for Raptor-built txs |
+| **Solana Tracker Raptor** | Arbitrage swaps (`maxHops` set) + the shared quote engine's `estimate` lane, and status polling for Raptor-built txs. Hops are per pair (`src/utils/raptor-hops.ts`) |
 | **Jupiter Swap V2 / Jupiter Lite** | Desk (directional) quote + prepare everywhere; Lite only when V2 fails |
 | **Shyft all_tokens** | Wallet token list (cached; Jupiter Portfolio fallback) |
 | **Shyft send_many_txns** | Batch broadcast of already-signed Solana txs |
