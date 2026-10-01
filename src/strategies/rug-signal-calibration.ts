@@ -117,6 +117,8 @@ type HourRow = {
   h_min: number[] | null
   l_min: number[] | null
   c_min: number[] | null
+  /** Written by the same sweep from the same `meme_quote_info` call the live path uses. */
+  liquidity_close: number | null
 }
 
 function percentile(values: number[], p: number): number | null {
@@ -157,6 +159,20 @@ function barsUpTo(rows: HourRow[], untilMs: number) {
     }
   }
   return ohlcvMinutesToRugBars(minutes.sort((a, b) => a.t - b.t))
+}
+
+/** The most recent recorded liquidity at or before `untilMs` — the value the sweep had in hand. */
+function liquidityAsOf(rows: HourRow[], untilMs: number): number | null {
+  let found: number | null = null
+  for (const row of rows) {
+    const hourMs = Date.parse(row.hour_bucket)
+    if (!Number.isFinite(hourMs)) continue
+    if (hourMs > untilMs) break
+    if (row.liquidity_close != null && Number.isFinite(row.liquidity_close)) {
+      found = row.liquidity_close
+    }
+  }
+  return found
 }
 
 /**
@@ -206,7 +222,7 @@ export async function replayRugSignal(params: {
   // One query for every mint's hours, then group in memory — not a query per row.
   const mints = [...new Set(points.map((p) => p.token_address))]
   const { rows: hours } = await query<HourRow>(
-    `SELECT token_address, hour_bucket::text, vol_min, o_min, h_min, l_min, c_min
+    `SELECT token_address, hour_bucket::text, vol_min, o_min, h_min, l_min, c_min, liquidity_close
        FROM token_metrics_history
       WHERE token_address = ANY($1::text[])
         AND hour_bucket > NOW() - make_interval(days => $2::int)
@@ -237,10 +253,21 @@ export async function replayRugSignal(params: {
   for (const point of points) {
     const rows = byMint.get(point.token_address)
     if (!rows) continue
-    const bars = barsUpTo(rows, Date.parse(point.created_at))
+    const atMs = Date.parse(point.created_at)
+    const bars = barsUpTo(rows, atMs)
     if (bars.length === 0) continue
 
-    const result = evaluateRugSignalFrom1m({ bars1m: bars }, thresholds)
+    // Give the scorer the same three inputs the sweep gives it: the bars, the market cap at the
+    // evaluation time (the last observed candle close — one source, one job), and the liquidity that
+    // same sweep recorded. Omitting these silently zeroed the liquidity component and made this
+    // replay disagree with the very log it exists to explain.
+    const mcap = bars[bars.length - 1]?.c ?? null
+    const liquidityUsd = liquidityAsOf(rows, atMs)
+
+    const result = evaluateRugSignalFrom1m(
+      { bars1m: bars, mcap, liquidityUsd, ageHours: null },
+      thresholds,
+    )
 
     if (!scoringTouched && point.breakdown) {
       crossCheckChecked++
