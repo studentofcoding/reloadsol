@@ -1,4 +1,5 @@
 import { TOKENS } from "@/utils/solana";
+import { resolveRaptorHops } from "@/utils/raptor-hops";
 import {
   BUYBULK_PLATFORM_FEE_BPS,
   BUYBULK_SOL_FEE_ACCOUNT,
@@ -17,12 +18,21 @@ export const RAPTOR_FETCH_TIMEOUT_MS = 20_000;
 export const RAPTOR_DEV_FEE_BPS = BUYBULK_PLATFORM_FEE_BPS;
 export const RAPTOR_DEV_FEE_ACCOUNT = BUYBULK_SOL_FEE_ACCOUNT;
 
-/** Direct/single-hop only — avoids multi-hop route failures on thin pump tokens. */
+/** Direct/single-hop only — correct for a leg through SOL/USDC/USDT, which has a direct pool. */
 export const RAPTOR_DEFAULT_MAX_HOPS = 1;
 
 /** Arb-only default — never applied to directional bots. */
 export const RAPTOR_DEFAULT_MAX_HOPS_ARBITRAGE = 3;
 
+/**
+ * The global hop ceiling from env.
+ *
+ * **Do not call this to build a quote.** A single global value cannot be right for both route kinds:
+ * at `1` a token→token pair has no direct pool and Raptor answers
+ * `500 "No direct route found and maxHops=1"`, which then escalated to the Jupiter picker and spent the
+ * 0.5 rps execution budget. Use `resolveRaptorHops(inputMint, outputMint)` from `@/utils/raptor-hops`,
+ * which keeps this value for a verified-mint leg and widens it for token→token.
+ */
 export function getRaptorMaxHops(): number {
   const raw = process.env.RAPTOR_MAX_HOPS?.trim();
   if (!raw) return RAPTOR_DEFAULT_MAX_HOPS;
@@ -174,7 +184,7 @@ export function buildRaptorQuoteAndSwapBody(
     slippageBps: params.slippageBps,
     wrapUnwrapSol: true,
     txVersion: "V0",
-    maxHops: params.maxHops ?? getRaptorMaxHops(),
+    maxHops: params.maxHops ?? resolveRaptorHops(params.inputMint, params.outputMint),
     priorityFee: priority.priorityFee,
     maxPriorityFee: priority.maxPriorityFee,
     // Canonical buy_bulk fee — ignore caller values so swaps cannot bypass 25 bps.
@@ -254,7 +264,7 @@ export async function fetchRaptorQuoteDirect(
     outputMint,
     amount,
     slippageBps: String(slippageBps),
-    maxHops: String(maxHops ?? getRaptorMaxHops()),
+    maxHops: String(resolveRaptorHops(inputMint, outputMint, { requested: maxHops ?? null })),
   });
   return raptorFetch<RaptorQuoteResponse>(`/quote?${params.toString()}`);
 }
@@ -320,7 +330,7 @@ export async function fetchRaptorQuote(
     outputMint,
     amount,
     slippageBps: String(slippageBps),
-    maxHops: String(maxHops ?? getRaptorMaxHops()),
+    maxHops: String(resolveRaptorHops(inputMint, outputMint, { requested: maxHops ?? null })),
   });
   const response = await fetch(`/api/solanatracker/quote?${query.toString()}`);
   if (!response.ok) {

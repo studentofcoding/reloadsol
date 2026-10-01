@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/utils/solanatracker-raptor', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/utils/solanatracker-raptor')>()
@@ -201,5 +201,42 @@ describe('execute', () => {
       QuoteEngineError,
     )
     expect(prepareSwapTransaction).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * Prod 2026-10-01: at maxHops=1 a token→token Raptor quote returns
+ * `500 "No direct route found and maxHops=1"`. That failure used to escalate straight to the Jupiter
+ * picker and spend the 0.5 rps execution budget. The engine must therefore ask Raptor correctly the
+ * **first** time — 3 hops for token→token, 1 for a leg touching SOL/USDC/USDT.
+ */
+describe('Raptor hop policy at the call site', () => {
+  const BPX = 'BPxxfRCXkUVhig4HS1Lh7kZqV6SPJhzfEk4x6fVBjPCy'
+  const before = process.env.RAPTOR_MAX_HOPS
+
+  beforeEach(() => {
+    process.env.RAPTOR_MAX_HOPS = '1'
+  })
+  afterAll(() => {
+    if (before === undefined) delete process.env.RAPTOR_MAX_HOPS
+    else process.env.RAPTOR_MAX_HOPS = before
+  })
+
+  it('asks a token→token pair at the wider ceiling on the first call', async () => {
+    vi.mocked(fetchRaptorQuoteDirect).mockResolvedValue(raptorQuote('4100000'))
+
+    const quote = await requestQuote({ ...estimate, inputMint: DEW, outputMint: BPX })
+
+    expect(quote.outAmount).toBe('4100000')
+    // exactly one call, at 3 hops — no wasted first attempt at 1
+    expect(vi.mocked(fetchRaptorQuoteDirect).mock.calls.map((c) => c[4])).toEqual([3])
+  })
+
+  it('asks a verified-mint route at 1 hop', async () => {
+    vi.mocked(fetchRaptorQuoteDirect).mockResolvedValue(raptorQuote('5000000'))
+
+    await requestQuote(estimate) // DEW→SOL
+
+    expect(vi.mocked(fetchRaptorQuoteDirect).mock.calls.map((c) => c[4])).toEqual([1])
   })
 })

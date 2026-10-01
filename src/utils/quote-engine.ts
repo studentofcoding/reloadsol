@@ -33,6 +33,7 @@ import {
   type RaptorQuoteResponse,
 } from '@/utils/solanatracker-raptor'
 import { prepareSwapTransaction, type PreparedSwap } from '@/utils/swap-executor'
+import { resolveRaptorHops } from '@/utils/raptor-hops'
 import { prefetchSlippageBps } from '@/utils/auto-slippage'
 import type { Connection } from '@solana/web3.js'
 
@@ -166,11 +167,18 @@ async function loadEstimate(req: SolanaQuoteRequest, slippageBps: number): Promi
   const direct = isDirect(req)
   const maxImpactPct = getSwapQuoteMaxImpactPct()
 
+  // Hop policy is per-pair: a token↔token leg has no direct pool, so asking Raptor at 1 hop fails with
+  // "No direct route found" — and that failure used to escalate straight to the Jupiter picker, spending
+  // the 0.5 rps execution budget on a question Raptor could answer. A route touching SOL/USDC/USDT keeps
+  // the single hop it was tuned for. Asking correctly the first time is the whole fix; a retry would only
+  // climb from the floor the resolver already applied.
+  const hops = resolveRaptorHops(req.inputMint, req.outputMint)
   const raptor = await settle(() =>
     direct
-      ? fetchRaptorQuoteDirect(req.inputMint, req.outputMint, String(req.amount), slippageBps)
-      : fetchRaptorQuote(req.inputMint, req.outputMint, String(req.amount), slippageBps),
+      ? fetchRaptorQuoteDirect(req.inputMint, req.outputMint, String(req.amount), slippageBps, hops)
+      : fetchRaptorQuote(req.inputMint, req.outputMint, String(req.amount), slippageBps, hops),
   )
+
   if (raptor?.amountOut) {
     const quote = quoteFromRaptor(raptor, req)
     if (passesImpactGate(quote.priceImpact, maxImpactPct)) return quote

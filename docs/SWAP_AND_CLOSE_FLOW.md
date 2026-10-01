@@ -37,10 +37,27 @@ does not fail Lite.
 **A display surface quotes the venue that will execute.** `BulkTokenSeller`'s estimate asks **Raptor
 first** — ungated, and the venue `prepareSwapTransaction` builds with `RAPTOR_DEV_FEE_ACCOUNT` — and
 escalates to the picker above **only when Raptor is unavailable or its own impact fails the gate**.
-That guardrail is load-bearing: at `RAPTOR_MAX_HOPS=1` a two-pool token quotes a single-hop,
-38%-impact route, 2.46 SOL below the executable route and above the gate — a sale the executor would
-refuse. `RAPTOR_MAX_HOPS` staying at `1` is deliberate; route selection, not the hop ceiling, is where
-a better price comes from.
+That guardrail is load-bearing: at `maxHops=1` a two-pool token quotes a single-hop, 38%-impact route,
+2.46 SOL below the executable route and above the gate — a sale the executor would refuse.
+
+**Measured on prod 2026-10-01, a single global hop value is the wrong shape.** At `maxHops=1` a
+**token→token** pair does not quote badly, it fails outright:
+
+```
+500 {"error":"Failed to get quote: No direct route found and maxHops=1"}
+```
+
+At `maxHops=2` and `3` the same pair quotes `200`. A route through SOL / USDC / USDT *does* have a
+direct pool and returns `200` at `1`. The failure was not cosmetic: Raptor 500 → the surface escalated
+to the Jupiter picker → those escalations spent the 0.5 rps keyed budget → the *prepare* was then rate
+limited too and fell back to a Lite lane that is per-IP banned on this host. One wrong hop count, a 429
+cascade.
+
+So the ceiling is resolved **per pair** in `src/utils/raptor-hops.ts`:
+`resolveRaptorHops(inputMint, outputMint)` returns `RAPTOR_MAX_HOPS` (1) when either side is a verified
+quote mint — SOL, USDC or USDT — and `RAPTOR_TOKEN_TOKEN_HOPS` (3) when neither is. Every Raptor quote
+and swap build goes through it, so a caller that omits `maxHops` can no longer pick the wrong value.
+Route selection is still where a better price comes from; the hop ceiling is now just correct per pair.
 
 **Cost of the estimate, measured.** Quoting the picker per selected token is what made **bulk** slow:
 5 tokens took **14.87s** wall (one token 14.87s) against **0.69s** on Raptor, because each picker call
