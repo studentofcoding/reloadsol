@@ -41,6 +41,34 @@ Three things follow, and they set the whole standard:
    against three different entry prices (real −69.0 / −64.6 / −5.6), and their win rates are
    55.0 / 54.9 / 55.2%. They share one input, so they are one observation counted three times.
 
+### What it does to the register (re-derived on price-validated PnL)
+
+Re-run per strategy on the same retention-bounded input — recorded and real on **identical** rows:
+
+| strategy | n | rec avg | **real avg** | rec win | **real win** | **real median** |
+|---|---|---|---|---|---|---|
+| `search_mcap…tp200` | 173 | +98.8 | +27.8 | 55.5 | **27.2** | **−66.0** |
+| `search_mcap…tp300` | 167 | +111.1 | +26.6 | 58.7 | **26.3** | **−75.4** |
+| `search_mcap…tp150` | 184 | +102.8 | +16.8 | 55.4 | **25.5** | **−71.9** |
+| **`mcap_enter_at_80`** | 101 | +8.3 | **+16.6** | 36.6 | **33.7** | **−14.3** |
+| `mcap_enter_first_seen` | 69 | +71.0 | **−0.8** | 49.3 | 23.2 | −67.2 |
+| `gmgn_kol_momentum` | 18 | −38.0 | −4.2 | 5.6 | 22.2 | −42.3 |
+| `social_only_fomo_gt7` | 9 | −31.3 | −28.0 | 22.2 | 22.2 | −38.0 |
+| `gmgn_sm_kol_combined` | 22 | −52.3 | −49.3 | 9.1 | 4.5 | −58.5 |
+
+**The register's load-bearing claim is falsified by this.** It argued "read the median, never the mean — the
+mcap family is the only one with a positive median, so it is real." Price-validated, **every one of them has a
+deeply negative median** (−66 to −75 for the TP trio). The positive medians were the stale valuation. Win
+rates fall **55–58% → 25–27%**.
+
+So the family's +16.8 to +27.8 average is **entirely right tail** — a typical trade loses ~70%. The tail is
+real (`take_profit_200` = +277.9% real on 161 trades), so this is genuine positive-EV-by-tail, not a phantom.
+But the median argument was never true, and it strengthens rather than weakens the payoff-ratio case (P4).
+
+Two ranking changes follow: **`mcap_enter_at_80` is the most robust strategy on the book** (best real median by
+far, best win rate) and the register listed it as marginal; **`mcap_enter_first_seen` was a phantom**
+(+71.0 recorded → −0.8 real). And the gap to the "losers" narrows from ~133pp of recorded average to ~49pp.
+
 ### The mechanism
 
 One field does two jobs, and it is a cache:
@@ -68,43 +96,99 @@ Every strategy, paper or live, satisfies all seven. Nothing else evaluates an ex
 
 | # | Rule |
 |---|---|
-| **S1** | **One valuation.** A position's PnL is computed from one live price series (entry and exit from the *same* series). No cache, no tracker field, is ever used as a *price*. |
+| **S1** | **One valuation.** An exit is evaluated against a **live** reference value — `getOpenPositionPrices()` (batched, GMGN → Jupiter/DexScreener) for a `price` basis, the tracker's mcap for an `mcap` basis — and the recorded PnL is computed from that value against the **reference value stamped at open** (S8). **No cache is ever used as a price, and no runtime path is added to get one: the batched price call already exists.** |
 | **S2** | **One decision.** A single `evaluateExit(position, { priceUsd, mcap }, now)` is the only exit evaluator. It returns `{ close, reason, pnlPct, basisUsed }` — reason from a closed set (`stop_loss`, `take_profit`, `max_hold`, `max_age`, `label_rugged`, `hold`, `stale`). |
 | **S3** | **Basis is explicit data, not the route.** Each strategy declares what its SL/TP are *expressed in* — `price` or `mcap`. The evaluator branches on that field, never on which route called it. (Today: `getMcapSimCloseReason` is mcap-based, `shouldClosePriceSimPosition` is price-based, and which one runs depends on the sim-track.) |
 | **S4** | **Triggers read live, never cached.** A threshold is compared against the S1 value. A staleness older than `EXIT_MAX_INPUT_AGE_SEC` yields `reason: 'stale'` — never a silent `hold`, and never a valuation from the stale value. Fail-closed on risk. |
 | **S5** | **Backstops are backstops.** `max_age` / `max_hold` are last resorts. Their **count is a health metric** with a threshold that alerts, because it measures how often the primary exit failed to fire. Last resort means ~0, not 9% of closes. |
-| **S6** | **One writer per row.** `sl_tp_positions` is a *mirror* for paper positions: written and closed by the sim that owns the position. `sltp_monitor` owns live rows only and **skips `is_simulation = true`**. No two evaluators write the same row. |
+| **S6** | **One writer per row — the worker.** `sltp_monitor` evaluates and closes **every** row, paper and live (superseding the earlier "skips `is_simulation`" form of this rule, which S9 replaced). A paper row is still *written* by the strategy at open — that is what registers it — but it is *closed* by exactly one writer: the worker, through the sim executor. No other code path may close or finish a row. |
 | **S7** | **Coverage is asserted.** A registry (or a test enumerating the sim-track routes) asserts that every strategy's open path reaches S2. The whole point of this SPEC is that "reaches one consumer" must be impossible to ship again. |
+| **S8** | **Every open carries its own exit contract.** At the moment a position opens it stamps the three things the exit needs, so no later step ever guesses or looks one up: **(a) the reference value** the thresholds are measured against, **(b) the basis** (`price` \| `mcap`) that reference value is in, **(c) the thresholds** (SL, TP, and the backstop) as they apply to *this* trade — the effective ones, not the strategy default. A position without a complete contract is uncloseable by policy, and the open fails loudly rather than producing one. |
+| **S9** | **One worker owns every exit.** `sltp_monitor` evaluates and executes for **all** strategies, paper and live, reading each position's S8 contract. It runs on its own clock (cheap, batched, bounded by open positions), decoupled from the 900s entry scans. |
 
-### Live later, without a second implementation
+### The executor: the SL/TP worker owns every exit
+
+Strategies decide **entries** and declare their exit contract (S8). The worker decides and performs every
+**exit** (S9). One decision function, two executors — and the executors differ only in what they write:
 
 ```
-decision = evaluateExit(…)
+// sl-tp-tracker.ts — the worker, per open position
+const { referenceValue, basis, sl, tp, backstop } = position   // S8, stamped at open
+const live = readLive(referenceValue.kind)                     // price series | tracker mcap, always live
+const decision = evaluateExit({ referenceValue, live, basis, sl, tp, backstop, now })
 if (!decision.close) return
-if (isSimulatedPosition(position)) recordSimClose(decision)   // paper
-else                              executeSellOrder(decision)  // live
+
+if (isSimulatedPosition(position)) recordSimClose(decision)    // paper: records + closes the mirror
+else                              executeSellOrder(decision)   // live: real swap — unchanged
 ```
 
-`isSimulatedPosition` and `executeSellOrder`'s hardcoded `isSimulated: false`
-(`sl-tp-tracker.ts:424-434`) stay exactly as they are. That invariant is why a paper stop has never spent
-real money, and nothing here weakens it.
+**Why the worker is the right executor, and not a new one:**
+
+- It **already exists and already works** — 211 real stop-loss closes, and the stored stop is correct
+  (`0.0000030520 / 0.0000043600 = 0.69999` → a real −30%).
+- It **already holds each position's thresholds** — `stop_loss_percentage`, `take_profit_percentage`,
+  `tp1/2/3_*`, `position_type`, `strategy_id`, `is_simulation` are all columns on `sl_tp_positions` today.
+- It **already reads prices in one batched call** (`getOpenPositionPrices`), so it is cheap — bounded by open
+  positions, not candidates, and free of the GMGN discovery traffic that forced the entry scans to 900s.
+- It **already runs at 60s** (`SLTP_MONITOR_INTERVAL`), which is the right clock for an exit and is already
+  decoupled from the entry scan.
+
+**The four gaps it must close, each a specific change:**
+
+| # | Gap | Change |
+|---|---|---|
+| G1 | It **cannot close a paper position** — `isSimulatedPosition` exists so a paper stop never reaches `executeSellOrder` (which hardcodes `isSimulated: false`) | add the second executor: `recordSimClose()` — writes the sim close (`trading_records` + `strategy_outcomes`) and finishes the mirror row. **Structurally isolated**; the sim path must not be able to reach the real swap, with its own test |
+| G2 | `stop_loss_percentage` is a **bare number with no unit** — price for most strategies, mcap growth for the mcap family | S8's `basis` on the row. This is already breaking it today: **`Finished: 211 (SL: 211, TP1: 0, TP2: 0, TP3: 0)`** — it has never fired a take-profit, because it compares a price against targets the mcap family expresses in mcap |
+| G3 | **Six strategies have no rows at all** — `mcap_enter_at_80`, `mcap_enter_first_seen`, `att_rh`, both gmgn, social | every open path registers (S7 asserts it). Today registration correlates with a *dashboard* feature, not risk — the three that register have the **worst** real median (−66 to −75), and the most robust (`mcap_enter_at_80`, −14.3) has none |
+| G4 | The mcap closer reads a **cached** `mcap_growth_percent` (stale 18–481 min) | S1/S4: live value, and `stale` rather than a hold when it cannot be read |
+
+**The one hard risk, stated plainly.** The worker is the **live** path, and this adds a branch that writes a
+paper close one step away from one that spends real money. `isSimulatedPosition` and
+`executeSellOrder`'s hardcoded `isSimulated: false` (`sl-tp-tracker.ts:424-434`) stay exactly as they are,
+the sim executor is a separate function, and the separation carries its own test. That invariant is why a
+paper stop has never spent real money; nothing here weakens it.
+
+### What S8 changes at the call site
+
+Every strategy's open becomes: work out the exit, then hand it over.
+
+```
+entryPrice = …                      // the price we just bought at
+basis      = exitConfig.basis       // 'price' | 'mcap', declared per strategy (S3)
+reference  = basis === 'mcap' ? { kind: 'mcap',  value: entryMcap } : { kind: 'price', value: entryPrice }
+thresholds = effectiveExit          // cl / brain adjusted for THIS trade, not the strategy default
+
+addSLTPPosition({ …position, referenceValue: reference, basis, thresholds })
+```
+
+Two consequences worth naming:
+
+- **The reference value is stamped, never re-derived.** Today the mcap family's entry mcap comes from the
+  tracker row at read time; if that row was already stale at open, the *whole trade's* exit math is off from
+  the first tick. Stamping it at open makes the contract self-contained — and a wrong reference becomes a bug
+  you can see in the row rather than one that surfaces 6 hours later as a phantom +21%.
+- **The thresholds are the *effective* ones.** `cl` and the brain adjust SL/TP per trade; the worker must
+  receive what the trade was actually sized and entered against. Using the strategy's *base* exit would
+  re-introduce a value the trade was never opened under — and with the mcap family's real median at −70%,
+  that difference is the whole result.
 
 ## Migration, by family
 
-| family | today | after |
+| family | today | after (S8 contract + S9 worker) |
 |---|---|---|
-| `search_mcap_*`, `mcap_enter_*` | `getMcapSimCloseReason` on the tracker's cached growth; also mirrored into `sl_tp_positions` and second-guessed by `sltp_monitor` | S2 with `basis: 'mcap'`; trigger **and** valuation from the live series; mirror closed by the sim |
-| `signals_*` | `shouldCloseSignalsClExit` (mcap-preferred, price fallback) | S2, `basis` declared once |
-| `gmgn_*`, `social_*` | `shouldClosePriceSimPosition`; no `sl_tp_positions` row at all | S2, `basis: 'price'`; paper has no mirror (nothing reads it) |
-| `att_rh` | the RH sim's own `buySim`/exit ladder; the tracker path explicitly excludes sims | S2, `basis` per its exit config |
-| live | `runSLTPMonitorAndSummarize` + `executeSellOrder` | unchanged in this pass; wired to S2 in a later, separate change with its own soak |
+| `search_mcap_*` (3) | registers; closer is `getMcapSimCloseReason` on the **cached** growth; also second-guessed by `sltp_monitor` | opens stamp `basis: 'mcap'`; the worker evaluates live and closes |
+| `mcap_enter_at_80`, `mcap_enter_first_seen` | **no rows at all** — same domain as the three above, no exit registration | register at open like the rest; the worker closes |
+| `signals_*` | `shouldCloseSignalsClExit` (mcap-preferred, price fallback); no rows (none open in 3d) | `basis` declared once; register at open; the worker closes |
+| `gmgn_*`, `social_*` | `shouldClosePriceSimPosition`; **no rows** | `basis: 'price'`; register at open; the worker closes |
+| `att_rh` | the RH sim's own `buySim`/exit ladder; `addSLTPPosition` gated `!is_simulated` | register like everything else; the worker closes |
+| live | `runSLTPMonitorAndSummarize` + `executeSellOrder` | **same worker, same executor** — only its decision becomes the shared `evaluateExit`. No new live path. |
 
 ## Env
 
 | Key | Default | Meaning |
 |---|---|---|
 | `EXIT_MAX_INPUT_AGE_SEC` | `180` | Older than this and the decision is `stale`, never a hold-from-cache. |
-| `EXIT_CHECK_INTERVAL` | `30` | The exit pass interval. Cheap — bounded by open positions (~150), no GMGN/Jupiter search, so it is **not** subject to the entry scan's 900s budget. |
+| `SLTP_MONITOR_INTERVAL` | `60` | The exit clock — **one worker, one interval.** (Supersedes the draft `EXIT_CHECK_INTERVAL`; two clocks for one worker is the same drift this SPEC removes.) Already set to 60 on prod; cheap, batched, bounded by open positions, no GMGN discovery — so it is not subject to the entry scan's 900s budget. |
 | `EXIT_BACKSTOP_ALERT_PCT` | `10` | Alert when backstop closes exceed this share of closes in a window. |
 | `EXIT_BASIS_<strategy>` | per strategy | `price` \| `mcap`. Declared, not inferred from the route. |
 
@@ -112,8 +196,9 @@ real money, and nothing here weakens it.
 
 - **Not** a change to any stop or take-profit **level**. The mechanism is the confounder; move one at a time.
 - **Not** a change to the entry scan cadence. That stays at 900s for the GMGN budget — the whole point of S1's
-  price source and `EXIT_CHECK_INTERVAL` is that the exit is cheap enough not to need the entry scan's clock.
-- **Not** a live-execution change. Live keeps its current path until the paper path has soaked.
+  price source and the worker's own 60s clock is that the exit is cheap enough not to need the entry scan's.
+- **Not** a change to *what* live execution does. The worker already owns live closes and keeps
+  `executeSellOrder`; step 5 only swaps its decision function for the shared one, after the paper path soaks.
 - **Not** a re-derivation of the strategy register. That is the *first consumer* of this SPEC, not part of it.
 - **Not** the volume band or the rug detector; those are separate blockers.
 
@@ -122,9 +207,12 @@ real money, and nothing here weakens it.
 | Risk | Mitigation |
 |---|---|
 | A live valuation *raises* losses (the recorded numbers get worse, not better) | that is the point — the record currently overstates by 60pp on the phantom cohort. Report both bases during the transition so the change is visible, not silent. |
-| The exit pass at 30s adds DB load | bounded by open positions, one batched price read, no discovery. Measure before/after on the cron container. |
+| The worker at 60s over ~150 paper rows adds DB load | bounded by open positions, one batched price read, no discovery. Measure before/after on the cron container; it already runs at 60s today. |
 | Re-deriving the register on real PnL changes the ranking | expected; land S1–S4 first, then re-run the register as a follow-up with the corrected input. |
-| Removing `sltp_monitor` from sims breaks the dashboard's open list | S6 keeps the mirror, closed by the sim; verify `loadOpenPaperPositions` still returns rows before shipping. |
+| **The worker is the live path.** Adding a sim executor puts a paper write one branch away from a real swap | `recordSimClose` is a **separate function**; `isSimulatedPosition` and `executeSellOrder`'s hardcoded `isSimulated: false` are untouched; the separation carries its own test (gate 6) |
+| A schema change to `sl_tp_positions` on the live table | the S8 contract is **additive and nullable**; existing rows and the live stop path are unaffected until an open stamps one |
+| Pointing the live decision at `evaluateExit` changes live behaviour | that is step 5 alone, after the paper path has soaked, with the invariant test green throughout |
+| The worker now closes ~150 paper rows it previously only recorded — a behaviour change to every arm of the paper desk | expected, and the point. Report both bases during the transition so the shift is visible, not silent. |
 | A live price is occasionally unavailable for a microcap | S4 makes it `stale`, which is visible and counted — not a silent hold. |
 
 ## Verification gate
@@ -135,8 +223,15 @@ real money, and nothing here weakens it.
 2. **The win rate is reported on both bases** in every strategy view until they converge — a `pnl_pct` that
    has not been price-validated must be labelled as such.
 3. **Backstop share falls** from the current `max_age` share of closes toward `EXIT_BACKSTOP_ALERT_PCT`.
-4. **Coverage test green** (S7): every sim-track's open path reaches S2, asserted, not documented.
-5. `tsc` · full `vitest` · `eslint` · build · the shrink-wrap deploy chain · a live smoke on the paper
+4. **Coverage test green** (S7): every sim-track's open path reaches S2, asserted, not documented. Today the
+   answer is **3 of 9** — `mcap_enter_at_80`, `mcap_enter_first_seen`, `att_rh`, both gmgn and social have
+   zero `sl_tp_positions` rows. The gate is 9 of 9.
+5. **The worker's take-profit fires.** It has never done so: `Finished: 211 (SL: 211, TP1: 0, TP2: 0, TP3: 0)`.
+   After the `basis` lands, a `mcap` position whose growth clears its TP must close as `take_profit` — if TP is
+   still 0, the basis is still wrong.
+6. **The isolation test.** A test asserts a paper position cannot reach `executeSellOrder` — the one property
+   that has kept a paper stop from spending real money. It must fail loudly if the branch is ever crossed.
+7. `tsc` · full `vitest` · `eslint` · build · the shrink-wrap deploy chain · a live smoke on the paper
    dashboard.
 
 ## Open items
