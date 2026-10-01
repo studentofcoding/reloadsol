@@ -28,6 +28,12 @@ import {
 } from './sim-wallets'
 import type { StrategyChain, StrategyDomain, StrategyOutcomeRow } from './types'
 
+/**
+ * How far back the RH trending sim's trading_records are hydrated. That wallet carries 155k
+ * rows / 169 MB, so an unbounded fetch costs 19-78s and holds a pool client for the duration.
+ */
+const RH_TRENDING_RECORD_WINDOW_DAYS = 14
+
 export type AlgoPosition = {
   id: string
   strategyId: string
@@ -280,10 +286,18 @@ export async function getAlgoPositions(params?: {
     fetchTradingRecordsForWallet(simWalletForChain(SIGNALS_SIM_WALLET, chain)),
     fetchTradingRecordsForWallet(simWalletForChain(GMGN_SIM_WALLET, chain)),
     isSol ? fetchTradingRecordsForWallet(SOCIAL_SIM_WALLET) : [],
+    // `trending-bot-sim-rh` holds 155k rows / 169 MB and grows forever, while only ~30k fall
+    // inside 14 days. Hydrating it unbounded measured 19-78s and parks a pool client for that
+    // whole time; alongside the five other wallets fetched here in parallel it occupies most of
+    // the 10-client pool, and every other query in the app then waits 5s and times out
+    // ("timeout exceeded when trying to connect"). 14 days is the window
+    // `fetchTradingRecordsForWallet` documents as safe — the oldest open att_rh position was 10
+    // days, so 7 would have been unsafe.
     isSol
       ? []
       : fetchTradingRecordsForWallet(
           simWalletForChain(TRENDING_BOT_SIM_WALLET, chain),
+          { sinceDays: RH_TRENDING_RECORD_WINDOW_DAYS },
         ),
     isSol ? getPositions() : [],
   ])
