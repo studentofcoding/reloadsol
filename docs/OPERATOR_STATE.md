@@ -23,8 +23,14 @@ verdict may act. Browsable version: [`diagrams/17-rug-progress.html`](./diagrams
 | Control cohort | the metrics sweep scores the **whole watch set**, which is the only path that records non-collapsing tokens | `scored: 150 / shadow_rows: 150` in the sweep summary |
 | Harness | `scripts/rug-signal-validate.mjs` + runner: base rate, precision/recall at 80 with Wilson intervals, per-day agreement, and an explicit **`inconclusive`** below the sample floor | ran on prod, read-only, and correctly printed `inconclusive` with the reason |
 
-**Live right now:** armed in **shadow** in prod (`RUG_SIGNAL_ENABLED=1`, `RUG_SIGNAL_MODE=shadow`); sweeps firing
-every 15 min; **0 trips** so far, max score **43/80**, and the volume band contributed on **21 of 150** mints.
+**Live right now:** armed in **shadow** in prod (`RUG_SIGNAL_ENABLED=1`, `RUG_SIGNAL_MODE=shadow`). The sweep
+covers the **full 300-mint** watch set at **1 rps** — 351 s, `blocks: 0`, 300/300 fetched — after the liquidity
+pass pushed 2 rps into parking (3 of 13 sweeps parked, avg 114/150 fetched). **2,639 shadow rows / 1,041 judged /
+0 trips**, max score **65 / 80**, band firing on **294 of 1,041** judged rows.
+
+> **Coupling to remember:** sweep size and the cron timeout move together. At 1 rps, 300 mints take ~351 s, so
+> `METRICS_COPY_TIMEOUT_SEC` must stay above that (480 now). A sweep longer than the timeout is recorded as a
+> failure *while succeeding* — the exact false negative fixed on 2026-10-01.
 
 **What's next**
 
@@ -44,6 +50,12 @@ every 15 min; **0 trips** so far, max score **43/80**, and the volume band contr
    rising with flat volume). The larger finding is the **watch set's composition**: 42 % of the swept mints have
    almost no candle history at all, because "most recently seen" includes tokens whose only activity was a single
    mention or buy.
+
+   **Then confirmed by experiment, not just by the split.** Raising the sweep from 150 to 300 mints changes the
+   judged share by **nothing — 39 % before, 40 % after** — so the unjudgeable share is composition, not a coverage
+   cap. The one lever left there is a **deliberate semantic choice**: an absent minute *inside* a fetched window
+   could read as "0 traded", which would make thin-but-active tokens judgeable, instead of `NULL = unobserved`. That
+   is a change to the locked invariant, not a bug fix, and it stays open until decided.
 
    **That mattered for the validation, and is fixed.** Those rows were being recorded as `pass`, but a score of 0
    from four bars is not a measured negative — it is the absence of a measurement, and counting it as a negative
