@@ -59,7 +59,7 @@ import {
   warmResolvedPreparedSwap,
 } from "@/utils/swap-executor";
 import { impactToAbsPct, passesImpactGate } from "@/utils/swap-quote-pick";
-import { pickParallelSwapQuote } from "@/utils/swap-quote-parallel";
+import { requestQuote, QUOTE_ESTIMATE_REFRESH_MS_DEFAULT } from "@/utils/quote-engine";
 import {
   AUTO_SLIPPAGE_BPS,
   AUTO_SLIPPAGE_CAP_BPS,
@@ -376,7 +376,7 @@ export default function BulkTokenSeller({
   // Quote state (Raptor via /api/solanatracker/quote)
   const [autoQuote, setAutoQuote] = useState<boolean>(true);
   /** Inside the 30s quote validity so the estimate never blanks between refreshes. */
-  const AUTO_QUOTE_REFRESH_MS = 25_000;
+  const AUTO_QUOTE_REFRESH_MS = QUOTE_ESTIMATE_REFRESH_MS_DEFAULT;
   const [quotes, setQuotes] = useState<Record<string, QuoteData>>({});
   const [isGettingQuotes, setIsGettingQuotes] = useState<boolean>(false);
   const [lastQuoteTime, setLastQuoteTime] = useState<number>(0);
@@ -452,50 +452,14 @@ export default function BulkTokenSeller({
 
   // Quote fetching functions for different providers
   /**
-   * One token -> the same candidate the executor would trade: `pickParallelSwapQuote` races Raptor,
-   * Jupiter Lite and Jupiter Swap, drops anything above the impact gate, and takes the best output
-   * (see docs/SWAP_AND_CLOSE_FLOW.md). Quoting Raptor alone here is what made the estimate disagree
-   * with the achievable route: for a two-pool token it returned a single-hop, 38%-impact route.
+   * One token -> the executor's own prepared swap when it is already warm, otherwise the shared quote
+   * engine's estimate (Raptor first, Jupiter picker on escalation, impact-gated either way).
+   *
+   * This used to race the picker here and re-implement the Raptor client locally, which is why the
+   * estimate could disagree with the achievable route — for a two-pool token Raptor alone returned a
+   * single-hop, 38%-impact route. Both now live in `quote-engine`, so buy, signals and PnL get the
+   * same rule instead of each rediscovering it.
    */
-  /** Raptor (`/api/solanatracker/quote`) — the venue this sell path executes on. Ungated. */
-  const fetchRaptorQuote = useCallback(
-    async (
-      inputMint: string,
-      amount: string,
-      slippageBps: number,
-    ): Promise<QuoteData | null> => {
-      try {
-        const query = new URLSearchParams({
-          inputMint,
-          outputMint: sellOut.outputMint,
-          amount,
-          slippageBps: String(prefetchSlippageBps(slippageBps)),
-        });
-        const response = await fetch(`/api/solanatracker/quote?${query.toString()}`);
-        if (!response.ok) return null;
-        const data = (await response.json()) as {
-          amountOut?: string;
-          priceImpact?: number;
-          routePlan?: unknown;
-        };
-        if (!data.amountOut) return null;
-        return {
-          provider: "solanatracker",
-          inputMint,
-          outputMint: sellOut.outputMint,
-          amount,
-          outAmount: data.amountOut,
-          priceImpact: impactToAbsPct(data.priceImpact),
-          timestamp: Date.now(),
-          route: data.routePlan,
-        };
-      } catch {
-        return null;
-      }
-    },
-    [sellOut.outputMint, slippage],
-  );
-
   const fetchQuoteForToken = useCallback(
     async (token: TokenToSell): Promise<QuoteData | null> => {
       const amount = sellAmountRaw(token.sellAmount);
@@ -530,34 +494,35 @@ export default function BulkTokenSeller({
         }
       }
 
-      // The sell executes on Raptor (the prepared swap is built with RAPTOR_DEV_FEE_ACCOUNT), Raptor
-      // is not gated, and it answers a whole batch in well under a second where the Jupiter-backed
-      // picker took 3-29s per token on the background lane. So ask the venue that will execute first —
-      // but only keep its answer when its own impact passes the gate, because at RAPTOR_MAX_HOPS=1 a
-      // two-pool token quotes a single-hop route far above it, and that is the estimate a user must
-      // not be shown. Escalate to the picker when Raptor is unavailable or its impact is unacceptable.
-      const raptor = await fetchRaptorQuote(token.mintAddress, amount, slippage);
-      if (raptor && passesImpactGate(raptor.priceImpact)) return raptor;
-
-      const picked = await pickParallelSwapQuote({
-        inputMint: token.mintAddress,
-        outputMint: sellOut.outputMint,
-        amount,
-        slippageBps: prefetchSlippageBps(slippage),
-      });
-      if (!picked) return null;
-      return {
-        provider: picked.provider === "raptor" ? "solanatracker" : "jupiter",
-        inputMint: token.mintAddress,
-        outputMint: sellOut.outputMint,
-        amount,
-        outAmount: picked.outAmount,
-        priceImpact: picked.impactPct,
-        timestamp: Date.now(),
-        route: picked.quote?.routePlan,
-      };
+      // One source of truth. The engine asks the venue that will execute on this path first (Raptor —
+      // ungated, and it answers a whole batch in well under a second where the Jupiter-backed picker
+      // took 3-29s per token), keeps that answer only while its own impact passes the gate, and
+      // escalates to the picker otherwise. It also guarantees a display number never draws the Jupiter
+      // trade lane.
+      try {
+        const estimate = await requestQuote({
+          inputMint: token.mintAddress,
+          outputMint: sellOut.outputMint,
+          amount,
+          slippageBps: slippage,
+          purpose: "estimate",
+        });
+        return {
+          provider:
+            estimate.provider === "solanatracker" ? "solanatracker" : "jupiter",
+          inputMint: estimate.inputMint,
+          outputMint: estimate.outputMint,
+          amount,
+          outAmount: estimate.outAmount,
+          priceImpact: estimate.priceImpact,
+          timestamp: estimate.timestamp,
+          route: estimate.route,
+        };
+      } catch {
+        return null;
+      }
     },
-    [slippage, priorityFee, publicKey, sellOut.outputMint, fetchRaptorQuote],
+    [slippage, priorityFee, publicKey, sellOut.outputMint],
   );
 
   const fetchAllQuotes = useCallback(async () => {
