@@ -258,15 +258,6 @@ async function runSimTrack(request: NextRequest) {
       const scored = await scoreSignalsForStrategy(strategy, { chain })
       const scoredByMint = new Map(scored.map((s) => [s.token_address, s]))
 
-      // Batch once for cl price-PnL fallback when entry/live mcap missing.
-      const openPrices =
-        openPositions.length > 0
-          ? await getOpenPositionPrices(
-              openPositions.map((p) => p.mintAddress),
-              chain,
-            )
-          : ({} as Record<string, number>)
-
       for (const pos of openPositions) {
         await appendSimPositionMonitorSnapshot({
           records,

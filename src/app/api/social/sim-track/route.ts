@@ -296,58 +296,17 @@ async function runSimTrack(request: NextRequest) {
       const openMintSet = new Set(openPositions.map((p) => p.mintAddress))
       const closedMints = new Set<string>()
 
-      const mintsToPrice = openPositions.map((p) => p.mintAddress)
-      const prices =
-        mintsToPrice.length > 0
-          ? await getOpenPositionPrices(mintsToPrice, SOCIAL_CHAIN)
-          : ({} as Record<string, number>)
-
-      const pendingCloses: TrackingRecord[] = []
       for (const pos of openPositions) {
         await appendSimPositionMonitorSnapshot({
           records,
           strategyId: strategy.id,
           mintAddress: pos.mintAddress,
         })
-        const currentPrice = prices[pos.mintAddress] ?? null
-        const exit = pos.effectiveExit ?? strategy.config.exit
-        const moonbag = moonbagExitConfig()
-        const gainPct = priceGainPct(pos.entryPriceUsd, currentPrice)
-        const heldHours = pos.entryAt
-          ? (Date.now() - new Date(pos.entryAt).getTime()) / 3_600_000
-          : 0
-        const { close, reason } =
-          gainPct == null
-            ? { close: false, reason: 'hold' as const }
-            : decideMoonbagTrailingExit({
-                exit: { ...exit, maxHoldHours: moonbag.maxHoldHours },
-                gainPct,
-                peakGainPct: peakGainPctFromFeatures(
-                  pos.entryPriceUsd,
-                  pos.entryFeatures,
-                ),
-                heldHours,
-                armPct: moonbag.armPct,
-                trailPct: moonbag.trailPct,
-              })
-        if (close) {
-          await closeSimPosition({
-            strategyId: strategy.id,
-            mintAddress: pos.mintAddress,
-            symbol: pos.symbol,
-            entryAt: pos.entryAt,
-            entryFeatures: pos.entryFeatures,
-            closeReason: reason,
-            records,
-            currentPriceUsd: prices[pos.mintAddress],
-            collect: (r) => pendingCloses.push(r),
-          })
-          closed++
-          openMintSet.delete(pos.mintAddress)
-          closedMints.add(pos.mintAddress)
-        }
+        // The 60s SL/TP worker owns this position's exit (SPEC-strategy-exit-standard S9). The
+        // moonbag trailing decision used to run here — the last per-family closer. The snapshots
+        // above are KEPT: the peak-gain logic reads them, so deleting the loop would have removed
+        // monitoring along with closing. Nothing closes on this pass any more.
       }
-      if (pendingCloses.length > 0) await insertTradingRecords(pendingCloses)
 
       const rollups = await loadFomoBurstCandidates(strategy.config.entry, {
         chain: SOCIAL_CHAIN,

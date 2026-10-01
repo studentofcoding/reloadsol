@@ -227,13 +227,6 @@ async function runSimTrack(request: NextRequest) {
       const cooldownHours = strategy.config.discovery.cooldownHours ?? 24
       const recentMints = collectRecentMints(records, strategy.id, cooldownHours)
 
-      const mintsToPrice = openPositions.map((p) => p.mintAddress)
-      const prices =
-        mintsToPrice.length > 0
-          ? await getOpenPositionPrices(mintsToPrice, chain)
-          : ({} as Record<string, number>)
-
-      const pendingCloses: TrackingRecord[] = []
       for (const pos of openPositions) {
         await checkGmgnLiveBoostForOpenPosition({
           walletAddress: simWallet,
