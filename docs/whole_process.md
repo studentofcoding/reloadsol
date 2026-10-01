@@ -128,7 +128,7 @@ Wallet tokens: `useWalletTokens` → `GET /api/jupiter/portfolio` → `https://w
 | Route | Method | Purpose |
 |-------|--------|---------|
 | `/api/solanatracker/swap` | POST | Build swap tx (SOL → token) |
-| `/api/solanatracker/send` | POST | **Unused.** Raptor's `POST /send-transaction` answered 200 + a signature for txs that never landed, and `sendRaptorTransaction` has no caller (T13). Removal proposed, not done |
+| `/api/solanatracker/send` | POST | **Kept deliberately; unused today.** Raptor's `POST /send-transaction` answered 200 + a signature for txs that never landed, and `sendRaptorTransaction` has no caller (T13). The code stays because Raptor is retained — but whoever wires it must **verify on-chain first**, never trust the response |
 | `/api/solanatracker/transaction/[signature]` | GET | Poll swap status |
 | `/api/jupiter/portfolio` | GET | Wallet token list |
 | `/api/rpc` | POST | RPC fallback send/confirm |

@@ -116,8 +116,10 @@ Per [Solana Tracker Swap API](https://docs.solanatracker.io/guides/swap-api):
 2. **Sign** — wallet signs returned `swapTransaction` (base64 v0 tx)
 3. **Submit** — **our own RPC**, not Raptor's. `submitSignedSwap` tries Shyft, then falls back to
    `connection.sendTransaction` (`skipPreflight: true`, `maxRetries: 2`). Raptor's `POST /send-transaction`
-   is **not used**: it answered `200` **plus a signature** for transactions that never reached the chain
-   (0/3 then 0/4 reproduced), and `sendRaptorTransaction` has **no caller** — audited 2026-10-01 (T13)
+   is **kept in the tree but not used** (§3 of the routing SPEC, locked 2026-10-01): it answered `200`
+   **plus a signature** for transactions that never reached the chain (0/3 then 0/4 reproduced), and
+   `sendRaptorTransaction` has **no caller** — audited 2026-10-01 (T13). Wiring it up would mean verifying
+   on-chain, not reading the response
 4. **Confirm** — poll `/transaction/{signature}` until `confirmed` | `failed` | `expired`
 
 ### Shared helpers (`src/utils/swap-executor.ts`)
@@ -151,8 +153,9 @@ Per [Solana Tracker Swap API](https://docs.solanatracker.io/guides/swap-api):
     in `src/utils/raptor-hops.ts` — `RAPTOR_MAX_HOPS` for a route touching SOL/USDC/USDT,
     `RAPTOR_TOKEN_TOKEN_HOPS` otherwise; callers may override per request)
   - Swap: `POST /api/solanatracker/swap` → Raptor `POST /quote-and-swap`
-  - Send: **our RPC**, via `submitSignedSwap` (Shyft → RPC fallback). `/api/solanatracker/send` → Raptor
-    `POST /send-transaction` exists but **has no caller** — a 200 + signature from it was not a landing (T13)
+  - Send: **our RPC**, via `submitSignedSwap` (Shyft → RPC fallback). Raptor's `/api/solanatracker/send` →
+    `POST /send-transaction` is **kept but has no caller** — a 200 + signature from it was not a landing
+    (T13), so wiring it up means verifying on-chain, not reading the response
   - Status: `GET /api/solanatracker/transaction/[signature]` (Raptor-built txs)
   - Env: `RAPTOR_API_BASE` (optional). Platform fee is **always 25 bps (0.25%)**
     to the buy_bulk treasury (`feeAccount` / `feeBps` via `src/utils/buybulk-fee.ts`);

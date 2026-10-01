@@ -314,6 +314,23 @@ Default `npm run docker:deploy` uses `--auto` from git diff.
 | **Discord** | Bot alerts, cron operational logs |
 | **Telegram** | Radar ENTER lifecycle (photo + caption), optional DLMM alerts |
 
+### Locked swap architecture (2026-10-01)
+
+- **Execution — one lane:** keyed Jupiter `/order?taker=` → simulate → sign → `/execute` → verify. No
+  fan-out, no best-of: fanning the paying candidates out measured **+5.0 bps mean / 0 median** for **2.59×**
+  the wall time, so the ranker is handed one candidate by design.
+- **Estimate:** the shared quote engine at `purpose: 'estimate'` — **Raptor first** (ungated, a batch in
+  under a second), escalating to the Jupiter picker only on Raptor error or a failed impact gate. A
+  displayed number never draws the execution lane.
+- **Raptor is kept:** the estimate lane, the arb/`maxHops` path, **and** its send path
+  (`sendRaptorTransaction` + `/api/solanatracker/send`) stay in the tree. Kept ≠ trusted — `/send-transaction`
+  returned `200` *plus a signature* for transactions that never landed, so wiring it means verifying
+  on-chain, never reading the response.
+- **Lite is display-only**, never execution: a Lite tx has no `requestId`, so `/execute` cannot finish it,
+  and its limit is a **per-IP ban**, not a throttle an API key can raise.
+
+Full reasoning and every measurement: [SPEC-swap-provider-routing-v1.md](./specs/SPEC-swap-provider-routing-v1.md) §3.
+
 Env: see [`.env.docker.example`](../.env.docker.example) and README environment table.
 
 ---

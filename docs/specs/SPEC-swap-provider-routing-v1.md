@@ -221,7 +221,7 @@ Read from `src/utils/swap-executor.ts`, not inferred:
 | sign | wallet keypair / server signer | already correct |
 | execute | **already first** — `submitSignedSwap` calls `tryJupiterExecute` before Shyft/RPC (`:471`), gated on `prefersJupiterExecute` (`provider === "jupiter_swap" && requestId`) | **already correct.** An earlier claim in this workstream that we never call `/execute` was wrong, and is corrected here |
 | batch landing | `tryLandPreparedOnServer` lands a whole batch server-side, but only if **every** item `prefersJupiterExecute` | already there; degrades to per-item RPC if any item is Lite/Raptor-built |
-| Raptor send | prod sends Raptor-built txs **via RPC**, not `/send-transaction` (`:496-507`) | the phantom-send finding (§2.9) **does not affect prod today** — `sendRaptorTransaction` is not on the hot path. It is still a loaded gun for whoever wires it up |
+| Raptor send | prod sends Raptor-built txs **via RPC**, not `/send-transaction` (`:496-507`) | the phantom-send finding (§2.9) **does not affect prod today** — `sendRaptorTransaction` is not on the hot path. It is **kept by decision** (§3) and inert while nothing calls it; whoever wires it up must verify on-chain rather than trust the response |
 | confirm | `confirmSwapSignaturesBatch`; `checkViaRaptor` only when the tx was Raptor-built | already correct |
 
 **The honest diff is small.** The main path is already `/order → sign → /execute → confirm`. What is
@@ -284,17 +284,25 @@ path (latent, off the hot path — audited as **zero callers** under T13); and e
 
 ## 3. Locked decisions
 
+**Locked 2026-10-01. This is the architecture as built** — the measurements behind each line are in §2.
+
 | Decision | Lock |
 |---|---|
-| Execution lane | Keep **keyed Jupiter `/swap/v2/order`** — it is the only lane with a quota tied to our account *and* a pre-flight simulation that refuses unaffordable swaps |
-| Estimate/quote lane | Keep the **Lite `/quote`** lane — fastest, and now confirmed it can also reach a tx in 2 calls |
-| Second provider | **Keep Raptor** in the best-of pick. The measurement validates the existing wiring: it wins where Jupiter is weak (selling illiquid mints) |
+| Execution lane | **One lane: keyed Jupiter `/order?taker=` → simulate → sign → `/execute` → verify.** The only lane with a quota tied to our account *and* a pre-flight simulation that refuses unaffordable swaps. No fan-out, no best-of |
+| Estimate lane | **Raptor first**, through the shared quote engine (`purpose: 'estimate'`), escalating to the Jupiter picker on Raptor error or a failed impact gate. Ungated, and it answers a whole batch in under a second. The estimate lane is **not** Lite |
+| Raptor's role | **Kept, deliberately — three jobs.** (1) the estimate lane above; (2) the arb / `maxHops` swap path; (3) its **send path stays in the tree** (`sendRaptorTransaction` + `/api/solanatracker/send`) even though nothing calls it today. Keeping the code is the decision; **trusting its response is not** — `/send-transaction` returned `200` **plus a signature** for transactions that never reached the chain (T13), so anyone who wires it must verify on-chain first |
+| Lite's role | **Display / fallback only, never execution.** A Lite tx has no `requestId`, so `/execute` can never finish it, and its penalty is a **per-IP ban**, not a throttle — an API key does not raise it |
+| Fan-out / best-of | **Rejected on measurement**, not on taste: **+5.0 bps mean / 0 median** over 40 random mints for **2.59×** the swap time. `pickBestSwapQuote` keeps its ranker, but is handed one candidate by design |
 | DFlow | **Do not adopt** — worst measured price + a tx format we cannot sign with our current client |
 | Titan | **Do not adopt** — key required, no keyless path to evaluate |
 | swap.io | **Do not put on the execution path** — no build endpoint. Optionally use it as a monitoring source, never as a dependency |
 | Ultra | **Delete** — deprecated, equivalent to Swap V2 on every measure, and our wrapper never worked (POST to a GET-only route) |
 
-## 3b. Optimal scenario (recommended)
+## 3b. Optimal scenario (recommended) — ⚠️ SUPERSEDED, do not implement
+
+**This section proposed the fan-out, and the fan-out was then measured and rejected** (§2.8: +5.0 bps mean /
+0 median over 40 random mints, for 2.59× the swap time). It is kept as the record of what was proposed and
+why it lost — **not as a plan.** The shipped architecture is §3 above.
 
 One change, no new dependency, and **no added wall time**.
 
@@ -327,38 +335,42 @@ Residual risk: the fan-out doubles the number of quote calls per swap (T5c).
 
 ## 4. Implementation tasks
 
-- [ ] **T1 — delete the dead Ultra integration.** Remove `src/utils/jupiter-ultra.ts`,
-      `src/app/api/jupiter/ultra/order/route.ts`, `src/app/api/jupiter/ultra/execute/route.ts`.
-      Pre-check: `grep -rn "jupiter-ultra\|/api/jupiter/ultra" src/` returns exactly those three.
-- [ ] **T2 — no env cleanup needed.** `JUPITER_ULTRA_API_BASE` / `JUPITER_ULTRA_CLIENT_PLATFORM` were
-      never declared in any env example or doc — they existed as inline fallbacks in the deleted file.
+- [ ] **T1 — delete the dead Ultra integration. PROPOSED, NOT APPROVED.** Remove
+      `src/utils/jupiter-ultra.ts`, `src/app/api/jupiter/ultra/order/route.ts`,
+      `src/app/api/jupiter/ultra/execute/route.ts`. Pre-check still holds: nothing calls them —
+      `fetchUltraOrderDirect` POSTs to a **GET-only** `/order`, so it 404s on arrival.
+      **This is the one deletion still awaiting an explicit go-ahead**, and it is deliberately *not* covered
+      by the "keep Raptor" decision — Ultra is a different provider, and §3 locks it as *delete*. Left
+      unchecked so the board cannot read as if it were already done.
+- [x] **T2 — no env cleanup needed (verified 2026-10-01).** `JUPITER_ULTRA_API_BASE` /
+      `JUPITER_ULTRA_CLIENT_PLATFORM` were never declared in any env example or doc — they existed only as
+      inline fallbacks inside `jupiter-ultra.ts`.
 - [ ] **T3 — never treat `/order` 200 as success.** Audit every `/order` consumer for a
       `response.ok`-only check. The failure mode is `200` + empty `transaction` +
       `errorMessage: "Insufficient funds"`. `prepareJupiterSwapOrder` already throws; keep that
       assertion and cover the empty-tx case with a unit test.
-- [ ] **T4 — the desk path never compares providers; make it.** What exists today is not a best-of:
-      `collectSwapQuoteCandidates` (`swap-quote-parallel.ts`) is **sequential and short-circuits** —
-      it returns `[jupiter_swap]` as soon as `/order` succeeds and only then tries Lite, and its own
-      docstring says **"Raptor is not queried"**. `prepareDeskSwap` (`swap-executor.ts:236`) is a plain
-      `try /order → catch → Lite`. So `pickBestSwapQuote`, which can rank `raptor | jupiter_lite |
-      jupiter_swap` by `outAmount`, has only ever been handed **one** candidate. Fan the two paying
-      candidates out in parallel and let the existing ranker do its job — the §2.3 spread (+1.31 % /
-      −2.41 %) is precisely what it cannot currently see.
+- [x] **T4 — the desk path never compares providers. REJECTED on measurement, 2026-10-01.** The premise was
+      right — `collectSwapQuoteCandidates` is sequential and short-circuits, and `pickBestSwapQuote` has only
+      ever been handed one candidate. But fanning Raptor and `/order` out in parallel was then measured on
+      **40 random mints**: **+5.0 bps mean / 0 median** for **2.59×** the swap time (226 → 585 ms). The
+      +1.31 % / −2.41 % spread this task was built on was a **five-pair artifact**, two of them majors.
+      **Do not implement this.** The single lane is the lock (§3). If the ranker is ever handed two
+      candidates, it should be because a measurement justified it — not because the plumbing allowed it.
 - [x] **T5 — bound Raptor's hops per pair. DONE (d5d214a).** Confirmed live: `RAPTOR_MAX_HOPS=1` makes a
       token→token quote fail outright — `500 "Failed to get quote: No direct route found and maxHops=1"` —
       while `maxHops=2` and `3` return 200, and a SOL/USDC/USDT route returns 200 at 1. No UI surface passed
       `maxHops`, so every quote took the 1-hop default. `src/utils/raptor-hops.ts` now resolves it per pair
       (`resolveRaptorHops`): `RAPTOR_MAX_HOPS` when either side is a verified quote mint, else
       `RAPTOR_TOKEN_TOKEN_HOPS` (default 3). All three Raptor call sites go through it.
-- [ ] **T5b — keep `/order`'s empty transaction as the affordability abort.** Only `/order` simulates.
-      Measured: the wallet held **0.00445 SOL** and asked for 0.4186; `/order` refused
+- [x] **T5b — `/order`'s empty transaction is the affordability abort. DONE (§2.12, T9b).** Only `/order`
+      simulates. Measured: the wallet held **0.00445 SOL** and asked for 0.4186; `/order` refused
       (`errorMessage: "Insufficient funds"`) while Lite and Raptor both built a transaction for it.
-      So the rule is: `/order` returns no tx ⇒ **abort the swap**, do not fall through to another
-      provider. That replaces an RPC balance pre-check and is the one capability the cheap lanes lack.
-- [ ] **T5c — double the quote fan-out is within budget.** The parallel change adds one provider
-      request per swap. Jupiter's shared gate is measured at 0.5 rps (ours to tune); Raptor measured
-      **6/6 parallel with no 429**. Confirm the added call does not push the trade lane over the gate
-      before shipping.
+      `JupiterSwapQuoteError.venueRefused` now carries that distinction and `prepareDeskSwap` **rethrows**
+      instead of falling through to Lite — so `/order` returning no tx aborts the swap, which is precisely
+      the capability the cheap lanes lack.
+- [x] **T5c — the fan-out's budget question. MOOT — the fan-out was rejected (T4).** It asked whether one
+      extra provider call per swap would push the trade lane over its 0.5 rps gate. With a single lane there
+      is no added call. Kept as the record that the budget was checked *before* the design was dropped.
 - [ ] **T6 — make a rate-limited fallback legible.** A Lite 429 must not read as "no route exists";
       surface it distinctly (pairs with the negative cache in `swap-quote-pick.ts`).
 - [ ] **T7 — ship the harness.** Add `scripts/bench-swap-providers.mjs` + `npm run bench:swap-providers`:
@@ -373,32 +385,39 @@ Residual risk: the fan-out doubles the number of quote calls per swap (T5c).
 - [ ] **T10 — an explicit priority fee on every send (new, §2.7).** Our live attempt without one was
       broadcast and never landed. Whatever the lane, the send path must carry a priority fee; make the
       default explicit and env-tunable rather than implicit.
-- [ ] **T11 — treat the keyless backoff as a cliff (new, §2.8).** A burst is absorbed, then the IP is
-      locked out for ~120 s and even a trickle is refused. Any retry/fan-out logic must respect that
-      window instead of hammering through it, and a Lite 429 must never be read as "no route exists".
+- [x] **T11 — the keyless backoff is a cliff, not a slope. STANDING RULE — no code pending.** A burst is
+      absorbed, then the IP is locked out for ~120 s and even a trickle is refused; no retry or fan-out may
+      hammer through that window, and a Lite 429 must never be read as "no route exists". Both hold by
+      construction in the shipped design (Lite is display-only, no fan-out — §3).
 - [x] **T12 — measured, 2026-10-01 (prod, 15 DEW round trip).** Confirmed as the dominant phase, so the
       standing rule holds: report **confirm** alongside prepare. Leg 1 — quote 44.6 / build 24.5 / sign 26.3
       / send 52.9 / **confirm→finalized 5,044** / total **5,268 ms**; leg 2 — 25.9 / 15.5 / 6.2 / 28.5 /
       **1,692** / **1,801 ms**. Prepare is **1–10 %**, confirm **96–99 %**. Any future latency work that
       quotes only prepare is optimising the wrong 2 %.
-- [x] **T13 — audited, 2026-10-01. Zero live callers, so the "make each one verify" fix has no target.**
+- [x] **T13 — audited 2026-10-01. Zero live callers; Raptor is KEPT by decision.**
       `sendRaptorTransaction` (`solanatracker-raptor.ts:364`) is **never called** — its only reference is its
       own definition. `sendRaptorTransactionDirect` (`:284`) is called from exactly one place,
-      `/api/solanatracker/send/route.ts:19`, which is reachable only *through* that dead wrapper. Prod sends
-      Raptor-built txs over our own RPC (§2.10), so **the phantom-send finding cannot affect prod today**.
-      What the audit actually found was **documentation drift**: `SWAP_AND_CLOSE_FLOW.md` and
-      `whole_process.md` both named `/send-transaction` as *the* submit step and cited a
-      `sendRaptorTransaction` caller that does not exist — both corrected. **Removing the wrapper + route is
-      proposed and deliberately not done** — deleting a route warrants the owner's review first, and the
-      loaded gun is inert while nothing calls it.
-- [ ] **T14 — prefer the lane that can also land the swap (new, §2.9).** Jupiter `/order` → `/execute`
-      measured ~888 ms end to end against 1,732–5,084 ms for a Lite tx sent over our own RPC. The desk
-      path should bias to `/order` for execution, and Lite should be treated as build-only.
-- [ ] **T15 — treat the keyless bucket as a ban (new, §2.9).** Lite stayed 429 for >10 minutes after a
-      sustained burst, through a 150 s cooldown, at 1 rps — while another IP was fine. Any retry, fan-out
-      or "fallback" logic that assumes the bucket refills on a short timer is wrong.
-- [ ] **T8 — index hygiene.** Add this SPEC and `13-swap-providers.html` to `docs/specs/README.md`,
-      `docs/diagrams/README.md` and `docs/index.html`.
+      `/api/solanatracker/send/route.ts:19`, reachable only *through* that wrapper. Prod sends Raptor-built
+      txs over our own RPC (§2.10), so **the phantom-send finding cannot affect prod today**.
+      **The removal this task originally proposed was considered and rejected — Raptor's send path stays**
+      (§3, locked 2026-10-01): it is the submit half of a stack we are deliberately keeping, and deleting it
+      would mean re-adding it before Raptor execution could ever be switched on. The lock is on the code
+      staying — **not** on trusting its response: whoever wires it must verify against the chain, because
+      `POST /send-transaction` returned `200` **plus a signature** for transactions that never landed.
+      The audit's other finding was **documentation drift**: `SWAP_AND_CLOSE_FLOW.md` and
+      `whole_process.md` named `/send-transaction` as *the* submit step and cited a `sendRaptorTransaction`
+      caller that does not exist — both corrected.
+- [x] **T14 — prefer the lane that can also land the swap. SATISFIED by construction.** Jupiter `/order` →
+      `/execute` measured ~888 ms end to end against 1,732–5,084 ms for a Lite tx sent over our own RPC. The
+      shipped design is `/order`-only for execution with Lite display-only (§3, §2.10), so Lite is never a
+      submit lane and there is nothing left to bias — the decision absorbed this task.
+- [x] **T15 — the keyless bucket is a ban, not a throttle. STANDING RULE — no code pending.** Lite stayed
+      429 for >10 min after a sustained burst, through a 150 s cooldown, at 1 rps, while another IP was fine.
+      No retry, fan-out or "fallback" logic may assume the bucket refills on a short timer. The shipped design
+      already complies by construction: Lite is display-only (§3) and there is no fan-out to hammer it.
+- [x] **T8 — index hygiene. DONE (2026-10-01).** This SPEC and `13-swap-providers.html` are indexed in
+      `docs/specs/README.md` and `docs/diagrams/README.md`, and the diagram page is linked from
+      `docs/index.html`.
 
 ## 5. Env
 
