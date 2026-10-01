@@ -557,12 +557,12 @@ func (cs *CronService) Start() {
     }
     cs.workers.BindEntry(signalsSimEntryID, "signals_sim_track")
 
-    // MCap tracker sim: ONE job per interval running both phases (phase=all) instead of separate
-    // open and manage jobs. They share the single `mcap_tracker_sim` lock, and a real open run
+    // MCap tracker sim: ONE job per interval (phase=all) instead of separate open and manage jobs. They share the single `mcap_tracker_sim` lock, and a real open run
     // holds it for longer than any sane start offset (measured live: open at 11:12:20, manage at
-    // 11:12:35 still skipped), so two jobs could never both run per tick. phase=all runs manage
-    // then open inside one request, under one lock acquisition, in the order the route requires
-    // (the manage pass must flush its records before open re-fetches them).
+    // 11:12:35 still skipped), so two jobs could never both run per tick.
+    //
+    // The manage phase is GONE (the 60s SL/TP worker owns every exit), so phase=all now runs the
+    // open phase only. `?phase=manage` still parses and runs nothing.
     mcapTrackerSimSpec := everySpec(cs.config.McapTrackerSimInterval)
     mcapTrackerSimEntryID, err := cs.cron.AddFunc(mcapTrackerSimSpec, cs.runMcapTrackerSimAll)
     if err != nil {
@@ -799,7 +799,7 @@ func (cs *CronService) Start() {
         cs.logger.Info(fmt.Sprintf("📈 Metrics 1m volume copier: every %d seconds", cs.config.MetricsCopyInterval))
     }
     cs.logger.Info(fmt.Sprintf("🧪 Signals sim track: every %d seconds", cs.config.SignalsSimInterval))
-    cs.logger.Info(fmt.Sprintf("📈 MCap tracker sim (manage+open, phase=all): every %d seconds", cs.config.McapTrackerSimInterval))
+	cs.logger.Info(fmt.Sprintf("📈 MCap tracker sim (open only, phase=all): every %d seconds", cs.config.McapTrackerSimInterval))
     cs.logger.Info(fmt.Sprintf("🐋 GMGN sim track: every %d seconds", cs.config.GmgnSimInterval))
     cs.logger.Info(fmt.Sprintf("📣 Social sim track: every %d seconds", cs.config.SocialSimInterval))
     cs.logger.Info(fmt.Sprintf("🔥 GMGN activity poll: every %d seconds", cs.config.GmgnActivityPollInterval))
@@ -1511,6 +1511,16 @@ func (cs *CronService) runSLTPMonitor() {
 	if err != nil {
 		cs.logger.Error(fmt.Sprintf("❌ SL/TP monitor failed: %v", err))
 		cs.workers.Fail("sltp_monitor", err.Error())
+		return
+	}
+
+	// A held job lock means a previous pass is still running — the lock working, not a failure. It
+	// happens routinely because a pass can outlast the 60s interval. Checked on the raw body, the
+	// same way trending_tracker and dlmm_manage do it, because the route answers 409 with
+	// {success:false, skipped:true, reason} — a shape this struct must not have to model.
+	if isSkippedBody(resp) {
+		cs.logger.Info("⏭️ SL/TP monitor skipped (job lock held)")
+		cs.workers.Skipped("sltp_monitor")
 		return
 	}
 
