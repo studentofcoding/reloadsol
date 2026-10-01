@@ -74,7 +74,7 @@ describe('sendBatchViaShyftRpc', () => {
       vi.fn(async () => {
         call += 1
         if (call === 2) {
-          return { json: async () => ({ error: { message: 'RateLimitExceeded' } }) }
+          return { json: async () => ({ error: { message: 'Invalid transaction' } }) }
         }
         return { json: async () => ({ result: `sig${call}` }) }
       }),
@@ -85,6 +85,41 @@ describe('sendBatchViaShyftRpc', () => {
     // leg 2 is null -> the caller resolves it through the per-tx RPC fallback
     expect(rows).toEqual([{ signature: 'sig1' }, null, { signature: 'sig3' }])
     expect(call).toBe(3)
+  })
+
+  it('WAITS OUT a throttle on this lane instead of handing the trade to the fallback', async () => {
+    // A 6-leg prod run at 400ms spacing throttled 2 legs; both fell back to the Tracker RPC and one of
+    // them never landed. A rate-limit is transient, so the same signed tx is re-sent here (idempotent —
+    // same bytes, same signature) rather than risking a lane that already dropped one.
+    process.env.SHYFT_RPC_URL = 'https://rpc.example'
+    process.env.BATCH_SEND_MIN_INTERVAL_MS = '0'
+    let call = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        call += 1
+        if (call === 1) {
+          return { json: async () => ({ error: { message: 'RateLimitExceeded' } }) }
+        }
+        return { json: async () => ({ result: 'sig-after-retry' }) }
+      }),
+    )
+
+    const rows = await sendBatchViaShyftRpc(['tx1'])
+
+    expect(rows).toEqual([{ signature: 'sig-after-retry' }])
+    expect(call).toBe(2)
+  })
+
+  it('gives up on the lane after the retries, leaving the leg to the fallback', async () => {
+    process.env.SHYFT_RPC_URL = 'https://rpc.example'
+    process.env.BATCH_SEND_MIN_INTERVAL_MS = '0'
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ json: async () => ({ error: { message: 'RateLimitExceeded' } }) })),
+    )
+
+    expect(await sendBatchViaShyftRpc(['tx1'])).toEqual([null])
   })
 
   it('treats a transport throw as a per-leg miss rather than failing the batch', async () => {

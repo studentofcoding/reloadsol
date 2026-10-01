@@ -571,7 +571,7 @@ function shyftBatchRpcUrl(): string | null {
 /** Serial spacing between batch sends. Parallel sends drew `RateLimitExceeded` at three (measured). */
 function batchSendMinIntervalMs(): number {
   const parsed = Number(process.env.BATCH_SEND_MIN_INTERVAL_MS);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 400;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 1000;
 }
 
 /**
@@ -581,6 +581,12 @@ function batchSendMinIntervalMs(): number {
  *   `send_many_txns` (REST)      → 417, 1 of 3 landed, confirm 61s
  *   this RPC, sends in parallel  → 2 of 3 (one `RateLimitExceeded`)
  *   this RPC, sends serialised   → 3 of 3 CONFIRMED, confirm 163ms
+ *
+ * A later 6-leg run at 400ms spacing drew `RateLimitExceeded` on 2 legs; both fell back to the Tracker RPC
+ * and **one never landed** — so a throttle here costs a trade, not just latency. Hence the 1000ms default
+ * and the retry below: a rate-limit is transient, so re-sending the *same* signed tx on the *same* lane is
+ * much safer than handing it to a lane that already dropped one. Re-sending is idempotent — same bytes,
+ * same signature.
  *
  * Returns `null` when the lane is not configured — the caller then keeps its previous behaviour. Otherwise
  * it returns one row per input: a signature, or `null` meaning "this one needs the fallback". A leg that
@@ -595,35 +601,46 @@ export async function sendBatchViaShyftRpc(
   const gap = batchSendMinIntervalMs();
   const rows: ({ signature: string } | null)[] = [];
 
+  const sendOne = async (payload: string, id: number): Promise<string | null> => {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        method: "sendTransaction",
+        params: [payload, { encoding: "base64", skipPreflight: true, maxRetries: 2 }],
+      }),
+    });
+    const body = (await response.json()) as { result?: unknown; error?: unknown };
+    if (typeof body?.result === "string") return body.result;
+    const reason = JSON.stringify(body?.error ?? body);
+    // A throttle is worth waiting out on this lane; anything else is the caller's fallback to handle.
+    if (/rate ?limit/i.test(reason)) throw new Error(reason);
+    console.warn("[swap] shyft batch rpc send rejected:", reason.slice(0, 140));
+    return null;
+  };
+
   for (let i = 0; i < encoded.length; i++) {
     if (i > 0 && gap > 0) await new Promise((resolve) => setTimeout(resolve, gap));
     try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: i + 1,
-          method: "sendTransaction",
-          params: [encoded[i], { encoding: "base64", skipPreflight: true, maxRetries: 2 }],
-        }),
-      });
-      const body = (await response.json()) as { result?: unknown; error?: unknown };
-      if (typeof body?.result === "string") {
-        rows.push({ signature: body.result });
-      } else {
-        console.warn(
-          "[swap] shyft batch rpc send rejected:",
-          JSON.stringify(body?.error ?? body).slice(0, 140),
-        );
-        rows.push(null);
+      rows.push({ signature: (await sendOne(encoded[i], i + 1)) ?? "" });
+      if (!rows[rows.length - 1]!.signature) rows[rows.length - 1] = null;
+    } catch {
+      // rate limited — back off and try the same tx again before giving up on this lane
+      let signature: string | null = null;
+      for (let attempt = 1; attempt <= 2 && !signature; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, gap * attempt * 2));
+        try {
+          signature = await sendOne(encoded[i], i + 1);
+        } catch (error) {
+          console.warn(
+            `[swap] shyft batch rpc still throttled (attempt ${attempt}):`,
+            error instanceof Error ? error.message.slice(0, 80) : error,
+          );
+        }
       }
-    } catch (error) {
-      console.warn(
-        "[swap] shyft batch rpc send threw:",
-        error instanceof Error ? error.message : error,
-      );
-      rows.push(null);
+      rows.push(signature ? { signature } : null);
     }
   }
   return rows;
