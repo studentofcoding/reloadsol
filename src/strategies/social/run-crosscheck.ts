@@ -292,7 +292,7 @@ export async function runSignalCrosscheck(body: CrosscheckRequest): Promise<Cros
         symbol,
         solAmount: spine.solAmount,
         priceUsd: spine.priceUsd,
-        entryPriceImpactedUsd: spine.impactedPriceUsd,
+        entryPriceImpactedUsd: spine.priceUsd,
         entryFeatures: spine.features,
         effectiveExit: spine.effectiveExit,
       })

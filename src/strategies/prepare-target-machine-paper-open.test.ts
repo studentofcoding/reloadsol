@@ -82,7 +82,12 @@ describe('prepareTargetMachinePaperOpen', () => {
       expect(pass.solAmount).toBeGreaterThan(0)
       expect(pass.effectiveExit.takeProfitPct).toBeGreaterThan(0)
       expect(pass.effectiveExit.stopLossPct).toBeLessThan(0)
-      expect(pass.features.initial_price_usd).toBe(0.01)
+      // ONE price (S10). The spine returns the quote PLUS the modelled impact, so it is strictly
+      // above the 0.01 quote, and the record, the features and the exit contract all read it — the
+      // defect this replaces was the record valuing at the quote while the exit measured from the
+      // fill, which made the recorded PnL and the trigger disagree by exactly the impact.
+      expect(pass.priceUsd).toBeGreaterThan(0.01)
+      expect(pass.features.initial_price_usd).toBe(pass.priceUsd)
       expect(pass.ohlcBars).toEqual([])
       expect(pass.ohlcSource).toBe('none')
     }

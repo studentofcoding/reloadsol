@@ -323,7 +323,7 @@ async function runSimTrack(request: NextRequest) {
           symbol,
           solAmount: simSol,
           priceUsd: spine.priceUsd,
-          entryPriceImpactedUsd: spine.impactedPriceUsd,
+          entryPriceImpactedUsd: spine.priceUsd,
           entryFeatures: stampBrainRisk(overlayResult.features, brainRisk, {
             sizedSol: simSol,
           }),

@@ -174,7 +174,7 @@ export async function openGmgnSimPosition(params: {
     mintAddress: params.mintAddress,
     symbol: params.symbol,
     positionSize: solAmount,
-    entryPriceUsd: spine.impactedPriceUsd,
+    entryPriceUsd: spine.priceUsd,
     basis: spine.exitBasis,
     thresholds: spine.effectiveExit,
   })

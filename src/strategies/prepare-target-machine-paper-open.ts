@@ -46,13 +46,11 @@ export type PrepareTargetMachinePaperOpenResult =
     }
   | {
       ok: true
-      priceUsd: number
       /**
-       * The price actually paid (S10): `priceUsd` plus the modelled impact and spread. This is what
-       * the exit contract stamps as its reference value — a stop measured from the market quote is
-       * measured from a price the trade never paid.
+       * The price actually paid (S10): the quote plus the modelled impact. This is the ONLY entry
+       * price the caller may use — for the record, the features and the exit contract alike.
        */
-      impactedPriceUsd: number
+      priceUsd: number
       /** What the thresholds are expressed in. 'price' today; the value that makes it declarable. */
       exitBasis: ExitBasis
       solAmount: number
@@ -111,16 +109,20 @@ export async function prepareTargetMachinePaperOpen(
     modelVersion: cl.modelVersion,
   })
 
-  // The reference the exit measures against: the price this size would actually have paid.
-  const impactedPriceUsd = impactedEntryPriceUsd({
+  // ONE price (S10): what this size would actually have paid, impact included.
+  //
+  // Every consumer reads this same value — the trading record, the entry features, and the exit
+  // contract — because the alternative is what the system had until now: the record valuing the
+  // position at the market quote while the exit measured from the fill, so the recorded PnL and the
+  // trigger disagreed about the entry by exactly the impact.
+  const entryPriceUsd = impactedEntryPriceUsd({
     spotPriceUsd: priceUsd,
     notionalQuote: sized.sol,
   })
 
   return {
     ok: true,
-    priceUsd,
-    impactedPriceUsd,
+    priceUsd: entryPriceUsd,
     exitBasis: 'price',
     solAmount: sized.sol,
     p: sized.p,
@@ -132,7 +134,8 @@ export async function prepareTargetMachinePaperOpen(
     },
     features: {
       ...features,
-      initial_price_usd: priceUsd,
+      // The same one price, so the feature snapshot cannot disagree with the record or the contract.
+      initial_price_usd: entryPriceUsd,
     },
     ohlcBars: ohlc.bars,
     ohlcSource: ohlc.source,

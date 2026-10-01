@@ -393,7 +393,7 @@ async function runSimTrack(request: NextRequest) {
           // tell whether the risk layer was in the path at all.
           entryFeatures: stampBrainRisk(spine.features, sized.risk, { sizedSol: spine.solAmount }),
           entryPriceUsd: spine.priceUsd,
-          entryPriceImpactedUsd: spine.impactedPriceUsd,
+          entryPriceImpactedUsd: spine.priceUsd,
           solAmount: spine.solAmount,
           effectiveExit: spine.effectiveExit,
         })

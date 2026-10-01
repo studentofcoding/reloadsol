@@ -923,7 +923,7 @@ async function runSimTrack(request: NextRequest) {
           sized = spine.sized
           sizedFeatures = spine.features
           spineExit = spine.effectiveExit
-          spineEntryPrice = spine.impactedPriceUsd
+          spineEntryPrice = spine.priceUsd
           await appendSpineDecision(
             spinePassDecision(
               'mcap_tracker_sim_track',
