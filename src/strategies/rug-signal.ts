@@ -50,6 +50,19 @@ export type RugSignalThresholds = {
   dumpBarDrop: number
   /** D: peak-to-trough over any 5 consecutive bars. */
   dumpDrawdown: number
+  /**
+   * Trip on the **shape pair alone** — `staircase + liquidity`.
+   *
+   * Added 2026-10-02 because the three-way conjunction never co-occurred: across 399 replayed
+   * observations the best joint score was 76, and the component maxima came from *different* rows
+   * (the rows with a strong staircase are not the ones with the thinnest liquidity). Requiring
+   * staircase **and** volume **and** liquidity meant no trip could fire on this population — and the
+   * volume band is the component this module's own calibration could never show separates rug from
+   * rising. So the band keeps its points and its evidence, and stops being load-bearing.
+   *
+   * The full score path (`score >= threshold`) is unchanged and still trips. `0` disables this path.
+   */
+  coreThreshold: number
   /** Score at or above this is a rug. */
   threshold: number
   /** Guardrail (RUG_SIGNAL.md §6): skip only when age and liquidity are both known-outsiders. */
@@ -69,6 +82,12 @@ export const DEFAULT_RUG_SIGNAL_THRESHOLDS: RugSignalThresholds = {
   liqSafeRatio: 0.1,
   dumpBarDrop: 0.4,
   dumpDrawdown: 0.6,
+  /**
+   * 60 = a full staircase (40) with the thinnest liquidity (20) — the shape pair at its maximum, so
+   * a genuine ramp can trip without the volume band. Env-tunable because the right operating point
+   * is the operator's call, and the replay measures what each value costs in trip rate.
+   */
+  coreThreshold: 60,
   threshold: 80,
   maxAgeH: 48,
   maxLiqUsd: 100_000,
@@ -131,6 +150,8 @@ export type RugSignalEval = {
   barsScored: number
   /** False when there were too few bars to evaluate the shape at all — an unknown, not a pass. */
   judged: boolean
+  /** The shape pair alone: `staircase + liquidity`, the alternative trip path. */
+  core: number
   breakdown: Record<RugSignalComponentId, number>
   components: RugSignalComponent[]
   reasons: string[]
@@ -174,6 +195,7 @@ export function resolveRugSignalThresholds(
     liqSafeRatio: envNum(env, 'RUG_SIG_LIQ_SAFE_RATIO', d.liqSafeRatio),
     dumpBarDrop: envNum(env, 'RUG_SIG_DUMP_BAR', d.dumpBarDrop),
     dumpDrawdown: envNum(env, 'RUG_SIG_DUMP_DRAWDOWN', d.dumpDrawdown),
+    coreThreshold: envNum(env, 'RUG_SIG_CORE_THRESHOLD', d.coreThreshold),
     threshold: envNum(env, 'RUG_SIG_THRESHOLD', d.threshold),
     maxAgeH: envNum(env, 'RUG_SIG_MAX_AGE_H', d.maxAgeH),
     maxLiqUsd: envNum(env, 'RUG_SIG_MAX_LIQ_USD', d.maxLiqUsd),
@@ -576,16 +598,29 @@ export function evaluateRugSignal(
     skipReason = `age ${fmt(ageHours, 1)}h ≥ ${th.maxAgeH}h and liquidity $${Math.round(liquidityUsd)} ≥ $${th.maxLiqUsd}`
   }
 
-  const isRug = !skipped && score >= th.threshold
+  /**
+   * The shape pair, scored on its own. A full staircase with the thinnest liquidity is the pattern
+   * this module exists to catch, and requiring the volume band alongside it meant no observation in
+   * the replayed population could trip at all.
+   */
+  const core = breakdown.staircase + breakdown.liquidity
+  const coreTrip = th.coreThreshold > 0 && core >= th.coreThreshold
+  const isRug = !skipped && (score >= th.threshold || coreTrip)
 
   const reasons = components.map(componentReason)
   if (skipped) reasons.push(`rug signal skipped: ${skipReason}`)
   reasons.push(
-    `rug signal score ${score}/100 vs threshold ${th.threshold} → ${isRug ? 'rug' : 'not rug'}`,
+    `rug signal score ${score}/100 vs threshold ${th.threshold} → ${score >= th.threshold ? 'rug' : 'not rug'}`,
   )
+  if (th.coreThreshold > 0) {
+    reasons.push(
+      `core pair (staircase ${breakdown.staircase} + liquidity ${breakdown.liquidity}) = ${core} vs ${th.coreThreshold} → ${coreTrip ? 'trip' : 'no trip'}`,
+    )
+  }
 
   return {
     score,
+    core,
     isRug,
     skipped,
     skipReason,

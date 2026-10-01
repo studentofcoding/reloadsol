@@ -37,6 +37,7 @@ type ShadowSummary = { rows: number; byDecision: Record<string, number>; newest:
 
 const ANCHOR_LABELS: Array<{ key: keyof CalibrationOverrides; label: string; hint: string }> = [
   { key: 'threshold', label: 'threshold', hint: 'trip score (operator rule: 80)' },
+  { key: 'coreThreshold', label: 'coreThreshold', hint: 'staircase+liquidity trip (0 disables)' },
   { key: 'volExpansionWeight', label: 'volExpansionWeight', hint: '1 = drop the inert dispersion term' },
   { key: 'volCvSafe', label: 'volCvSafe', hint: 'volume CV anchor' },
   { key: 'liqSafeRatio', label: 'liqSafeRatio', hint: 'liq/mcap read as deep' },
@@ -187,6 +188,19 @@ export default function RugSignalPanel() {
                 </>
               ) : (
                 'No components evaluated.'
+              )}
+            </p>
+            <p className="mt-3 text-sm text-gray-400">
+              core pair (staircase + liquidity): avg{' '}
+              <span className="text-gray-200">{run.core.avg.toFixed(1)}</span> · max{' '}
+              <span className="text-gray-200">{run.core.max}</span> · threshold{' '}
+              <span className="text-gray-200">{run.effective.coreThreshold ?? '—'}</span>
+              {run.tripsByPath && (
+                <>
+                  {' '}
+                  — trips: <span className="text-gray-200">{run.tripsByPath.score}</span> by score,{' '}
+                  <span className="text-gray-200">{run.tripsByPath.core}</span> by the shape pair
+                </>
               )}
             </p>
             {run.crossCheckChecked > 0 && (

@@ -401,3 +401,57 @@ describe('evaluateRugSignal — judged vs merely scored', () => {
     expect(wide.judged).toBe(true)
   })
 })
+
+describe('evaluateRugSignal — the core pair trip path', () => {
+  /**
+   * A clean staircase with **no volume at all**: 20 bars climbing 4% each, so all four staircase
+   * conditions hold (≥70% green, mean gain <5%, window gain >80%, negligible wicks) and the volume
+   * band cannot contribute because there is nothing to measure.
+   */
+  const fullStaircaseNoVolume = (): RugSignalBar[] =>
+    Array.from({ length: 20 }, (_, i) => {
+      const open = 1.04 ** i
+      const close = open * 1.04
+      return { t: 600 + i * 300, o: open, h: close * 1.0001, l: open, c: close }
+    })
+
+  it('trips on a full staircase plus thin liquidity, with the volume band inert', () => {
+    const result = evaluateRugSignal({
+      bars: fullStaircaseNoVolume(),
+      mcap: 1_000_000,
+      liquidityUsd: 1_000, // liq/mcap 0.1% → the C20 band maxes
+    })
+
+    expect(result.breakdown.staircase).toBe(40)
+    expect(result.breakdown.volume).toBe(0) // inert by construction, not a gap
+    expect(result.breakdown.liquidity).toBe(20)
+    // The whole point: it trips *below* the score threshold, on the shape pair alone.
+    expect(result.score).toBe(60)
+    expect(result.score).toBeLessThan(DEFAULT_RUG_SIGNAL_THRESHOLDS.threshold)
+    expect(result.core).toBe(60)
+    expect(result.isRug).toBe(true)
+    expect(result.reasons.some((r) => r.includes('core pair'))).toBe(true)
+  })
+
+  it('does not trip when the core path is disabled — proving that path is the cause', () => {
+    const result = evaluateRugSignal(
+      { bars: fullStaircaseNoVolume(), mcap: 1_000_000, liquidityUsd: 1_000 },
+      { coreThreshold: 0 },
+    )
+    expect(result.score).toBe(60)
+    expect(result.isRug).toBe(false)
+  })
+
+  it('still requires the shape — thin liquidity alone must never be enough', () => {
+    const flat: RugSignalBar[] = Array.from({ length: 20 }, (_, i) => ({
+      t: 600 + i * 300,
+      o: 1,
+      h: 1.0001,
+      l: 1,
+      c: 1,
+    }))
+    const result = evaluateRugSignal({ bars: flat, mcap: 1_000_000, liquidityUsd: 1_000 })
+    expect(result.core).toBeLessThan(DEFAULT_RUG_SIGNAL_THRESHOLDS.coreThreshold)
+    expect(result.isRug).toBe(false)
+  })
+})

@@ -32,6 +32,7 @@ export type CalibrationOverrides = Partial<
   Pick<
     RugSignalThresholds,
     | 'threshold'
+    | 'coreThreshold'
     | 'stairBullishMin'
     | 'stairAvgGainMax'
     | 'stairPriceGainMin'
@@ -54,6 +55,10 @@ export type CalibrationRun = {
   crossCheckMismatches: number
   trips: number
   tripRate: number
+  /** Which path produced each trip — a core-pair trip is a different claim from a score trip. */
+  tripsByPath: { score: number; core: number }
+  /** The shape pair (`staircase + liquidity`) across the population, against its own threshold. */
+  core: { avg: number; max: number }
   best: { score: number; mint: string } | null
   scoreHistogram: Array<{ score: number; n: number }>
   /** Per component: average points, the observed maximum, and the component's own maximum. */
@@ -90,6 +95,7 @@ export function sanitizeOverrides(input: unknown): CalibrationOverrides {
   if (!input || typeof input !== 'object') return {}
   const bounds: Record<keyof CalibrationOverrides, [number, number]> = {
     threshold: [0, 100],
+    coreThreshold: [0, 100],
     stairBullishMin: [0, 1],
     stairAvgGainMax: [0, 1],
     stairPriceGainMin: [0, 10],
@@ -217,6 +223,8 @@ export async function replayRugSignal(params: {
       crossCheckMismatches: 0,
       trips: 0,
       tripRate: 0,
+      tripsByPath: { score: 0, core: 0 },
+      core: { avg: 0, max: 0 },
       best: null,
       scoreHistogram: [],
       components: [],
@@ -260,6 +268,9 @@ export async function replayRugSignal(params: {
   const conditionThreshold = new Map<string, number>()
   const measureValues = new Map<string, number[]>()
   let trips = 0
+  let tripsByScore = 0
+  let tripsByCore = 0
+  const coreValues: number[] = []
   let best: { score: number; mint: string } | null = null
   let crossCheckChecked = 0
   let crossCheckMismatches = 0
@@ -292,7 +303,13 @@ export async function replayRugSignal(params: {
     }
 
     scores.push(result.score)
-    if (result.isRug) trips++
+    coreValues.push(result.core)
+    if (result.isRug) {
+      trips++
+      // Count the stronger claim when both hold: a score trip meets the original rule.
+      if (result.score >= thresholds.threshold) tripsByScore++
+      else tripsByCore++
+    }
     if (!best || result.score > best.score) best = { score: result.score, mint: point.token_address }
 
     for (const component of result.components) {
@@ -336,6 +353,11 @@ export async function replayRugSignal(params: {
     crossCheckMismatches,
     trips,
     tripRate: scores.length > 0 ? trips / scores.length : 0,
+    tripsByPath: { score: tripsByScore, core: tripsByCore },
+    core: {
+      avg: coreValues.length > 0 ? coreValues.reduce((s, v) => s + v, 0) / coreValues.length : 0,
+      max: coreValues.length > 0 ? Math.max(...coreValues) : 0,
+    },
     best,
     scoreHistogram: [...histogram.entries()]
       .map(([score, n]) => ({ score, n }))
@@ -367,6 +389,7 @@ export async function replayRugSignal(params: {
     })),
     effective: {
       threshold: thresholds.threshold,
+      coreThreshold: thresholds.coreThreshold,
       volExpansionWeight: thresholds.volExpansionWeight,
       volCvSafe: thresholds.volCvSafe,
       liqSafeRatio: thresholds.liqSafeRatio,
