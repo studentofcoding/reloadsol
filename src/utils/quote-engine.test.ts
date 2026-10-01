@@ -7,6 +7,11 @@ vi.mock('@/utils/solanatracker-raptor', async (importOriginal) => {
 vi.mock('@/utils/swap-quote-parallel', () => ({ pickParallelSwapQuote: vi.fn() }))
 vi.mock('@/utils/swap-executor', () => ({ prepareSwapTransaction: vi.fn() }))
 vi.mock('@/utils/jupiter-rps', () => ({ throttleJupiterRps: vi.fn(async () => {}) }))
+// The mint-account read is a real RPC call; stub it so estimates stay offline and fast.
+vi.mock('@/utils/token-transfer-fee', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/utils/token-transfer-fee')>()
+  return { ...actual, getMintDecimals: vi.fn(async () => 6) }
+})
 
 import { fetchRaptorQuoteDirect } from '@/utils/solanatracker-raptor'
 import { pickParallelSwapQuote } from '@/utils/swap-quote-parallel'
@@ -95,6 +100,8 @@ describe('estimate', () => {
 
     expect(quote.provider).toBe('solanatracker')
     expect(quote.outAmount).toBe('5000000')
+    // display-ready: the raw amount arrives with the scale a surface needs to render it
+    expect(quote.outDecimals).toBe(6)
     expect(pickParallelSwapQuote).not.toHaveBeenCalled()
     // The whole point of `purpose`: a display number must not spend the execution budget.
     expect(throttleJupiterRps).not.toHaveBeenCalled()

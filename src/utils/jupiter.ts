@@ -16,13 +16,13 @@ import {
   runWithConcurrency,
   submitSignedSwap,
   submitSignedSwapBatch,
-  fetchSwapQuote,
   buildSwapTransaction,
   signTransactionsWithFallback,
   tryLandPreparedOnServer,
   type PreparedSwapMeta,
   type SubmitSignedSwapBatchResult,
 } from './swap-executor'
+import { requestQuote, solanaQuoteToSwapQuote } from './quote-engine'
 import { beginTradeInFlight } from './trade-inflight'
 import { signPreparedSwapTransactions } from './sol-desk-signer'
 import { waitForRpcRateLimit } from './rpc-rate-limit'
@@ -500,14 +500,39 @@ function getTokenIdentifierForLogging(mintAddress: string): string {
   return `${mintAddress.slice(0, 4)}...${mintAddress.slice(-4)}`
 }
 
-// Get quote for a single token swap (parallel Raptor / Lite / Swap + impact gate)
+// Get quote for a single token swap — through the shared quote engine (see below).
+/**
+ * Every quote surface this repo already calls — the signals tab's buy/sell hovers, the PnL tracker's
+ * sell estimate, the desk quote — routes through here, so this is the one place to point at the shared
+ * engine.
+ *
+ * It previously called `fetchSwapQuote`, the Jupiter-only picker: a Jupiter-background-lane request per
+ * mint (3-29s per token when the lane is starved) with no cross-surface dedupe, so the same sell
+ * estimate was fetched independently by three components. Through the engine the callers share one
+ * keyed cache, ask Raptor first (ungated), and a displayed number never touches the trade lane.
+ */
 export async function getSwapQuote(
   inputMint: string,
   outputMint: string,
   amount: number,
   slippageBps: number = 100
 ): Promise<SwapQuote | null> {
-  return fetchSwapQuote(inputMint, outputMint, amount, slippageBps)
+  try {
+    const quote = await requestQuote({
+      inputMint,
+      outputMint,
+      amount,
+      slippageBps,
+      purpose: "estimate",
+    });
+    return solanaQuoteToSwapQuote(quote);
+  } catch (error) {
+    console.warn(
+      "[quote] estimate failed:",
+      error instanceof Error ? error.message : error,
+    );
+    return null;
+  }
 }
 
 // Get swap transaction — Raptor quote-and-swap

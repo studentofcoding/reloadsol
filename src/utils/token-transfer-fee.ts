@@ -102,7 +102,7 @@ export function applyTransferFeeFloor(
   return Math.max(slippageBps, floor)
 }
 
-type CacheRow = { bps: number; at: number }
+type CacheRow = { decimals: number | null; bps: number; at: number }
 const cache = new Map<string, CacheRow>()
 
 export function resetTransferFeeCacheForTests(): void {
@@ -121,20 +121,22 @@ function rpcUrlForRead(): string | null {
 }
 
 /**
- * Transfer fee in basis points for `mint`. `0` when it is not a Token-2022 mint, carries no fee, or
- * cannot be read. Cached — a mint's fee schedule changes at most once per epoch.
+ * One cached read of a mint account serves both questions this module answers — its decimals and its
+ * transfer fee — because `getAccountInfo` returns both in the same payload. Fail-open: an unreadable
+ * mint yields `{ decimals: null, bps: 0 }` so neither the fee floor nor a caller's formatting blocks.
  */
-export async function getTransferFeeBps(
+async function readMintAccount(
   mint: string,
   options?: { timeoutMs?: number; skipCache?: boolean },
-): Promise<number> {
+): Promise<CacheRow> {
   const cached = cache.get(mint)
   if (!options?.skipCache && cached && Date.now() - cached.at < resolveCacheMs()) {
-    return cached.bps
+    return cached
   }
 
+  const fresh: CacheRow = { decimals: null, bps: 0, at: Date.now() }
   const url = rpcUrlForRead()
-  if (!url) return 0
+  if (!url) return fresh
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), options?.timeoutMs ?? 1500)
@@ -151,26 +153,55 @@ export async function getTransferFeeBps(
       signal: controller.signal,
     })
     const body = (await response.json()) as {
-      result?: { value?: { owner?: string; data?: unknown }; context?: { slot?: number } }
+      result?: { value?: { owner?: string; data?: unknown } }
     }
     const value = body?.result?.value
-    if (!value || value.owner !== TOKEN_2022_PROGRAM_ID) {
-      cache.set(mint, { bps: 0, at: Date.now() })
-      return 0
+    const info = (value?.data as { parsed?: { info?: { decimals?: unknown } } })?.parsed?.info
+    if (typeof info?.decimals === 'number' && Number.isFinite(info.decimals)) {
+      fresh.decimals = info.decimals
     }
 
-    // The fee schedule is keyed to an epoch; `getEpochInfo` is one more round trip, so the slot's
-    // epoch is approximated from the account read itself and the newer config is used when its epoch
-    // has already passed. Erring toward the older (lower) figure is safe: margin covers the gap.
+    // Classic SPL mints carry no fee; they still carry decimals, so record and return.
+    if (!value || value.owner !== TOKEN_2022_PROGRAM_ID) {
+      cache.set(mint, fresh)
+      return fresh
+    }
+
+    // The fee schedule is keyed to an epoch; erring toward the older (lower) figure is safe, since the
+    // margin covers the gap.
     const epoch = await currentEpoch(url, controller.signal)
-    const bps = transferFeeBpsFromMintAccount(value, epoch)
-    cache.set(mint, { bps, at: Date.now() })
-    return bps
+    fresh.bps = transferFeeBpsFromMintAccount(value, epoch)
+    cache.set(mint, fresh)
+    return fresh
   } catch {
-    return 0
+    return fresh
   } finally {
     clearTimeout(timer)
   }
+}
+
+/**
+ * Transfer fee in basis points for `mint`. `0` when it is not a Token-2022 mint, carries no fee, or
+ * cannot be read. Cached — a mint's fee schedule changes at most once per epoch.
+ */
+export async function getTransferFeeBps(
+  mint: string,
+  options?: { timeoutMs?: number; skipCache?: boolean },
+): Promise<number> {
+  return (await readMintAccount(mint, options)).bps
+}
+
+/**
+ * Decimals for `mint`, or `null` when it cannot be read.
+ *
+ * Exists so a quote's raw `outAmount` can be rendered as a token amount without a second mint lookup:
+ * the account read above already carries `decimals`, and it works for classic SPL mints too.
+ */
+export async function getMintDecimals(
+  mint: string,
+  options?: { timeoutMs?: number; skipCache?: boolean },
+): Promise<number | null> {
+  return (await readMintAccount(mint, options)).decimals
 }
 
 async function currentEpoch(url: string, signal: AbortSignal): Promise<number> {

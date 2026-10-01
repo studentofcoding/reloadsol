@@ -8,6 +8,27 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — every quote surface now reads the shared quote engine
+
+The buyer's displayed estimate was `warmed.outAmount` — a **taker-scoped prepare on the Jupiter trade
+lane** — so the 0.5 rps budget an actual execution needs was being spent to render a number somebody is
+only looking at, once per mint per settled edit. It now comes from `useQuotes(…, 'estimate')`, which asks
+Raptor (ungated) and never touches that lane. The 400 ms warm still runs, because it is what makes the
+click instant — it just no longer *is* the display.
+
+The same policy now covers the signals tab's buy/sell hovers and the PnL tracker's sell estimate without
+touching any of their call sites: `getSwapQuote` — the one function they all go through — routes into the
+engine and adapts back with `solanaQuoteToSwapQuote`. Those three components previously fetched the same
+sell estimate independently, each on the Jupiter background lane; they now share one keyed entry.
+
+### Fixed — the buyer's estimate badge rendered a raw smallest-unit integer
+
+It read `~33661682691` beside the token symbol: `outAmount` printed with no formatter. The engine now
+attaches the output mint's **`outDecimals`**, so a surface can render an amount with `formatTokenAmount`.
+The decimals come from the same cached mint-account read that already answers the transfer-fee question,
+so this adds no lookup. When the mint cannot be read the badge shows **nothing** rather than guessing an
+exponent — a wrong scale is worse than a missing number.
+
 ### Fixed — token→token swaps failed on a one-hop ceiling (`d5d214a`)
 
 At `RAPTOR_MAX_HOPS=1` a token→token quote did not quote badly, it **failed**:

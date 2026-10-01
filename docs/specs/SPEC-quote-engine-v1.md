@@ -89,28 +89,28 @@ gate the fetch makes a 5-mint edit cost one request per *changed* mint, and a re
 
 | step | status |
 |---|---|
-| 1 · core + hook | **done** — `src/utils/quote-engine.ts`, `src/hooks/useQuote.ts` (react-query v5 binding), `quote-engine.test.ts` (14 tests) |
+| 1 · core + hook | **done** — `src/utils/quote-engine.ts`, `src/hooks/useQuote.ts` (react-query v5 binding), `quote-engine.test.ts` |
 | 2 · `BulkTokenSeller` | **done** — its local `fetchRaptorQuote` re-implementation is gone, `fetchQuoteForToken` asks the engine, and the 25 s figure is now `QUOTE_ESTIMATE_REFRESH_MS_DEFAULT` so there is one number instead of two |
-| 3 · `BulkTokenBuyer` | **open — deliberately** (see below) |
-| 4 · signals + PnL | **open** — duplicate-fetch cleanup, lower value, touches more components |
-| 5 · delete orphaned caches | **open** |
+| 3 · `BulkTokenBuyer` | **done** — the displayed estimate now comes from `useQuotes(…, 'estimate')` instead of the warmed prepared swap, so it no longer spends the Jupiter trade lane; the warm stays for click latency but no longer *is* the display |
+| 4 · signals + PnL | **done, at the chokepoint** — rather than editing four call sites, `getSwapQuote` (which the signals tab's buy/sell hovers and the PnL tracker's sell estimate all call) now routes through the engine and adapts back via `solanaQuoteToSwapQuote`. They inherit the shared key, cache and estimate policy with **zero** call-site changes, and the duplicate fetches collapse onto one entry |
+| 5 · delete orphaned caches | **partly** — the seller's local Raptor client and the buyer's `solPrefetchOut` feed are gone. `preparedSwapCache` stays: it is the execution warm, not a display cache |
 
-### Why step 3 stopped
+### The raw-amount bug, and the fix
 
-The buyer renders `~{solPrefetchOut[mint]}` (`BulkTokenBuyer.tsx:2046-2048`) with **no formatter**, and
-`solPrefetchOut` is filled from `warmed.outAmount` (`:571-575`) — a **raw smallest-unit integer**. So the
-badge currently shows something like `~33661682691` beside the token symbol. (Flagged as a probable
-cosmetic bug; verify against the live UI before changing it.)
+`BulkTokenBuyer` rendered `~{solPrefetchOut[mint]}` with **no formatter**, filled from `warmed.outAmount`
+— a raw smallest-unit integer — so the badge read like `~33661682691` beside the token symbol.
 
-Changing where that number *comes from*, while it is already unformatted, would risk shipping a worse
-display than the one we have, and the correct fix needs a formatter plus a look at the rendered page.
-That is its own small change, not a rider on this one. The engine is ready for it: `useQuotes(reqs)`
-returns the estimates keyed by `quoteKey`, so step 3 is a wiring change once the display is sorted.
+Fixing *where the number comes from* without fixing that would just have moved the bug, so the engine now
+carries the scale: an `estimate` attaches **`outDecimals`** for the output mint, read from the same cached
+mint-account call that already answers the transfer-fee question (`getMintDecimals` shares that reader
+rather than adding a second lookup). A surface renders `formatTokenAmount(outAmount, outDecimals, 4)`, and
+when the mint cannot be read it shows **nothing** rather than guessing an exponent — a wrong scale is worse
+than a missing number.
 
-**Note what is and is not fixed today.** The engine guarantees a *display* number never draws the
-Jupiter trade lane — but the buyer's and seller's **warm prefetch** (`warmResolvedPreparedSwap`, 400 ms
-debounce) still does, because that is a deliberate click-latency trade, not a display concern. Moving
-that warm from "every edit" to hover/idle is the second half of step 3 and is still open.
+**Note on the warm.** The buyer's and seller's `warmResolvedPreparedSwap` (400 ms debounce) still draws the
+trade lane. That is a deliberate click-latency trade, not a display concern, and moving it from "every edit"
+to hover/idle remains open — tracked here rather than done, because it changes click behaviour and wants its
+own look.
 
 ## 5. Out of scope
 

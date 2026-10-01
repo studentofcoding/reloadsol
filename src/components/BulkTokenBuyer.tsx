@@ -19,6 +19,9 @@ import { useRhWalletMode } from "@/contexts/RhWalletModeContext";
 import { useRpc } from "@/contexts/RpcContext";
 import { useResolvedWalletPublicKey } from "@/hooks/useResolvedWalletPublicKey";
 import { useWalletTokens } from "@/hooks/useWalletTokens";
+import { useQuotes } from "@/hooks/useQuote";
+import { formatTokenAmount } from "@/utils/formatters";
+import { quoteKey, type SolanaQuote } from "@/utils/quote-engine";
 import { useRhWalletTokens } from "@/hooks/useRhWalletTokens";
 import { usePortfolioWallet } from "@/hooks/usePortfolioWallet";
 import { useGmgnTokenSearch } from "@/hooks/useGmgnTokenSearch";
@@ -215,9 +218,6 @@ export default function BulkTokenBuyer() {
   const [tradeAutoConfirm, setTradeAutoConfirm] = useState(readTradeAutoConfirm);
   const [gmgnQuoteRefreshing, setGmgnQuoteRefreshing] = useState(false);
   const autoConfirmFiredRef = useRef(false);
-  const [solPrefetchOut, setSolPrefetchOut] = useState<Record<string, string>>(
-    {},
-  );
   const boundWallets = useGmgnBoundWallets();
   // App network (header) is source of truth; the per-chain pages ensure
   // `effectiveChain` matches the URL. No local canUseRh coercion here.
@@ -524,27 +524,86 @@ export default function BulkTokenBuyer() {
     setTokenMints(getInitialTokenMints());
   }, [effectiveChain]);
 
-  // Solana: prefetch Raptor/Jupiter quote+tx while the user is still filling
-  // the form so Buy does not wait on that waterfall.
-  useEffect(() => {
-    if (!isSolTrade || !publicKey || !connection) return;
+  /**
+   * The per-token buy plan the estimate and the warm both derive from, so the number the user *reads*
+   * and the transaction the click *builds* can never disagree about size or pair.
+   */
+  const buyPlan = useMemo(() => {
+    if (!isSolTrade) return null;
     const amount = parseFloat(solAmount);
     if (!Number.isFinite(amount) || amount <= 0 || validMints.length === 0) {
-      return;
+      return null;
     }
     const inputDecimals = selectedCurrency === "USDC" ? 6 : 9;
     const amountPerToken = Math.floor(
       (amount * 10 ** inputDecimals) / validMints.length,
     );
-    if (amountPerToken <= 0) return;
-    const inputMint =
-      selectedCurrency === "USDC" ? TOKENS.USDC : TOKENS.SOL;
+    if (amountPerToken <= 0) return null;
+    return {
+      amountPerToken,
+      inputMint: selectedCurrency === "USDC" ? TOKENS.USDC : TOKENS.SOL,
+    };
+  }, [isSolTrade, solAmount, validMints, selectedCurrency]);
+
+  /**
+   * The displayed estimate comes from the shared quote engine, not from the warmed prepared swap.
+   *
+   * It used to read `warmed.outAmount` — a **taker-scoped prepare on the Jupiter trade lane**, i.e. the
+   * 0.5 rps budget an actual execution needs was being spent to render a number somebody is just
+   * looking at, once per mint per settled edit. An `estimate` quote asks Raptor (ungated) instead and
+   * never touches that lane. The warm below still runs, because it is what makes the click instant —
+   * but it no longer *is* the display.
+   */
+  const buyEstimateRequests = useMemo(
+    () =>
+      buyPlan
+        ? validMints.map((mint) => ({
+            inputMint: buyPlan.inputMint,
+            outputMint: mint,
+            amount: buyPlan.amountPerToken,
+            slippageBps: slippage,
+            purpose: "estimate" as const,
+          }))
+        : [],
+    [buyPlan, validMints, slippage],
+  );
+  const { quotes: buyEstimates } = useQuotes(buyEstimateRequests);
+
+  const buyEstimateByMint = useMemo(() => {
+    const byMint: Record<string, SolanaQuote> = {};
+    for (const req of buyEstimateRequests) {
+      const quote = buyEstimates.get(quoteKey(req));
+      if (quote) byMint[req.outputMint] = quote;
+    }
+    return byMint;
+  }, [buyEstimateRequests, buyEstimates]);
+
+  /**
+   * `null` when the estimate is missing or its decimals could not be read — deliberately showing
+   * nothing rather than rendering a raw smallest-unit integer, and rather than guessing a scale.
+   */
+  const buyEstimateLabel = useCallback(
+    (mint: string): string | null => {
+      const quote = buyEstimateByMint[mint];
+      if (!quote || quote.outDecimals == null) return null;
+      return formatTokenAmount(quote.outAmount, quote.outDecimals, 4);
+    },
+    [buyEstimateByMint],
+  );
+
+  // Solana: prefetch Raptor/Jupiter quote+tx while the user is still filling
+  // the form so Buy does not wait on that waterfall.
+  useEffect(() => {
+    if (!isSolTrade || !publicKey || !connection || !buyPlan) return;
+    const { amountPerToken, inputMint } = buyPlan;
     const pk = publicKey.toBase58();
     const timer = window.setTimeout(() => {
       void Promise.all(
         validMints.map(async (mint) => {
           try {
-            const { slippageBps: resolvedBps } = await warmResolvedPreparedSwap(
+            // Warm only. The display reads the quote engine above, so there is nothing to copy out of
+            // the cache here — this call exists so the click finds a prepared swap waiting.
+            await warmResolvedPreparedSwap(
               {
                 userPublicKey: pk,
                 inputMint,
@@ -557,22 +616,6 @@ export default function BulkTokenBuyer() {
               },
               slippage,
             );
-            const warmed = peekFreshPreparedSwap({
-              userPublicKey: pk,
-              inputMint,
-              outputMint: mint,
-              amount: amountPerToken,
-              slippageBps: resolvedBps,
-              priorityFeeLamports: priorityFee,
-              feeAccount: RAPTOR_DEV_FEE_ACCOUNT,
-              feeBps: RAPTOR_DEV_FEE_BPS,
-            });
-            if (warmed?.outAmount) {
-              setSolPrefetchOut((prev) => ({
-                ...prev,
-                [mint]: warmed.outAmount!,
-              }));
-            }
           } catch {
             /* prefetch is best-effort */
           }
@@ -584,9 +627,8 @@ export default function BulkTokenBuyer() {
     isSolTrade,
     publicKey,
     connection,
-    solAmount,
+    buyPlan,
     validMints,
-    selectedCurrency,
     slippage,
     priorityFee,
   ]);
@@ -2043,9 +2085,9 @@ export default function BulkTokenBuyer() {
                               />
                             )}
                             <span className="mr-1 text-sm">{symbol}</span>
-                            {!isRhChain && solPrefetchOut[mint] ? (
+                            {!isRhChain && buyEstimateLabel(mint) ? (
                               <span className="mr-1 text-[10px] text-gray-400">
-                                ~{solPrefetchOut[mint]}
+                                ~{buyEstimateLabel(mint)}
                               </span>
                             ) : null}
                             <button

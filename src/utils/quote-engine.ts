@@ -33,8 +33,10 @@ import {
   type RaptorQuoteResponse,
 } from '@/utils/solanatracker-raptor'
 import { prepareSwapTransaction, type PreparedSwap } from '@/utils/swap-executor'
+import { getMintDecimals } from '@/utils/token-transfer-fee'
 import { resolveRaptorHops } from '@/utils/raptor-hops'
 import { prefetchSlippageBps } from '@/utils/auto-slippage'
+import type { SwapQuote } from '@/types'
 import type { Connection } from '@solana/web3.js'
 
 export type QuotePurpose = 'estimate' | 'execute'
@@ -51,6 +53,14 @@ export type SolanaQuote = {
   outAmount: string
   /** Absolute percent, same convention as the rest of the swap path. */
   priceImpact: number
+  /**
+   * Decimals for `outputMint`, so a caller can render `outAmount` as a token amount without a second
+   * lookup. `null` when the mint could not be read — a surface should then show nothing rather than
+   * guess a scale. Absent on `execute` quotes, where the transaction is the payload.
+   */
+  outDecimals?: number | null
+  /** The slippage the quote was taken at, after the Auto sentinel was resolved. */
+  slippageBps: number
   timestamp: number
   route?: unknown
   fee?: number
@@ -81,6 +91,28 @@ export class QuoteEngineError extends Error {
   constructor(message: string, public statusCode?: number) {
     super(message)
     this.name = 'QuoteEngineError'
+  }
+}
+
+/**
+ * The engine's quote in the `SwapQuote` shape the older surfaces already speak, so a caller can adopt
+ * the engine without reshaping its own state — `getSwapQuote` uses this to give every one of its call
+ * sites the shared key, cache and estimate policy without touching any of them.
+ *
+ * `otherAmountThreshold` mirrors `outAmount`: the engine carries no min-out for an estimate, and
+ * nothing on a display path reads it.
+ */
+export function solanaQuoteToSwapQuote(quote: SolanaQuote): SwapQuote {
+  return {
+    inputMint: quote.inputMint,
+    outputMint: quote.outputMint,
+    inAmount: quote.amount,
+    outAmount: quote.outAmount,
+    otherAmountThreshold: quote.outAmount,
+    swapMode: 'ExactIn',
+    slippageBps: quote.slippageBps,
+    priceImpactPct: String(quote.priceImpact),
+    routePlan: Array.isArray(quote.route) ? (quote.route as unknown[]) : [],
   }
 }
 
@@ -144,7 +176,7 @@ async function settle<T>(load: () => Promise<T>): Promise<T | null> {
   }
 }
 
-function quoteFromRaptor(raw: RaptorQuoteResponse, req: SolanaQuoteRequest): SolanaQuote {
+function quoteFromRaptor(raw: RaptorQuoteResponse, req: SolanaQuoteRequest, slippageBps: number): SolanaQuote {
   return {
     provider: 'solanatracker',
     inputMint: req.inputMint,
@@ -152,6 +184,7 @@ function quoteFromRaptor(raw: RaptorQuoteResponse, req: SolanaQuoteRequest): Sol
     amount: String(req.amount),
     outAmount: String(raw.amountOut),
     priceImpact: impactToAbsPct(raw.priceImpact),
+    slippageBps,
     timestamp: Date.now(),
     route: raw.routePlan,
     fee: raw.feeAmount != null ? Number(raw.feeAmount) : undefined,
@@ -180,8 +213,10 @@ async function loadEstimate(req: SolanaQuoteRequest, slippageBps: number): Promi
   )
 
   if (raptor?.amountOut) {
-    const quote = quoteFromRaptor(raptor, req)
-    if (passesImpactGate(quote.priceImpact, maxImpactPct)) return quote
+    const quote = quoteFromRaptor(raptor, req, slippageBps)
+    if (passesImpactGate(quote.priceImpact, maxImpactPct)) {
+      return attachDecimals(quote, req.outputMint)
+    }
     console.warn(
       `[quote] raptor estimate gated: impact ${quote.priceImpact.toFixed(2)}% > ${maxImpactPct}% — escalating`,
     )
@@ -197,16 +232,31 @@ async function loadEstimate(req: SolanaQuoteRequest, slippageBps: number): Promi
   if (!picked) {
     throw new QuoteEngineError('No route for this pair right now', 502)
   }
-  return {
-    provider: toSolanaProvider(picked.provider),
-    inputMint: picked.quote.inputMint,
-    outputMint: picked.quote.outputMint,
-    amount: String(req.amount),
-    outAmount: picked.outAmount,
-    priceImpact: picked.impactPct,
-    timestamp: Date.now(),
-    route: picked.quote.routePlan,
-  }
+  return attachDecimals(
+    {
+      provider: toSolanaProvider(picked.provider),
+      inputMint: picked.quote.inputMint,
+      outputMint: picked.quote.outputMint,
+      amount: String(req.amount),
+      outAmount: picked.outAmount,
+      priceImpact: picked.impactPct,
+      slippageBps,
+      timestamp: Date.now(),
+      route: picked.quote.routePlan,
+    },
+    req.outputMint,
+  )
+}
+
+/**
+ * Attach the output mint's decimals so a surface can render `outAmount` as a token amount instead of a
+ * raw integer. Cached with the mint account (and shared with the transfer-fee read, which is the same
+ * account) and **fail-open**: an unreadable mint leaves it `null` rather than guessing a scale — a
+ * wrong exponent is worse than showing nothing.
+ */
+async function attachDecimals(quote: SolanaQuote, outputMint: string): Promise<SolanaQuote> {
+  const decimals = await getMintDecimals(outputMint)
+  return { ...quote, outDecimals: decimals }
 }
 
 /**
@@ -238,6 +288,7 @@ async function loadExecute(req: SolanaQuoteRequest, slippageBps: number): Promis
     amount: String(req.amount),
     outAmount: prepared.outAmount ?? '',
     priceImpact: impactToAbsPct(prepared.priceImpact),
+    slippageBps,
     timestamp: Date.now(),
     swapTransaction: prepared.swapTransaction,
     requestId: prepared.requestId,
