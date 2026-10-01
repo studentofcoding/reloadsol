@@ -118,7 +118,7 @@ Wallet tokens: `useWalletTokens` → `GET /api/jupiter/portfolio` → `https://w
 2. `executeBulkBuy` splits budget per token; batches quote-and-swap (10 per batch).
 3. For each token: `fetchRaptorQuoteAndSwap` → `POST /api/solanatracker/swap` → Raptor `POST /quote-and-swap`.
 4. Wallet signs all swap transactions: `signAllTransactions`.
-5. Send (batches of 6): `sendRaptorTransaction` → `POST /api/solanatracker/send` → Raptor `POST /send-transaction`.
+5. Send (batches of 6): `submitSignedSwap` — Shyft, then RPC fallback. **Not** Raptor's `/send-transaction`.
 6. Confirm: `waitForRaptorConfirmation` (poll until `confirmed`; throws on pending timeout); RPC `confirmTransaction` on RPC fallback only.
 7. Track: `trackBuy` → `POST /api/operations/track`; `trackOperation` → `POST /api/trading/records`.
 8. Refresh token list via `useWalletTokens` / Jupiter Portfolio.
@@ -128,7 +128,7 @@ Wallet tokens: `useWalletTokens` → `GET /api/jupiter/portfolio` → `https://w
 | Route | Method | Purpose |
 |-------|--------|---------|
 | `/api/solanatracker/swap` | POST | Build swap tx (SOL → token) |
-| `/api/solanatracker/send` | POST | Broadcast signed tx via Raptor |
+| `/api/solanatracker/send` | POST | **Unused.** Raptor's `POST /send-transaction` answered 200 + a signature for txs that never landed, and `sendRaptorTransaction` has no caller (T13). Removal proposed, not done |
 | `/api/solanatracker/transaction/[signature]` | GET | Poll swap status |
 | `/api/jupiter/portfolio` | GET | Wallet token list |
 | `/api/rpc` | POST | RPC fallback send/confirm |

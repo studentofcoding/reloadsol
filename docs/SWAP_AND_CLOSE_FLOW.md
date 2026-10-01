@@ -114,7 +114,10 @@ Per [Solana Tracker Swap API](https://docs.solanatracker.io/guides/swap-api):
 
 1. **Prepare** — `POST /quote-and-swap` (via `/api/solanatracker/swap`) with `userPublicKey`, mints, amount, slippage, platform fee
 2. **Sign** — wallet signs returned `swapTransaction` (base64 v0 tx)
-3. **Submit** — `POST /send-transaction` (via `/api/solanatracker/send`)
+3. **Submit** — **our own RPC**, not Raptor's. `submitSignedSwap` tries Shyft, then falls back to
+   `connection.sendTransaction` (`skipPreflight: true`, `maxRetries: 2`). Raptor's `POST /send-transaction`
+   is **not used**: it answered `200` **plus a signature** for transactions that never reached the chain
+   (0/3 then 0/4 reproduced), and `sendRaptorTransaction` has **no caller** — audited 2026-10-01 (T13)
 4. **Confirm** — poll `/transaction/{signature}` until `confirmed` | `failed` | `expired`
 
 ### Shared helpers (`src/utils/swap-executor.ts`)
@@ -148,7 +151,8 @@ Per [Solana Tracker Swap API](https://docs.solanatracker.io/guides/swap-api):
     in `src/utils/raptor-hops.ts` — `RAPTOR_MAX_HOPS` for a route touching SOL/USDC/USDT,
     `RAPTOR_TOKEN_TOKEN_HOPS` otherwise; callers may override per request)
   - Swap: `POST /api/solanatracker/swap` → Raptor `POST /quote-and-swap`
-  - Send: `POST /api/solanatracker/send` → Raptor `POST /send-transaction`
+  - Send: **our RPC**, via `submitSignedSwap` (Shyft → RPC fallback). `/api/solanatracker/send` → Raptor
+    `POST /send-transaction` exists but **has no caller** — a 200 + signature from it was not a landing (T13)
   - Status: `GET /api/solanatracker/transaction/[signature]` (Raptor-built txs)
   - Env: `RAPTOR_API_BASE` (optional). Platform fee is **always 25 bps (0.25%)**
     to the buy_bulk treasury (`feeAccount` / `feeBps` via `src/utils/buybulk-fee.ts`);

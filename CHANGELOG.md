@@ -40,6 +40,25 @@ The decimals come from the same cached mint-account read that already answers th
 so this adds no lookup. When the mint cannot be read the badge shows **nothing** rather than guessing an
 exponent — a wrong scale is worse than a missing number.
 
+### Fixed — the copier's rate budget came from the wrong endpoint
+
+The 1m volume copier's first production sweep tripped a **429 across the whole `gmgn-web-proxy` path** — the
+same tunnel the chart candles and risk chips use. Owning the cause: the "≥ 60 rps clean, budget 48" figure was
+measured on `token_stat` (~600 B) and then applied to **candles** (~18 KB, ~90× the payload). A real sweep at
+8 rps (~240 calls in ~30 s) was well past what the candle lane tolerates, and the limit looks **tunnel-wide**,
+not per-endpoint. Removing the load cleared the 429s within ~2 minutes — no lasting block.
+
+Re-measured on the candle endpoint the sweep actually uses: **96 requests / 2.6 MB clean at ~1.1 rps
+sustained** (p50 ~450 ms). The code default is now **2 rps**, re-enabled with a smaller sweep, on its own lane
+so it cannot pace the live chart/risk path.
+
+Two smaller defects the same sweep exposed, both fixed:
+- the cron's 30 s client timeout sits below a cold sweep, so it logged a *successful* sweep as
+  `❌ Metrics copier failed: context deadline exceeded` — now `METRICS_COPY_TIMEOUT_SEC` (default 240).
+- 1,449 rows landed with timestamps outside any window (205 stamped 2024): GMGN returns the last 501
+  *traded* minutes, which for a barely-traded token reaches back years. Each lane now clips to its own reach
+  before writing; the pre-fix rows self-clear under the 30-day prune.
+
 ### Fixed — token→token swaps failed on a one-hop ceiling (`d5d214a`)
 
 At `RAPTOR_MAX_HOPS=1` a token→token quote did not quote badly, it **failed**:

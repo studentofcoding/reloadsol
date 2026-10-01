@@ -217,7 +217,7 @@ Read from `src/utils/swap-executor.ts`, not inferred:
 | Raptor pre-quote | **absent** — the desk path never quotes Raptor (`collectSwapQuoteCandidates` docstring: "Raptor is not queried") | proposed here, but **not worth adding**: Raptor's best-of edge measured +5 bps mean / 0 median, and its quote does not predict Jupiter's routing. Useful only as a cheap budget pre-filter (5 rps vs 0.5), never as a veto |
 | prepare | `/order?taker=` → tx + **`requestId`** + impact, behind `assertSwapImpact` | **already correct** (`prepareJupiterSwapPrepared`, `swap-executor.ts:211`) |
 | Lite fallback | on `/order` failure → Lite `quote` + `/swap` | already there — but a Lite tx has no `requestId`, so it can never be `/execute`d and always lands via RPC |
-| simulate | **not in the submit path.** The RPC fallback sends with **`skipPreflight: true`** | **a real gap** — we deliberately skip preflight exactly where an unlandable tx would slip through |
+| simulate | **not in the submit path.** All three RPC sends use **`skipPreflight: true`** with `maxRetries: 2` (`swap-executor.ts:506`, `:516`, `:550`) | **deliberate — resolved 2026-10-01.** An earlier draft of this row called it "a real gap" and §2.12 called it "a guardrail"; the reasoning below decides it. Flipping to `false` trades a *possible fee burn* for a *rejected swap*: a tight-but-valid tx that would have landed comes back as a simulation error, and `submitSignedSwap` has **no retry** — so the swap fails outright instead of costing a fee. Landing outweighs the fee here. The residual risk is real but bounded to the **non-Jupiter fallbacks** (Lite/Raptor-built txs have no upstream simulation, unlike `/order`), and is narrowed by the transfer-fee floor plus prepare's own re-quote |
 | sign | wallet keypair / server signer | already correct |
 | execute | **already first** — `submitSignedSwap` calls `tryJupiterExecute` before Shyft/RPC (`:471`), gated on `prefersJupiterExecute` (`provider === "jupiter_swap" && requestId`) | **already correct.** An earlier claim in this workstream that we never call `/execute` was wrong, and is corrected here |
 | batch landing | `tryLandPreparedOnServer` lands a whole batch server-side, but only if **every** item `prefersJupiterExecute` | already there; degrades to per-item RPC if any item is Lite/Raptor-built |
@@ -275,7 +275,10 @@ Only the two live defects were fixed. The architecture was left alone because it
 | `src/utils/swap-executor.ts` | `prepareSwapTransaction` applies the floor **once**, before dispatch, so `/order`, the Lite fallback and the arb/Raptor path all inherit it. No-op for classic SPL mints (nearly every swap). `prepareDeskSwap` now **rethrows a venue refusal** instead of falling back to Lite. |
 | `src/utils/jupiter-swap-quote.ts` | `JupiterSwapQuoteError.venueRefused` — a 200 carrying `errorMessage` is a venue decision, distinguishable from a transport fault. |
 
-**Deliberately unchanged:** `skipPreflight: true` on the RPC fallback (guardrail, not a defect, and changing it adds a simulation round trip to every fallback send); Raptor's unused send path (latent, off the hot path); and everything in §3's rejected list.
+**Deliberately unchanged:** `skipPreflight: true` on the RPC sends — **decided, not deferred** (§2.10): preflight
+turns a tight-but-valid tx into a *rejected swap* rather than a landed one, and `submitSignedSwap` has no
+retry, so the fee a skipped preflight might burn is cheaper than the swap it might lose; Raptor's unused send
+path (latent, off the hot path — audited as **zero callers** under T13); and everything in §3's rejected list.
 
 **Verification actually run:** `npm run verify:no-raw-useeffect` ✓ · `npm run verify:no-hardcoded-sol-price` ✓ · `npm run build` ✓ (compiled, 225/225 pages, `next-env.d.ts` restored by postbuild) · 18 new tests ✓ · all **48** pre-existing swap tests still pass, including the one asserting a **500 does fall back to Lite** — the behaviour deliberately preserved.
 
@@ -373,13 +376,21 @@ Residual risk: the fan-out doubles the number of quote calls per swap (T5c).
 - [ ] **T11 — treat the keyless backoff as a cliff (new, §2.8).** A burst is absorbed, then the IP is
       locked out for ~120 s and even a trickle is refused. Any retry/fan-out logic must respect that
       window instead of hammering through it, and a Lite 429 must never be read as "no route exists".
-- [ ] **T12 — measure the phase that dominates.** Prepare is 1–10 % of a real swap; confirm is 96–99 %.
-      Any future latency work should report confirm alongside prepare, or it will optimise the wrong 2 %.
-- [ ] **T13 — audit Raptor's send path before trusting it (new, §2.9).** `POST /send-transaction`
-      returned HTTP 200 + a signature for four transactions (three Raptor-built, one Jupiter-built) and
-      **none reached the chain**. Whatever consumed that signature treated the swap as submitted. Find
-      every caller of `sendRaptorTransaction` / `sendRaptorTransactionDirect` and make each one verify
-      against the chain, not against the response body.
+- [x] **T12 — measured, 2026-10-01 (prod, 15 DEW round trip).** Confirmed as the dominant phase, so the
+      standing rule holds: report **confirm** alongside prepare. Leg 1 — quote 44.6 / build 24.5 / sign 26.3
+      / send 52.9 / **confirm→finalized 5,044** / total **5,268 ms**; leg 2 — 25.9 / 15.5 / 6.2 / 28.5 /
+      **1,692** / **1,801 ms**. Prepare is **1–10 %**, confirm **96–99 %**. Any future latency work that
+      quotes only prepare is optimising the wrong 2 %.
+- [x] **T13 — audited, 2026-10-01. Zero live callers, so the "make each one verify" fix has no target.**
+      `sendRaptorTransaction` (`solanatracker-raptor.ts:364`) is **never called** — its only reference is its
+      own definition. `sendRaptorTransactionDirect` (`:284`) is called from exactly one place,
+      `/api/solanatracker/send/route.ts:19`, which is reachable only *through* that dead wrapper. Prod sends
+      Raptor-built txs over our own RPC (§2.10), so **the phantom-send finding cannot affect prod today**.
+      What the audit actually found was **documentation drift**: `SWAP_AND_CLOSE_FLOW.md` and
+      `whole_process.md` both named `/send-transaction` as *the* submit step and cited a
+      `sendRaptorTransaction` caller that does not exist — both corrected. **Removing the wrapper + route is
+      proposed and deliberately not done** — deleting a route warrants the owner's review first, and the
+      loaded gun is inert while nothing calls it.
 - [ ] **T14 — prefer the lane that can also land the swap (new, §2.9).** Jupiter `/order` → `/execute`
       measured ~888 ms end to end against 1,732–5,084 ms for a Lite tx sent over our own RPC. The desk
       path should bias to `/order` for execution, and Lite should be treated as build-only.

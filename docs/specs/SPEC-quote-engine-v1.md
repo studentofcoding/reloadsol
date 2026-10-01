@@ -93,7 +93,7 @@ gate the fetch makes a 5-mint edit cost one request per *changed* mint, and a re
 | 2 · `BulkTokenSeller` | **done** — its local `fetchRaptorQuote` re-implementation is gone, `fetchQuoteForToken` asks the engine, and the 25 s figure is now `QUOTE_ESTIMATE_REFRESH_MS_DEFAULT` so there is one number instead of two |
 | 3 · `BulkTokenBuyer` | **done** — the displayed estimate now comes from `useQuotes(…, 'estimate')` instead of the warmed prepared swap, so it no longer spends the Jupiter trade lane; the warm stays for click latency but no longer *is* the display |
 | 4 · signals + PnL | **done, at the chokepoint** — rather than editing four call sites, `getSwapQuote` (which the signals tab's buy/sell hovers and the PnL tracker's sell estimate all call) now routes through the engine and adapts back via `solanaQuoteToSwapQuote`. They inherit the shared key, cache and estimate policy with **zero** call-site changes, and the duplicate fetches collapse onto one entry |
-| 5 · delete orphaned caches | **partly** — the seller's local Raptor client and the buyer's `solPrefetchOut` feed are gone. `preparedSwapCache` stays: it is the execution warm, not a display cache |
+| 5 · delete orphaned caches | **done — nothing orphaned remains.** The two this SPEC named (the seller's local Raptor client, the buyer's `solPrefetchOut` feed) are gone. Audited 2026-10-01, reader-by-reader: `preparedSwapCache` is the **execution** warm, `jupiter-swap-quote.ts`'s `quoteCache` is read by `withJupiterOrderQuote` (the execute path), and `quote-engine.ts`'s `estimateCache` has a live reader. Every cache left has a caller, so the honest result is that there was nothing further to delete — not that the step was skipped |
 
 ### The raw-amount bug, and the fix
 

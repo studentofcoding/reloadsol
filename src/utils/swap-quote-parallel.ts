@@ -75,6 +75,12 @@ function jupiterOrderParams(params: ParallelQuoteParams, amount: string): Jupite
 /**
  * Desk quote: one Jupiter Swap V2 `/order` (no taker).
  * Lite runs only after V2 fails. Raptor is not queried.
+ *
+ * **Sequential, despite the filename.** Each provider is awaited and the first success short-circuits, so
+ * this can only ever return a single candidate — `pickBestSwapQuote` accepts a list and orders by
+ * `outAmount`, but has never been handed more than one. The name is historical. A real fan-out was
+ * measured and rejected: +5.0 bps mean / **0 median** for 2.59× the swap time (SPEC-swap-provider-routing-v1
+ * §2.8). Do not "fix" this into parallel quoting without re-reading that measurement.
  */
 export async function collectSwapQuoteCandidates(
   params: ParallelQuoteParams,
