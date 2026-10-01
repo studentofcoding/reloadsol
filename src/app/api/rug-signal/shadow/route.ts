@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse, connection } from 'next/server'
 import { log } from '@/utils/unified-logger'
+import { isServiceAuthorizedRequest, requireDevSession } from '@/utils/api-auth'
 import { loadRugSignalShadow } from '@/strategies/rug-signal-shadow'
 
 /**
@@ -13,18 +14,14 @@ import { loadRugSignalShadow } from '@/strategies/rug-signal-shadow'
  * `?limit=` is clamped in the reader. Read-only.
  */
 
-function isServiceAuthorized(request: NextRequest): boolean {
-  const { searchParams } = new URL(request.url)
-  const key = searchParams.get('key')
-  const expected = process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending'
-  if (key && key === expected) return true
-  const auth = request.headers.get('authorization')
-  return auth === `Bearer ${expected}`
+function isAuthorized(request: NextRequest): boolean {
+  if (isServiceAuthorizedRequest(request)) return true
+  return !(requireDevSession(request) instanceof NextResponse)
 }
 
 export async function GET(request: NextRequest) {
   await connection()
-  if (!isServiceAuthorized(request)) {
+  if (!isAuthorized(request)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
