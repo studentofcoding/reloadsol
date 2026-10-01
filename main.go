@@ -1840,12 +1840,26 @@ func (cs *CronService) manualOhlcSampleTrigger(w http.ResponseWriter, r *http.Re
     })
 }
 
+// metricsCopyTimeoutSec returns the client timeout for one copier sweep.
+//
+// A cold sweep fetches hundreds of candles at a paced rate, so the default 30s would report a
+// *successful* sweep as a failure — it did exactly that on the first production sweep, leaving a
+// false error on the worker. Env-tunable; keep it under the route's own job lock (600s).
+func metricsCopyTimeoutSec() int {
+    if v := os.Getenv("METRICS_COPY_TIMEOUT_SEC"); v != "" {
+        if n, err := strconv.Atoi(v); err == nil && n > 0 {
+            return n
+        }
+    }
+    return 240
+}
+
 // runMetricsCopy sweeps the watch set for 1m candle volume into token_metrics_history.
 // 409 means another sweep holds the job lock — a skip, not a failure.
 func (cs *CronService) runMetricsCopy() {
     cs.workers.Begin("metrics_copier")
     url := fmt.Sprintf("%s/api/metrics/copy?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
-    resp, err := cs.makeRequest("POST", url, nil)
+    resp, err := cs.makeRequest("POST", url, nil, metricsCopyTimeoutSec())
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ Metrics copier failed: %v", err))
         cs.workers.Fail("metrics_copier", err.Error())

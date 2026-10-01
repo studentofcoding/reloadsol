@@ -27,11 +27,16 @@ const TIMEOUT_MS = 12_000
 /** A 403/429 parks every extra call for this long. */
 const NEGATIVE_COOLDOWN_MS = 60_000
 /**
- * Bulk copy lane (the metrics copier) — 80% of the highest rate measured clean through our
- * Worker (>=60 rps at concurrency 32, zero 403/429). See docs/GMGN_RATE_BUDGET.md.
- * `GMGN_WEB_MAX_POST_PER_SEC` (the live lane) is untouched by this.
+ * Bulk copy lane (the metrics copier) — paced deliberately low.
+ *
+ * The earlier "48 rps = 80% of the measured ceiling" came from probing `token_stat` (~600 B) and
+ * was then applied to **candles** (~18 KB, ~90x the payload). A real sweep at 8 rps (~240 calls in
+ * ~30 s) tripped a 429 on the *whole* Worker path — so the limit looks tunnel-wide, shared with the
+ * live chart/risk lanes. Re-measured on the candle endpoint: 96 requests / 2.6 MB clean at ~1.1 rps
+ * sustained. Default 2, with margin, on its own lane; `GMGN_WEB_MAX_POST_PER_SEC` is untouched.
+ * See docs/GMGN_RATE_BUDGET.md.
  */
-const DEFAULT_COPY_RPS = 48
+const DEFAULT_COPY_RPS = 2
 const MAX_COPY_RPS = 100
 /** The upstream accepts 501 bars of the requested resolution per call. */
 const CANDLE_LIMIT_MAX = 501

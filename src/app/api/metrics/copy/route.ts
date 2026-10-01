@@ -33,7 +33,7 @@ import {
  *   1. the **free lane** — the 24h 1m candle cache, which already carries per-candle volume and
  *      costs no upstream call (`readCachedTokenOhlc24h1m`, a pure read);
  *   2. the **copy lane** — GMGN web candles through our Worker, one call per token, paced at
- *      `METRICS_COPY_RPS` (default 48 = 80% of the measured clean ceiling) so it never competes
+ *      `METRICS_COPY_RPS` (default 2, measured-safe on the candle endpoint) so it never competes
  *      with the live chart/risk lane.
  *
  * One call at 1m/501 returns ~8.35 h of minutes, so a single sweep backfills every minute of that

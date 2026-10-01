@@ -137,3 +137,40 @@ growing only mildly with concurrency.
 - **Recommended shape:** raise the web gate in steps (e.g. 0.4 → 8) while watching for 403/429 in
   prod, keep the existing park-on-403/429 negative cooldown, and let the copier self-pace below the
   gate rather than pushing the global value straight to 48.
+
+---
+
+## Correction, 2026-10-01 (later the same day) — the budget above came from the WRONG endpoint
+
+**What went wrong.** The "≥ 60 rps clean" ceiling above was measured on `token_stat` (~600 B payload) and
+then applied to **candles** — the endpoint the metrics copier actually uses, at ~18 KB (~90× the payload).
+The first production sweep (a ~240-call burst at `METRICS_COPY_RPS=8` over ~30 s) tripped a **429 on the
+whole Worker path**: `token_stat` *and* candles both 403/429'd afterwards, so the limit is **tunnel-wide**,
+not per-endpoint, and it is shared with the live chart and risk-chip lanes.
+
+**Owned, then reverted.** The copier was disabled immediately via the non-code switch
+(`METRICS_COPY_INTERVAL=0` + `METRICS_COPY_KILL_SWITCH=1`). Removing the load cleared the 429s within
+**~2 minutes** — a transient rate window, not a lasting block. The sweeps that did run were guarded: on the
+block the client reported `parked: true, blocks: 8` and stopped instead of hammering.
+
+**Re-measured on the right endpoint** (`/api/v1/token_mcap_candles/...?resolution=1m&limit=501`, 60 distinct
+mints, stopping at the first non-200):
+
+| step | requests | 429/403 | achieved rps | p50 | payload |
+|---|---|---|---|---|---|
+| sequential | 6 | **0** | 1.96 | 472 ms | 264 KB |
+| 1 rps target | 30 | **0** | 0.65 | 447 ms | 2,403 KB |
+| 2 rps target | 30 | **0** | 1.03 | 405 ms | 2,243 KB |
+| 3 rps target | 30 | **0** | 1.14 | 508 ms | 2,403 KB |
+
+**96 requests / 2.6 MB clean, ~1.1 rps sustained, zero blocks.** A serial probe is latency-bound
+(~450 ms/call → ~2.2 rps max), so the true ceiling is still above 1.1 rps and below the 8 rps that blocked —
+but the clean, measured zone is what matters for operations.
+
+**Budget now:** `METRICS_COPY_RPS` default **2** (was 48), on its own lane, with a smaller sweep
+(`METRICS_COPY_MAX_MINTS=150`). Ramp only on evidence, watching for 403/429. The `40 %`/`80 %`-of-ceiling
+framing in the section above is superseded where the endpoint differs in payload size — a rate measured on
+one endpoint does not transfer to another through the same tunnel.
+
+**Also fixed here:** the cron's 30 s client timeout sat below a cold sweep, so it recorded a *successful*
+sweep as a failure — now `METRICS_COPY_TIMEOUT_SEC` (default 240).

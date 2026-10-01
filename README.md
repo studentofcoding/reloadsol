@@ -289,7 +289,8 @@ silently hole the series. See [docs/GMGN_RATE_BUDGET.md](docs/GMGN_RATE_BUDGET.m
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `METRICS_COPY_INTERVAL` | `900` | Go cron cadence for `metrics_copier` (seconds; `0` disables). Must stay below the window one call covers. |
-| `METRICS_COPY_RPS` | `48` | Copy-lane rate budget — **its own lane**, independent of `GMGN_WEB_MAX_POST_PER_SEC` so a sweep cannot disturb the live chart/risk path. Default is 80 % of the highest rate measured clean through the Worker (≥ 60 rps, zero 403/429). Ship low and ramp while watching for 403/429. |
+| `METRICS_COPY_RPS` | `2` | Copy-lane rate budget — **its own lane**, independent of `GMGN_WEB_MAX_POST_PER_SEC`. Measured on the **candle** endpoint (the one the sweep uses): 96 requests / 2.6 MB clean at ~1.1 rps sustained, while a 240-call burst at 8 rps tripped a 429 across the whole Worker path (shared with the live chart/risk lanes). Ramp only while watching for 403/429. |
+| `METRICS_COPY_TIMEOUT_SEC` | `240` | Go cron's client timeout for one sweep. The default 30 s sits below a cold sweep and logged a successful one as a failure. |
 | `METRICS_COPY_CONCURRENCY` | `8` | Max in-flight candle calls per sweep. |
 | `METRICS_COPY_MAX_MINTS` | `300` | Watch-set cap for the sweep (shared with `ohlc_sampler`). |
 | `METRICS_COPY_LOOKBACK_MIN` | `240` | How far back a cached series must reach to skip the vendor call entirely. |

@@ -193,15 +193,15 @@ describe('gmgn-web-extra', () => {
     expect(String(fetchSpy.mock.calls[0][0])).not.toContain('limit=')
   })
 
-  it('defaults the copy budget to the measured 80% and clamps nonsense', () => {
-    expect(gmgnWebCopyRps()).toBe(48)
+  it('defaults the copy budget to the measured-safe rate and clamps nonsense', () => {
+    expect(gmgnWebCopyRps()).toBe(2)
     vi.stubEnv('METRICS_COPY_RPS', '8')
     expect(gmgnWebCopyRps()).toBe(8)
     vi.stubEnv('METRICS_COPY_RPS', '5000')
     expect(gmgnWebCopyRps()).toBe(100)
     vi.stubEnv('METRICS_COPY_RPS', 'nope')
-    expect(gmgnWebCopyRps()).toBe(48)
+    expect(gmgnWebCopyRps()).toBe(2)
     vi.stubEnv('METRICS_COPY_RPS', '0')
-    expect(gmgnWebCopyRps()).toBe(48)
+    expect(gmgnWebCopyRps()).toBe(2)
   })
 })
