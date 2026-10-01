@@ -622,6 +622,66 @@ async function submitShyftManyBatch(
   }
 }
 
+/** One prepared leg of a batch, as the caller identifies it (the mint address, in practice). */
+export type PreparedBatchItem<K> = {
+  key: K;
+  tx: VersionedTransaction;
+  meta: PreparedSwapMeta;
+};
+
+export type PreparedBatchSplit<K> = {
+  keep: PreparedBatchItem<K>[];
+  dropped: { key: K; reason: string }[];
+};
+
+/**
+ * Drop prepared swaps whose transaction **would revert** — before anything is signed.
+ *
+ * The batch path had no simulation at all. Jupiter's `/order` refuses a bad swap up front, but a Raptor
+ * build can return a transaction that reverts on chain (`Custom 6038` and `6006`, measured on prod
+ * 2026-10-02) — and a single such leg poisons a whole batch, because the landing lane reports one failure
+ * for all of them. Simulating first costs ~150 ms for five legs and turns a burned fee into a dropped leg.
+ *
+ * **Failing open is deliberate.** Only a simulation that *returns* an error drops a leg; a simulation that
+ * cannot run (transport failure, rate limit) keeps it. Dropping on an unreadable simulation would silently
+ * discard good trades, which is worse than the fee it saves.
+ */
+export async function dropRevertingPreparedSwaps<K>(
+  items: PreparedBatchItem<K>[],
+  connection: Connection,
+): Promise<PreparedBatchSplit<K>> {
+  const checked = await Promise.all(
+    items.map(async (item) => {
+      try {
+        const sim = await connection.simulateTransaction(item.tx, {
+          sigVerify: false,
+          replaceRecentBlockhash: true,
+        });
+        if (sim.value.err) {
+          return { item, revert: JSON.stringify(sim.value.err).slice(0, 120) };
+        }
+        return { item, revert: null };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[swap] simulation unavailable for a batch leg — keeping it: ${message}`);
+        return { item, revert: null };
+      }
+    }),
+  );
+
+  const keep: PreparedBatchItem<K>[] = [];
+  const dropped: { key: K; reason: string }[] = [];
+  for (const { item, revert } of checked) {
+    if (revert) {
+      console.warn(`[swap] dropped a batch leg that would revert: ${revert}`);
+      dropped.push({ key: item.key, reason: revert });
+    } else {
+      keep.push(item);
+    }
+  }
+  return { keep, dropped };
+}
+
 async function submitOneSignedSwap(
   item: SubmitSignedSwapBatchItem,
   connection: Connection,

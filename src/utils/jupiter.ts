@@ -16,6 +16,7 @@ import {
   runWithConcurrency,
   submitSignedSwap,
   submitSignedSwapBatch,
+  dropRevertingPreparedSwaps,
   buildSwapTransaction,
   signTransactionsWithFallback,
   tryLandPreparedOnServer,
@@ -1951,6 +1952,53 @@ export async function executeBulkBuy(
 
     if (transactions.length === 0) {
       throw new Error('No valid transactions could be created')
+    }
+
+    // Refuse to sign anything that would revert on chain. One such leg otherwise poisons the whole batch,
+    // because the landing lane reports a single failure for all of them — see `dropRevertingPreparedSwaps`.
+    const checked = await dropRevertingPreparedSwaps(
+      transactions
+        .map((tx, i) => ({
+          key: transactionMints[i],
+          tx,
+          meta: transactionMetas[i],
+        }))
+        .filter(
+          (
+            item,
+          ): item is {
+            key: string
+            tx: VersionedTransaction
+            meta: PreparedSwapMeta
+          } => item.key != null && item.meta != null,
+        ),
+      connection,
+    )
+    if (checked.dropped.length > 0) {
+      for (const dropped of checked.dropped) {
+        result.failedPurchases.push({
+          mintAddress: dropped.key,
+          error: `Would revert on chain: ${dropped.reason}`,
+        })
+      }
+      transactions.length = 0
+      transactionMints.length = 0
+      transactionMetas.length = 0
+      for (const item of checked.keep) {
+        transactions.push(item.tx)
+        transactionMints.push(item.key)
+        transactionMetas.push(item.meta)
+      }
+      console.log(
+        `Pre-flight simulation dropped ${checked.dropped.length} of ${
+          checked.dropped.length + checked.keep.length
+        } swaps before signing`,
+      )
+      if (transactions.length === 0) {
+        throw new Error(
+          `Every swap would revert on chain (e.g. ${checked.dropped[0]!.reason})`,
+        )
+      }
     }
 
     const signatures: string[] = []
