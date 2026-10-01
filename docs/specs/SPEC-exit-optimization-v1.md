@@ -62,6 +62,33 @@ This does not invalidate the comparison, because **the recorded outcomes came fr
 
 **Second caveat:** the replay cannot see a stop that was never reached in *any* sample but was reached in reality. Any candidate stop whose advantage rests on a handful of trades is `inconclusive`, not a winner.
 
+### Which stop is actually in force (checked, 2026-10-01)
+
+Three different stop values are stamped on the same row, so the sweep's target had to be established rather
+than assumed:
+
+| field | on rows | distinct values | honoured? |
+|---|---|---|---|
+| `cl_stop_loss_pct` | ~800 | 11–18 per strategy, **−32.7 → −31.3** (18 on tp150) | **yes** |
+| `brain_stop_loss_pct` | 726 / 813 | **2** | **no** |
+| `ml_exit_effective_stop_loss_pct` | 1136 | — | **no** (`applied: false`) |
+
+The check that settles it: the `effective_exit.stopLossPct` the sims *record on the buy record* matches
+`cl_stop_loss_pct` exactly across 8 strategies / 802 buys (tp150 −32.7…−31.3, `mcap_enter_at_80`
+−54.6…−53.2, gmgn −27.3…−25.0). So **the closed-loop stop is the one in force**, and P4's premise holds.
+
+Two things fall out of that, both worth a decision:
+
+1. **The stop is "dynamic" only in the sense that it is computed at entry — its whole range is 1.4 points**
+   (18 distinct values over 190 trades on tp150, ~4% relative). It moves with `cl_sl_mult = 1.2 − 0.4p`, i.e.
+   with the *same* `cl_p` that was just removed from sizing for having no rank power. **The stop is now the
+   last place that score still acts.**
+2. **The brain's stop is stamped and ignored.** `brain_stop_loss_pct` is present on 726 rows with only two
+   distinct values, and `applyBrainRiskToExit` is called on the sim-open path — but the honoured exit is the
+   closed-loop one. So the regime TP/SL overlay is another wired-but-inert layer, sibling to `ml_exit_overlay`
+   (P5). Either wire it or stop stamping it; a field that reads like a control and is not one is worse than no
+   field.
+
 ### Tasks
 
 1. `scripts/replay-stop-sweep.mjs` — read-only, `--apply`-free (it writes nothing): pull trades + bars, replay the four stops, emit per-stop PnL / ROI / win-rate / drawdown **and a per-token clustered confidence interval** on the difference against as-is.
