@@ -1,19 +1,23 @@
 /**
  * Rug-signal validation harness — read-only.
  *
- * Answers one question: **does `score >= threshold` actually precede a collapse more often than the
- * base rate?** Nothing here re-implements the scorer. The verdicts come from `rug_signal_shadow`
- * (written by the real code on every evaluation, trips and non-trips alike), and the label is derived
- * independently from the market-cap candles — so the test is not graded by the thing being tested.
+ * Answers one question: **does the shipped trip rule actually precede a collapse more often than the
+ * base rate?** The verdicts come from `rug_signal_shadow` (written by the real code on every
+ * evaluation, trips and non-trips alike), and the label is derived independently from the market-cap
+ * candles — so the test is not graded by the thing being tested.
  *
  * Design points that matter:
+ *   * **The trip is the scorer's own verdict, read from `decision`.** This file used to re-derive it
+ *     as `score >= threshold`, which was a second implementation of the scorer — and a wrong one: the
+ *     score path never reached its threshold, so it reported `trips: 0` forever while the core-pair
+ *     path was tripping. Anything re-derived here is labelled `retroactive` and reported separately.
  *   * **The label looks forward from the evaluation**, not backward. A rug card's own window ends
  *     *in* the dump, which is why the labelled corpus could never validate a pre-dump signal.
  *   * **Unlabellable rows are counted, not dropped.** A row whose token has no candles after it is
  *     not a negative — it is unknown, and silently treating it as one is how a precision figure
  *     becomes fiction.
- *   * **`inconclusive` is a verdict.** Below the sample floor the script prints that, never a number
- *     that could be mistaken for a result.
+ *   * **`inconclusive` is a verdict.** The floor is applied to the *trip* denominator too: `0/0` is
+ *     not "precision 0%", and printing a confident "no lift" from it is the error this guards.
  *   * **Days must agree.** A pooled number can hide one good day; the acceptance rule is agreement
  *     across days, per the SPEC.
  *
@@ -32,11 +36,26 @@ const { Client } = require('pg')
 const DAYS = Number(process.argv[2] || 3)
 const EVENT_DROP = Number(process.env.RUG_EVENT_DROP || 0.6)
 const EVENT_WINDOW_MIN = Number(process.env.RUG_EVENT_WINDOW || 30)
-const THRESHOLD = Number(process.env.RUG_SIG_THRESHOLD || 80)
 const MIN_LABELLED = Number(process.env.RUG_VALIDATE_MIN_ROWS || 30)
 const MIN_POSITIVES = Number(process.env.RUG_VALIDATE_MIN_POSITIVES || 5)
 /** Fewer 5m bars than this and the scorer could not judge the shape — an unknown, not a negative. */
 const MIN_BARS = Number(process.env.RUG_SIG_MIN_BARS || 5)
+/** The shipped core-pair rule, for the retroactive view. Must mirror `rug-signal.ts`. */
+const CORE_THRESHOLD = Number(process.env.RUG_SIG_CORE_THRESHOLD || 40)
+const CORE_MIN_LIQ = Number(process.env.RUG_SIG_CORE_MIN_LIQ || 10)
+/** Candidate operating points, so the threshold is chosen from data instead of re-guessed. */
+const CORE_CANDIDATES = (process.env.RUG_VALIDATE_CORE_CANDIDATES || '46,40,35,30,25')
+  .split(',')
+  .map(Number)
+  .filter(Number.isFinite)
+
+/** Raw liquidity-to-mcap ratio buckets. Thin liquidity is the hypothesis under test. */
+const LIQ_BUCKETS = [
+  { label: '< 2%', lo: 0, hi: 0.02 },
+  { label: '2–5%', lo: 0.02, hi: 0.05 },
+  { label: '5–10%', lo: 0.05, hi: 0.1 },
+  { label: '≥ 10%', lo: 0.1, hi: Infinity },
+]
 
 /** Minute closes for a token: [{t, c}], ascending, from the market-cap candle arrays. */
 function expandCloses(rows) {
@@ -70,12 +89,26 @@ function wilson(successes, n) {
 
 const pct = (v) => `${(v * 100).toFixed(1)}%`
 
+/** A cell is a result only once it has enough n; below that it says so out loud. */
+function rateCell(hits, n) {
+  if (n === 0) return 'n/a (no rows)'
+  const ci = wilson(hits, n)
+  const note = n < MIN_POSITIVES ? `  inconclusive, n<${MIN_POSITIVES}` : ''
+  return `${pct(hits / n)} [${pct(ci.lo)}, ${pct(ci.hi)}] (${hits}/${n})${note}`
+}
+
+function num(value) {
+  const n = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(n) ? n : null
+}
+
 async function main() {
   const client = new Client({ connectionString: process.env.DATABASE_URL })
   await client.connect()
   try {
     const { rows: shadowAll } = await client.query(
-      `SELECT token_address, created_at::text, score, decision, bars_source, bars_scored, breakdown
+      `SELECT token_address, created_at::text, score, decision, bars_source, bars_scored,
+              breakdown, mcap, liquidity_usd
          FROM rug_signal_shadow
         WHERE created_at > NOW() - make_interval(days => $1::int)
         ORDER BY created_at ASC`,
@@ -126,6 +159,7 @@ async function main() {
 
     const labelled = []
     let unlabellable = 0
+    let noLiquidity = 0
     const windowSec = EVENT_WINDOW_MIN * 60
     for (const row of shadow) {
       if (row.score == null) continue
@@ -141,20 +175,34 @@ async function main() {
         unlabellable++
         continue
       }
+      const breakdown = row.breakdown ?? {}
+      const staircase = num(breakdown.staircase) ?? 0
+      const liquidity = num(breakdown.liquidity) ?? 0
+      const mcap = num(row.mcap)
+      const liquidityUsd = num(row.liquidity_usd)
+      const liqRatio =
+        mcap != null && mcap > 0 && liquidityUsd != null && liquidityUsd >= 0
+          ? liquidityUsd / mcap
+          : null
+      if (liqRatio == null) noLiquidity++
       labelled.push({
         row,
-        tripped: row.score >= THRESHOLD,
+        staircase,
+        liquidity,
+        core: staircase + liquidity,
+        liqRatio,
+        // The scorer's verdict as stored — the shipped rule, not a second implementation of it.
+        trippedShipped: row.decision === 'would_rug',
+        // The current rule re-applied to the stored features: lets an operating point be evaluated
+        // now rather than waited for. Always reported separately, always labelled retroactive.
+        trippedRetroactive: staircase + liquidity >= CORE_THRESHOLD && liquidity >= CORE_MIN_LIQ,
         collapsed: (baseline - trough) / baseline >= EVENT_DROP,
         dayKey: row.created_at.slice(0, 10),
       })
     }
 
-    const positives = labelled.filter((l) => l.collapsed)
-    const trips = labelled.filter((l) => l.tripped)
-    const truePositives = labelled.filter((l) => l.tripped && l.collapsed)
     console.log('')
     console.log(`labelled rows: ${labelled.length}  (unlabellable, no candles after the row: ${unlabellable})`)
-    console.log(`collapses (label=1): ${positives.length}   trips (score>=${THRESHOLD}): ${trips.length}`)
     if (labelled.length === 0) {
       console.log('')
       console.log(
@@ -165,20 +213,127 @@ async function main() {
       return
     }
 
+    // Rows are not independent: the same mint is re-evaluated every sweep, so 22 rows can be three
+    // mints seen eleven times. Judging diversification by seats rather than distinct hands inflates
+    // n. `labelled` is ascending, so the first row per mint is its earliest evaluation.
+    const byMint = []
+    {
+      const seen = new Set()
+      for (const l of labelled) {
+        if (seen.has(l.row.token_address)) continue
+        seen.add(l.row.token_address)
+        byMint.push(l)
+      }
+    }
+
+    const positives = labelled.filter((l) => l.collapsed)
     const baseRate = positives.length / labelled.length
-    const precision = trips.length > 0 ? truePositives.length / trips.length : 0
-    const recall = positives.length > 0 ? truePositives.length / positives.length : 0
-    const pCi = wilson(truePositives.length, trips.length)
-    const rCi = wilson(truePositives.length, positives.length)
     const bCi = wilson(positives.length, labelled.length)
+    console.log(
+      `collapses (label=1): ${positives.length}   base rate ${pct(baseRate)} [${pct(bCi.lo)}, ${pct(bCi.hi)}]`,
+    )
+
+    const reportView = (set, name, predicate) => {
+      const trips = set.filter(predicate)
+      const tp = trips.filter((l) => l.collapsed)
+      const precision = trips.length > 0 ? tp.length / trips.length : 0
+      const recall = positives.length > 0 ? tp.length / positives.length : 0
+      const pCi = wilson(tp.length, trips.length)
+      const rCi = wilson(tp.length, positives.length)
+      if (trips.length === 0) {
+        console.log(`  ${name}: 0 trips — precision undefined, NOT zero (inconclusive)`)
+      } else {
+        const note = trips.length < MIN_POSITIVES ? `  inconclusive, trips<${MIN_POSITIVES}` : ''
+        console.log(
+          `  ${name}: trips ${trips.length}  precision ${pct(precision)} [${pct(pCi.lo)}, ${pct(pCi.hi)}] ` +
+            `(${tp.length}/${trips.length})  recall ${pct(recall)} [${pct(rCi.lo)}, ${pct(rCi.hi)}]${note}`,
+        )
+      }
+      return { trips, tp, precision, recall }
+    }
+
     console.log('')
-    console.log(`base rate        ${pct(baseRate)}  [${pct(bCi.lo)}, ${pct(bCi.hi)}]`)
-    console.log(
-      `precision @${THRESHOLD}   ${pct(precision)}  [${pct(pCi.lo)}, ${pct(pCi.hi)}]  (${truePositives.length}/${trips.length})`,
-    )
-    console.log(
-      `recall    @${THRESHOLD}   ${pct(recall)}  [${pct(rCi.lo)}, ${pct(rCi.hi)}]  (${truePositives.length}/${positives.length})`,
-    )
+    console.log('trips (shipped = the decision the scorer actually stored):')
+    const shipped = reportView(labelled, 'shipped      ', (l) => l.trippedShipped)
+    console.log(`trips (retroactive = the current core rule re-applied to stored features):`)
+    const retro = reportView(labelled, 'retroactive  ', (l) => l.trippedRetroactive)
+
+    // Threshold sensitivity: the operating point becomes an output, not an input.
+    console.log('')
+    console.log(`core-threshold sensitivity (retroactive; liquidity >= ${CORE_MIN_LIQ} required):`)
+    for (const candidate of CORE_CANDIDATES) {
+      const trips = labelled.filter((l) => l.core >= candidate && l.liquidity >= CORE_MIN_LIQ)
+      const tp = trips.filter((l) => l.collapsed)
+      const mark = candidate === CORE_THRESHOLD ? '  <- shipped' : ''
+      const cell =
+        trips.length === 0
+          ? 'no trips'
+          : `${pct(tp.length / trips.length)} (${tp.length}/${trips.length})` +
+            (trips.length < MIN_POSITIVES ? `  inconclusive, n<${MIN_POSITIVES}` : '')
+      console.log(
+        `  core >= ${String(candidate).padStart(2)}  trips ${String(trips.length).padStart(3)}  precision ${cell}${mark}`,
+      )
+    }
+
+    // The sum hides which component is doing the work. Sweep the components on their own.
+    const sweepCell = (set, predicate) => {
+      const trips = set.filter(predicate)
+      if (trips.length === 0) return 'none'
+      const tp = trips.filter((l) => l.collapsed).length
+      const note = trips.length < MIN_POSITIVES ? ` inconclusive, n<${MIN_POSITIVES}` : ''
+      return `${pct(tp / trips.length)} (${tp}/${trips.length})${note}`
+    }
+
+    console.log('')
+    console.log('staircase-threshold sensitivity (retroactive; rows vs independent mints):')
+    for (const candidate of [30, 25, 20, 15, 10]) {
+      console.log(
+        `  staircase >= ${String(candidate).padStart(2)}  rows ${sweepCell(labelled, (l) => l.staircase >= candidate).padEnd(26)}` +
+          `  mints ${sweepCell(byMint, (l) => l.staircase >= candidate)}`,
+      )
+    }
+    console.log('')
+    console.log('liquidity-only sensitivity (is thin liquidity alone a trip?):')
+    for (const candidate of [0.01, 0.02, 0.03, 0.05]) {
+      console.log(
+        `  liq/mcap <= ${pct(candidate).padEnd(5)}  rows ${sweepCell(labelled, (l) => l.liqRatio != null && l.liqRatio <= candidate).padEnd(26)}` +
+          `  mints ${sweepCell(byMint, (l) => l.liqRatio != null && l.liqRatio <= candidate)}`,
+      )
+    }
+
+    const separation = (set, title) => {
+      const pos = set.filter((l) => l.collapsed)
+      const rate = set.length > 0 ? pos.length / set.length : 0
+      const ci = wilson(pos.length, set.length)
+      console.log('')
+      console.log(`${title}  (n=${set.length}, collapses=${pos.length}, base rate ${pct(rate)} [${pct(ci.lo)}, ${pct(ci.hi)}])`)
+      for (const bucket of LIQ_BUCKETS) {
+        const rows = set.filter(
+          (l) => l.liqRatio != null && l.liqRatio >= bucket.lo && l.liqRatio < bucket.hi,
+        )
+        console.log(
+          `  liq/mcap ${bucket.label.padEnd(6)} ${rateCell(rows.filter((l) => l.collapsed).length, rows.length)}`,
+        )
+      }
+      for (const [lo, hi] of [
+        [0, 10],
+        [10, 25],
+        [25, 41],
+      ]) {
+        const rows = set.filter((l) => l.staircase >= lo && l.staircase < hi)
+        console.log(
+          `  staircase ${lo}-${Math.min(hi - 1, 40)} ${rateCell(rows.filter((l) => l.collapsed).length, rows.length)}`,
+        )
+      }
+    }
+
+    separation(labelled, 'separation by row (every sweep counts — not independent)')
+    separation(byMint, 'separation by distinct mint (first evaluation only — independent)')
+
+    console.log('')
+    console.log(`trips per distinct mint (what would actually be deployed; ${byMint.length} mints):`)
+    reportView(byMint, 'shipped      ', (l) => l.trippedShipped)
+    reportView(byMint, 'retroactive  ', (l) => l.trippedRetroactive)
 
     // Per-day agreement — a pooled number can hide one good day.
     const days = [...new Set(labelled.map((l) => l.dayKey))].sort()
@@ -188,34 +343,56 @@ async function main() {
     let daysWithFloor = 0
     for (const day of days) {
       const dayRows = labelled.filter((l) => l.dayKey === day)
-      const dayTrips = dayRows.filter((l) => l.tripped)
+      const dayTrips = dayRows.filter((l) => l.trippedShipped || l.trippedRetroactive)
       const dayPos = dayRows.filter((l) => l.collapsed)
-      const dayTp = dayRows.filter((l) => l.tripped && l.collapsed)
+      const dayTp = dayTrips.filter((l) => l.collapsed)
       const dayPrecision = dayTrips.length > 0 ? dayTp.length / dayTrips.length : 0
       const dayBaseRate = dayRows.length > 0 ? dayPos.length / dayRows.length : 0
+      const dayStair = dayRows.filter((l) => l.staircase >= 25)
+      const dayStairTp = dayStair.filter((l) => l.collapsed).length
       if (dayTrips.length >= MIN_POSITIVES) daysWithFloor++
       if (dayTrips.length >= MIN_POSITIVES && dayPrecision > dayBaseRate) daysClearing++
       console.log(
         `  ${day}  rows=${String(dayRows.length).padStart(3)}  collapses=${String(dayPos.length).padStart(2)}  ` +
           `trips=${String(dayTrips.length).padStart(2)}  precision=${dayTrips.length > 0 ? pct(dayPrecision) : 'n/a'}`,
       )
+      console.log(
+        `            staircase>=25 trips=${String(dayStair.length).padStart(2)} ` +
+          `precision=${dayStair.length > 0 ? `${pct(dayStairTp / dayStair.length)} (${dayStairTp}/${dayStair.length})` : 'n/a'}`,
+      )
     }
 
-    const enough = labelled.length >= MIN_LABELLED && positives.length >= MIN_POSITIVES
+    // The trip denominator carries its own floor: 0/0 is not a precision of zero.
+    const tripsForVerdict = retro.trips.length >= shipped.trips.length ? retro : shipped
     console.log('')
-    if (!enough) {
+    if (labelled.length < MIN_LABELLED) {
       console.log(
-        `VERDICT: inconclusive — ${labelled.length} labelled rows / ${positives.length} collapses ` +
-          `against a floor of ${MIN_LABELLED} / ${MIN_POSITIVES}. Not "no effect"; not yet a result.`,
+        `VERDICT: inconclusive — ${labelled.length} labelled rows against a floor of ${MIN_LABELLED}. ` +
+          'Not "no effect"; not yet a result.',
       )
       return
     }
-    const lift = precision > baseRate
+    if (positives.length < MIN_POSITIVES) {
+      console.log(
+        `VERDICT: inconclusive — only ${positives.length} collapses against a floor of ${MIN_POSITIVES}. ` +
+          'There is nothing to predict yet.',
+      )
+      return
+    }
+    if (tripsForVerdict.trips.length < MIN_POSITIVES) {
+      console.log(
+        `VERDICT: inconclusive — ${tripsForVerdict.trips.length} trips against a floor of ${MIN_POSITIVES}. ` +
+          'Precision is undefined here, NOT zero: the rule has not fired enough times to say anything. ' +
+          'Lower RUG_SIG_CORE_THRESHOLD to raise the trip rate, or let the soak run.',
+      )
+      return
+    }
+    const lift = tripsForVerdict.precision > baseRate
     console.log(
       lift
-        ? `VERDICT: the trip carries signal — precision ${pct(precision)} against a base rate of ${pct(baseRate)} ` +
+        ? `VERDICT: the trip carries signal — precision ${pct(tripsForVerdict.precision)} against a base rate of ${pct(baseRate)} ` +
             `(${daysClearing}/${daysWithFloor} days with enough trips agree). Anchors may be called FITTED only if that agreement holds.`
-        : `VERDICT: no lift — precision ${pct(precision)} is not above the base rate of ${pct(baseRate)}. ` +
+        : `VERDICT: no lift — precision ${pct(tripsForVerdict.precision)} is not above the base rate of ${pct(baseRate)}. ` +
             'The trip is not evidence of a coming collapse; do NOT enforce.',
     )
   } finally {
