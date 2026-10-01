@@ -117,6 +117,51 @@ for (const t of trades) {
 console.log(`\nstop sweep — read-only · window ${WINDOW_DAYS}d · min ${MIN_BARS} bars · ${ONLY || 'all strategies'}`)
 console.log(`trades in window ${trades.length} · replayable ${replayable.length} · bars loaded ${bars.length}\n`)
 
+// ---- 0. slippage comparison: did a faster exit check actually tighten the exit? ---------------------
+// `--slippage` splits the replayable trades at SLIPPAGE_CUTOFF (the cadence change) and reports, per cohort,
+// the one number that measures poll latency: how long AFTER the bar that breached the stop the exit landed.
+if (process.argv.includes('--slippage')) {
+  const cutoff = new Date(process.env.SLIPPAGE_CUTOFF ?? '2026-10-01T09:14:00Z').getTime()
+  const cohorts = { before: [], after: [] }
+
+  for (const t of replayable) {
+    const stop = Number.isFinite(t.recorded_stop) && t.recorded_stop < 0 ? t.recorded_stop : -31.7
+    const level = t.entry * (1 + stop / 100)
+    const breach = t.path.find((b) => b.low > 0 && b.low <= level)
+    // The bar that first breached the stop is what a 15-minute poll would have missed entirely.
+    const lagSec = breach ? (new Date(t.exit_at).getTime() - breach.t) / 1000 : null
+    const row = { lagSec, settled: Math.abs(t.pnl_pct - stop) < 2, overshoot: t.pnl_pct - stop, breached: !!breach, pnl: t.pnl_pct }
+    ;(new Date(t.entry_at).getTime() >= cutoff ? cohorts.after : cohorts.before).push(row)
+  }
+
+  const q = (xs, p) => {
+    if (!xs.length) return NaN
+    const s = [...xs].sort((a, b) => a - b)
+    return s[Math.min(s.length - 1, Math.floor(p * s.length))]
+  }
+  const line = (label, rows) => {
+    const breached = rows.filter((r) => r.breached)
+    const lags = breached.map((r) => r.lagSec).filter((v) => Number.isFinite(v) && v >= 0)
+    console.log(
+      `  ${label.padEnd(9)} trades ${String(rows.length).padStart(4)} · breached ${String(breached.length).padStart(4)}` +
+        ` · settled-on-stop ${String(rows.filter((r) => r.settled).length).padStart(4)}` +
+        ` · deep tail(<-25%) ${String(rows.filter((r) => r.pnl < -25).length).padStart(4)}` +
+        `\n            breach→exit lag sec: p50 ${f(q(lags, 0.5), 0)} · p90 ${f(q(lags, 0.9), 0)} · max ${f(Math.max(...lags), 0)}` +
+        ` · overshoot p50 ${f(q(breached.map((r) => r.overshoot), 0.5))}pp · mean PnL ${f(mean(rows.map((r) => r.pnl)))}%`,
+    )
+  }
+
+  console.log(`slippage by cohort — cutoff ${new Date(cutoff).toISOString()} (the SLTP cadence change)`)
+  line('before', cohorts.before)
+  line('after', cohorts.after)
+  console.log(
+    '\n  Success = the after-cohort breach→exit lag p50 collapses toward the new interval, the settled-on-stop\n' +
+      '  count rises off its 23/780 baseline, and the deep tail shrinks. Until `after` has a real sample this\n' +
+      '  prints an empty row on purpose — do not read a one-sided comparison as a result.\n',
+  )
+  process.exit(0)
+}
+
 // ---- 1. fidelity: does replaying the RECORDED stop reproduce the recorded outcome? -------------------
 let agree = 0
 let compared = 0
