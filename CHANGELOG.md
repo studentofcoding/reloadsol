@@ -46,6 +46,45 @@ The fold and the scalar are separate layers on purpose: the scalar standardises 
 fold decides *whether* a strategy trades at all — so a family re-tuned later is already measured on the same
 risk footing as its neighbours.
 
+### Changed — the ML size multiplier is out of the size path (P1)
+
+`ml_size_mult` **was** the closed-loop score `cl_p` used directly as the stake fraction. It was measured
+twice to have no rank power — within a strategy the two mass tiers are **+87.0% (n=73)** against **+96.6%
+(n=88)**, t ≈ 0.25 — and across strategies the level *inverts* (`gmgn_sm_kol_combined` at `cl_p` 0.389 wins
+**13.2%** while the mcap family at 0.389 wins **55.0%**). Applied as a multiplier it cost **1.531 SOL** over
+two days on the dashboard's own rows, and the normalised tilt it inspired was worse still (clustered
+**t = −2.52**).
+
+`softMlSize` is now flat: it returns the base stake and `mult: 1`. One seam covers both call sites
+(`sizeFromClosedLoop`, and the mcap legacy branch), so every sim domain stakes the base × the Level 1 market
+scalar and nothing else. **`SOL_ML_SIZE_ENABLED=1` restores the old behaviour** for a soak — but the gate
+that would earn a non-flat multiplier back is `docs/specs/SPEC-sizing-level-2-probabilistic-v1.md` §4 (rank
+power with a confidence interval, a per-bin sample floor, comparability, and lift over flat clustered by
+token), not a retune.
+
+Two consequences worth recording:
+
+- **The fail-soft inversion dies with it** (P2 in the register). A missing model used to fall soft to
+  `cl_p = 0.5` — the *largest* multiplier in the working band, on the rows that won 16.2% — and that whole
+  defect class is gone, not guarded.
+- **The dashboard's `sized` column now equals its `flat` column**, which is the correct representation: with
+  no sizing there is nothing to distinguish them.
+
+**C-7, decided and measured.** Flattening raises the average stake, so the base had to be settled with it.
+Measured per family (config base → predicted flat × the 0.25 scalar, against what the ledger shows today):
+
+| family | config base | staked now | flat × scalar | change |
+|---|---|---|---|---|
+| mcap / search (4) | 0.010 | ~0.00090 | **0.00250** | **2.8× up** |
+| gmgn (2) | 0.020 | ~0.0079 | **0.00500** | **0.63× down** |
+
+**No base cut.** The increase lands only on the profitable family; gmgn, social and att_rh all *shrink*
+(the newly-applied 0.25 scalar more than offsets losing their multiplier). Peak paper exposure moves
+~0.079 → ~0.22 SOL, inside the paper desk's own `SIM_DAILY_BUDGET_SOL=0.5`, and `MAX_SOL_AT_RISK=0.1` is the
+*live* cap this desk does not trade against. Cutting the base to chase it would undo part of P1's measured
+gain. Revisit if `peak concurrent × effective stake` approaches the budget — the concurrency series is in
+`/api/pnl/daily` (`peaks`).
+
 ### Fixed — the ML label backfill no longer outlives the proxy, plus user rugs counted per dev
 
 **Backfill.** `POST /api/strategies/ml/backfill-labels` failed with `Unexpected token '<', "<!DOCTYPE "...`.
