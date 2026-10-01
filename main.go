@@ -246,6 +246,7 @@ type Config struct {
     DLMMSecret         string
     SolArbScanInterval int // seconds (0 = disabled)
     OhlcSampleInterval int // seconds — 1m OHLC sampler (0 = disabled)
+    MetricsCopyInterval int // seconds — 1m volume copier (0 = disabled)
     FomoWsEnabled      bool
 }
 
@@ -439,6 +440,17 @@ func NewCronService() *CronService {
             }
             return 15 // default 15s; set 0 to disable
         }(),
+        // 1m volume copier. GMGN's candle endpoint returns a SERIES (~8.35h of minutes per call),
+        // so the cadence governs snapshot freshness only, not slot completeness. Keep it well
+        // under that window or the gap loses minutes permanently.
+        MetricsCopyInterval: func() int {
+            if v := os.Getenv("METRICS_COPY_INTERVAL"); v != "" {
+                if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
+                    return iv
+                }
+            }
+            return 900 // default 15 min; set 0 to disable
+        }(),
         FomoWsEnabled: envBool("FOMO_WS_ENABLED", true),
     }
 
@@ -523,6 +535,17 @@ func (cs *CronService) Start() {
             log.Fatal("Failed to add OHLC sampler cron job:", err)
         }
         cs.workers.BindEntry(ohlcEntryID, "ohlc_sampler")
+    }
+
+    // 1m metrics copier – every N seconds (default 900, 0 = disabled)
+    if cs.config.MetricsCopyInterval > 0 {
+        metricsCopySpec := everySpec(cs.config.MetricsCopyInterval)
+        metricsCopyEntryID, err := cs.cron.AddFunc(metricsCopySpec, cs.runMetricsCopy)
+        if err != nil {
+            cs.logger.Error(fmt.Sprintf("Failed to add metrics copier cron job: %v", err))
+            log.Fatal("Failed to add metrics copier cron job:", err)
+        }
+        cs.workers.BindEntry(metricsCopyEntryID, "metrics_copier")
     }
 
     // Signals sim track – every N seconds (default 120)
@@ -758,6 +781,7 @@ func (cs *CronService) Start() {
     http.HandleFunc("/trigger/strategy-search", cs.requireTriggerSecret(cs.manualStrategySearchTrigger))
     http.HandleFunc("/trigger/sol-arb-scan", cs.requireTriggerSecret(cs.manualSolArbScanTrigger))
     http.HandleFunc("/trigger/ohlc-sampler", cs.requireTriggerSecret(cs.manualOhlcSampleTrigger))
+    http.HandleFunc("/trigger/metrics-copier", cs.requireTriggerSecret(cs.manualMetricsCopyTrigger))
     http.HandleFunc("/trigger/fomo-ws", cs.requireTriggerSecret(cs.manualFomoWsTrigger))
     http.HandleFunc("/logs/test", cs.testDiscordLogs)
 
@@ -770,6 +794,9 @@ func (cs *CronService) Start() {
     cs.logger.Info(fmt.Sprintf("📡 Signals refresh: every %d seconds", cs.config.SignalRefreshInterval))
     if cs.config.OhlcSampleInterval > 0 {
         cs.logger.Info(fmt.Sprintf("🕯️ OHLC 1m sampler: every %d seconds", cs.config.OhlcSampleInterval))
+    }
+    if cs.config.MetricsCopyInterval > 0 {
+        cs.logger.Info(fmt.Sprintf("📈 Metrics 1m volume copier: every %d seconds", cs.config.MetricsCopyInterval))
     }
     cs.logger.Info(fmt.Sprintf("🧪 Signals sim track: every %d seconds", cs.config.SignalsSimInterval))
     cs.logger.Info(fmt.Sprintf("📈 MCap tracker sim (manage+open, phase=all): every %d seconds", cs.config.McapTrackerSimInterval))
@@ -1809,6 +1836,40 @@ func (cs *CronService) manualOhlcSampleTrigger(w http.ResponseWriter, r *http.Re
     w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(map[string]string{
         "message":   "OHLC sampler triggered manually",
+        "timestamp": time.Now().UTC().Format(time.RFC3339),
+    })
+}
+
+// runMetricsCopy sweeps the watch set for 1m candle volume into token_metrics_history.
+// 409 means another sweep holds the job lock — a skip, not a failure.
+func (cs *CronService) runMetricsCopy() {
+    cs.workers.Begin("metrics_copier")
+    url := fmt.Sprintf("%s/api/metrics/copy?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
+    resp, err := cs.makeRequest("POST", url, nil)
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("❌ Metrics copier failed: %v", err))
+        cs.workers.Fail("metrics_copier", err.Error())
+        return
+    }
+    if isSkippedBody(resp) {
+        cs.logger.Info("⏭️ Metrics copier skipped (job lock held)")
+        cs.workers.Skipped("metrics_copier")
+        return
+    }
+    cs.logger.Success(fmt.Sprintf("✅ Metrics copier completed: %s", resp))
+    cs.workers.Success("metrics_copier")
+}
+
+func (cs *CronService) manualMetricsCopyTrigger(w http.ResponseWriter, r *http.Request) {
+    if r.Method != "POST" {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    cs.logger.Info("🔧 Manual metrics copier trigger")
+    cs.runMetricsCopy()
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]string{
+        "message":   "metrics copier triggered manually",
         "timestamp": time.Now().UTC().Format(time.RFC3339),
     })
 }

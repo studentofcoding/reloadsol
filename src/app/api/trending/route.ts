@@ -9,6 +9,7 @@ import {
   acquireTrendingListNotificationSlot,
   trendingListDiscordViaCronOnly,
 } from '@/utils/trending-notification-dedup'
+import { recordMetricSnapshots } from '@/strategies/token-metrics-history'
 
 // Environment variable for Discord webhook URL
 const DISCORD_WEBHOOK_URL =
@@ -1047,6 +1048,24 @@ async function fetchAndUpdateCache(
 
     // Use all transformed tokens instead of filtered ones
     const allTokens = transformedTokens;
+
+    // Persist the mcap/price the payload already carries into the metrics series.
+    //
+    // Deliberately NOT the volume: Jupiter's `stats5m`/`stats1h` are ROLLING WINDOW readings, not
+    // per-minute candles, and this series' `vol_min` slots hold observed per-minute volume only.
+    // Writing a rolling window into a slot would fabricate precision the source does not have.
+    // Route: `GET /api/metrics/copy` fills slots from real candles.
+    // Best-effort — never fails the route.
+    await recordMetricSnapshots(
+      allTokens.map((token) => ({
+        tokenAddress: token.token_address,
+        chain: 'sol',
+        mcap: token.mcap,
+        priceUsd: token.price,
+      })),
+      new Date(),
+      'snapshot',
+    )
 
     // Log timestamps for all tokens in the final set
     allTokens.forEach(token => {

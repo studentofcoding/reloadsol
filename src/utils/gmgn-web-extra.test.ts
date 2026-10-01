@@ -2,10 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   __resetGmgnWebExtraForTests,
   fetchGmgnWebCandles,
+  fetchGmgnWebCandlesPaced,
   fetchGmgnWebSafety,
   fetchGmgnWebTokenStat,
+  gmgnWebCopyRps,
   gmgnWebExtrasConfigured,
+  gmgnWebIsBlocked,
   normalizeGmgnWebResolution,
+  takeGmgnWebBlockCount,
 } from '@/utils/gmgn-web-extra'
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -141,5 +145,63 @@ describe('gmgn-web-extra', () => {
     // Second call is served from the negative cooldown — no upstream hit.
     expect(await fetchGmgnWebTokenStat('Other')).toBeNull()
     expect(fetchSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('counts 403/429 blocks and exposes the park state', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({}, 429))
+    expect(await fetchGmgnWebTokenStat('Mint')).toBeNull()
+    expect(gmgnWebIsBlocked()).toBe(true)
+    expect(takeGmgnWebBlockCount()).toBe(1)
+    // read-and-reset
+    expect(takeGmgnWebBlockCount()).toBe(0)
+  })
+
+  it('paces the copy lane independently of the live lane', async () => {
+    vi.stubEnv('GMGN_WEB_MAX_POST_PER_SEC', '1000') // live lane: ~1ms spacing
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ code: 0, data: { list: [] } }))
+
+    const t0 = Date.now()
+    for (let i = 0; i < 3; i++) {
+      await fetchGmgnWebCandlesPaced('Mint', { resolution: '1m', limit: 501, rps: 20 })
+    }
+    const copyMs = Date.now() - t0
+
+    const t1 = Date.now()
+    for (let i = 0; i < 3; i++) await fetchGmgnWebTokenStat('Mint')
+    const liveMs = Date.now() - t1
+
+    // 20 rps → 50ms per gap, so 3 copy calls cannot finish before ~100ms…
+    expect(copyMs).toBeGreaterThanOrEqual(80)
+    // …while the live lane is not dragged along by the copy lane's spacing.
+    expect(liveMs).toBeLessThan(60)
+  })
+
+  it('sends an explicit bar count on the copy lane, clamped to the upstream max', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(jsonResponse({ code: 0, data: { list: [] } }))
+
+    await fetchGmgnWebCandlesPaced('Mint', { resolution: '1m', limit: 501, rps: 48 })
+    expect(String(fetchSpy.mock.calls[0][0])).toContain('limit=501')
+
+    fetchSpy.mockClear()
+    await fetchGmgnWebCandlesPaced('Mint', { resolution: '1m', limit: 5000, rps: 48 })
+    expect(String(fetchSpy.mock.calls[0][0])).toContain('limit=501')
+
+    fetchSpy.mockClear()
+    await fetchGmgnWebCandles('Mint', '1m')
+    expect(String(fetchSpy.mock.calls[0][0])).not.toContain('limit=')
+  })
+
+  it('defaults the copy budget to the measured 80% and clamps nonsense', () => {
+    expect(gmgnWebCopyRps()).toBe(48)
+    vi.stubEnv('METRICS_COPY_RPS', '8')
+    expect(gmgnWebCopyRps()).toBe(8)
+    vi.stubEnv('METRICS_COPY_RPS', '5000')
+    expect(gmgnWebCopyRps()).toBe(100)
+    vi.stubEnv('METRICS_COPY_RPS', 'nope')
+    expect(gmgnWebCopyRps()).toBe(48)
+    vi.stubEnv('METRICS_COPY_RPS', '0')
+    expect(gmgnWebCopyRps()).toBe(48)
   })
 })

@@ -836,6 +836,22 @@ export async function getCachedTokenOhlc24h1m(
 }
 
 /**
+ * Pure cache read (primary → last-good), with **no upstream call**.
+ *
+ * `getCachedTokenOhlc24h1m` deliberately fetches when the cache misses — correct for one chart,
+ * wrong for a bulk sweep, which would then hammer the live rate lane with 300 misses. The metrics
+ * copier uses this instead: a miss costs nothing and simply means "fetch this one on the copy
+ * lane".
+ */
+export async function readCachedTokenOhlc24h1m(
+  tokenAddress: string,
+): Promise<{ candles: TokenOhlcBar[]; source: string } | null> {
+  const primary = await readOhlcCache(ohlc24h1mCacheKey(tokenAddress))
+  if (primary) return primary
+  return readOhlcCache(ohlc24h1mLastGoodKey(tokenAddress))
+}
+
+/**
  * "Tracker" price series for the chart, chain-aware:
  * 1. `trending_token_tracker.price_history` (sol-only trending-token tracker).
  * 2. Per-position `monitor_snapshots` from `strategy_outcomes.features`

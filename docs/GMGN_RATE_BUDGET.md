@@ -3,6 +3,12 @@
 **Measured:** 2026-09-30 · **Method:** bounded live ramps (sequential bursts, stopping at the first
 429) + prod logs. **Status:** A/C/D shipped; B/E/F deferred.
 
+> **Superseded in part — see "The web tunnel, re-measured" below (2026-10-01).** The 2026-09-30
+> "≥ 2.3 rps" figure for the Worker → `gmgn.ai` path was a **sequential-probe artefact**: at ~290 ms
+> per call, a one-at-a-time loop cannot exceed ~3.4 rps whatever the vendor allows. The real web
+> ceiling is **≥ 60 rps**.
+
+
 ## The finding
 
 **We were not rate limited — we were under-using the quota by ~7×.** The old constants were guesses;
@@ -77,3 +83,57 @@ the number here.
   IPs does nothing), and the web limit is Cloudflare-side. Multi-accounting is ToS-grey and brittle.
 - **Raising the GMGN tier.** Only if a measurement shows we need >3.6 rps — today we use ~14 %.
 - Putting the unofficial web path on the critical path: it stays fail-soft with openapi behind it.
+
+---
+
+## The web tunnel, re-measured — 2026-10-01
+
+**Method:** bounded probes from the `reloadsol-web` container against
+`https://gmgn-web-proxy.yonathanevanchristy.workers.dev` (our own Worker → `gmgn.ai`), small
+payloads (`/api/v1/token_stat/sol/{mint}`, ~600 B), 30 rotating mints, stopping at the first
+403/429. ≤180 requests total.
+
+**Step 1 — sequential ramp (the instructive failure).** Targets 1→15 rps:
+
+| target | achieved | 403/429 | p50 |
+|---|---|---|---|
+| 1–15 rps | **0.80 → 2.86 rps** (saturates) | **0** | ~290 ms flat |
+
+Achieved rate stopped tracking the target and pinned at ~2.9 rps. At 290 ms per call a serial loop
+**cannot** exceed ~3.4 rps — so this measured the Worker hop's latency, **not** the vendor. (This is
+exactly the artefact behind the 2026-09-30 "≥ 2.3 rps" row.)
+
+**Step 2 — concurrency ramp (the real answer).**
+
+| concurrency | achieved rps | 403/429 | p50 | p95 |
+|---|---|---|---|---|
+| 4 | 11.97 | **0** | 283 ms | 399 ms |
+| 8 | 25.24 | **0** | 290 ms | 330 ms |
+| 16 | 38.00 | **0** | 303 ms | 353 ms |
+| 32 | **60.04** | **0** | 356 ms | 490 ms |
+
+**We never reached the ceiling.** 160 requests, **zero** 403/429, single Durable Object, latency
+growing only mildly with concurrency.
+
+### Budget (80 % of the highest rate measured clean, per operator direction)
+
+| | value |
+|---|---|
+| Highest rate tested clean | **60 rps** (32 concurrent) |
+| **Budget = 80 %** | **48 rps** |
+| Current prod `GMGN_WEB_MAX_POST_PER_SEC` | **0.4** — ~120× under the budget |
+| Doc previously claimed | 0.9 (⚠ prod/doc drift — prod has 0.4) |
+
+### What this means
+
+- **A full 300-mint candle sweep is ~6 s at 48 rps**, not the ~12.5 min the 0.4 gate implies. The
+  metrics backbone's 1m volume is therefore *not* rate-limited by GMGN web — Solana Tracker's
+  absence does not block it.
+- **Caveats before raising anything:** (1) this is a **burst** measurement (≤160 requests, ~20 s
+  steps) — longer-window quotas are unmeasured; (2) `GMGN_WEB_MAX_POST_PER_SEC` is a **process-wide
+  serial gate**, so raising it speeds up *every* gmgn-web caller (chart candles, risk chips,
+  token_stat), not just the copier; (3) 48 is 80 % of the highest rate *tested*, **not** of a found
+  ceiling — the true limit is somewhere above 60.
+- **Recommended shape:** raise the web gate in steps (e.g. 0.4 → 8) while watching for 403/429 in
+  prod, keep the existing park-on-403/429 negative cooldown, and let the copier self-pace below the
+  gate rather than pushing the global value straight to 48.

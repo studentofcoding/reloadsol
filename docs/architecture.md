@@ -149,6 +149,7 @@ Registered in [`worker_tracker.go`](../worker_tracker.go), scheduled in [`main.g
 | `daily_summary` | 00:00 UTC | `POST /api/trending/summary` | infra |
 | `pnl_update` | 02:00 UTC | `POST /api/pnl/update` | infra |
 | `ohlc_sampler` | every 15s (env, 0=off) | `POST /api/ohlc/sample` | algo |
+| `metrics_copier` | every 15min (env, 0=off) | `POST /api/metrics/copy` | algo |
 
 **Removed (2026-06):** `ohlc_update`, `price_monitor` — charts use GMGN embed only; inter-cycle price alerts dropped in favor of trending track + SL/TP monitor. **Re-added (2026-09)** as `ohlc_sampler` (our own 1m series, see [SPEC-ohlc-own-1m-v1.md](./specs/SPEC-ohlc-own-1m-v1.md)).
 
@@ -278,7 +279,8 @@ Live candles come from **Solana Tracker** (`fetchTokenOhlc` / `GET /api/gmgn/tok
 
 | Table | Notes |
 |-------|-------|
-| `token_ohlc_bars` | **Our own 1m OHLC series** — written by the 15s `ohlc_sampler` worker (`POST /api/ohlc/sample`), read by the Freeview chart as the dependency-free source behind brain → SolanaTracker → GMGN. `volume` is NULL by design (no 1-minute volume exists in our stack); `samples` = price samples folded into the bar. Retention: `OHLC_BARS_RETENTION_HOURS` (default 48). |
+| `token_ohlc_bars` | **Our own 1m OHLC series** — written by the 15s `ohlc_sampler` worker (`POST /api/ohlc/sample`), read by the Freeview chart as the dependency-free source behind brain → SolanaTracker → GMGN. `volume` is NULL **because the sampler only has a Jupiter spot price in scope** — NOT because no 1-minute volume exists (per-candle volume is fetched by four paths and had simply never been persisted). `samples` = price samples folded into the bar. Retention: `OHLC_BARS_RETENTION_HOURS` (default 48). |
+| `token_metrics_history` | **The durable per-token volume/mcap series** — one row per (token, chain, UTC hour) holding 60 one-minute volume slots (`float8[60]`), written by the `metrics_copier` worker (`POST /api/metrics/copy`) from real candles. Fills the gap `token_ohlc_bars` leaves: `volume` is never NULL by omission, and a 5m bucket is derived only when all five minutes were observed. Retention: `TOKEN_METRICS_RETENTION_DAYS` (default 30). See [SPEC-rug-pattern-data-v1.md](./specs/SPEC-rug-pattern-data-v1.md). |
 
 ---
 

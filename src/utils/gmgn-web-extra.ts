@@ -15,8 +15,9 @@
  * and `/defi/...` + `/pf/...` are not on the Worker allow-list.
  *
  * Posture: unofficial + Cloudflare-tunnelled, so every call is **fail-soft** (null/[]),
- * honours a negative cooldown, and shares the existing GMGN web rate gate. Never the
- * critical path. See docs/GMGN_INTERNAL_API.md.
+ * honours a negative cooldown, and paces on one of two lanes (live at `GMGN_WEB_MAX_POST_PER_SEC`,
+ * bulk copy at `METRICS_COPY_RPS`) that share a single 403/429 park. Never the critical path.
+ * See docs/GMGN_INTERNAL_API.md and docs/GMGN_RATE_BUDGET.md.
  */
 
 import { chunkGmgnWebAddresses, gmgnWebMinIntervalMs } from '@/utils/gmgn-web-multi'
@@ -25,12 +26,30 @@ const DEFAULT_HOST = 'https://gmgn.ai'
 const TIMEOUT_MS = 12_000
 /** A 403/429 parks every extra call for this long. */
 const NEGATIVE_COOLDOWN_MS = 60_000
+/**
+ * Bulk copy lane (the metrics copier) — 80% of the highest rate measured clean through our
+ * Worker (>=60 rps at concurrency 32, zero 403/429). See docs/GMGN_RATE_BUDGET.md.
+ * `GMGN_WEB_MAX_POST_PER_SEC` (the live lane) is untouched by this.
+ */
+const DEFAULT_COPY_RPS = 48
+const MAX_COPY_RPS = 100
+/** The upstream accepts 501 bars of the requested resolution per call. */
+const CANDLE_LIMIT_MAX = 501
 
-const gate: { chain: Promise<void>; lastAt: number } = {
-  chain: Promise.resolve(),
-  lastAt: 0,
-}
+/**
+ * Two independent pacing lanes, one shared park.
+ *
+ * The live lane paces at `GMGN_WEB_MAX_POST_PER_SEC` and serves charts + risk chips; the copy
+ * lane paces at `METRICS_COPY_RPS` and serves the metrics copier. Separate lanes mean a bulk
+ * sweep runs at full budget without speeding up — or being slowed by — the live path.
+ * `blockedUntil` is deliberately shared: a 403/429 on either lane must stop both.
+ */
+type Lane = { chain: Promise<void>; lastAt: number }
+const liveGate: Lane = { chain: Promise.resolve(), lastAt: 0 }
+const copyGate: Lane = { chain: Promise.resolve(), lastAt: 0 }
 let blockedUntil = 0
+/** 403/429 seen since the last `takeGmgnWebBlockCount()` — the ramp signal. */
+let blockCount = 0
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -52,16 +71,41 @@ function webHeaders(): Record<string, string> {
   return headers
 }
 
-/** Same serial min-interval as the token-info client, so extras cannot burst past it. */
-function gateWait(): Promise<void> {
-  const minIntervalMs = gmgnWebMinIntervalMs()
-  const next = gate.chain.then(async () => {
-    const wait = Math.max(0, gate.lastAt + minIntervalMs - Date.now())
+/** /1000 rps → ms spacing. A nonsense value falls back to the live pace rather than hammering. */
+function minIntervalFor(rps: number | null | undefined): number {
+  if (rps == null || !Number.isFinite(rps) || rps <= 0) return gmgnWebMinIntervalMs()
+  return Math.ceil(1000 / Math.min(rps, MAX_COPY_RPS))
+}
+
+/** Serial min-interval on one lane, so that lane cannot burst past its own budget. */
+function paceWait(lane: Lane, rps?: number | null): Promise<void> {
+  const minIntervalMs = minIntervalFor(rps)
+  const next = lane.chain.then(async () => {
+    const wait = Math.max(0, lane.lastAt + minIntervalMs - Date.now())
     if (wait > 0) await sleep(wait)
-    gate.lastAt = Date.now()
+    lane.lastAt = Date.now()
   })
-  gate.chain = next.catch(() => undefined)
+  lane.chain = next.catch(() => undefined)
   return next
+}
+
+/** Copy-lane pace from env (default 48 = 80% of the measured clean ceiling). */
+export function gmgnWebCopyRps(): number {
+  const raw = Number(process.env.METRICS_COPY_RPS ?? DEFAULT_COPY_RPS)
+  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_COPY_RPS
+  return Math.min(raw, MAX_COPY_RPS)
+}
+
+/** True while a 403/429 park is active — a bulk sweep should stop rather than churn nulls. */
+export function gmgnWebIsBlocked(): boolean {
+  return Date.now() < blockedUntil
+}
+
+/** Read-and-reset the 403/429 count, for the copier's coverage line. */
+export function takeGmgnWebBlockCount(): number {
+  const n = blockCount
+  blockCount = 0
+  return n
 }
 
 function num(value: unknown): number | null {
@@ -95,13 +139,15 @@ async function callJson(
   method: 'GET' | 'POST',
   path: string,
   body?: unknown,
+  opts?: { rps?: number | null },
 ): Promise<Record<string, unknown> | null> {
   if (Date.now() < blockedUntil) return null
   if (!gmgnWebExtrasConfigured()) return null
+  const onCopyLane = opts?.rps != null
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
   try {
-    await gateWait()
+    await paceWait(onCopyLane ? copyGate : liveGate, opts?.rps)
     const res = await fetch(`${webHost()}${path}`, {
       method,
       headers: webHeaders(),
@@ -110,6 +156,7 @@ async function callJson(
     })
     if (res.status === 403 || res.status === 429) {
       blockedUntil = Date.now() + NEGATIVE_COOLDOWN_MS
+      blockCount++
       return null
     }
     if (!res.ok) return null
@@ -161,12 +208,43 @@ export async function fetchGmgnWebCandles(
   mint: string,
   resolution: string,
 ): Promise<GmgnWebCandle[] | null> {
+  return fetchCandles(mint, resolution)
+}
+
+/**
+ * Same endpoint on the bulk copy lane, with an explicit bar count.
+ *
+ * One call returns up to `limit` bars of `resolution` — so at 1m/501 a single call covers
+ * ~8.35 h of minutes. The metrics copier relies on that: slot completeness comes from the
+ * series, not from the sweep cadence (which only governs snapshot freshness). The cadence
+ * must stay below `limit x resolution`, or the gap leaves minutes the vendor will never
+ * re-serve — see `assertCadenceCoversWindow`.
+ */
+export async function fetchGmgnWebCandlesPaced(
+  mint: string,
+  opts: { resolution: string; limit?: number; rps?: number | null },
+): Promise<GmgnWebCandle[] | null> {
+  return fetchCandles(mint, opts.resolution, { limit: opts.limit, rps: opts.rps })
+}
+
+async function fetchCandles(
+  mint: string,
+  resolution: string,
+  opts?: { limit?: number; rps?: number | null },
+): Promise<GmgnWebCandle[] | null> {
   const address = mint.trim()
   const res = normalizeGmgnWebResolution(resolution)
   if (!address || !res) return null
+  const limit =
+    opts?.limit != null && Number.isFinite(opts.limit) && opts.limit > 0
+      ? Math.min(Math.floor(opts.limit), CANDLE_LIMIT_MAX)
+      : null
+  const query = `resolution=${encodeURIComponent(res)}${limit != null ? `&limit=${limit}` : ''}`
   const json = await callJson(
     'GET',
-    `/api/v1/token_mcap_candles/sol/${encodeURIComponent(address)}?resolution=${encodeURIComponent(res)}`,
+    `/api/v1/token_mcap_candles/sol/${encodeURIComponent(address)}?${query}`,
+    undefined,
+    { rps: opts?.rps },
   )
   if (!json || !isRecord(json.data)) return null
   const list = json.data.list
@@ -263,8 +341,10 @@ export async function fetchGmgnWebTokenStat(mint: string): Promise<GmgnWebStat |
   }
 }
 
-/** Test-only: clear the negative cooldown. */
+/** Test-only: clear the negative cooldown and both lanes. */
 export function __resetGmgnWebExtraForTests(): void {
   blockedUntil = 0
-  gate.lastAt = 0
+  blockCount = 0
+  liveGate.lastAt = 0
+  copyGate.lastAt = 0
 }

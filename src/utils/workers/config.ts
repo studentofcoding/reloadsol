@@ -25,6 +25,7 @@ export type WorkerId =
   | 'rh_lp_screen'
   | 'strategy_search'
   | 'ohlc_sampler'
+  | 'metrics_copier'
 
 export const WORKER_TRIGGER_PATHS: Record<WorkerId, string> = {
   signals_sim_track: '/trigger/signals-sim-track',
@@ -53,6 +54,7 @@ export const WORKER_TRIGGER_PATHS: Record<WorkerId, string> = {
   rh_lp_screen: '/trigger/rh-lp-screen',
   strategy_search: '/trigger/strategy-search',
   ohlc_sampler: '/trigger/ohlc-sampler',
+  metrics_copier: '/trigger/metrics-copier',
 }
 
 export function getCronServiceUrl(): string {

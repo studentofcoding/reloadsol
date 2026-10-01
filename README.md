@@ -277,6 +277,25 @@ Both default **off**, and neither gates anything: they record + label only, suff
 UI `/dev/dev-reputation` (profitable devs vs ban list, top-10 tokens each). Read APIs:
 `GET /api/dev/reputation`, `GET /api/gmgn/risk-chips` (bulk chips for list surfaces).
 
+### Metrics series — 1m volume (`metrics_copier`)
+
+The durable per-token series (`token_metrics_history`: one row per (token, UTC hour) of 60 one-minute volume
+slots), filled by `POST /api/metrics/copy`. Cheapest lane first — the 24h 1m candle cache for free, then one
+paced GMGN-web candle call per remaining watch mint. Its only hazard is a **cadence longer than the window a
+single call covers** (501 × 1m ≈ 8.35 h): the minutes in the gap are never re-served, so a daily sweep would
+silently hole the series. See [docs/GMGN_RATE_BUDGET.md](docs/GMGN_RATE_BUDGET.md).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `METRICS_COPY_INTERVAL` | `900` | Go cron cadence for `metrics_copier` (seconds; `0` disables). Must stay below the window one call covers. |
+| `METRICS_COPY_RPS` | `48` | Copy-lane rate budget — **its own lane**, independent of `GMGN_WEB_MAX_POST_PER_SEC` so a sweep cannot disturb the live chart/risk path. Default is 80 % of the highest rate measured clean through the Worker (≥ 60 rps, zero 403/429). Ship low and ramp while watching for 403/429. |
+| `METRICS_COPY_CONCURRENCY` | `8` | Max in-flight candle calls per sweep. |
+| `METRICS_COPY_MAX_MINTS` | `300` | Watch-set cap for the sweep (shared with `ohlc_sampler`). |
+| `METRICS_COPY_LOOKBACK_MIN` | `240` | How far back a cached series must reach to skip the vendor call entirely. |
+| `METRICS_COPY_MAX_STALENESS_MIN` | `30` | A cache older than this counts as stale → fetch regardless (its recent minutes are missing). |
+| `METRICS_COPY_KILL_SWITCH` | — | `1` makes every sweep a no-op. |
+| `TOKEN_METRICS_RETENTION_DAYS` | `30` | Whole-hour retention prune. |
+
 ### Market-brain (optional)
 
 Read-only client for [market-brain](https://market-brain.yonathanevanchristy.workers.dev) lists + recipes + `/regime/params` + `/ohlc` + `/risk/from-score`. Universe plugs default off. OHLC prefers brain when a read token is set (set `MARKET_BRAIN_OHLC=0` to keep SolanaTracker/GMGN). Principal sim-open **score risk** (`GET /risk/from-score`) defaults on when a read token is set — set `MARKET_BRAIN_SCORE_RISK=0` to keep today's recipe / `DEFAULT_MCAP_TRACKER_EXIT` knobs. Climate `sizeScale` still comes from `/regime/params`. Does not change live execute.

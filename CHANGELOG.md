@@ -8,6 +8,36 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — the 1m volume backbone actually fills now (`metrics_copier`)
+
+`token_ohlc_bars.volume` is NULL on **875,535/875,535** rows, which left the rug scorer's 30-point volume
+band inert and capped a ramp at 40 + 20 = 60 < 80 — it could never trip. `token_metrics_history` (one row per
+(token, UTC hour) carrying `float8[60]` one-minute slots) held the shape but nothing filled it.
+
+`metrics_copier` (`POST /api/metrics/copy`, every 15 min) fills it, cheapest lane first: the 24h 1m candle
+cache for free (it already carries per-candle volume), then **one paced GMGN-web call per remaining mint**.
+Volume arrives one call per token — `batch_handler` is `403 Endpoint not allowed` for candles — so the budget
+is a rate question, and the rate was **measured before it was used**: a concurrency ramp through our own
+Worker held **≥ 60 rps with zero 403/429** (the earlier "≥ 2.3 rps" figure was a sequential-probe artefact —
+at ~290 ms/call a one-at-a-time loop cannot exceed ~3.4 rps). Budget is 80 % of the highest rate measured
+clean = **48 rps**, on its **own rate lane** (`METRICS_COPY_RPS`) so a bulk sweep can never speed up or slow
+down the live chart/risk path; a 403/429 still parks both.
+
+One 501-bar call backfills **~8.35 h of minutes**, so coverage comes from the series, not the cadence —
+cadence is for snapshot freshness. The reverse is the one config that destroys data silently (a cadence longer
+than the fetched window loses every minute in the gap and the vendor never re-serves them), so it is guarded
+in code and pinned by a test.
+
+Verified end to end on prod, read-only: the real watch set (300 at cap) → real candles via the Worker (501/501
+bars carrying volume) → the writer's **verbatim SQL** → 243 rows / 1,507 slots across 5 mints, read back
+through the real column, then `ROLLBACK` (table gone afterwards, zero state change). **Density caveat,
+measured:** the endpoint returns only minutes that *traded*, so for the hottest mints the series is ~1 bar/min
+with 5–7 of the last 8 hours complete, while quiet tokens leave most minutes absent. An absent minute stays
+`NULL = not observed` — a deliberate open choice, not an oversight.
+
+**Not wired here:** the rug scorer's volume band still reads its own path; pointing it at this series is the
+consumer step.
+
 ### Added — every strategy on one market scalar, and a fold toggle on the paper desk
 
 **The scalar had a reach gap, not a signal gap.** `brain_size_scale` (market brain → `scaleOpenSize`) was
