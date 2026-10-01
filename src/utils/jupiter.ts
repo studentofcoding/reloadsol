@@ -2787,6 +2787,54 @@ export async function executeBulkSellAlt(
           clearTimeout(timeoutId);
         }
 
+        // The same guard the buy path runs — it was only wired into `executeBulkBuy`, so a batch SELL had
+        // nothing checking it. Measured 2026-10-02 on a token->token sell: Raptor's own program rejects
+        // these with `Custom 6006 TotalAmountsMustBeEqualToAmountIn` (raptor-v1/common_swap.rs:897), and
+        // two txs landed on chain as failures with nothing swapped and fees burned.
+        const tokenByMint = new Map(
+          transactionTokens.filter(Boolean).map((token) => [token.mintAddress, token]),
+        )
+        const checked = await dropRevertingPreparedSwaps(
+          transactions
+            .map((tx, i) => ({
+              key: transactionTokens[i]?.mintAddress,
+              tx,
+              meta: transactionMetas[i],
+            }))
+            .filter(
+              (
+                item,
+              ): item is {
+                key: string
+                tx: VersionedTransaction
+                meta: PreparedSwapMeta
+              } => item.key != null && item.meta != null,
+            ),
+          connection,
+        )
+        if (checked.dropped.length > 0) {
+          for (const dropped of checked.dropped) {
+            result.failedSwaps.push({
+              mintAddress: dropped.key,
+              error: `Would revert on chain: ${dropped.reason}`,
+            })
+          }
+          transactions.length = 0
+          transactionTokens.length = 0
+          transactionMetas.length = 0
+          for (const item of checked.keep) {
+            transactions.push(item.tx)
+            transactionMetas.push(item.meta)
+            const original = tokenByMint.get(item.key)
+            if (original) transactionTokens.push(original)
+          }
+          console.log(
+            `Pre-flight simulation dropped ${checked.dropped.length} of ${
+              checked.dropped.length + checked.keep.length
+            } swaps before signing`,
+          )
+        }
+
         if (transactions.length > 0) {
           const swapSignatures: string[] = [];
           const accountSellSends = async (sendResults: SubmitSignedSwapBatchResult[]) => {
