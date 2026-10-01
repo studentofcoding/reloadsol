@@ -1989,6 +1989,8 @@ export async function aggregateDailyPnl(params: {
   from: string
   to: string
   timeZone: string
+  /** Strategy ids to leave out of every aggregate — the dashboard's fold toggle. */
+  excludeStrategies?: string[]
 }): Promise<{
   daily: Array<{
     day: string
@@ -2033,7 +2035,10 @@ export async function aggregateDailyPnl(params: {
   regimeByDay: Array<{ day: string; regime_tag: string | null }>
 }> {
   const timeZone = resolveReportTimeZone(params.timeZone)
-  const args = [params.from, params.to, timeZone]
+  // An empty list excludes nothing, so every query below can carry the clause unconditionally:
+  // `x <> ALL('{}')` is true for every row. The coalesce matters — a bare `<> ALL` against a null
+  // strategy_id yields null, which would filter those rows out even when nothing is being folded.
+  const args = [params.from, params.to, timeZone, params.excludeStrategies ?? []]
 
   const { rows: daily } = await query<{
     day: string
@@ -2088,6 +2093,7 @@ export async function aggregateDailyPnl(params: {
         AND exit_at IS NOT NULL
         AND exit_at >= ($1::date::timestamp AT TIME ZONE $3)
         AND exit_at <  (($2::date + 1)::timestamp AT TIME ZONE $3)
+        AND coalesce(strategy_id, '') <> ALL($4::text[])
       GROUP BY 1
       ORDER BY 1`,
     args,
@@ -2102,12 +2108,14 @@ export async function aggregateDailyPnl(params: {
         WHERE is_simulated
           AND entry_at >= ($1::date::timestamp AT TIME ZONE $3)
           AND entry_at <  (($2::date + 1)::timestamp AT TIME ZONE $3)
+          AND coalesce(strategy_id, '') <> ALL($4::text[])
        UNION ALL
        SELECT coalesce(exit_at, NOW()) AS ts, -1 AS d
          FROM strategy_outcomes
         WHERE is_simulated
           AND entry_at >= ($1::date::timestamp AT TIME ZONE $3)
           AND entry_at <  (($2::date + 1)::timestamp AT TIME ZONE $3)
+          AND coalesce(strategy_id, '') <> ALL($4::text[])
      ), cum AS (
        SELECT ts, sum(sum(d)) OVER (ORDER BY ts) AS open_now
          FROM ev GROUP BY ts
@@ -2140,6 +2148,7 @@ export async function aggregateDailyPnl(params: {
         AND exit_at IS NOT NULL
         AND exit_at >= ($1::date::timestamp AT TIME ZONE $3)
         AND exit_at <  (($2::date + 1)::timestamp AT TIME ZONE $3)
+        AND coalesce(strategy_id, '') <> ALL($4::text[])
       GROUP BY 1
       ORDER BY trades DESC
       LIMIT 12`,
@@ -2171,6 +2180,7 @@ export async function aggregateDailyPnl(params: {
         AND exit_at IS NOT NULL
         AND exit_at >= ($1::date::timestamp AT TIME ZONE $3)
         AND exit_at <  (($2::date + 1)::timestamp AT TIME ZONE $3)
+        AND coalesce(strategy_id, '') <> ALL($4::text[])
       GROUP BY 1
       ORDER BY trades DESC
       LIMIT 12`,
@@ -2188,6 +2198,7 @@ export async function loadDayClosedTrades(params: {
   day: string
   timeZone: string
   limit?: number
+  excludeStrategies?: string[]
 }): Promise<Array<{
   strategy_id: string
   token_address: string
@@ -2223,15 +2234,19 @@ export async function loadDayClosedTrades(params: {
         AND exit_at IS NOT NULL
         AND exit_at >= ($1::date::timestamp AT TIME ZONE $2)
         AND exit_at <  (($1::date + 1)::timestamp AT TIME ZONE $2)
+        AND coalesce(strategy_id, '') <> ALL($3::text[])
       ORDER BY pnl_pct DESC NULLS LAST
-      LIMIT $3`,
-    [params.day, timeZone, params.limit ?? 2000],
+      LIMIT $4`,
+    [params.day, timeZone, params.excludeStrategies ?? [], params.limit ?? 2000],
   )
   return rows
 }
 
 /** Currently-open PAPER positions, from the SL/TP tracker the sims now register into. */
-export async function loadOpenPaperPositions(limit = 500): Promise<Array<{
+export async function loadOpenPaperPositions(
+  limit = 500,
+  excludeStrategies: string[] = [],
+): Promise<Array<{
   token_address: string
   token_symbol: string
   strategy_id: string | null
@@ -2257,9 +2272,10 @@ export async function loadOpenPaperPositions(limit = 500): Promise<Array<{
             entry_price, current_price, stop_loss_price, take_profit_price, created_at
        FROM sl_tp_positions
       WHERE is_active AND is_simulation
+        AND coalesce(strategy_id, '') <> ALL($2::text[])
       ORDER BY created_at DESC
       LIMIT $1`,
-    [limit],
+    [limit, excludeStrategies],
   ).catch(() => ({ rows: [] as Array<never> }))
   return rows as never
 }
@@ -2276,6 +2292,7 @@ export async function loadSimLedgerRecords(params: {
   to: string
   timeZone: string
   limit?: number
+  excludeStrategies?: string[]
 }): Promise<Array<{
   operationType: string
   timestamp: number
@@ -2306,9 +2323,10 @@ export async function loadSimLedgerRecords(params: {
       WHERE data->>'is_simulation' = 'true'
         AND timestamp >= ($1::date::timestamp AT TIME ZONE $3)
         AND timestamp <  (($2::date + 1)::timestamp AT TIME ZONE $3)
-      ORDER BY timestamp ASC
-      LIMIT $4`,
-    [params.from, params.to, timeZone, params.limit ?? 40000],
+        AND coalesce(data->>'bot_strategy', '') <> ALL($4::text[])
+       ORDER BY timestamp ASC
+       LIMIT $5`,
+    [params.from, params.to, timeZone, params.excludeStrategies ?? [], params.limit ?? 40000],
   )
   return rows.map((r) => ({
     operationType: r.operationType ?? '',

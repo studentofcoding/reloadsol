@@ -13,6 +13,7 @@ import {
   resolveBasePositionSizeSol,
   resolveBudgetHeadroom,
   resolveDailyBudgetSol,
+  resolveFoldedStrategyIds,
   summarizeDailyPnl,
 } from '@/strategies/pnl-dashboard'
 
@@ -45,13 +46,16 @@ export async function GET(request: NextRequest) {
 
     const budgetSol = resolveDailyBudgetSol()
     const basePositionSizeSol = resolveBasePositionSizeSol()
+    // One flag, resolved server-side, so the aggregate, the drill-down and the ledger cannot
+    // disagree about which families are folded.
+    const folded = searchParams.get('fold') === '1' ? resolveFoldedStrategyIds() : []
 
     const [{ daily, peaks, bySizeMult, byRegimeTag, regimeByDay }, openPositions] =
       await Promise.all([
-        aggregateDailyPnl({ from, to, timeZone }),
+        aggregateDailyPnl({ from, to, timeZone, excludeStrategies: folded }),
         // The paper positions the sims now register into the SL/TP tracker, so the dashboard can
         // show what is open right now rather than only what has closed.
-        loadOpenPaperPositions(),
+        loadOpenPaperPositions(500, folded),
       ])
 
     const budgetHeadroom = resolveBudgetHeadroom()
@@ -73,6 +77,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       range: { from, to, timezone: timeZone },
+      // Echoed so the UI can name what it removed instead of silently showing different totals.
+      folded,
       config: { budgetSol, basePositionSizeSol, budgetHeadroom },
 
       regimes,

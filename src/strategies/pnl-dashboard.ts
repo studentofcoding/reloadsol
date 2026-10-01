@@ -146,6 +146,38 @@ export function resolveBudgetHeadroom(env: Record<string, string | undefined> = 
   return positiveNumber(env.SIM_BUDGET_HEADROOM) ?? 1.25
 }
 
+/**
+ * The families the dashboard's fold toggle removes: measured to lose on both the 7-day window and
+ * the spine era, at every stake. See docs/diagrams/12-proposal-register.html (P3, gated by C-3 on
+ * READINESS_MIN_SAMPLE plus a non-negative net per trade).
+ *
+ * This is a *selection* decision, not a sizing one — a fold is binary, and the register is explicit
+ * that turning it into a weight is worse than either extreme. The list lives here rather than in the
+ * client so the aggregate, the per-day drill-down, the ledger and the open-position list cannot
+ * disagree about what "folded" means.
+ */
+export const DEFAULT_FOLDED_STRATEGY_IDS = [
+  'gmgn_sm_kol_combined',
+  'gmgn_kol_momentum',
+  'social_only_fomo_gt7',
+  'att_rh',
+] as const
+
+/**
+ * Env-overridable so a re-check can widen or narrow the fold without a deploy. An explicitly empty
+ * `SIM_FOLDED_STRATEGIES` folds nothing, which is how the toggle's "off" state is spelled server-side.
+ */
+export function resolveFoldedStrategyIds(
+  env: Record<string, string | undefined> = process.env,
+): string[] {
+  const raw = env.SIM_FOLDED_STRATEGIES
+  if (raw == null) return [...DEFAULT_FOLDED_STRATEGY_IDS]
+  return raw
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean)
+}
+
 export function capacityForBudget(budgetSol: number, positionSizeSol: number): number {
   return positionSizeSol > 0 ? Math.floor(budgetSol / positionSizeSol) : 0
 }

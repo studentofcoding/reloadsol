@@ -168,6 +168,7 @@ interface LedgerPayload {
     minSample: number
   }>
   success: boolean
+  folded?: string[]
   records?: number
   summary?: LedgerSummary
   strategies?: Array<LedgerSummary & { strategyId: string }>
@@ -187,6 +188,8 @@ interface RegimeRow {
 interface Payload {
   success: boolean
   range?: { from: string; to: string; timezone: string }
+  /** Strategy ids the server left out, echoed back so the page can name what it folded. */
+  folded?: string[]
   daily?: DailyRow[]
   open_positions?: OpenPosition[]
   regimes?: RegimeRow[]
@@ -240,13 +243,18 @@ export default function PnlDashboardClient() {
   const [climate, setClimate] = useState<Climate | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  // Fold the families the register measured as losing at every stake (P3, see
+  // docs/diagrams/12-proposal-register.html). A view of the same server data, not a local filter:
+  // the flag travels as a query param so the aggregate, the drill-down and the ledger cannot
+  // disagree about which trades were removed.
+  const [fold, setFold] = useState(false)
 
   const load = useCallback(async () => {
     if (!from || !to) return
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch(`/api/pnl/daily?from=${from}&to=${to}`)
+      const res = await fetch(`/api/pnl/daily?from=${from}&to=${to}${fold ? '&fold=1' : ''}`)
       const body = (await res.json()) as Payload
       if (!body.success) throw new Error(body.error || 'Request failed')
       setData(body)
@@ -255,7 +263,7 @@ export default function PnlDashboardClient() {
     } finally {
       setLoading(false)
     }
-  }, [from, to])
+  }, [from, to, fold])
 
   const applyPreset = useCallback((n: number) => {
     const anchor = todayIso()
@@ -274,7 +282,7 @@ export default function PnlDashboardClient() {
       if (dayTrades[day]) return
       setDayLoading(day)
       try {
-        const res = await fetch(`/api/pnl/day?date=${day}`)
+        const res = await fetch(`/api/pnl/day?date=${day}${fold ? '&fold=1' : ''}`)
         const body = (await res.json()) as { success: boolean; trades?: DayTrade[] }
         setDayTrades((prev) => ({ ...prev, [day]: body.trades ?? [] }))
       } catch {
@@ -283,7 +291,7 @@ export default function PnlDashboardClient() {
         setDayLoading(null)
       }
     },
-    [expanded, dayTrades],
+    [expanded, dayTrades, fold],
   )
 
   const loadClimate = useCallback(async () => {
@@ -315,7 +323,7 @@ export default function PnlDashboardClient() {
     let cancelled = false
     void (async () => {
       try {
-        const res = await fetch(`/api/pnl/ledger?from=${from}&to=${to}`)
+        const res = await fetch(`/api/pnl/ledger?from=${from}&to=${to}${fold ? '&fold=1' : ''}`)
         const body = (await res.json()) as LedgerPayload
         if (!cancelled) setLedger(body)
       } catch {
@@ -325,7 +333,7 @@ export default function PnlDashboardClient() {
     return () => {
       cancelled = true
     }
-  }, [from, to])
+  }, [from, to, fold])
 
   const summary = data?.summary
   const rows = data?.daily ?? []
@@ -347,6 +355,12 @@ export default function PnlDashboardClient() {
               budget per day {sol(summary?.budgetSol ?? 0, 2)} SOL · velocity = peak concurrent
               capital × stake, which is the binding number because capital recycles.
             </p>
+            {fold ? (
+              <p className="text-xs text-lime-300/80 mt-1">
+                Folded{data?.folded?.length ? `: ${data.folded.join(' · ')}` : ''} — every figure on this
+                page excludes them.
+              </p>
+            ) : null}
           </div>
           <div className="flex items-center gap-3">
             {climate?.state ? (
@@ -355,6 +369,23 @@ export default function PnlDashboardClient() {
                 {climate.scale ? ` · sizeScale ${climate.scale}` : ''}
               </span>
             ) : null}
+            <button
+              onClick={() => {
+                setFold((v) => !v)
+                // The per-day cache is keyed by day only, so it has to go when the fold changes.
+                setExpanded(null)
+                setDayTrades({})
+              }}
+              aria-pressed={fold}
+              title="Leave out the four families the register measured as losing at every stake"
+              className={`px-3 py-1.5 text-xs rounded border ${
+                fold
+                  ? 'border-lime-500 bg-lime-500/10 text-lime-300'
+                  : 'border-gray-700 bg-gray-900 text-gray-300 hover:bg-gray-800'
+              }`}
+            >
+              {fold ? 'folded · 4 families' : 'fold losing families'}
+            </button>
             <label className="text-xs text-gray-400">
               From
               <input

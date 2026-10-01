@@ -8,6 +8,7 @@ import {
   pnlSolFor,
   resolveBasePositionSizeSol,
   resolveDailyBudgetSol,
+  resolveFoldedStrategyIds,
   summarizeDailyPnl,
   type DailyPnlRow,
 } from './pnl-dashboard'
@@ -340,5 +341,27 @@ describe('per-day risk and reward', () => {
     expect(s.winLossRatio).toBeCloseTo(3, 6)
     expect(s.profitFactor).toBeCloseTo(3, 6)
     expect(s.avgRiskSol).toBeCloseTo(0.005, 8)
+  })
+})
+
+describe('resolveFoldedStrategyIds', () => {
+  it('defaults to the four families the register measured as losing', () => {
+    expect(resolveFoldedStrategyIds({})).toEqual([
+      'gmgn_sm_kol_combined',
+      'gmgn_kol_momentum',
+      'social_only_fomo_gt7',
+      'att_rh',
+    ])
+  })
+
+  it('lets a soak widen or narrow the fold without a deploy', () => {
+    expect(resolveFoldedStrategyIds({ SIM_FOLDED_STRATEGIES: 'a, b ,c' })).toEqual(['a', 'b', 'c'])
+  })
+
+  it('folds nothing when explicitly emptied, which is the toggle-off spelling', () => {
+    // The SQL clause is unconditional (`coalesce(strategy_id,'') <> ALL($n)`), so an empty list has
+    // to be the identity — if this ever returned the defaults the toggle could never turn off.
+    expect(resolveFoldedStrategyIds({ SIM_FOLDED_STRATEGIES: '' })).toEqual([])
+    expect(resolveFoldedStrategyIds({ SIM_FOLDED_STRATEGIES: ' , ' })).toEqual([])
   })
 })

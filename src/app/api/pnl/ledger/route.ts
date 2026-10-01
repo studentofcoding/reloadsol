@@ -6,6 +6,7 @@ import {
 } from '@/strategies/best-trade-windows'
 import { dayInTimeZone, isValidDayString } from '@/strategies/token-pnl-export'
 import { buildStrategyReadiness, summarizeLedger, summarizeLedgerPositions } from '@/strategies/ledger-pnl'
+import { resolveFoldedStrategyIds } from '@/strategies/pnl-dashboard'
 import type { TrackingRecord } from '@/utils/trading-tracker'
 
 const DEFAULT_RANGE_DAYS = 14
@@ -36,7 +37,8 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const rows = await loadSimLedgerRecords({ from, to, timeZone })
+    const folded = searchParams.get('fold') === '1' ? resolveFoldedStrategyIds() : []
+    const rows = await loadSimLedgerRecords({ from, to, timeZone, excludeStrategies: folded })
     // Shape the selected columns back into the record the reconstruction expects.
     const records = rows.map(
       (r) =>
@@ -74,6 +76,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       range: { from, to, timezone: timeZone },
+      folded,
       // Per-strategy readiness: median trade, the calibrated drag, net per trade, and peak concurrent
       // positions (which has to fit MAX_SOL_AT_RISK at the live size). Sorted best net first.
       readiness: buildStrategyReadiness(positions),

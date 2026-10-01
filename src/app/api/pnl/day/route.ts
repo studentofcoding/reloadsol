@@ -5,6 +5,7 @@ import {
   resolveReportTimeZone,
 } from '@/strategies/best-trade-windows'
 import { isValidDayString } from '@/strategies/token-pnl-export'
+import { resolveFoldedStrategyIds } from '@/strategies/pnl-dashboard'
 
 /**
  * Every closed trade on one day, for the dashboard's expandable per-day section.
@@ -27,11 +28,13 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const trades = await loadDayClosedTrades({ day, timeZone })
+    const folded = searchParams.get('fold') === '1' ? resolveFoldedStrategyIds() : []
+    const trades = await loadDayClosedTrades({ day, timeZone, excludeStrategies: folded })
     return NextResponse.json({
       success: true,
       day,
       timezone: timeZone,
+      folded,
       count: trades.length,
       trades,
     })
