@@ -837,7 +837,14 @@ async function runSimTrack(request: NextRequest) {
     phaseParam === 'open' || phaseParam === 'manage' || phaseParam === 'all'
       ? phaseParam
       : 'all'
-  const runManage = phase === 'manage' || phase === 'all'
+  // The 60s SL/TP worker owns EVERY exit (SPEC-strategy-exit-standard S9), so this route is
+  // discovery + entry only. Its manage phase used to close positions on this 900s clock through its
+  // own mcap-growth evaluator (`getMcapSimCloseReason`) — a second opinion on the same position,
+  // reading the same thresholds as a different unit. That is the branch the standard removes.
+  //
+  // Left computed rather than deleted so the `?phase=` request shape stays compatible while the
+  // pass is off; the now-unreachable block below is a follow-up deletion, not a hidden behaviour.
+  const runManage = false
   const runOpen = phase === 'open' || phase === 'all'
   // One OHLC load per mint per run. The seven strategies evaluate the same candidates, and that
   // load is rate-gated (~1.07 s measured), so without this the run pays it once per strategy.
