@@ -30,6 +30,19 @@ rm -rf .next/ && npm run lint && npm run verify:no-raw-useeffect && npm run veri
 
 Report each step verbosely (exit code + failures). Confirm `npm run start` boots, then stop it.
 
+### Builds serialise across agents — `npm run build` now queues
+
+`npm run build` runs through `scripts/with-build-lock.js`, which takes `/tmp/reloadsol-build.lock` and
+**waits** if another session is already building (up to `BUILD_LOCK_WAIT_SECS`, default 30 min; `=` is
+`exit 75`). Two concurrent `next build`s on one machine starve each other — a ~3-minute build blew past a
+10-minute timeout twice while another session was building, which reads as a hang.
+
+- **Use `npm run build`, not a raw `npx next build`/`next build`** — the raw form skips the lock and is what
+  causes the collision. Same for `npm run build:webpack`.
+- `node scripts/with-build-lock.js --status` reports who holds it. A lock whose owner died (or is older than
+  `BUILD_LOCK_STALE_SECS`) is stolen automatically, so a killed build cannot wedge the machine.
+- Separate from the deploy lock (`/tmp/reloadsol-deploy.lock`), which serialises `compose up` on the VPS.
+
 ## Deploy chain
 
 1. Push to `origin`.

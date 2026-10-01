@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "sh scripts/next-dev.sh",
     "dev:webpack": "sh scripts/next-dev.sh --webpack",
-    "build": "next build",
-    "build:webpack": "next build --webpack",
+    "build": "node scripts/with-build-lock.js next build",
+    "build:webpack": "node scripts/with-build-lock.js next build --webpack",
     "build:analyze": "ANALYZE=true next build:webpack",
     "start": "next start",
     "start:prod": "NODE_ENV=production next start",

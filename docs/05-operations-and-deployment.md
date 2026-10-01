@@ -42,6 +42,18 @@ Measured on prod 2026-10-01 against a Solana Tracker RPC (`*.secure.rpc.solanatr
 
 Env anchors: `RPC_MAX_REQ_PER_SEC`, `SOLANATRACKER_RPC_URL` (`src/utils/rpc-urls.ts`).
 
+### Local builds serialise across sessions — use `npm run build`
+
+`npm run build` (and `build:webpack`) run through `scripts/with-build-lock.js`, which holds
+`/tmp/reloadsol-build.lock` for the duration and **queues** rather than failing when another session is
+already building. `--status` reports the holder; a lock whose owner died — or that outlived
+`BUILD_LOCK_STALE_SECS` — is stolen automatically, so a killed build cannot wedge the machine.
+
+Two concurrent `next build`s on one box starve each other: a build that normally finishes in ~3 minutes
+blew past a 10-minute timeout twice while another session was building, which looks like a hang rather than
+contention. **A raw `npx next build` skips the lock** — that is the form that causes it. This is a local
+build lock and is separate from the VPS `compose up` lock (`/tmp/reloadsol-deploy.lock`).
+
 ## 2. Docker stack
 
 Services in `docker-compose.yml` (compose files: `docker-compose.yml` + `docker-compose.prod.yml` for deploy; `docker-compose.migrate.yml` for host-bound DB cutover; `docker-compose.dev.yml`/`override.yml` for dev):
