@@ -11,7 +11,7 @@ import {
   openGmgnSimPosition,
 } from '@/strategies/gmgn-open-sim'
 import { computeOpenSimCycle } from '@/utils/simulation-trades'
-import { buildTradingRecord, insertTradingRecords } from '@/utils/trading-records-db'
+import { buildTradingRecord } from '@/utils/trading-records-db'
 import { getOpenPositionPrices } from '@/utils/open-position-prices'
 import { getNativeUsd } from '@/utils/native-usd'
 import { log } from '@/utils/unified-logger'
