@@ -1173,6 +1173,9 @@ export interface SLTPTrackingSummary {
 
 // ✅ NEW: Get comprehensive tracking summary
 export async function getSLTPTrackingSummary(): Promise<SLTPTrackingSummary> {
+    // #region debug
+    const __sumT0 = Date.now()
+    // #endregion
     try {
         // Get all active positions
         const { rows: activePositions } = await query<SLTPPosition>(
@@ -1211,6 +1214,11 @@ export async function getSLTPTrackingSummary(): Promise<SLTPTrackingSummary> {
             ...finishedPositions.map(p => p.wallet_address)
         ]).size
 
+        // #region debug
+        console.warn(
+            `[sl-tp-debug] summary=${Date.now() - __sumT0}ms active=${activePositions.length} finished24h=${finishedPositions.length}`,
+        )
+        // #endregion
         return {
             active_positions: activePositions,
             finished_positions: finishedPositions,
