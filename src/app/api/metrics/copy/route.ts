@@ -253,6 +253,7 @@ export async function POST(request: NextRequest) {
     //    mode cannot turn a measurement sweep into a decision.
     let shadowRows = 0
     let seriesFed = 0
+    let notJudged = 0
     if (isRugSignalEnabled() && scored.length > 0) {
       const thresholds = resolveRugSignalThresholds()
       const mode = rugSignalMode()
@@ -269,6 +270,14 @@ export async function POST(request: NextRequest) {
           thresholds,
         )
         if (result.breakdown.volume > 0) seriesFed++
+        // A score from too few bars is an **unknown**, not a negative. Recording it as `pass` would
+        // quietly fill the control cohort with tokens nobody judged, which is how a precision figure
+        // becomes fiction.
+        if (!result.judged) notJudged++
+        const decision = !result.judged ? 'no_bars' : result.isRug ? 'would_rug' : 'pass'
+        const reason = result.judged
+          ? (result.reasons[result.reasons.length - 1] ?? null)
+          : `insufficient bars (${result.barsScored} x 5m)`
         await recordRugSignalShadow({
           chain: 'sol',
           tokenAddress: entry.mint,
@@ -277,9 +286,10 @@ export async function POST(request: NextRequest) {
           breakdown: result.breakdown as unknown as Record<string, number>,
           barsSource: 'series',
           barsUsed: entry.bars.length,
-          decision: result.isRug ? 'would_rug' : 'pass',
+          barsScored: result.barsScored,
+          decision,
           mode,
-          reason: result.reasons[result.reasons.length - 1] ?? null,
+          reason,
           mcap: entry.mcap,
           liquidityUsd,
           source: 'metrics_sweep',
@@ -321,6 +331,7 @@ export async function POST(request: NextRequest) {
       scored: scored.length,
       shadow_rows: shadowRows,
       series_fed: seriesFed,
+      not_judged: notJudged,
       blocks,
       pruned,
       cadence_ok: cadenceOk,

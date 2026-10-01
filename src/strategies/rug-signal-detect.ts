@@ -178,6 +178,7 @@ export async function detectRugSignal(params: {
         breakdown: null,
         barsSource,
         barsUsed: 0,
+        barsScored: 0,
         decision: 'no_bars',
         mode,
         reason: 'no bars',
@@ -234,6 +235,7 @@ export async function detectRugSignal(params: {
         breakdown: result ? (result.breakdown as unknown as Record<string, number>) : null,
         barsSource,
         barsUsed: bars1m.length,
+        barsScored: result?.barsScored ?? 0,
         decision,
         mode,
         reason,
@@ -248,9 +250,14 @@ export async function detectRugSignal(params: {
     )
 
     if (!result.isRug) {
-      const reason = result.reasons[result.reasons.length - 1] ?? null
-      await writeShadow('pass', reason, result)
-      return { evaluated: true, wrote: false, eval: result, reason, barsSource }
+      // A score from too few bars is an unknown, not a negative — say so, or the control cohort
+      // silently fills with tokens nobody judged.
+      const decision: RugSignalShadowDecision = result.judged ? 'pass' : 'no_bars'
+      const reason = result.judged
+        ? (result.reasons[result.reasons.length - 1] ?? null)
+        : `insufficient bars (${result.barsScored} x 5m)`
+      await writeShadow(decision, reason, result)
+      return { evaluated: result.judged, wrote: false, eval: result, reason, barsSource }
     }
 
     if (mode === 'shadow') {

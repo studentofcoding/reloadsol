@@ -31,10 +31,26 @@ every 15 min; **0 trips** so far, max score **43/80**, and the volume band contr
 1. **Let the soak produce the first verdict.** Rows become labellable 30 minutes after they are written, so the
    floor (30 labelled / 5 collapses) is reached within a day. The harness then states a lift or no lift — and the
    acceptance rule is *days must agree*, so the honest answer is a multi-day one.
-2. **Explain `series_fed: 21/150`.** Either those tokens are not rising (the band correctly scores 0) or the
-   series is too sparse for the band to see anything — two causes needing opposite responses. Diagnostic: bars
-   per mint, 5m buckets, and mcap gain across the 129. This decides whether the band is measurable on this
-   population at all, so it is worth doing **before** reading too much into the soak.
+2. **~~Explain `series_fed: 21/150`~~ — answered, and it exposed a bug in the instrumentation.** Split by how
+   many bars the scorer actually received:
+
+   | 1m bars the scorer got | rows | band fed | avg score |
+   |---|---|---|---|
+   | **< 15** (cannot form 3 × 5m — unjudgeable) | **126** | 4 | **1** |
+   | 15–59 | 25 | 8 | 24 |
+   | **≥ 60** (judgeable) | **151** | **32 (21 %)** | 13 |
+
+   So the band is **not** blind: of the mints it could judge, it fired on **21 %** — its designed shape (price
+   rising with flat volume). The larger finding is the **watch set's composition**: 42 % of the swept mints have
+   almost no candle history at all, because "most recently seen" includes tokens whose only activity was a single
+   mention or buy.
+
+   **That mattered for the validation, and is fixed.** Those rows were being recorded as `pass`, but a score of 0
+   from four bars is not a measured negative — it is the absence of a measurement, and counting it as a negative
+   would inflate the control cohort and make precision look *better* than it is. `RugSignalEval` now reports
+   `barsScored` and `judged`; a row below `minBars` is logged as `no_bars` (`insufficient bars (n × 5m)`), the
+   sweep summary reports `not_judged`, and the harness excludes them from its denominators **and prints how many
+   it excluded**.
 3. **P5 — enforce, then feed the ML shadow lane.** Gated: only if the harness clears its floor with a lift over
    base rate. `RUG_SIGNAL_MODE=enforce` is the explicit keystroke; `RUG_SIGNAL_KILL_SWITCH` stays as the stop.
 

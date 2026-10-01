@@ -371,3 +371,33 @@ describe('config', () => {
     ).toBe('shadow')
   })
 })
+
+describe('evaluateRugSignal — judged vs merely scored', () => {
+  const bars = (n: number): RugSignalBar[] =>
+    Array.from({ length: n }, (_, i) => ({
+      t: 600 + i * 300,
+      o: 1,
+      h: 1.1,
+      l: 0.9,
+      c: 1,
+      v: 10,
+    }))
+
+  it('says how many 5m bars it scored, and whether that was enough to judge', () => {
+    const few = evaluateRugSignal({ bars: bars(2) })
+    expect(few.barsScored).toBe(2)
+    // Below minBars the shape was never evaluated — a caller must read this as "unknown", not "pass".
+    expect(few.judged).toBe(false)
+
+    const many = evaluateRugSignal({ bars: bars(20) })
+    expect(many.barsScored).toBe(20)
+    expect(many.judged).toBe(true)
+  })
+
+  it('counts only the window it actually scored', () => {
+    // windowBars default is 20, so a longer series is sliced — barsScored reports the slice.
+    const wide = evaluateRugSignal({ bars: bars(40) })
+    expect(wide.barsScored).toBe(DEFAULT_RUG_SIGNAL_THRESHOLDS.windowBars)
+    expect(wide.judged).toBe(true)
+  })
+})

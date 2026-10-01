@@ -123,6 +123,14 @@ export type RugSignalEval = {
   isRug: boolean
   skipped: boolean
   skipReason?: string
+  /**
+   * 5m bars actually scored, after the window slice. Callers need this: a score of 0 from four
+   * bars is not the same evidence as a score of 0 from twenty, and a shadow log that cannot tell
+   * them apart turns "not judged" into "judged negative".
+   */
+  barsScored: number
+  /** False when there were too few bars to evaluate the shape at all — an unknown, not a pass. */
+  judged: boolean
   breakdown: Record<RugSignalComponentId, number>
   components: RugSignalComponent[]
   reasons: string[]
@@ -576,7 +584,17 @@ export function evaluateRugSignal(
     `rug signal score ${score}/100 vs threshold ${th.threshold} → ${isRug ? 'rug' : 'not rug'}`,
   )
 
-  return { score, isRug, skipped, skipReason, breakdown, components, reasons }
+  return {
+    score,
+    isRug,
+    skipped,
+    skipReason,
+    barsScored: bars.length,
+    judged: bars.length >= th.minBars,
+    breakdown,
+    components,
+    reasons,
+  }
 }
 
 /** Convenience: build the scorer's input from 1m bars. */

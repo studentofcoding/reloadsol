@@ -36,6 +36,8 @@ export type RugSignalShadowRow = {
   mcap: number | null
   liquidityUsd: number | null
   barsUsed: number
+  /** 5m bars the scorer actually evaluated — 0 on rows it could not judge. */
+  barsScored: number
   source: RugSignalShadowSource
 }
 
@@ -50,6 +52,7 @@ const CREATE_TABLE_SQL = `
     breakdown JSONB,
     bars_source TEXT NOT NULL,
     bars_used INTEGER NOT NULL DEFAULT 0,
+    bars_scored INTEGER NOT NULL DEFAULT 0,
     decision TEXT NOT NULL CHECK (decision IN ('would_rug', 'pass', 'no_bars', 'disabled')),
     mode TEXT NOT NULL CHECK (mode IN ('shadow', 'enforce')),
     reason TEXT,
@@ -78,6 +81,11 @@ async function ensureShadowTable(): Promise<void> {
   }
   ensurePromise = (async () => {
     await query(CREATE_TABLE_SQL)
+    // The table may predate a column (it is created on first use, not by a migration), so add it
+    // idempotently rather than assuming a fresh create.
+    await query(
+      `ALTER TABLE rug_signal_shadow ADD COLUMN IF NOT EXISTS bars_scored INTEGER NOT NULL DEFAULT 0`,
+    )
     for (const sql of CREATE_INDEX_SQL) await query(sql)
   })()
     .then(() => undefined)
@@ -95,9 +103,9 @@ export async function recordRugSignalShadow(row: RugSignalShadowRow): Promise<vo
     await ensureShadowTable()
     await query(
       `INSERT INTO rug_signal_shadow (
-         chain, token_address, symbol, score, breakdown, bars_source, bars_used,
+         chain, token_address, symbol, score, breakdown, bars_source, bars_used, bars_scored,
          decision, mode, reason, mcap, liquidity_usd, source
-       ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13)`,
+       ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
       [
         row.chain,
         row.tokenAddress,
@@ -106,6 +114,7 @@ export async function recordRugSignalShadow(row: RugSignalShadowRow): Promise<vo
         row.breakdown == null ? null : JSON.stringify(row.breakdown),
         row.barsSource,
         row.barsUsed,
+        row.barsScored,
         row.decision,
         row.mode,
         row.reason,
@@ -166,6 +175,7 @@ export async function loadRugSignalShadow(params: {
     breakdown: Record<string, number> | null
     bars_source: string
     bars_used: number
+    bars_scored: number
     decision: string
     mode: string
     reason: string | null
@@ -174,7 +184,8 @@ export async function loadRugSignalShadow(params: {
     source: string
   }>(
     `SELECT id::text AS id, created_at::text AS created_at, chain, token_address, symbol, score,
-            breakdown, bars_source, bars_used, decision, mode, reason, mcap, liquidity_usd, source
+            breakdown, bars_source, bars_used, bars_scored, decision, mode, reason, mcap,
+            liquidity_usd, source
        FROM rug_signal_shadow
        ${clause}
       ORDER BY created_at DESC
@@ -198,6 +209,7 @@ export async function loadRugSignalShadow(params: {
       breakdown: r.breakdown,
       barsSource: r.bars_source,
       barsUsed: r.bars_used,
+      barsScored: r.bars_scored,
       decision: r.decision as RugSignalShadowDecision,
       mode: r.mode as 'shadow' | 'enforce',
       reason: r.reason,

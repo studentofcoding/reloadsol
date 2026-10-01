@@ -35,6 +35,8 @@ const EVENT_WINDOW_MIN = Number(process.env.RUG_EVENT_WINDOW || 30)
 const THRESHOLD = Number(process.env.RUG_SIG_THRESHOLD || 80)
 const MIN_LABELLED = Number(process.env.RUG_VALIDATE_MIN_ROWS || 30)
 const MIN_POSITIVES = Number(process.env.RUG_VALIDATE_MIN_POSITIVES || 5)
+/** Fewer 5m bars than this and the scorer could not judge the shape — an unknown, not a negative. */
+const MIN_BARS = Number(process.env.RUG_SIG_MIN_BARS || 5)
 
 /** Minute closes for a token: [{t, c}], ascending, from the market-cap candle arrays. */
 function expandCloses(rows) {
@@ -72,15 +74,15 @@ async function main() {
   const client = new Client({ connectionString: process.env.DATABASE_URL })
   await client.connect()
   try {
-    const { rows: shadow } = await client.query(
-      `SELECT token_address, created_at::text, score, decision, bars_source, breakdown
+    const { rows: shadowAll } = await client.query(
+      `SELECT token_address, created_at::text, score, decision, bars_source, bars_scored, breakdown
          FROM rug_signal_shadow
         WHERE created_at > NOW() - make_interval(days => $1::int)
         ORDER BY created_at ASC`,
       [DAYS],
     )
-    console.log(`shadow rows (last ${DAYS}d): ${shadow.length}`)
-    if (shadow.length === 0) {
+    console.log(`shadow rows (last ${DAYS}d): ${shadowAll.length}`)
+    if (shadowAll.length === 0) {
       console.log('')
       console.log(
         'VERDICT: inconclusive — no shadow rows yet. Arm the detector in shadow ' +
@@ -88,15 +90,24 @@ async function main() {
       )
       return
     }
-    const byDecision = shadow.reduce((acc, r) => {
+
+    // A row the scorer could not judge must never enter a denominator: its 0 is the absence of a
+    // measurement, not a measured negative. Excluded rows are counted out loud, never dropped.
+    const shadow = shadowAll.filter((r) => Number(r.bars_scored) >= MIN_BARS)
+    const unjudged = shadowAll.length - shadow.length
+    console.log(
+      `judged for scoring: ${shadow.length}   excluded, too few 5m bars (<${MIN_BARS}): ${unjudged}`,
+    )
+
+    const byDecision = shadowAll.reduce((acc, r) => {
       acc[r.decision] = (acc[r.decision] ?? 0) + 1
       return acc
     }, {})
-    const byBarsSource = shadow.reduce((acc, r) => {
+    const byBarsSource = shadowAll.reduce((acc, r) => {
       acc[r.bars_source] = (acc[r.bars_source] ?? 0) + 1
       return acc
     }, {})
-    console.log(`decisions: ${JSON.stringify(byDecision)}`)
+    console.log(`decisions (all rows): ${JSON.stringify(byDecision)}`)
     console.log(`bars sources: ${JSON.stringify(byBarsSource)}`)
 
     // Label each row by looking FORWARD from its own timestamp.
