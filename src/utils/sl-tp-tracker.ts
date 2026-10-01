@@ -14,6 +14,7 @@ import { mapShyftTokensToUserTokens } from '@/utils/shyft-wallet'
 import { fetchJupiterPortfolioDirect, mapPortfolioToUserTokens } from '@/utils/jupiter-portfolio'
 import { getOpenPositionPrices } from '@/utils/open-position-prices'
 import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
+import { closeSimulatedPositionFromWorker } from '@/utils/sl-tp-sim-close'
 
 /** Cached Shyft all_tokens, then Jupiter, then RPC token accounts. */
 async function fetchSlTpWalletTokens(
@@ -651,16 +652,24 @@ function checkSLTPTriggers(position: SLTPPosition, currentPrice: number): SLTPTr
 
     // For bot positions, check multiple TP levels
     if (position.position_type === 'bot') {
+        // A bot row with no TP ladder otherwise has NO reachable take-profit: this branch reads only
+        // tp1/2/3_percentage, and take_profit_percentage is read only by the `manual` branch below.
+        // Fall back to the single target so the field is evaluated rather than silently ignored —
+        // this is why `Finished: 211` read TP1: 0, TP2: 0, TP3: 0.
+        const tp1Pct = position.tp1_percentage ?? position.take_profit_percentage
         // Check TP1
-        if (position.tp1_percentage && !position.tp1_executed && gainPercentage >= position.tp1_percentage) {
+        if (tp1Pct && !position.tp1_executed && gainPercentage >= tp1Pct) {
             return {
                 triggered: true,
                 trigger_type: 'take_profit_1',
-                sell_percentage: position.tp1_sell_percentage || 80,
+                // A real ladder keeps its configured partial; a lone target must sell all of it,
+                // since there is no TP2 to catch the remainder.
+                sell_percentage:
+                    position.tp1_sell_percentage ?? (position.tp1_percentage ? 80 : 100),
                 current_price: currentPrice,
-                trigger_price: position.entry_price * (1 + position.tp1_percentage / 100),
+                trigger_price: position.entry_price * (1 + tp1Pct / 100),
                 gain_percentage: gainPercentage,
-                reason: `TP1 triggered: ${gainPercentage.toFixed(2)}% >= ${position.tp1_percentage}%`
+                reason: `TP1 triggered: ${gainPercentage.toFixed(2)}% >= ${tp1Pct}%`
             }
         }
 
@@ -1301,14 +1310,24 @@ export async function monitorSLTPPositions(returnSummary: boolean = false): Prom
                 })
 
                 if (isSimulatedPosition(position)) {
-                    // Paper: record the trigger and close it in the bookkeeping. Touching the chain
-                    // here would sell real tokens for a simulated stop.
+                    // Paper: close the TRADE, never the chain. The closer writes the sell record and
+                    // the outcome; the mirror is retired only when that succeeded, so a failed close
+                    // stays open and is retried on the next pass rather than silently vanishing.
+                    const closeResult = await closeSimulatedPositionFromWorker({
+                        position,
+                        triggerType: triggerResult.trigger_type,
+                        currentPrice,
+                    })
                     log.info('deviation_alert', 'Simulated SL/TP trigger recorded (no on-chain sell)', {
                         positionId: position.id,
                         tokenSymbol: position.token_symbol,
                         triggerType: triggerResult.trigger_type,
+                        domain: closeResult.domain,
+                        closed: closeResult.closed,
                     })
-                    await markSimulatedPositionClosed(position, triggerResult)
+                    if (closeResult.closed) {
+                        await markSimulatedPositionClosed(position, triggerResult)
+                    }
                 } else {
                     // Execute sell order
                     await executeSellOrder(position, triggerResult)
@@ -1397,14 +1416,24 @@ export async function runSLTPMonitorAndSummarize(): Promise<SLTPTrackingSummary>
                 })
 
                 if (isSimulatedPosition(position)) {
-                    // Paper: record the trigger and close it in the bookkeeping. Touching the chain
-                    // here would sell real tokens for a simulated stop.
+                    // Paper: close the TRADE, never the chain. The closer writes the sell record and
+                    // the outcome; the mirror is retired only when that succeeded, so a failed close
+                    // stays open and is retried on the next pass rather than silently vanishing.
+                    const closeResult = await closeSimulatedPositionFromWorker({
+                        position,
+                        triggerType: triggerResult.trigger_type,
+                        currentPrice,
+                    })
                     log.info('deviation_alert', 'Simulated SL/TP trigger recorded (no on-chain sell)', {
                         positionId: position.id,
                         tokenSymbol: position.token_symbol,
                         triggerType: triggerResult.trigger_type,
+                        domain: closeResult.domain,
+                        closed: closeResult.closed,
                     })
-                    await markSimulatedPositionClosed(position, triggerResult)
+                    if (closeResult.closed) {
+                        await markSimulatedPositionClosed(position, triggerResult)
+                    }
                 } else {
                     // Execute sell order
                     await executeSellOrder(position, triggerResult)

@@ -33,6 +33,26 @@ import { closeOutcomeStatusFromPnl } from '@/strategies/close-outcome-status'
 
 const CLOSE_REASON = 'strategy_deactivated' as const
 
+/**
+ * The close reasons the SL/TP worker produces, mapped onto the vocabulary the outcome rows already
+ * use. `close_outcome_status` then derives won/lost from the PnL.
+ */
+const WORKER_CLOSE_REASONS: Record<string, string> = {
+  stop_loss: 'stop_loss',
+  take_profit_1: 'take_profit',
+  take_profit_2: 'take_profit',
+  take_profit_3: 'take_profit',
+  take_profit: 'take_profit',
+  max_hold_time: 'max_hold',
+  max_age: 'max_age',
+  label_rugged: 'label_rugged',
+}
+
+/** The close_reason an SL/TP worker trigger maps to. */
+export function closeReasonForTrigger(triggerType: string): string {
+  return WORKER_CLOSE_REASONS[triggerType] ?? CLOSE_REASON
+}
+
 type PriceDomain = 'signals' | 'gmgn' | 'social'
 
 function walletForDomain(domain: PriceDomain, chain: StrategyChain): string {
@@ -73,14 +93,29 @@ export async function closePriceStrategySimPosition(params: {
   symbol: string
   entryAt: string | null
   entryFeatures: Record<string, unknown>
+  /**
+   * Why this position is closing. Defaults to deactivation, which is what this function originally
+   * served. The SL/TP worker passes `closeReasonForTrigger(trigger_type)` instead.
+   */
+  closeReason?: string
+  /**
+   * The live price the close decision was made on. Supply it when the caller has already priced the
+   * position — the worker has, and re-reading would price the same tick twice.
+   */
+  sellPriceUsd?: number
 }): Promise<number> {
+  const closeReason = params.closeReason ?? CLOSE_REASON
   const wallet = walletForDomain(params.domain, params.chain)
   const records = await fetchTradingRecordsForWallet(wallet)
   const cycle = computeOpenSimCycle(records, params.mintAddress)
   if (!cycle) return 0
 
-  const prices = await getOpenPositionPrices([params.mintAddress], params.chain)
-  const sellPriceUsd = prices[params.mintAddress] || cycle.weightedBuyPriceUsd
+  const prices =
+    params.sellPriceUsd == null
+      ? await getOpenPositionPrices([params.mintAddress], params.chain)
+      : {}
+  const sellPriceUsd =
+    params.sellPriceUsd ?? prices[params.mintAddress] ?? cycle.weightedBuyPriceUsd
   const solPrice = await getNativeUsd(params.chain)
   const remaining = cycle.remainingTokenAmount
   const solReceived =
@@ -116,9 +151,9 @@ export async function closePriceStrategySimPosition(params: {
       solAmount: solReceived,
       feesPaid: 0,
       solPriceUsd: solPrice,
-      signatures: [`${params.domain}-sim-deactivate-${Date.now()}`],
+      signatures: [`${params.domain}-sim-${closeReason}-${Date.now()}`],
       status: closeOutcomeStatusFromPnl(pnlPct),
-      trading_simulation: { close_reason: CLOSE_REASON },
+      trading_simulation: { close_reason: closeReason },
     }),
   )
 
@@ -142,7 +177,7 @@ export async function closePriceStrategySimPosition(params: {
     features: mergeEntryFeaturesForOutcome(buyFeatures, {
       token_symbol: params.symbol,
       exit_price_usd: sellPriceUsd,
-      close_reason: CLOSE_REASON,
+      close_reason: closeReason,
       sol_spent: cycle.totalSolBought,
       sol_received: solReceived,
       initial_price_usd:
@@ -159,12 +194,23 @@ export async function closePriceStrategySimPosition(params: {
 export async function closeMcapStrategySimPositions(
   strategyId: string,
   chain: StrategyChain,
+  options?: {
+    /** Why this is closing. Defaults to deactivation. */
+    closeReason?: string
+    /** Scope to one mint. Omitted closes every open mcap sim for the strategy (deactivation). */
+    mintAddress?: string
+    /** The live price the decision was made on. Omitted falls back to the nominal placeholder. */
+    sellPriceUsd?: number
+  },
 ): Promise<{ closed: number; failed: Array<{ token: string; error: string }> }> {
   const failed: Array<{ token: string; error: string }> = []
   let closed = 0
   const wallet = simWalletForChain(MCAP_TRACKER_SIM_WALLET, chain)
   const records = await fetchTradingRecordsForWallet(wallet)
-  const open = getOpenMcapSimPositions(records, strategyId)
+  const allOpen = getOpenMcapSimPositions(records, strategyId)
+  const open = options?.mintAddress
+    ? allOpen.filter((p) => p.mintAddress === options.mintAddress)
+    : allOpen
 
   for (const pos of open) {
     try {
@@ -178,7 +224,7 @@ export async function closeMcapStrategySimPositions(
           : pos.entryMcap
       const pnlPct = computeMcapSimPnlPct(pos.entryMcap, exitMcap)
       const solPrice = await getNativeUsd(chain)
-      const sellPriceUsd = 0.000001
+      const sellPriceUsd = options?.sellPriceUsd ?? 0.000001
       const remaining = cycle.remainingTokenAmount
       const solReceived =
         sellPriceUsd && solPrice > 0
@@ -214,7 +260,7 @@ export async function closeMcapStrategySimPositions(
         }),
       )
 
-      const closeReason: McapSimCloseReason = 'strategy_deactivated'
+      const closeReason = (options?.closeReason ?? CLOSE_REASON) as McapSimCloseReason
       const closeFeatures = snapshot
         ? buildMcapOutcomeFeatures({
             snapshot,
