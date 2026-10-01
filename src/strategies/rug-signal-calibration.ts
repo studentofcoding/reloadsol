@@ -33,6 +33,7 @@ export type CalibrationOverrides = Partial<
     RugSignalThresholds,
     | 'threshold'
     | 'coreThreshold'
+    | 'coreMinLiquidity'
     | 'stairBullishMin'
     | 'stairAvgGainMax'
     | 'stairPriceGainMin'
@@ -96,6 +97,7 @@ export function sanitizeOverrides(input: unknown): CalibrationOverrides {
   const bounds: Record<keyof CalibrationOverrides, [number, number]> = {
     threshold: [0, 100],
     coreThreshold: [0, 100],
+    coreMinLiquidity: [0, 20],
     stairBullishMin: [0, 1],
     stairAvgGainMax: [0, 1],
     stairPriceGainMin: [0, 10],
@@ -390,6 +392,7 @@ export async function replayRugSignal(params: {
     effective: {
       threshold: thresholds.threshold,
       coreThreshold: thresholds.coreThreshold,
+      coreMinLiquidity: thresholds.coreMinLiquidity,
       volExpansionWeight: thresholds.volExpansionWeight,
       volCvSafe: thresholds.volCvSafe,
       liqSafeRatio: thresholds.liqSafeRatio,

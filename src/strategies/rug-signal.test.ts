@@ -184,7 +184,8 @@ describe('evaluateRugSignal — staircase', () => {
         liquidityUsd: THIN_LIQ,
         ageHours: YOUNG,
       },
-      { threshold: 88 },
+      // The core pair is a *second* gate, so it is disabled here to isolate the score rule.
+      { threshold: 88, coreThreshold: 0 },
     )
     expect(r.score).toBe(87)
     expect(r.isRug).toBe(false)

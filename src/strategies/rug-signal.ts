@@ -63,6 +63,12 @@ export type RugSignalThresholds = {
    * The full score path (`score >= threshold`) is unchanged and still trips. `0` disables this path.
    */
   coreThreshold: number
+  /**
+   * The pair must also carry **some** liquidity risk. Thin liquidity is part of the shape, so a
+   * perfect staircase over *deep* liquidity must not trip on this path — that combination is exactly
+   * the healthy ramp the module is supposed to leave alone. Half the C20 band by default.
+   */
+  coreMinLiquidity: number
   /** Score at or above this is a rug. */
   threshold: number
   /** Guardrail (RUG_SIGNAL.md §6): skip only when age and liquidity are both known-outsiders. */
@@ -83,11 +89,23 @@ export const DEFAULT_RUG_SIGNAL_THRESHOLDS: RugSignalThresholds = {
   dumpBarDrop: 0.4,
   dumpDrawdown: 0.6,
   /**
-   * 60 = a full staircase (40) with the thinnest liquidity (20) — the shape pair at its maximum, so
-   * a genuine ramp can trip without the volume band. Env-tunable because the right operating point
-   * is the operator's call, and the replay measures what each value costs in trip rate.
+   * 40, selected from a measured trip-rate curve rather than guessed.
+   *
+   * Replaying 399 observations at the current anchors (one day, prod):
+   *
+   *   core >= 46 → 2 trips (0.5%)     core >= 35 → 5 (1.25%)
+   *   core >= 40 → 2 trips (0.5%)     core >= 30 → 13 (3.3%)
+   *
+   * The best row reaches **46**, so 60 (the first value tried) could never fire at all — the same
+   * inert-rule defect the volume band had. 40 sits on the flat part of the curve, where the rule
+   * fires rarely and deliberately; 30 is a cliff (3× the trips) and reads as ordinary rows.
+   *
+   * The pair's maximum is 46 rather than 60 because the two shape components do not co-occur
+   * strongly: the tokens with the strongest staircase are not the ones with the thinnest liquidity.
+   * That is a property of this population, and the replay is how it stays visible.
    */
-  coreThreshold: 60,
+  coreThreshold: 40,
+  coreMinLiquidity: 10,
   threshold: 80,
   maxAgeH: 48,
   maxLiqUsd: 100_000,
@@ -196,6 +214,7 @@ export function resolveRugSignalThresholds(
     dumpBarDrop: envNum(env, 'RUG_SIG_DUMP_BAR', d.dumpBarDrop),
     dumpDrawdown: envNum(env, 'RUG_SIG_DUMP_DRAWDOWN', d.dumpDrawdown),
     coreThreshold: envNum(env, 'RUG_SIG_CORE_THRESHOLD', d.coreThreshold),
+    coreMinLiquidity: envNum(env, 'RUG_SIG_CORE_MIN_LIQ', d.coreMinLiquidity),
     threshold: envNum(env, 'RUG_SIG_THRESHOLD', d.threshold),
     maxAgeH: envNum(env, 'RUG_SIG_MAX_AGE_H', d.maxAgeH),
     maxLiqUsd: envNum(env, 'RUG_SIG_MAX_LIQ_USD', d.maxLiqUsd),
@@ -604,7 +623,10 @@ export function evaluateRugSignal(
    * the replayed population could trip at all.
    */
   const core = breakdown.staircase + breakdown.liquidity
-  const coreTrip = th.coreThreshold > 0 && core >= th.coreThreshold
+  const coreTrip =
+    th.coreThreshold > 0 &&
+    breakdown.liquidity >= th.coreMinLiquidity &&
+    core >= th.coreThreshold
   const isRug = !skipped && (score >= th.threshold || coreTrip)
 
   const reasons = components.map(componentReason)
