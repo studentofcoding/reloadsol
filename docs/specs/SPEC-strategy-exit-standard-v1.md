@@ -43,18 +43,26 @@ Three things follow, and they set the whole standard:
 
 ### What it does to the register (re-derived on price-validated PnL)
 
-Re-run per strategy on the same retention-bounded input — recorded and real on **identical** rows:
+Re-run per strategy on the same retention-bounded input — recorded and real on **identical** rows,
+one consistent snapshot (2026-10-02). `avg win` / `avg loss` are the payoff legs, so the EV below
+can be checked arithmetically rather than taken on trust:
 
-| strategy | n | rec avg | **real avg** | rec win | **real win** | **real median** |
-|---|---|---|---|---|---|---|
-| `search_mcap…tp200` | 173 | +98.8 | +27.8 | 55.5 | **27.2** | **−66.0** |
-| `search_mcap…tp300` | 167 | +111.1 | +26.6 | 58.7 | **26.3** | **−75.4** |
-| `search_mcap…tp150` | 184 | +102.8 | +16.8 | 55.4 | **25.5** | **−71.9** |
-| **`mcap_enter_at_80`** | 101 | +8.3 | **+16.6** | 36.6 | **33.7** | **−14.3** |
-| `mcap_enter_first_seen` | 69 | +71.0 | **−0.8** | 49.3 | 23.2 | −67.2 |
-| `gmgn_kol_momentum` | 18 | −38.0 | −4.2 | 5.6 | 22.2 | −42.3 |
-| `social_only_fomo_gt7` | 9 | −31.3 | −28.0 | 22.2 | 22.2 | −38.0 |
-| `gmgn_sm_kol_combined` | 22 | −52.3 | −49.3 | 9.1 | 4.5 | −58.5 |
+| strategy | n | rec avg | **real avg** | **real win** | **real median** | avg win | avg loss |
+|---|---|---|---|---|---|---|---|
+| `search_mcap…tp300` | 159 | +106.7 | **+29.9** | 27.7 | **−70.0** | +305 | −75 |
+| `search_mcap…tp200` | 168 | +83.3 | **+23.5** | 28.6 | **−59.2** | +260 | −71 |
+| **`mcap_enter_at_80`** | 99 | +7.8 | **+18.7** | **32.3** | **−12.9** | +149 | −43 |
+| `mcap_enter_first_seen` | 61 | +72.9 | **+11.1** | 27.9 | −65.4 | +226 | −72 |
+| `search_mcap…tp150` | 185 | +90.5 | **+9.9** | 27.0 | −67.4 | +232 | −72 |
+| `gmgn_kol_momentum` | 19 | −32.5 | **+0.8** | 26.3 | −19.1 | +134 | −47 |
+| `social_only_fomo_gt7` | 9 | −31.3 | −28.0 | 22.2 | −38.0 | +65 | −54 |
+| `gmgn_sm_kol_combined` | 23 | −53.4 | **−50.8** | 4.3 | −61.8 | +103 | −58 |
+
+**The profile is a lottery ticket, and the payoff legs say so.** `tp300` wins 27.7 % of the time and
+its median trade loses **70 %**, yet it returns **+29.9 %** on average because the wins are ~4× the
+losses (305 vs 75). `0.277 × 305 − 0.723 × 75 = +30.3` — the mean is fully explained by the payoff
+ratio, not by any claim of predictive skill. A strategy you judge on win rate looks broken here; one
+you judge on `R` looks deliberate.
 
 **The register's load-bearing claim is falsified by this.** It argued "read the median, never the mean — the
 mcap family is the only one with a positive median, so it is real." Price-validated, **every one of them has a
@@ -65,9 +73,16 @@ So the family's +16.8 to +27.8 average is **entirely right tail** — a typical 
 real (`take_profit_200` = +277.9% real on 161 trades), so this is genuine positive-EV-by-tail, not a phantom.
 But the median argument was never true, and it strengthens rather than weakens the payoff-ratio case (P4).
 
-Two ranking changes follow: **`mcap_enter_at_80` is the most robust strategy on the book** (best real median by
-far, best win rate) and the register listed it as marginal; **`mcap_enter_first_seen` was a phantom**
-(+71.0 recorded → −0.8 real). And the gap to the "losers" narrows from ~133pp of recorded average to ~49pp.
+**`mcap_enter_at_80` is the most robust strategy on the book**, on three independent measures: best
+real median (**−12.9** against −59…−70 for the TP trio), best win rate (**32.3 %**), and the
+shallowest average loss (**−43** vs −71…−75). The register listed it as marginal because its
+*recorded* average was the family's lowest (+7.8) — the stale valuation penalised the strategy whose
+exits were honest.
+
+The ranking also inverts inside the family: recorded puts `tp150` second (+90.5) and real puts it
+fifth (+9.9) — an **80 pp overstatement** on one strategy. `gmgn_kol_momentum` is **+0.8 real**, i.e.
+flat rather than the −32.5 it records. And the gap to the "losers" narrows from ~133 pp of recorded
+average to ~49 pp.
 
 ### The mechanism
 
