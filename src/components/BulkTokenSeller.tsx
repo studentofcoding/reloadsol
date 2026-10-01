@@ -17,6 +17,7 @@ import { useRhWalletMode } from "@/contexts/RhWalletModeContext";
 import { useResolvedWalletPublicKey } from "@/hooks/useResolvedWalletPublicKey";
 import { useSolPrice } from "@/hooks/useSolPrice";
 import { useWalletTokens, refreshWalletTokensData, type WalletTokensData } from "@/hooks/useWalletTokens";
+import { useWarmOnIntent } from "@/hooks/useWarmOnIntent";
 import { compactDustOnlyDefault } from "@/utils/reload-home";
 import UniversalWalletButton from "./UniversalWalletButton";
 import TradeOutcomeModal, { useTradeOutcome } from "./TradeOutcomeModal";
@@ -613,41 +614,44 @@ export default function BulkTokenSeller({
     [selectedTokens],
   );
 
-  useEffect(() => {
+  // Warm on intent rather than on every settled edit — the warm is a taker-scoped prepare on the Jupiter
+  // trade lane, which is the budget a real execution needs (see useWarmOnIntent).
+  const warmSellLegs = useCallback(() => {
     if (!isSolTrade || !publicKey || !connection) return;
     if (selectedTokens.length === 0) return;
     const pk = publicKey.toBase58();
     const legs = selectedTokens.filter((t) => t.sellAmount > 0);
-    const timer = window.setTimeout(() => {
-      void Promise.all(
-        legs.map((token) =>
-          warmResolvedPreparedSwap(
-            {
-              userPublicKey: pk,
-              inputMint: token.mintAddress,
-              outputMint: sellOut.outputMint,
-              amount: token.sellAmount,
-              priorityFeeLamports: priorityFee,
-              feeAccount: RAPTOR_DEV_FEE_ACCOUNT,
-              feeBps: RAPTOR_DEV_FEE_BPS,
-              connection,
-            },
-            slippage,
-          ).catch(() => undefined),
-        ),
-      );
-    }, 400);
-    return () => window.clearTimeout(timer);
+    void Promise.all(
+      legs.map((token) =>
+        warmResolvedPreparedSwap(
+          {
+            userPublicKey: pk,
+            inputMint: token.mintAddress,
+            outputMint: sellOut.outputMint,
+            amount: token.sellAmount,
+            priorityFeeLamports: priorityFee,
+            feeAccount: RAPTOR_DEV_FEE_ACCOUNT,
+            feeBps: RAPTOR_DEV_FEE_BPS,
+            connection,
+          },
+          slippage,
+        ).catch(() => undefined),
+      ),
+    );
   }, [
     isSolTrade,
     publicKey,
     connection,
-    sellPrefetchKey,
-    slippage,
-    priorityFee,
     selectedTokens,
     sellOut.outputMint,
+    slippage,
+    priorityFee,
   ]);
+
+  const { warmProps: sellWarmProps } = useWarmOnIntent(
+    warmSellLegs,
+    selectedTokens.length > 0 ? `${sellPrefetchKey}:${sellOut.outputMint}:${slippage}` : "",
+  );
 
   // Fetch SOL price using robust multi-API system — handled by useSolPrice
 
@@ -3478,6 +3482,7 @@ export default function BulkTokenSeller({
               {/* Sell — only when sellable tokens selected */}
               {selectedTokens.length > 0 && (
                 <button
+                  {...sellWarmProps}
                   onClick={() => void handleBulkSell()}
                   disabled={
                     isLoading || (isRhChain && !tradeFromAddress)

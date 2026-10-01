@@ -19,6 +19,7 @@ import { useRhWalletMode } from "@/contexts/RhWalletModeContext";
 import { useRpc } from "@/contexts/RpcContext";
 import { useResolvedWalletPublicKey } from "@/hooks/useResolvedWalletPublicKey";
 import { useWalletTokens } from "@/hooks/useWalletTokens";
+import { useWarmOnIntent } from "@/hooks/useWarmOnIntent";
 import { useQuotes } from "@/hooks/useQuote";
 import { formatTokenAmount } from "@/utils/formatters";
 import { quoteKey, type SolanaQuote } from "@/utils/quote-engine";
@@ -591,38 +592,29 @@ export default function BulkTokenBuyer() {
     [buyEstimateByMint],
   );
 
-  // Solana: prefetch Raptor/Jupiter quote+tx while the user is still filling
-  // the form so Buy does not wait on that waterfall.
-  useEffect(() => {
+  // Solana: warm the prepared swaps so Buy does not wait on that waterfall — but on intent, not on every
+  // settled edit, because the warm spends the Jupiter trade lane the execution itself needs.
+  const warmBuySwaps = useCallback(() => {
     if (!isSolTrade || !publicKey || !connection || !buyPlan) return;
     const { amountPerToken, inputMint } = buyPlan;
     const pk = publicKey.toBase58();
-    const timer = window.setTimeout(() => {
-      void Promise.all(
-        validMints.map(async (mint) => {
-          try {
-            // Warm only. The display reads the quote engine above, so there is nothing to copy out of
-            // the cache here — this call exists so the click finds a prepared swap waiting.
-            await warmResolvedPreparedSwap(
-              {
-                userPublicKey: pk,
-                inputMint,
-                outputMint: mint,
-                amount: amountPerToken,
-                priorityFeeLamports: priorityFee,
-                feeAccount: RAPTOR_DEV_FEE_ACCOUNT,
-                feeBps: RAPTOR_DEV_FEE_BPS,
-                connection,
-              },
-              slippage,
-            );
-          } catch {
-            /* prefetch is best-effort */
-          }
-        }),
-      );
-    }, 400);
-    return () => window.clearTimeout(timer);
+    void Promise.all(
+      validMints.map((mint) =>
+        warmResolvedPreparedSwap(
+          {
+            userPublicKey: pk,
+            inputMint,
+            outputMint: mint,
+            amount: amountPerToken,
+            priorityFeeLamports: priorityFee,
+            feeAccount: RAPTOR_DEV_FEE_ACCOUNT,
+            feeBps: RAPTOR_DEV_FEE_BPS,
+            connection,
+          },
+          slippage,
+        ).catch(() => undefined),
+      ),
+    );
   }, [
     isSolTrade,
     publicKey,
@@ -632,6 +624,11 @@ export default function BulkTokenBuyer() {
     slippage,
     priorityFee,
   ]);
+
+  const buyWarmKey = buyPlan
+    ? `${buyPlan.inputMint}:${buyPlan.amountPerToken}:${slippage}:${validMints.join(",")}`
+    : "";
+  const { warmProps: buyWarmProps } = useWarmOnIntent(warmBuySwaps, buyWarmKey);
 
   // Auto-select first mint from URL params (display chart automatically)
   useEffect(() => {
@@ -2763,6 +2760,7 @@ export default function BulkTokenBuyer() {
               <button
                 data-slot="button"
                 data-variant="primary"
+                {...buyWarmProps}
                 aria-label={
                   isLoading
                     ? "Processing buy transactions"

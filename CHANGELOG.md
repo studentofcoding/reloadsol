@@ -8,6 +8,17 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — the swap warm fires on intent, not on every edit
+
+Both bulk forms warmed their prepared swaps 400 ms after every settled edit. That warm is a **taker-scoped
+prepare on the Jupiter trade lane** — the same 0.5 rps budget a real execution needs — so an amount someone
+was still deciding on was already spending it, one prepare per mint per keystroke burst.
+
+They now warm through `useWarmOnIntent`: **1.5 s of idle** on the form, or immediately when the pointer or
+keyboard reaches the action button, and once per distinct set of inputs. Reaching for the button is the
+moment the warm actually pays, and it is now the moment it starts. A missed trigger costs latency only —
+the click path builds on a cold cache either way.
+
 ### Changed — every quote surface now reads the shared quote engine
 
 The buyer's displayed estimate was `warmed.outAmount` — a **taker-scoped prepare on the Jupiter trade

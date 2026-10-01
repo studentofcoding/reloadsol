@@ -107,10 +107,12 @@ rather than adding a second lookup). A surface renders `formatTokenAmount(outAmo
 when the mint cannot be read it shows **nothing** rather than guessing an exponent — a wrong scale is worse
 than a missing number.
 
-**Note on the warm.** The buyer's and seller's `warmResolvedPreparedSwap` (400 ms debounce) still draws the
-trade lane. That is a deliberate click-latency trade, not a display concern, and moving it from "every edit"
-to hover/idle remains open — tracked here rather than done, because it changes click behaviour and wants its
-own look.
+**The warm now fires on intent.** It used to run 400 ms after every settled edit, which spent the trade lane
+on an amount the user was still deciding on. Both forms warm through `useWarmOnIntent` instead: after
+**1.5 s of idle**, or immediately on `pointerenter`/`focus` of the action button, and once per distinct set
+of inputs (re-hovering the same form is free). Reaching for the button is when the warm pays, so that is now
+when it starts. A missed trigger costs **latency only** — the click path builds on a cold cache — which is
+what makes this safe to leave heuristic rather than exhaustive.
 
 ## 5. Out of scope
 
