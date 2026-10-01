@@ -4,7 +4,7 @@ import {
   fetchGmgnWebCandlesPaced,
   fetchGmgnWebSafety,
   gmgnWebCopyRps,
-  gmgnWebIsBlocked,
+  gmgnWebCopyLaneBlocked,
   takeGmgnWebBlockCount,
 } from '@/utils/gmgn-web-extra'
 import { readCachedTokenOhlc24h1m, type TokenOhlcBar } from '@/strategies/token-map-chart'
@@ -179,7 +179,9 @@ export async function POST(request: NextRequest) {
      */
     const scored: Array<{ mint: string; bars: RugSignalBar[]; mcap: number | null }> = []
     await mapWithConcurrency(plan.fetch, concurrency, async (mint) => {
-      if (parked || gmgnWebIsBlocked()) {
+      // Only this lane's own endpoints can park the sweep — a challenge on the snapshot
+      // endpoint used to cancel the whole pass even though candles were fetching cleanly.
+      if (parked || gmgnWebCopyLaneBlocked()) {
         parked = true
         return null
       }

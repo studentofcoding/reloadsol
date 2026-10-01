@@ -174,3 +174,47 @@ one endpoint does not transfer to another through the same tunnel.
 
 **Also fixed here:** the cron's 30 s client timeout sat below a cold sweep, so it recorded a *successful*
 sweep as a failure — now `METRICS_COPY_TIMEOUT_SEC` (default 240).
+
+## Correction, 2026-10-02 — those 403/429s are a Cloudflare **challenge**, not a rate limit
+
+**What we got wrong.** The section above reads the tunnel-wide 403/429 as a *shared rate budget* and
+concludes "the limit is tunnel-wide, not per-endpoint". The symptom was real; the inference was not.
+The response body is `<title>Just a moment...</title>` — an HTML interstitial from **Cloudflare's managed
+challenge** in front of `gmgn.ai`, relayed verbatim by the Worker (`new Response(body, { status:
+upstream.status })`). That is why it looked tunnel-wide: a challenge is scored against the **client**, so
+it hits every endpoint at once regardless of which one you call. There is no shared rate budget being
+exhausted here, and our volume is not the trigger — only ~10 attempts were made in the window and all were
+challenged, including with browser-like `Origin`/`Referer`/`UA` headers, which the app already sends.
+
+**The natural experiment that settles it.** In one window, a `token_mcap_candles` sweep fetched
+**240/240 cleanly** (`fetch_failed 4`) while `mutil_window_token_info` was being challenged — two endpoints,
+opposite outcomes, simultaneously. So at this volume the refusals are per-endpoint, not per-tunnel.
+
+**The damage was in our own response to it.** `gmgn-web-extra.ts` parked on any 403/429 with a single
+**global** 60 s flag, so an intermittent challenge on the *snapshot* endpoint discarded a whole 15-minute
+copier sweep (`fetched 0, scored 0, shadow_rows 0` — the series got a hole for a refusal that didn't apply
+to the endpoint being swept). `gmgn-web-multi.ts` already keyed its cooldown by pathname for this exact
+reason; `gmgn-web-extra.ts` now does the same, and distinguishes the two failure modes.
+
+**Shipped:** a park keyed **per endpoint** (`gmgnWebEndpointKey`, and `gmgnWebCopyLaneBlocked()` for the
+copy lane's own `token_mcap_candles` / `meme_quote_info`), plus **challenge detection** — a challenge is
+retried (2 retries, 400 ms backoff) and never parks, because retrying helps and waiting does not. A genuine
+JSON-bodied 429 still parks its endpoint for 60 s.
+
+**Not permanent, and not degrading.** `token_info_detect` output by day: 343 → 455 → 671 → 799 → (today,
+partial) 104, one row per mint, newest 2 minutes old and fully populated (`top10_hold_pct`, `sniper_wallet_count`,
+`bundlers_hold_pct`). The snapshot path and the risk chips have been producing continuously; the challenge
+rate is unquantified but plainly low enough to be a nuisance, not an outage.
+
+**Two measurement traps, recorded so they don't mislead again:**
+
+- **`docker logs` on this stack resets on every container recreate.** Retention showed **13 seconds** after a
+  deploy, so any "last N minutes" read from container logs is really "since the last recreate" — and a deploy
+  silently destroys the history mid-investigation. Measure over days from **Postgres**, not `docker logs`.
+- **`DEFAULT_POSITIVE_TTL_S = 90`.** Three probes 25 s apart are one live call plus two cache hits, so a
+  3/3-success read overstates it. Only the first probe proves the upstream was reachable.
+
+**Still open:** whether the challenge rate correlates with our own volume (unresolved — the attempt count was
+too low to tell), and whether `sol` should get an automatic fallback to the OpenAPI path (`GMGN_API_KEY` is
+present; `GMGN_TOKEN_INFO_SOURCE=web` currently makes that path unreachable for `sol`). Neither is load-bearing
+today.

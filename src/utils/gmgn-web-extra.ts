@@ -40,20 +40,31 @@ const DEFAULT_COPY_RPS = 2
 const MAX_COPY_RPS = 100
 /** The upstream accepts 501 bars of the requested resolution per call. */
 const CANDLE_LIMIT_MAX = 501
+/** Cloudflare's challenge is transient and per-request — retry it instead of parking. */
+const CHALLENGE_RETRIES = 2
+const CHALLENGE_BACKOFF_MS = 400
+/** The bulk copy lane's own endpoints. A park on any other endpoint must not cancel its sweep. */
+const COPY_LANE_ENDPOINTS = ['token_mcap_candles', 'meme_quote_info']
 
 /**
- * Two independent pacing lanes, one shared park.
+ * Two independent pacing lanes, one park **per endpoint**.
  *
  * The live lane paces at `GMGN_WEB_MAX_POST_PER_SEC` and serves charts + risk chips; the copy
  * lane paces at `METRICS_COPY_RPS` and serves the metrics copier. Separate lanes mean a bulk
  * sweep runs at full budget without speeding up — or being slowed by — the live path.
- * `blockedUntil` is deliberately shared: a 403/429 on either lane must stop both.
+ *
+ * The park used to be one global flag. That cost the copier whole sweeps: observed live, a
+ * `token_mcap_candles` sweep fetched **240/240 cleanly** in the same window that
+ * `mutil_window_token_info` was being challenged, and the copier still reported `fetched 0`
+ * because the unrelated 429 had armed the shared flag. `gmgn-web-multi.ts` already keys its
+ * cooldown by pathname for exactly this reason, so this mirrors that shape.
  */
 type Lane = { chain: Promise<void>; lastAt: number }
 const liveGate: Lane = { chain: Promise.resolve(), lastAt: 0 }
 const copyGate: Lane = { chain: Promise.resolve(), lastAt: 0 }
-let blockedUntil = 0
-/** 403/429 seen since the last `takeGmgnWebBlockCount()` — the ramp signal. */
+/** Parked-until per endpoint key. See `gmgnWebEndpointKey`. */
+const parkedUntil = new Map<string, number>()
+/** Adverse upstream events (403/429, including challenges) since the last `takeGmgnWebBlockCount()`. */
 let blockCount = 0
 
 function sleep(ms: number): Promise<void> {
@@ -101,9 +112,39 @@ export function gmgnWebCopyRps(): number {
   return Math.min(raw, MAX_COPY_RPS)
 }
 
-/** True while a 403/429 park is active — a bulk sweep should stop rather than churn nulls. */
+/**
+ * Endpoint identity for parking: the route, without the mint or the query string.
+ * `/api/v1/token_mcap_candles/sol/<mint>?resolution=1m` → `token_mcap_candles`.
+ */
+export function gmgnWebEndpointKey(path: string): string {
+  const noQuery = path.split('?')[0]
+  const match = noQuery.match(/^\/(?:api\/v1|mrwapi\/v1|vas\/api)\/([^/]+)/)
+  return match ? match[1] : noQuery
+}
+
+function isParked(endpoint: string): boolean {
+  return Date.now() < (parkedUntil.get(endpoint) ?? 0)
+}
+
+function isAnyParked(): boolean {
+  const now = Date.now()
+  for (const until of parkedUntil.values()) if (now < until) return true
+  return false
+}
+
+/** True while a 403/429 park is active on **any** endpoint — the conservative question. */
 export function gmgnWebIsBlocked(): boolean {
-  return Date.now() < blockedUntil
+  return isAnyParked()
+}
+
+/**
+ * True while the bulk copy lane's **own** endpoints are parked.
+ *
+ * The copier asks this rather than `gmgnWebIsBlocked()`: because the park is keyed per endpoint,
+ * a challenge or rate limit on the snapshot endpoint can no longer discard a whole candle sweep.
+ */
+export function gmgnWebCopyLaneBlocked(): boolean {
+  return COPY_LANE_ENDPOINTS.some((endpoint) => isParked(endpoint))
 }
 
 /** Read-and-reset the 403/429 count, for the copier's coverage line. */
@@ -140,35 +181,70 @@ function asPercent(rate: number | null): number | null {
   return rate > 1 && rate <= 100 ? rate : rate * 100
 }
 
+/**
+ * Is this 403/429 a Cloudflare **managed challenge** rather than a rate limit?
+ *
+ * Cloudflare answers with an HTML interstitial (`Just a moment…`), so the content type is the
+ * cheap discriminator and the body is sniffed only when the header is absent or unhelpful. The
+ * distinction matters operationally: a rate limit means "stop and wait", a challenge means
+ * "this request lost a coin toss" — retrying helps, and a 60 s park just discards the pass.
+ */
+async function isChallengeResponse(res: Response): Promise<boolean> {
+  const type = res.headers?.get?.('content-type')?.toLowerCase() ?? ''
+  if (type.includes('json')) return false
+  if (type.includes('html')) return true
+  try {
+    const text = (await res.text()).slice(0, 512).toLowerCase()
+    return (
+      text.includes('just a moment') ||
+      text.includes('cf-chl') ||
+      text.includes('<!doctype html')
+    )
+  } catch {
+    return false
+  }
+}
+
 async function callJson(
   method: 'GET' | 'POST',
   path: string,
   body?: unknown,
   opts?: { rps?: number | null },
 ): Promise<Record<string, unknown> | null> {
-  if (Date.now() < blockedUntil) return null
+  const endpoint = gmgnWebEndpointKey(path)
+  if (isParked(endpoint)) return null
   if (!gmgnWebExtrasConfigured()) return null
   const onCopyLane = opts?.rps != null
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
   try {
-    await paceWait(onCopyLane ? copyGate : liveGate, opts?.rps)
-    const res = await fetch(`${webHost()}${path}`, {
-      method,
-      headers: webHeaders(),
-      body: body != null ? JSON.stringify(body) : undefined,
-      signal: controller.signal,
-    })
-    if (res.status === 403 || res.status === 429) {
-      blockedUntil = Date.now() + NEGATIVE_COOLDOWN_MS
-      blockCount++
-      return null
+    for (let attempt = 0; ; attempt++) {
+      await paceWait(onCopyLane ? copyGate : liveGate, opts?.rps)
+      const res = await fetch(`${webHost()}${path}`, {
+        method,
+        headers: webHeaders(),
+        body: body != null ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
+      })
+      if (res.status === 403 || res.status === 429) {
+        blockCount++
+        if (await isChallengeResponse(res)) {
+          // Transient and per-request: retry, but never park the endpoint for it.
+          if (attempt < CHALLENGE_RETRIES) {
+            await sleep(CHALLENGE_BACKOFF_MS * (attempt + 1))
+            continue
+          }
+          return null
+        }
+        parkedUntil.set(endpoint, Date.now() + NEGATIVE_COOLDOWN_MS)
+        return null
+      }
+      if (!res.ok) return null
+      const json = (await res.json()) as unknown
+      if (!isRecord(json)) return null
+      if (json.code !== 0 && json.code !== '0') return null
+      return json
     }
-    if (!res.ok) return null
-    const json = (await res.json()) as unknown
-    if (!isRecord(json)) return null
-    if (json.code !== 0 && json.code !== '0') return null
-    return json
   } catch {
     return null
   } finally {
@@ -361,7 +437,7 @@ export async function fetchGmgnWebTokenStat(mint: string): Promise<GmgnWebStat |
 
 /** Test-only: clear the negative cooldown and both lanes. */
 export function __resetGmgnWebExtraForTests(): void {
-  blockedUntil = 0
+  parkedUntil.clear()
   blockCount = 0
   liveGate.lastAt = 0
   copyGate.lastAt = 0

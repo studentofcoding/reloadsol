@@ -5,7 +5,9 @@ import {
   fetchGmgnWebCandlesPaced,
   fetchGmgnWebSafety,
   fetchGmgnWebTokenStat,
+  gmgnWebCopyLaneBlocked,
   gmgnWebCopyRps,
+  gmgnWebEndpointKey,
   gmgnWebExtrasConfigured,
   gmgnWebIsBlocked,
   normalizeGmgnWebResolution,
@@ -16,7 +18,31 @@ function jsonResponse(body: unknown, status = 200): Response {
   return {
     ok: status >= 200 && status < 300,
     status,
+    headers: { get: () => 'application/json' },
     json: async () => body,
+    text: async () => JSON.stringify(body),
+  } as unknown as Response
+}
+
+/**
+ * Cloudflare's managed-challenge answer: an HTML interstitial on a 403/429. Every probe of the
+ * live tunnel returned this — including with browser-like `Origin`/`Referer`/UA — which is how
+ * we know it is a challenge and not a rate limit.
+ */
+const CHALLENGE_HTML =
+  '<!DOCTYPE html><html lang="en-US"><head><title>Just a moment...</title></head></html>'
+
+function challengeResponse(status = 429): Response {
+  return {
+    ok: false,
+    status,
+    headers: {
+      get: (key: string) => (key.toLowerCase() === 'content-type' ? 'text/html; charset=UTF-8' : null),
+    },
+    json: async () => {
+      throw new Error('challenge is not JSON')
+    },
+    text: async () => CHALLENGE_HTML,
   } as unknown as Response
 }
 
@@ -218,5 +244,78 @@ describe('gmgn-web-extra', () => {
     expect(gmgnWebCopyRps()).toBe(2)
     vi.stubEnv('METRICS_COPY_RPS', '0')
     expect(gmgnWebCopyRps()).toBe(2)
+  })
+})
+
+describe('gmgn-web-extra — challenges and per-endpoint parks', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    __resetGmgnWebExtraForTests()
+    vi.stubEnv('GMGN_WEB_HOST', 'https://worker.example')
+    vi.stubEnv('GMGN_WEB_PROXY_SECRET', 's3cret')
+    vi.stubEnv('GMGN_WEB_MAX_POST_PER_SEC', '1000')
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.restoreAllMocks()
+  })
+
+  it('keys a park by endpoint, not by the whole path', () => {
+    expect(gmgnWebEndpointKey('/api/v1/token_mcap_candles/sol/Abc?resolution=1m')).toBe(
+      'token_mcap_candles',
+    )
+    expect(gmgnWebEndpointKey('/api/v1/token_stat/sol/Abc')).toBe('token_stat')
+    expect(gmgnWebEndpointKey('/mrwapi/v1/multi_token_full_info')).toBe('multi_token_full_info')
+  })
+
+  it('retries a Cloudflare challenge and does not park the endpoint', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(challengeResponse())
+      .mockResolvedValueOnce(
+        jsonResponse({ code: 0, data: { list: [{ time: 1, open: 1, high: 1, low: 1, close: 1 }] } }),
+      )
+
+    const candles = await fetchGmgnWebCandles('Mint', '1m')
+
+    expect(candles).toHaveLength(1)
+    expect(fetchSpy).toHaveBeenCalledTimes(2) // retried rather than parked
+    expect(gmgnWebIsBlocked()).toBe(false)
+    expect(gmgnWebCopyLaneBlocked()).toBe(false)
+  })
+
+  it('gives up after the retry budget on a persistent challenge, still without parking', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(challengeResponse())
+
+    expect(await fetchGmgnWebCandles('Mint', '1m')).toBeNull()
+    // One attempt plus CHALLENGE_RETRIES — bounded, so a sticky challenge cannot spin.
+    expect(fetchSpy).toHaveBeenCalledTimes(3)
+    // The point of the change: a challenge never blinds a later sweep.
+    expect(gmgnWebIsBlocked()).toBe(false)
+  })
+
+  it('a genuine rate limit still parks its own endpoint', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ error: 'rate limited' }, 429))
+
+    expect(await fetchGmgnWebTokenStat('Mint')).toBeNull()
+    expect(gmgnWebIsBlocked()).toBe(true)
+  })
+
+  it('a park on another endpoint cannot starve the copy lane (the regression)', async () => {
+    // A rate limit on the snapshot endpoint — 60 s park on `token_stat` only.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ error: 'rate limited' }, 429))
+    expect(await fetchGmgnWebTokenStat('Mint')).toBeNull()
+    expect(gmgnWebIsBlocked()).toBe(true)
+
+    // Observed live: candles fetched 240/240 cleanly while the snapshot endpoint was refusing.
+    expect(gmgnWebCopyLaneBlocked()).toBe(false)
+  })
+
+  it('parks the copy lane when its own endpoint is the one rate limited', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ error: 'rate limited' }, 429))
+
+    expect(await fetchGmgnWebCandlesPaced('Mint', { resolution: '1m', rps: 1 })).toBeNull()
+    expect(gmgnWebCopyLaneBlocked()).toBe(true)
   })
 })
