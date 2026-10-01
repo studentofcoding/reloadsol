@@ -562,6 +562,73 @@ async function rpcSendFallback(
   });
 }
 
+/** Shyft's JSON-RPC. Used for the **batch** landing only — single swaps keep their existing lanes. */
+function shyftBatchRpcUrl(): string | null {
+  const url = process.env.SHYFT_RPC_URL?.trim();
+  return url && url.length > 0 ? url : null;
+}
+
+/** Serial spacing between batch sends. Parallel sends drew `RateLimitExceeded` at three (measured). */
+function batchSendMinIntervalMs(): number {
+  const parsed = Number(process.env.BATCH_SEND_MIN_INTERVAL_MS);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 400;
+}
+
+/**
+ * Land a batch through Shyft's JSON-RPC, one `sendTransaction` at a time.
+ *
+ * Measured on a real 5-leg batch, 2026-10-02:
+ *   `send_many_txns` (REST)      → 417, 1 of 3 landed, confirm 61s
+ *   this RPC, sends in parallel  → 2 of 3 (one `RateLimitExceeded`)
+ *   this RPC, sends serialised   → 3 of 3 CONFIRMED, confirm 163ms
+ *
+ * Returns `null` when the lane is not configured — the caller then keeps its previous behaviour. Otherwise
+ * it returns one row per input: a signature, or `null` meaning "this one needs the fallback". A leg that
+ * fails does **not** abort the rest; the remaining legs still get sent.
+ */
+export async function sendBatchViaShyftRpc(
+  encoded: string[],
+): Promise<({ signature: string } | null)[] | null> {
+  const url = shyftBatchRpcUrl();
+  if (!url) return null;
+
+  const gap = batchSendMinIntervalMs();
+  const rows: ({ signature: string } | null)[] = [];
+
+  for (let i = 0; i < encoded.length; i++) {
+    if (i > 0 && gap > 0) await new Promise((resolve) => setTimeout(resolve, gap));
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: i + 1,
+          method: "sendTransaction",
+          params: [encoded[i], { encoding: "base64", skipPreflight: true, maxRetries: 2 }],
+        }),
+      });
+      const body = (await response.json()) as { result?: unknown; error?: unknown };
+      if (typeof body?.result === "string") {
+        rows.push({ signature: body.result });
+      } else {
+        console.warn(
+          "[swap] shyft batch rpc send rejected:",
+          JSON.stringify(body?.error ?? body).slice(0, 140),
+        );
+        rows.push(null);
+      }
+    } catch (error) {
+      console.warn(
+        "[swap] shyft batch rpc send threw:",
+        error instanceof Error ? error.message : error,
+      );
+      rows.push(null);
+    }
+  }
+  return rows;
+}
+
 async function submitShyftManyBatch(
   items: SubmitSignedSwapBatchItem[],
   connection: Connection,
@@ -603,6 +670,15 @@ async function submitShyftManyBatch(
   };
 
   try {
+    // The batch lane (Shyft JSON-RPC, paced). `null` means it is not configured, so we fall through to the
+    // previous REST behaviour unchanged. A leg it could not send resolves through the per-tx RPC fallback.
+    const viaRpc = await sendBatchViaShyftRpc(encoded);
+    if (viaRpc) {
+      return Promise.all(
+        items.map((item, i) => resolveItem(item, viaRpc[i] ?? undefined)),
+      );
+    }
+
     const manyResult = useDirect
       ? await sendShyftManyTransactionsDirect(encoded)
       : await sendShyftManyTransactions(encoded);
@@ -1069,15 +1145,40 @@ export async function confirmSwapSignature(
 
 export type PreparedSwapMeta = PreparedSwap;
 
+/**
+ * Where a batch leg's transaction is built.
+ *
+ * `raptor` is the batch lane (`docs/specs/SPEC-batch-swap-lane-v1.md` §3). Raptor builds every leg in one
+ * parallel round, which is the entire reason to move the batch: at N=1 Jupiter is 3.3× faster (206 ms vs
+ * 688 ms), but N keyed calls serialise behind the 0.5 rps trade lane — ~10 s for five legs against Raptor's
+ * 832 ms round. Defaults to the keyed builder; a Raptor failure falls back to it rather than failing the leg.
+ */
+export type BulkPrepareLane = "raptor" | "venued";
+
 export async function prepareBulkSwapTransaction(
   params: PrepareSwapParams,
+  options?: { lane?: BulkPrepareLane },
 ): Promise<{ tx: VersionedTransaction; meta: PreparedSwapMeta; outAmount?: string }> {
-  const prepared =
-    takeFreshPreparedSwap(params) ?? (await prepareSwapTransaction(params));
+  let prepared: PreparedSwap | null = null;
+  if (options?.lane === "raptor") {
+    try {
+      prepared = await prepareRaptorSwap(params);
+    } catch (error) {
+      console.warn(
+        "[swap] raptor bulk build failed, falling back to the keyed lane:",
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+
+  const swap =
+    prepared ??
+    takeFreshPreparedSwap(params) ??
+    (await prepareSwapTransaction(params));
   const tx = VersionedTransaction.deserialize(
-    Buffer.from(prepared.swapTransaction, "base64"),
+    Buffer.from(swap.swapTransaction, "base64"),
   );
-  return { tx, meta: prepared, outAmount: prepared.outAmount };
+  return { tx, meta: swap, outAmount: swap.outAmount };
 }
 
 export type SignOneTransaction = (

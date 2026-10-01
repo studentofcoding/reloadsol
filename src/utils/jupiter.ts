@@ -1912,7 +1912,7 @@ export async function executeBulkBuy(
               feeAccount: FEE_CONFIG.DEV_WALLET,
               feeBps: BUYBULK_PLATFORM_FEE_BPS,
               connection,
-            })
+            }, { lane: 'raptor' })
 
             console.log(`✅ Swap prepared for ${mint} via ${meta.provider}`)
             return { success: true as const, mint, tx, meta }
@@ -2753,7 +2753,7 @@ export async function executeBulkSellAlt(
                   feeAccount: FEE_CONFIG.DEV_WALLET,
                   feeBps: BUYBULK_PLATFORM_FEE_BPS,
                   connection,
-                });
+                }, { lane: 'raptor' });
 
                 return {
                   success: true,

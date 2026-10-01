@@ -1,6 +1,6 @@
 # SPEC — the batch swap lane: Raptor build, a simulation guard, Shyft-RPC landing v1
 
-**Status:** implementing (2026-10-02)
+**Status:** implemented, shipping (2026-10-02) — B1-B5 landed; B6 live verify in flight
 **Date:** 2026-10-02
 **Surface:** `src/utils/jupiter.ts` (`executeBulkBuy` / `executeBulkSellAlt`), `src/utils/swap-executor.ts` (guard + landing), `src/utils/shyft-transaction.ts` (RPC send), `src/utils/solana.ts`/`src/utils/rpc-urls.ts` (RPC list)
 **Lane:** Solana bulk buy/sell only. The **direct (1-to-1) swap is explicitly out of scope** — §3 says why.
@@ -95,10 +95,10 @@ Buys: **median −1.6 bps** vs Jupiter (21 of 29 priced pairs within ±10 bps). 
       **Fails open on purpose** — only a simulation that *returns* an error drops a leg; one that cannot run
       (transport/rate limit) keeps it, because silently discarding a good trade is worse than the fee it saves.
       3 tests, including that distinction.
-- [ ] **B2 — Shyft RPC as a configured RPC.** `SHYFT_RPC_URL` in `.env.docker.example` + `.env`; the RPC list in `rpc-urls.ts` gains it. Keep failover.
-- [ ] **B3 — paced batch landing.** Replace the `SEND_BATCH_SIZE` chunking with a serial min-interval send (`BATCH_SEND_MIN_INTERVAL_MS`, default 400) against the Shyft RPC, with the existing per-tx RPC path as the fallback on failure. Never fire the sends in parallel.
-- [ ] **B4 — route the batch prepare through Raptor.** Bulk buy/sell build via `fetchRaptorQuoteAndSwapDirect` in one parallel round, falling back to the current keyed prepare if the round fails.
-- [ ] **B5 — tests.** Guard drops a reverting tx and keeps the rest; paced landing never overlaps sends; a failed Shyft send falls back per-tx; the direct swap path is untouched (regression).
+- [x] **B2 — Shyft RPC for the BATCH only. DONE.** `SHYFT_RPC_URL` read by the batch landing alone (`shyftBatchRpcUrl`); the single-swap path and all reads keep their existing lanes, per the request. Documented in `.env.docker.example`. Unset = old behaviour, byte for byte.
+- [x] **B3 — paced batch landing. DONE.** `sendBatchViaShyftRpc` sends one `sendTransaction` at a time, spaced by `BATCH_SEND_MIN_INTERVAL_MS` (default 400), and **never in parallel** — a test asserts `maxInFlight === 1`. A rejected or throwing leg yields `null` for that leg only and does **not** abort the batch; those resolve through the existing per-tx RPC fallback. `send_many_txns` stays as the fallback lane.
+- [x] **B4 — batch prepare on Raptor. DONE.** `prepareBulkSwapTransaction(params, { lane: 'raptor' })` reuses the existing `prepareRaptorSwap` (no new build code); both bulk call sites (buy `jupiter.ts:1915`, sell `:2756`) request it. It throws → the keyed builder runs instead, so the change degrades to today's behaviour and never to nothing.
+- [x] **B5 — tests. DONE.** 8 new: the guard (drops a reverting leg, keeps the rest, **fails open** when a simulation cannot run) and the batch lane (unset → `null`, one signature per leg, **never parallel**, one rejected leg does not abort the batch, a transport throw is a per-leg miss).
 - [ ] **B6 — live verify.** A real 5-leg batch on prod: guard drops the known-bad leg, the rest land, per-phase timings reported.
 
 ## 5. Env
