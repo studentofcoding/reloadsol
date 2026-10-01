@@ -15,6 +15,7 @@ import { fetchJupiterPortfolioDirect, mapPortfolioToUserTokens } from '@/utils/j
 import { getOpenPositionPrices } from '@/utils/open-position-prices'
 import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
 import { closeSimulatedPositionFromWorker } from '@/utils/sl-tp-sim-close'
+import { evaluateExit } from '@/utils/exit-evaluator'
 
 /** Cached Shyft all_tokens, then Jupiter, then RPC token accounts. */
 async function fetchSlTpWalletTokens(
@@ -635,92 +636,57 @@ async function getCurrentTokenPrices(
 
 // Function to check SL/TP triggers for a position
 function checkSLTPTriggers(position: SLTPPosition, currentPrice: number): SLTPTriggerResult {
-    const gainPercentage = ((currentPrice - position.entry_price) / position.entry_price) * 100
+    // The decision itself lives in `evaluateExit` (S2), so the worker, the sims and the live path
+    // all resolve a trigger the same way. This function is the row -> decision adapter.
+    const isStop = position.sl_executed === true
+    const decision = evaluateExit({
+        // Pre-contract rows have no reference_value; their entry price is the same thing.
+        referenceValue: position.reference_value ?? position.entry_price,
+        referenceKind: position.reference_kind,
+        live: currentPrice,
+        stopLossPct: isStop ? null : position.stop_loss_percentage,
+        takeProfitPct: position.take_profit_percentage,
+        ladder: {
+            tp1Pct: position.tp1_percentage,
+            tp1SellPct: position.tp1_sell_percentage,
+            tp2Pct: position.tp2_percentage,
+            tp3Pct: position.tp3_percentage,
+            tp3Enabled: position.tp3_enabled,
+            tp1Executed: position.tp1_executed,
+            tp2Executed: position.tp2_executed,
+            tp3Executed: position.tp3_executed,
+        },
+        entryAt: position.created_at,
+    })
 
-    // Check Stop Loss
-    if (gainPercentage <= position.stop_loss_percentage && !position.sl_executed) {
-        return {
-            triggered: true,
-            trigger_type: 'stop_loss',
-            sell_percentage: 100,
-            current_price: currentPrice,
-            trigger_price: position.stop_loss_price,
-            gain_percentage: gainPercentage,
-            reason: `Stop loss triggered: ${gainPercentage.toFixed(2)}% <= ${position.stop_loss_percentage}%`
-        }
-    }
-
-    // For bot positions, check multiple TP levels
-    if (position.position_type === 'bot') {
-        // A bot row with no TP ladder otherwise has NO reachable take-profit: this branch reads only
-        // tp1/2/3_percentage, and take_profit_percentage is read only by the `manual` branch below.
-        // Fall back to the single target so the field is evaluated rather than silently ignored —
-        // this is why `Finished: 211` read TP1: 0, TP2: 0, TP3: 0.
-        const tp1Pct = position.tp1_percentage ?? position.take_profit_percentage
-        // Check TP1
-        if (tp1Pct && !position.tp1_executed && gainPercentage >= tp1Pct) {
-            return {
-                triggered: true,
-                trigger_type: 'take_profit_1',
-                // A real ladder keeps its configured partial; a lone target must sell all of it,
-                // since there is no TP2 to catch the remainder.
-                sell_percentage:
-                    position.tp1_sell_percentage ?? (position.tp1_percentage ? 80 : 100),
-                current_price: currentPrice,
-                trigger_price: position.entry_price * (1 + tp1Pct / 100),
-                gain_percentage: gainPercentage,
-                reason: `TP1 triggered: ${gainPercentage.toFixed(2)}% >= ${tp1Pct}%`
-            }
-        }
-
-        // Check TP2 (only if TP1 was executed)
-        if (position.tp2_percentage && position.tp1_executed && !position.tp2_executed && gainPercentage >= position.tp2_percentage) {
-            return {
-                triggered: true,
-                trigger_type: 'take_profit_2',
-                sell_percentage: 100,
-                current_price: currentPrice,
-                trigger_price: position.entry_price * (1 + position.tp2_percentage / 100),
-                gain_percentage: gainPercentage,
-                reason: `TP2 triggered: ${gainPercentage.toFixed(2)}% >= ${position.tp2_percentage}%`
-            }
-        }
-
-        // Check TP3 (trailing stop after TP1)
-        if (position.tp3_percentage && position.tp3_enabled && position.tp1_executed && !position.tp3_executed && gainPercentage <= position.tp3_percentage) {
-            return {
-                triggered: true,
-                trigger_type: 'take_profit_3',
-                sell_percentage: 100,
-                current_price: currentPrice,
-                trigger_price: position.entry_price * (1 + position.tp3_percentage / 100),
-                gain_percentage: gainPercentage,
-                reason: `TP3 (trailing stop) triggered: ${gainPercentage.toFixed(2)}% <= ${position.tp3_percentage}% after TP1`
-            }
-        }
-    } else {
-        // For manual positions, simple TP check
-        if (gainPercentage >= position.take_profit_percentage) {
-            return {
-                triggered: true,
-                trigger_type: 'take_profit_1',
-                sell_percentage: 100,
-                current_price: currentPrice,
-                trigger_price: position.take_profit_price,
-                gain_percentage: gainPercentage,
-                reason: `Take profit triggered: ${gainPercentage.toFixed(2)}% >= ${position.take_profit_percentage}%`
-            }
-        }
-    }
+    const gainPercentage = decision.pnlPct ?? 0
+    const pctForPrice =
+        decision.triggerType === 'take_profit_1'
+            ? (position.tp1_percentage ?? position.take_profit_percentage)
+            : decision.triggerType === 'take_profit_2'
+              ? position.tp2_percentage
+              : decision.triggerType === 'take_profit_3'
+                ? position.tp3_percentage
+                : null
 
     return {
-        triggered: false,
-        trigger_type: 'stop_loss',
-        sell_percentage: 0,
+        triggered: decision.close,
+        // The shape predates the decision function and always names a type; keep its contract.
+        trigger_type: decision.triggerType ?? 'stop_loss',
+        sell_percentage: decision.sellPercentage,
         current_price: currentPrice,
-        trigger_price: 0,
+        trigger_price:
+            decision.triggerType === 'stop_loss'
+                ? position.stop_loss_price
+                : pctForPrice != null
+                  ? position.entry_price * (1 + pctForPrice / 100)
+                  : 0,
         gain_percentage: gainPercentage,
-        reason: 'No triggers met'
+        reason: decision.close
+            ? `${decision.triggerType} triggered at ${gainPercentage.toFixed(2)}% (${decision.basisUsed} basis)`
+            : decision.reason === 'stale'
+              ? 'No triggers met (stale input)'
+              : 'No triggers met',
     }
 }
 
