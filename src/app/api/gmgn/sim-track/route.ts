@@ -243,31 +243,11 @@ async function runSimTrack(request: NextRequest) {
           symbol: pos.symbol,
         })
 
-        const currentPrice = prices[pos.mintAddress] ?? pos.entryPriceUsd
-        const { close, reason } = shouldClosePosition({
-          entryPriceUsd: pos.entryPriceUsd,
-          currentPriceUsd: currentPrice,
-          entryAt: pos.entryAt,
-          exit: strategy.config.exit,
-        })
-        if (close) {
-          await closeSimPosition({
-            strategyId: strategy.id,
-            chain,
-            mintAddress: pos.mintAddress,
-            symbol: pos.symbol,
-            entryAt: pos.entryAt,
-            entryFeatures: pos.entryFeatures,
-            closeReason: reason,
-            records,
-            currentPriceUsd: prices[pos.mintAddress],
-            collect: (r) => pendingCloses.push(r),
-          })
-          closed++
-          openMintSet.delete(pos.mintAddress)
-        }
+        // The 60s SL/TP worker owns this position's exit (SPEC-strategy-exit-standard S9). This
+        // pass monitors (the live-boost check above) and opens; it no longer closes, so
+        // `shouldClosePriceSimPosition` has no caller here and this route cannot disagree with the
+        // worker about the same position.
       }
-      if (pendingCloses.length > 0) await insertTradingRecords(pendingCloses)
 
       const { discovered, eligible, skipped } = await discoverAndGateGmgnCandidates({
         strategy,

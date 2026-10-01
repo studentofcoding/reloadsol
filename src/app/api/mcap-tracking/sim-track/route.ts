@@ -838,13 +838,15 @@ async function runSimTrack(request: NextRequest) {
       ? phaseParam
       : 'all'
   // The 60s SL/TP worker owns EVERY exit (SPEC-strategy-exit-standard S9), so this route is
-  // discovery + entry only. Its manage phase used to close positions on this 900s clock through its
-  // own mcap-growth evaluator (`getMcapSimCloseReason`) — a second opinion on the same position,
-  // reading the same thresholds as a different unit. That is the branch the standard removes.
+  // discovery + entry only.
   //
-  // Left computed rather than deleted so the `?phase=` request shape stays compatible while the
-  // pass is off; the now-unreachable block below is a follow-up deletion, not a hidden behaviour.
-  const runManage = false
+  // The manage phase is GONE, not disabled. It closed positions on this 900s clock through its own
+  // mcap-growth evaluator (`getMcapSimCloseReason`) — a second opinion on the same position,
+  // reading the same thresholds as a different unit. That branch is what the standard removes, and
+  // carrying it as unreachable code would have left it one flag away from returning.
+  //
+  // `?phase=manage` is still accepted and simply runs nothing: the cron sends `phase=all`, and
+  // rejecting the old value would break a request shape for no benefit.
   const runOpen = phase === 'open' || phase === 'all'
   // One OHLC load per mint per run. The seven strategies evaluate the same candidates, and that
   // load is rate-gated (~1.07 s measured), so without this the run pays it once per strategy.
@@ -962,105 +964,6 @@ async function runSimTrack(request: NextRequest) {
           ms: Date.now() - startedAt,
           replacedRoundTrips: res.inserted,
         })
-      }
-
-      if (runManage) {
-      for (const pos of openPositions) {
-        const snapshot =
-          trackingByMint.get(pos.mintAddress) ??
-          (await fetchMcapTrackingRow(pos.mintAddress))
-        if (!snapshot) continue
-
-        await appendSimPositionMonitorSnapshot({
-          records,
-          strategyId: strategy.id,
-          mintAddress: pos.mintAddress,
-          marketCap: snapshot.current_mcap,
-        })
-
-        await checkGmgnLiveBoostForOpenPosition({
-          walletAddress,
-          strategyId: strategy.id,
-          mintAddress: pos.mintAddress,
-          entryAt: pos.entryAt,
-          symbol: pos.symbol,
-        })
-
-        // Sim: prefer frozen effective_exit from open when apply mode persisted it.
-        // Live: always registry exit (ignore effective_exit).
-        const exitForClose =
-          execMode.isSimulated && pos.effectiveExit
-            ? pos.effectiveExit
-            : {
-                stopLossPct: strategy.config.exit.stopLossPct,
-                takeProfitPct: strategy.config.exit.takeProfitPct,
-                maxHoldHours: strategy.config.exit.maxHoldHours,
-              }
-        const closeReason = getMcapSimCloseReason(snapshot, exitForClose)
-        if (!closeReason) continue
-
-        const enrichedSnapshot = {
-          ...snapshot,
-          volume_5m:
-            snapshot.volume_5m ??
-            (
-              await resolveTokenMonitorSnapshot(
-                pos.mintAddress,
-                snapshot.current_mcap,
-              )
-            ).volume_5m,
-        }
-
-        try {
-          if (execMode.isSimulated) {
-            await closeSimPosition({
-              strategyId: strategy.id,
-              chain,
-              mintAddress: pos.mintAddress,
-              symbol: pos.symbol,
-              entryAt: pos.entryAt,
-              entryMcap: pos.entryMcap || snapshot.first_mcap,
-              entryTemplate: pos.entryTemplate,
-              snapshot: enrichedSnapshot,
-              closeReason,
-              collect,
-            })
-          } else {
-            await closeLivePosition({
-              walletAddress,
-              strategyId: strategy.id,
-              mintAddress: pos.mintAddress,
-              symbol: pos.symbol,
-              entryAt: pos.entryAt,
-              entryMcap: pos.entryMcap || snapshot.first_mcap,
-              entryTemplate: pos.entryTemplate,
-              snapshot: enrichedSnapshot,
-              closeReason,
-              slippageBps,
-              collect,
-            })
-          }
-          closed++
-        } catch (closeError) {
-          skipped.push(
-            `${pos.symbol}: live_close_failed (${closeError instanceof Error ? closeError.message : String(closeError)})`,
-          )
-          continue
-        }
-
-        openMintSet.delete(pos.mintAddress)
-        closedOutcomeKeys.add(pos.mintAddress)
-      }
-      // REL-20: flush manage-phase writes before the open phase re-fetches
-      // records; a failed close write previously surfaced per position via the
-      // try/catch above, so keep it non-fatal and record it in skipped.
-      try {
-        await flushPending('manage')
-      } catch (flushError) {
-        skipped.push(
-          `close_writes_failed (${flushError instanceof Error ? flushError.message : String(flushError)})`,
-        )
-      }
       }
 
       if (runOpen) {

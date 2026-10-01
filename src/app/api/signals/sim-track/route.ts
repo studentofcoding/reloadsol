@@ -286,63 +286,10 @@ async function runSimTrack(request: NextRequest) {
           symbol: pos.symbol,
         })
 
-        const signal = scoredByMint.get(pos.mintAddress)
-        const decision = signal?.decision ?? 'hold'
-        if (decision === 'exit') {
-          await closeSimPosition({
-            strategyId: strategy.id,
-            chain,
-            mintAddress: pos.mintAddress,
-            symbol: signal?.token_symbol || pos.symbol,
-            entryAt: pos.entryAt,
-            entryFeatures: pos.entryFeatures,
-            exitMcap: signal?.current_mcap ?? null,
-            exitGrowthPercent: signal?.mcap_growth_percent ?? null,
-            collect,
-          })
-          closed++
-          openMintSet.delete(pos.mintAddress)
-          continue
-        }
-
-        // Stage 5a: OR stamped cl TP/SL / maxHold when score says hold.
-        if (!pos.effectiveExit) continue
-        const entryMcap =
-          typeof pos.entryFeatures.entry_mcap === 'number'
-            ? pos.entryFeatures.entry_mcap
-            : typeof pos.entryFeatures.first_mcap === 'number'
-              ? pos.entryFeatures.first_mcap
-              : null
-        const currentMcap =
-          typeof signal?.current_mcap === 'number' ? signal.current_mcap : null
-        const clClose = shouldCloseSignalsClExit({
-          exit: pos.effectiveExit,
-          entryAt: pos.entryAt,
-          entryMcap,
-          currentMcap,
-          entryPriceUsd: pos.entryPriceUsd,
-          currentPriceUsd: openPrices[pos.mintAddress] ?? null,
-        })
-        if (!clClose.close) continue
-        await closeSimPosition({
-          strategyId: strategy.id,
-          chain,
-          mintAddress: pos.mintAddress,
-          symbol: signal?.token_symbol || pos.symbol,
-          entryAt: pos.entryAt,
-          entryFeatures: pos.entryFeatures,
-          exitMcap: currentMcap,
-          exitGrowthPercent:
-            entryMcap != null &&
-            entryMcap > 0 &&
-            currentMcap != null &&
-            currentMcap > 0
-              ? (clClose.pnlPct ?? null)
-              : null,
-          collect,
-        })
-        closed++
-        openMintSet.delete(pos.mintAddress)
+        // The 60s SL/TP worker owns this position's exit (SPEC-strategy-exit-standard S9). This
+        // pass monitors and opens only. Both closers that used to run here — the score's `exit`
+        // decision and the stamped cl TP/SL — are gone, so the worker is the single evaluator and
+        // the route cannot take a second opinion on a position it also opened.
       }
 
       // REL-20: flush close-phase writes before re-fetching records
