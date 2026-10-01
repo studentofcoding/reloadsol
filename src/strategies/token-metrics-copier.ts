@@ -153,6 +153,39 @@ export function toCandleVolumes(bars: CopierCacheBar[]): CandleVolume[] {
 }
 
 /**
+ * Keep only candles inside the window a lane can actually mean to observe.
+ *
+ * GMGN returns the last `limit` **traded** minutes, so for a barely-traded token those 501 bars can
+ * reach back *years* — measured on prod after the first sweep: 1,438 rows landed outside the
+ * window, 205 of them stamped 2024. They are harmless to range-bounded reads and self-clear under
+ * retention, but they skew the series' reported span, so each lane clips to its own reach.
+ *
+ * The bound is deliberately per-lane, because the reach differs: a copy-lane call covers
+ * `limit x resolution`, while the 24h cache legitimately holds up to a day.
+ */
+export function clipCandlesToWindow(
+  candles: CandleVolume[],
+  opts: { now: Date; windowSeconds: number; slackSeconds?: number },
+): CandleVolume[] {
+  const nowSec = Math.floor(opts.now.getTime() / 1000)
+  const windowSeconds =
+    Number.isFinite(opts.windowSeconds) && opts.windowSeconds > 0
+      ? opts.windowSeconds
+      : COPY_BAR_LIMIT * COPY_RESOLUTION_SECONDS
+  const slack = Number.isFinite(opts.slackSeconds) ? (opts.slackSeconds as number) : 120
+  const fromSec = nowSec - windowSeconds - slack
+  const toSec = nowSec + slack
+
+  const out: CandleVolume[] = []
+  for (const candle of candles) {
+    if (!Number.isFinite(candle?.t)) continue
+    if (candle.t < fromSec || candle.t > toSec) continue
+    out.push(candle)
+  }
+  return out
+}
+
+/**
  * Run `fn` over `items` with at most `concurrency` in flight, preserving input order.
  *
  * Never rejects: a failing item yields `null` in its slot, so one bad mint cannot abort a sweep —

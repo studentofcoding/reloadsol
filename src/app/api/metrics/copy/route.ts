@@ -11,6 +11,7 @@ import {
   COPY_BAR_LIMIT,
   COPY_RESOLUTION_SECONDS,
   cadenceCoversWindow,
+  clipCandlesToWindow,
   copyWindowSeconds,
   mapWithConcurrency,
   planCopyTargets,
@@ -53,6 +54,8 @@ const CACHE_READ_CONCURRENCY = 16
 const JOB_LOCK_SECONDS = 600
 /** Prune a few times a day rather than on every sweep. */
 const PRUNE_EVERY_HOURS = 6
+/** How far back the 24h cache may legitimately reach (its own TTL, not the copy window). */
+const CACHE_REACH_SECONDS = 24 * 60 * 60
 
 function isServiceAuthorized(request: NextRequest): boolean {
   const { searchParams } = new URL(request.url)
@@ -142,7 +145,10 @@ export async function POST(request: NextRequest) {
       if (!cached) continue
       const result = await recordMetricHours({
         tokenAddress: mint,
-        candles: toCandleVolumes(cached.candles),
+        candles: clipCandlesToWindow(toCandleVolumes(cached.candles), {
+          now,
+          windowSeconds: CACHE_REACH_SECONDS,
+        }),
         source: 'cache_copy',
       })
       hoursWritten += result.hoursWritten
@@ -167,9 +173,15 @@ export async function POST(request: NextRequest) {
         return null
       }
       fetched++
+      // The vendor's last 501 *traded* minutes can reach back years for a barely-traded token, so
+      // clip to what this sweep can mean to observe before writing anything.
+      const clipped = clipCandlesToWindow(candles, {
+        now,
+        windowSeconds: copyWindowSeconds(limit, COPY_RESOLUTION_SECONDS),
+      })
       const result = await recordMetricHours({
         tokenAddress: mint,
-        candles,
+        candles: clipped,
         source: 'gmgn_web',
       })
       hoursWritten += result.hoursWritten

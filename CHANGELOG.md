@@ -35,6 +35,12 @@ measured:** the endpoint returns only minutes that *traded*, so for the hottest 
 with 5–7 of the last 8 hours complete, while quiet tokens leave most minutes absent. An absent minute stays
 `NULL = not observed` — a deliberate open choice, not an oversight.
 
+**Found by the first production sweep, then fixed:** the same trade-driven series taken to its extreme means a
+barely-traded token's last 501 traded minutes can reach back **years** — 1,438 rows landed outside the window,
+205 stamped 2024. Bounded noise (idempotent, invisible to range-bounded reads, self-clearing under retention)
+but it skews the series' reported span, so each lane now clips to its own reach: the copy lane to
+`limit × resolution`, the cache lane to its 24 h TTL. Four tests pin it, including the years-old bar.
+
 **Not wired here:** the rug scorer's volume band still reads its own path; pointing it at this series is the
 consumer step.
 

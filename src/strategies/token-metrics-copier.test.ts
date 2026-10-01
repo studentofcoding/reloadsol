@@ -4,6 +4,7 @@ import {
   COPY_RESOLUTION_SECONDS,
   assertCadenceCoversWindow,
   cadenceCoversWindow,
+  clipCandlesToWindow,
   copyWindowSeconds,
   mapWithConcurrency,
   planCopyTargets,
@@ -177,6 +178,59 @@ describe('metrics copier — bounded concurrency', () => {
     })
     expect(peak).toBe(1)
     expect(await mapWithConcurrency([], 4, async () => 1)).toEqual([])
+  })
+})
+
+describe('metrics copier — window clip', () => {
+  const WINDOW = COPY_BAR_LIMIT * COPY_RESOLUTION_SECONDS
+
+  it('drops candles older than the lane window', () => {
+    const out = clipCandlesToWindow(
+      [
+        { t: nowSec - WINDOW - 3600, v: 5 },
+        { t: nowSec - 600, v: 7 },
+      ],
+      { now: NOW, windowSeconds: WINDOW },
+    )
+    expect(out).toEqual([{ t: nowSec - 600, v: 7 }])
+  })
+
+  it('drops the years-old bars a barely-traded token returns', () => {
+    // Measured on prod: 501 *traded* minutes reached back to 2024 for a dead token.
+    const yearsAgo = Date.parse('2024-09-16T14:00:00Z') / 1000
+    const out = clipCandlesToWindow(
+      [
+        { t: yearsAgo, v: 1 },
+        { t: nowSec - 60, v: 2 },
+      ],
+      { now: NOW, windowSeconds: WINDOW },
+    )
+    expect(out).toHaveLength(1)
+    expect(out[0]!.v).toBe(2)
+  })
+
+  it('keeps both boundaries and the current minute, drops the far future', () => {
+    const out = clipCandlesToWindow(
+      [
+        { t: nowSec - WINDOW - 120, v: 1 }, // exactly the past bound (slack 120)
+        { t: nowSec, v: 2 }, // now, inside slack
+        { t: nowSec + 120, v: 3 }, // exactly the future bound
+        { t: nowSec + 121, v: 4 }, // beyond it
+      ],
+      { now: NOW, windowSeconds: WINDOW },
+    )
+    expect(out.map((c) => c.v)).toEqual([1, 2, 3])
+  })
+
+  it('falls back to the default window on nonsense and drops bad timestamps', () => {
+    const out = clipCandlesToWindow(
+      [
+        { t: Number.NaN, v: 1 },
+        { t: nowSec - 60, v: 2 },
+      ],
+      { now: NOW, windowSeconds: 0 },
+    )
+    expect(out).toEqual([{ t: nowSec - 60, v: 2 }])
   })
 })
 

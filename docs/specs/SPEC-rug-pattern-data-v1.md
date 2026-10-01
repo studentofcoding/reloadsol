@@ -58,6 +58,8 @@ Two writers, cheapest first:
 
 For genuinely active tokens the series is effectively **one bar per minute** (501 bars over ~500 min) and past hours come out complete — which is the rug scorer's target population, since a token in a staircase is trading continuously. Quiet tokens leave most minutes absent, so their 5m buckets derive NULL.
 
+**The same property, taken to its extreme (found on prod, first sweep 2026-10-01):** a *barely*-traded token's last 501 traded minutes span **years**, so the writer received bars stamped 2024 and created 1,438 rows outside the window (205 hours across 6 tokens in 2024, 702 across 8 in 2025). They were idempotent, invisible to any range-bounded read, and self-clearing under the 30-day prune — but they skewed the series' reported span, so the copier now clips each lane to its own reach (copy lane `limit × resolution`; cache lane its 24 h TTL) before writing.
+
 **Open semantic choice, not changed here:** an absent minute inside a fetched window is read as **NULL = not observed** (the locked invariant). For a quiet token it could equally be read as **0 volume = no trades**. That would make more of the series usable but would weaken the one rule that keeps "we didn't look" distinct from "nothing happened" — so it stays NULL until deliberately decided.
 
 ### G2 — A durable per-token metric series
