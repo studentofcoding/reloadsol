@@ -79,9 +79,21 @@ This does not invalidate the comparison, because **the recorded outcomes came fr
 
 Promote only if the shadow exit shows **lift over the recorded exit on the identical rows**, clustered by token, at the `READINESS_MIN_SAMPLE` floor. Given §"What is measured today" — the overlay moves **only take-profit**, and take-profit has already been swept three ways against a flat win rate — the prior is that P5 returns **inconclusive or negative**. The right outcome of this SPEC may well be "leave both in shadow and delete the boost", and that is a success, not a failure.
 
+### Cross-reference — this may already be answered, and better
+
+A parallel workstream has `SPEC-ml-shadow-lane-v1.md` in review, which measures the same lane from the other
+side and is **more specific than the reading above**: the overlay runs and records on **2,493 rows**, but is
+**starved and untuned** — every row `source='identity'`, tier null, and **0 exit parameters changed**.
+
+If that holds, it resolves this SPEC's Step 0 in the negative and **P5 closes with no code**: the "1136 rows
+where the effective/base TP differ" above is the overlay's *internal* base-vs-effective bookkeeping, not a
+change against the TP the strategy actually used. That is exactly the ambiguity Step 0 existed to remove —
+so the honest state here is that **P5 belongs to `SPEC-ml-shadow-lane-v1.md`**, and this section should be read
+as the exit-side rationale for tidying that lane rather than as a competing plan. Do not execute both.
+
 ### Tasks
 
-1. **Resolve the ambiguity first.** The stamped pair says the overlay's effective TP always differs from its *own* base TP, but that is internal bookkeeping — it does **not** yet say it differs from the TP the strategy actually used. Step 0 is a read-only query joining `ml_exit_effective_take_profit_pct` against the strategy's own effective TP (`cl_take_profit_pct` / the strategy base) to establish whether promoting the overlay would change behaviour at all. **If it would not, P5 closes here** with no code.
+1. **Resolve the ambiguity first — but check `SPEC-ml-shadow-lane-v1.md` before running it.** The stamped pair says the overlay's effective TP always differs from its *own* base TP, but that is internal bookkeeping — it does **not** yet say it differs from the TP the strategy actually used. Step 0 is a read-only query joining `ml_exit_effective_take_profit_pct` against the strategy's own effective TP (`cl_take_profit_pct` / the strategy base) to establish whether promoting the overlay would change behaviour at all. **If it would not, P5 closes here** with no code.
 2. If it would: replay the shadow TP against the recorded exit on the rows where it fired, and report lift with the same clustered CI as P4.
 3. If lift is significant: promote behind `ML_EXIT_OVERLAY_MODE=shadow|enforce` (default `shadow`), fail-soft, with a kill switch — the repo's standing gate shape.
 4. Ship the **counterfactual reader** with it. A shadow sink with no reader is another dead store; both overlays have been invisible for their whole life, which is how they stayed inert unnoticed.
@@ -134,7 +146,9 @@ Promote only if the shadow exit shows **lift over the recorded exit on the ident
 
 ## Open items
 
-1. **P5 task 1 is unanswered** — whether the overlay's effective TP differs from the *strategy's* effective TP, versus merely from the overlay's own base. That single query decides whether P5 has anything to measure.
+1. **P5 task 1 is probably already answered elsewhere** — `SPEC-ml-shadow-lane-v1.md` measures the lane as
+   `source='identity'` with **0 exit parameters changed**, which would close P5 with no code. Confirm against
+   that SPEC before running anything here; if it holds, this SPEC's P5 section is rationale, not a plan.
 2. **Stop-hit distribution is unmeasured** — the sweep's first output should be the histogram, before any PnL summary.
 3. Whether the stop should be per-family rather than global. `mcap_enter_at_80` runs **−53.9** while `search_mcap…` runs **−31.7**; a single sweep value may be the wrong shape.
 4. The `gmgn_exit_boost` overlay (243 rows) is untouched by both tasks above and may belong to a third thread.
