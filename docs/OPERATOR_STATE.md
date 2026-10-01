@@ -4,6 +4,44 @@ Living notes for regime awareness and rule changes. Production DB: Docker Postgr
 
 Update after significant sim batches or when disabling a strategy.
 
+## Rug label — state of play (2026-10-01)
+
+The goal: **make the staircase / up-only ramp actually get labelled `rug`.** What is built now is the material
+for that verdict, the plumbing that makes the material trustworthy, and the measurement that decides whether the
+verdict may act. Browsable version: [`diagrams/17-rug-progress.html`](./diagrams/17-rug-progress.html).
+
+**Shipped and verified**
+
+| Layer | What landed | Evidence |
+|---|---|---|
+| Data | `token_metrics_history` — one row per (token, UTC hour) holding 1m **USD volume** and 1m **market-cap candles** (`o_min`/`h_min`/`l_min`/`c_min`), written by `metrics_copier` (`POST /api/metrics/copy`, every 15 min) | migrations `54`/`55`/`56`; sweeps `blocks: 0` at 2 rps; 4.5k rows / 43k mcap slots / 86k volume slots |
+| Rate | the copier's budget was **measured on the wrong endpoint** and corrected (≥60 rps on `token_stat` was applied to `candles`, 90× the payload — a 240-call burst at 8 rps tripped a tunnel-wide 429) | candle endpoint re-measured: 96 requests / 2.6 MB clean at ~1.1 rps; default now **2**, own lane |
+| Units | the endpoint is `token_mcap_candles` — **market cap, not price**; the chart cache holds prices (~10⁹ apart) and was writing them into the same column | `56` re-comments the columns; the cache lane now contributes **volume only**; verified `ohlc_filled = 0` on cache rows |
+| Scorer input | the detector reads the series first (`load1mOhlcv`), so the 30-point volume band is no longer structurally inert (a ramp used to cap at 60 < the 80 threshold) | 268/268 5m bars carrying volume on a real series, vs 0 before; pinned by test |
+| Liquidity | `liquidity_close` had **no writer at all** — now filled by a batched `meme_quote_info` pass | 0 → **150** rows |
+| Measurement | `RUG_SIGNAL_MODE` **defaults to `shadow`** (arming ≠ enforcing); every evaluation — trips *and* non-trips — lands in `rug_signal_shadow`, readable at `GET /api/rug-signal/shadow` | reviewer blocking note B-1 resolved; one sweep wrote **150** rows, 150 `pass` |
+| Control cohort | the metrics sweep scores the **whole watch set**, which is the only path that records non-collapsing tokens | `scored: 150 / shadow_rows: 150` in the sweep summary |
+| Harness | `scripts/rug-signal-validate.mjs` + runner: base rate, precision/recall at 80 with Wilson intervals, per-day agreement, and an explicit **`inconclusive`** below the sample floor | ran on prod, read-only, and correctly printed `inconclusive` with the reason |
+
+**Live right now:** armed in **shadow** in prod (`RUG_SIGNAL_ENABLED=1`, `RUG_SIGNAL_MODE=shadow`); sweeps firing
+every 15 min; **0 trips** so far, max score **43/80**, and the volume band contributed on **21 of 150** mints.
+
+**What's next**
+
+1. **Let the soak produce the first verdict.** Rows become labellable 30 minutes after they are written, so the
+   floor (30 labelled / 5 collapses) is reached within a day. The harness then states a lift or no lift — and the
+   acceptance rule is *days must agree*, so the honest answer is a multi-day one.
+2. **Explain `series_fed: 21/150`.** Either those tokens are not rising (the band correctly scores 0) or the
+   series is too sparse for the band to see anything — two causes needing opposite responses. Diagnostic: bars
+   per mint, 5m buckets, and mcap gain across the 129. This decides whether the band is measurable on this
+   population at all, so it is worth doing **before** reading too much into the soak.
+3. **P5 — enforce, then feed the ML shadow lane.** Gated: only if the harness clears its floor with a lift over
+   base rate. `RUG_SIGNAL_MODE=enforce` is the explicit keystroke; `RUG_SIGNAL_KILL_SWITCH` stays as the stop.
+
+**Honest caveats.** Zero trips so far, so precision is undefined — the soak may find that on this population the
+signal does not fire at all, which is itself a finding. Pre-`56` rows keep their mixed units (the writer never
+overwrites a slot); they age out under the 30-day prune.
+
 ## Docker rebuilds — what survives
 
 | State | Survives `docker compose up --build` / `down` + `up`? |

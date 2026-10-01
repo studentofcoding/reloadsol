@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ReloadSOL · Rug label — progress and what's next</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --paper:#fafaf7; --paper2:#f0efe9; --ink:#163b2a; --muted:#5b6b60;
+    --soft:#8a968d; --accent:#84cc16; --link:#2e5aa8; --rule:rgba(22,59,42,0.14);
+    --sans:'DM Sans', system-ui, sans-serif;
+    --serif:'Fraunces', serif;
+    --mono:'Geist Mono', ui-monospace, monospace;
+  }
+  body { font-family:var(--sans); background:var(--paper); color:var(--ink); line-height:1.5; }
+  .wrap { max-width:1200px; margin:0 auto; padding:3.5rem 2rem 4rem; }
+  .eyebrow { font-family:var(--mono); font-size:.68rem; font-weight:500; letter-spacing:.2em; text-transform:uppercase; color:var(--muted); }
+  h1 { font-family:var(--serif); font-weight:400; font-size:clamp(1.6rem,3vw,2.4rem); letter-spacing:-.02em; margin:.4rem 0 .6rem; }
+  .lede { color:var(--muted); max-width:76ch; font-size:1rem; margin-bottom:2.25rem; }
+  .lede code, p code, li code, td code { font-family:var(--mono); font-size:.8rem; color:var(--ink); background:rgba(22,59,42,0.05); padding:.05rem .28rem; border-radius:3px; }
+  .lede b, p b, li b, td b { color:var(--ink); font-weight:600; }
+
+  h2 { font-family:var(--mono); font-weight:500; font-size:.7rem; letter-spacing:.2em; text-transform:uppercase; color:var(--soft); margin:2.5rem 0 1rem; }
+  h2 .rule { display:inline-block; width:2.5rem; height:1px; background:var(--rule); vertical-align:middle; margin-right:.75rem; }
+  .diagram { margin-bottom:1.75rem; overflow-x:auto; }
+  svg { width:100%; min-width:1000px; display:block; }
+  .callout { font-family:var(--serif); font-style:italic; font-size:1rem; color:var(--muted); margin:-.5rem 0 2rem; }
+  .callout b { font-style:normal; font-weight:600; color:var(--ink); }
+
+  table.reg { width:100%; border-collapse:collapse; font-size:.84rem; }
+  table.reg th { font-family:var(--mono); font-size:.6rem; letter-spacing:.14em; text-transform:uppercase; color:var(--soft); text-align:left; padding:.5rem .6rem; border-bottom:1px solid var(--rule); font-weight:500; }
+  table.reg td { padding:.6rem; border-bottom:1px solid rgba(22,59,42,0.07); color:var(--muted); vertical-align:top; }
+  table.reg td:first-child { font-family:var(--mono); color:var(--ink); white-space:nowrap; }
+  table.reg td strong { color:var(--ink); font-weight:600; }
+  table.reg code { font-family:var(--mono); font-size:.76rem; color:var(--ink); background:rgba(22,59,42,0.05); padding:.05rem .25rem; border-radius:3px; }
+
+  .cards { display:grid; grid-template-columns:1fr 1.15fr 0.85fr; gap:1rem; }
+  @media (max-width:900px) { .cards { grid-template-columns:1fr; } }
+  .card { background:#fff; border:1px solid rgba(22,59,42,0.12); border-radius:6px; padding:1.25rem; }
+  .card .eyebrow { color:var(--soft); font-size:.62rem; }
+  .card-head { display:flex; align-items:center; gap:.5rem; margin:.45rem 0 .7rem; }
+  .card-head h3 { font-size:1rem; font-weight:600; }
+  .dot { width:7px; height:7px; border-radius:50%; flex:none; }
+  .dot.coral { background:var(--accent); } .dot.ink { background:var(--ink); } .dot.muted { background:var(--muted); }
+  .card ul { list-style:none; }
+  .card li { font-size:.86rem; color:var(--muted); padding-left:.9rem; position:relative; margin-bottom:.4rem; }
+  .card li::before { content:"—"; position:absolute; left:0; color:var(--soft); }
+
+  ol.next { list-style:none; counter-reset:n; }
+  ol.next > li { counter-increment:n; position:relative; padding-left:2.25rem; margin-bottom:1.1rem; font-size:.9rem; color:var(--muted); }
+  ol.next > li::before { content:counter(n,decimal-leading-zero); position:absolute; left:0; top:.1rem; font-family:var(--mono); font-size:.72rem; color:var(--soft); }
+  ol.next > li b { color:var(--ink); font-weight:600; }
+  .gate { font-family:var(--mono); font-size:.74rem; color:var(--ink); background:rgba(132,204,22,0.12); border:1px solid rgba(132,204,22,0.45); border-radius:4px; padding:.05rem .3rem; }
+
+  .footer { margin-top:3rem; padding-top:1rem; border-top:1px solid var(--rule); font-family:var(--mono); font-size:.72rem; color:var(--soft); display:flex; justify-content:space-between; flex-wrap:wrap; gap:.5rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">ReloadSOL · Rug label · progress · 2026-10-01</p>
+  <h1>Where the rug label stands, and what's next</h1>
+  <p class="lede">The goal has not moved: <b>make the staircase / up-only ramp actually get labelled
+  <code>rug</code></b>. What exists now is the material for that verdict, the plumbing that makes the material
+  trustworthy, and — deliberately — the <b>measurement that decides whether the verdict may act</b>. Nothing
+  enforces yet, and that is a decision, not a gap.</p>
+
+  <h2><span class="rule"></span>The path as built</h2>
+  <div class="diagram">
+  <svg viewBox="0 0 1160 640" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="rp-title rp-desc">
+    <title id="rp-title">Rug label pipeline from watch set to gated enforcement</title>
+    <desc id="rp-desc">A watch set feeds the metrics copier, which writes one-minute volume and market-cap candles into token_metrics_history; the rug-signal scorer reads that series and records every evaluation, trips and non-trips alike, in rug_signal_shadow; the validation harness reads that log and gates whether enforcement is allowed, which is the only step that would write to the rug list. The gate is focal because it is currently closed.</desc>
+    <defs>
+      <marker id="rp-arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#5b6b60"/></marker>
+      <marker id="rp-arr-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#84cc16"/></marker>
+    </defs>
+    <rect width="100%" height="100%" fill="#fafaf7"/>
+
+    <!-- arrows first -->
+    <path d="M 248 140 H 280 Q 288 140 288 140" fill="none" stroke="#5b6b60" stroke-width="1.2" marker-end="url(#rp-arr)"/>
+    <path d="M 504 140 H 536 Q 544 140 544 140" fill="none" stroke="#5b6b60" stroke-width="1.2" marker-end="url(#rp-arr)"/>
+    <path d="M 792 140 H 824 Q 832 140 832 140" fill="none" stroke="#5b6b60" stroke-width="1.2" marker-end="url(#rp-arr)"/>
+    <path d="M 944 184 V 272 Q 944 280 944 280" fill="none" stroke="#5b6b60" stroke-width="1.2" marker-end="url(#rp-arr)"/>
+    <path d="M 832 324 H 800 Q 792 324 792 324" fill="none" stroke="#5b6b60" stroke-width="1.2" marker-end="url(#rp-arr)"/>
+    <path d="M 544 324 H 512 Q 504 324 504 324" fill="none" stroke="#5b6b60" stroke-width="1.2" marker-end="url(#rp-arr)"/>
+    <path d="M 396 368 V 456 Q 396 464 396 464" fill="none" stroke="#84cc16" stroke-width="1.4" marker-end="url(#rp-arr-accent)"/>
+
+    <!-- arrow labels (mask + 8px gap) -->
+    <rect x="920" y="188" width="104" height="12" rx="2" fill="#fafaf7"/>
+    <text x="972" y="197" fill="#8a968d" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">EVERY EVAL</text>
+    <rect x="786" y="296" width="88" height="12" rx="2" fill="#fafaf7"/>
+    <text x="830" y="305" fill="#8a968d" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">READS LOG</text>
+    <rect x="450" y="296" width="72" height="12" rx="2" fill="#fafaf7"/>
+    <text x="486" y="305" fill="#8a968d" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">GATES</text>
+    <rect x="408" y="400" width="80" height="12" rx="2" fill="#fafaf7"/>
+    <text x="448" y="409" fill="#84cc16" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">ON PASS</text>
+
+    <!-- row 1: the material -->
+    <rect x="48" y="96" width="200" height="88" rx="6" fill="rgba(91,107,96,0.10)" stroke="#8a968d" stroke-width="1"/>
+    <rect x="60" y="104" width="48" height="12" rx="2" fill="transparent" stroke="rgba(91,107,96,0.45)" stroke-width="0.8"/>
+    <text x="84" y="113" fill="#8a968d" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">INPUT</text>
+    <text x="148" y="144" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Watch set</text>
+    <text x="148" y="162" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">150 swept / 300 cap</text>
+
+    <rect x="288" y="96" width="216" height="88" rx="6" fill="#ffffff" stroke="#163b2a" stroke-width="1"/>
+    <rect x="300" y="104" width="40" height="12" rx="2" fill="transparent" stroke="rgba(22,59,42,0.40)" stroke-width="0.8"/>
+    <text x="320" y="113" fill="#163b2a" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">LIVE</text>
+    <text x="396" y="144" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">metrics_copier</text>
+    <text x="396" y="162" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">15 min · 2 rps · own lane</text>
+
+    <rect x="544" y="96" width="248" height="88" rx="6" fill="rgba(22,59,42,0.05)" stroke="#5b6b60" stroke-width="1"/>
+    <rect x="556" y="104" width="40" height="12" rx="2" fill="transparent" stroke="rgba(91,107,96,0.45)" stroke-width="0.8"/>
+    <text x="576" y="113" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">STORE</text>
+    <text x="668" y="144" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">token_metrics_history</text>
+    <text x="668" y="162" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">1m volume + mcap candles</text>
+
+    <rect x="832" y="96" width="232" height="88" rx="6" fill="#ffffff" stroke="#163b2a" stroke-width="1"/>
+    <rect x="844" y="104" width="40" height="12" rx="2" fill="transparent" stroke="rgba(22,59,42,0.40)" stroke-width="0.8"/>
+    <text x="864" y="113" fill="#163b2a" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">BUILT</text>
+    <text x="948" y="144" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">rug-signal scorer</text>
+    <text x="948" y="162" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">A40 B30 C20 D10 → 80</text>
+
+    <!-- row 2: measurement (flows right to left) -->
+    <rect x="832" y="280" width="232" height="88" rx="6" fill="rgba(22,59,42,0.05)" stroke="#5b6b60" stroke-width="1"/>
+    <rect x="844" y="288" width="40" height="12" rx="2" fill="transparent" stroke="rgba(91,107,96,0.45)" stroke-width="0.8"/>
+    <text x="864" y="297" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">STORE</text>
+    <text x="948" y="328" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">rug_signal_shadow</text>
+    <text x="948" y="346" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">trips + non-trips = control</text>
+
+    <rect x="544" y="280" width="248" height="88" rx="6" fill="rgba(22,59,42,0.02)" stroke="rgba(22,59,42,0.20)" stroke-width="1" stroke-dasharray="4,3"/>
+    <rect x="556" y="288" width="64" height="12" rx="2" fill="transparent" stroke="rgba(22,59,42,0.30)" stroke-width="0.8"/>
+    <text x="588" y="297" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">HARNESS</text>
+    <text x="668" y="328" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">validate (read-only)</text>
+    <text x="668" y="346" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">precision · CI · floor</text>
+
+    <rect x="288" y="280" width="216" height="88" rx="6" fill="rgba(132,204,22,0.12)" stroke="#84cc16" stroke-width="1.4"/>
+    <rect x="300" y="288" width="48" height="12" rx="2" fill="transparent" stroke="rgba(132,204,22,0.55)" stroke-width="0.8"/>
+    <text x="324" y="297" fill="#84cc16" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">GATE</text>
+    <text x="396" y="328" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">enforce?</text>
+    <text x="396" y="346" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">default shadow · closed</text>
+
+    <!-- row 3: the only writer of a verdict -->
+    <rect x="288" y="464" width="216" height="88" rx="6" fill="#ffffff" stroke="#163b2a" stroke-width="1"/>
+    <rect x="300" y="472" width="40" height="12" rx="2" fill="transparent" stroke="rgba(22,59,42,0.40)" stroke-width="0.8"/>
+    <text x="320" y="481" fill="#163b2a" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">VERDICT</text>
+    <text x="396" y="512" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">token_rug_list</text>
+    <text x="396" y="530" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">0 rug-signal rows today</text>
+
+    <!-- legend strip -->
+    <line x1="48" y1="592" x2="1112" y2="592" stroke="rgba(22,59,42,0.10)" stroke-width="0.8"/>
+    <text x="48" y="612" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.14em">LEGEND</text>
+    <circle cx="152" cy="609" r="3.5" fill="#163b2a"/>
+    <text x="164" y="612" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace">LIVE / BUILT</text>
+    <circle cx="288" cy="609" r="3.5" fill="#5b6b60"/>
+    <text x="300" y="612" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace">STORE</text>
+    <circle cx="392" cy="609" r="3.5" fill="#84cc16"/>
+    <text x="404" y="612" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace">GATE — CLOSED UNTIL EVIDENCE</text>
+  </svg>
+  </div>
+  <p class="callout">Everything left of the gate is <b>done and running</b>. The gate is the whole point of the
+  current phase: <b>neither the trip write nor the ML lane moves until the measurement clears its floor.</b></p>
+
+  <h2><span class="rule"></span>The register — what landed, on what evidence</h2>
+  <table class="reg">
+    <thead>
+      <tr><th>Layer</th><th>What landed</th><th>Evidence (measured)</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Data</td>
+        <td><strong>The 1m series.</strong> One row per (token, UTC hour) carrying 1m <strong>USD volume</strong>
+        and 1m <strong>market-cap candles</strong>, filled by <code>metrics_copier</code> every 15 min.</td>
+        <td>migrations <code>54</code>/<code>55</code>/<code>56</code>; 4,497 rows / 43,031 mcap slots / 85,678
+        volume slots; sweeps <code>blocks: 0</code> at 2 rps.</td>
+      </tr>
+      <tr>
+        <td>Rate</td>
+        <td><strong>A budget measured on the wrong endpoint, then fixed.</strong> ≥60 rps on
+        <code>token_stat</code> had been applied to <code>candles</code> — 90× the payload.</td>
+        <td>A 240-call burst at 8 rps tripped a <strong>tunnel-wide 429</strong>; re-measured on the candle
+        endpoint: 96 requests / 2.6 MB clean at ~1.1 rps. Default now <strong>2</strong>, own lane.</td>
+      </tr>
+      <tr>
+        <td>Units</td>
+        <td><strong>The endpoint returns market cap, not price.</strong> The chart cache holds prices and had been
+        writing them into the same column.</td>
+        <td>Medians 586,287 vs 0.00143 — ~10⁹ apart, so any cross-row ratio was a fake ramp. Fixed; cache now
+        writes volume only (<code>ohlc_filled = 0</code>).</td>
+      </tr>
+      <tr>
+        <td>Input</td>
+        <td><strong>The scorer reads the series</strong>, so the 30-point volume band is reachable.</td>
+        <td>268/268 5m bars carrying volume on a real series, against <strong>0</strong> before. A ramp on the old
+        path capped at 60 &lt; the 80 threshold — it could never trip.</td>
+      </tr>
+      <tr>
+        <td>Liquidity</td>
+        <td><strong><code>liquidity_close</code> had no writer at all.</strong></td>
+        <td>0 → <strong>150</strong> rows from one batched <code>meme_quote_info</code> pass.</td>
+      </tr>
+      <tr>
+        <td>Measurement</td>
+        <td><strong>Arming no longer enforces.</strong> Every evaluation — trips and non-trips — is recorded and
+        readable.</td>
+        <td><code>RUG_SIGNAL_MODE</code> defaults to <code>shadow</code>; one sweep wrote <strong>150</strong>
+        rows (150 <code>pass</code>) to <code>rug_signal_shadow</code>.</td>
+      </tr>
+      <tr>
+        <td>Control</td>
+        <td><strong>The sweep scores the whole watch set</strong> — the only path that records tokens which do not
+        collapse.</td>
+        <td><code>scored: 150 / shadow_rows: 150</code>. Without it there is no base rate to compare against.</td>
+      </tr>
+      <tr>
+        <td>Harness</td>
+        <td><strong>The validation harness</strong>, read-only: base rate, precision/recall at 80 with Wilson
+        intervals, per-day agreement, and an explicit <code>inconclusive</code>.</td>
+        <td>Ran on prod and correctly printed <code>inconclusive</code> with the reason instead of a number.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2><span class="rule"></span>The numbers that matter right now</h2>
+  <div class="cards">
+    <div class="card">
+      <p class="eyebrow">LIVE STATE</p>
+      <div class="card-head"><span class="dot ink"></span><h3>Armed, in shadow</h3></div>
+      <ul>
+        <li><code>RUG_SIGNAL_ENABLED=1</code></li>
+        <li><code>RUG_SIGNAL_MODE=shadow</code></li>
+        <li>sweeps firing every 15 min</li>
+        <li>kill switch wired as the stop</li>
+      </ul>
+    </div>
+    <div class="card">
+      <p class="eyebrow">WHAT THE SOAK SHOWS SO FAR</p>
+      <div class="card-head"><span class="dot muted"></span><h3>150 scored, 0 trips</h3></div>
+      <ul>
+        <li>max score <strong>43 / 80</strong> — nothing near the threshold</li>
+        <li>volume band contributed on <strong>21 of 150</strong></li>
+        <li>precision is <strong>undefined</strong> until trips exist</li>
+        <li>150 rows unlabellable yet — the label needs 30 min of forward candles</li>
+      </ul>
+    </div>
+    <div class="card">
+      <p class="eyebrow">THE GATE</p>
+      <div class="card-head"><span class="dot coral"></span><h3>Closed by design</h3></div>
+      <ul>
+        <li>enforce needs an explicit keystroke</li>
+        <li>the harness must clear its floor first</li>
+        <li>days must agree — not one pooled number</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2><span class="rule"></span>What's next</h2>
+  <ol class="next">
+    <li><b>Let the soak produce the first verdict.</b> Rows become labellable 30 minutes after they are written,
+    so the floor (30 labelled / 5 collapses) is reachable within a day. The harness then states a lift or no lift —
+    and because the acceptance rule is that days must agree, the honest answer is a multi-day one. No code, just
+    time.</li>
+    <li><b>Explain <code>series_fed: 21/150</code>.</b> Either those tokens are simply not rising — the band
+    correctly scores 0 without a price rise — or the series is too sparse for the band to see anything. The two
+    causes need opposite responses, and the answer decides whether the band is measurable on this population at
+    all. Diagnostic: bars per mint, 5m buckets, and mcap gain across the 129 that scored 0. Worth doing
+    <b>before</b> reading much into the soak.</li>
+    <li><b>Enforce, then feed the ML shadow lane.</b> <span class="gate">GATED</span> Only if the harness clears
+    its floor with a lift over base rate. <code>RUG_SIGNAL_MODE=enforce</code> is the deliberate keystroke; the
+    kill switch stays. The lane that would consume the verdict currently runs 100% <code>source='identity'</code>.</li>
+  </ol>
+
+  <p class="footer">
+    <span>Source of truth: <b>docs/OPERATOR_STATE.md</b> § Rug label — state of play · spec: docs/specs/SPEC-rug-signal-v1.md</span>
+    <span>Rendered 2026-10-01</span>
+  </p>
+</div>
+</body>
+</html>
