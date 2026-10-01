@@ -220,6 +220,7 @@ Copy from [`.env.docker.example`](.env.docker.example). Key groups:
 | `JUPITER_BURST` | Bucket capacity (default `8`; measured tolerance is ~8 sequential before 429) |
 | `JUPITER_TRADE_RESERVE` | Tokens held for the trade lane, never spent by background work (default `2`) |
 | `JUPITER_QUOTE_CACHE_MS` | Coalescing/quote cache window for non-taker quotes (default `4000`) |
+| `SWAP_PRIORITY_FEE_LAMPORTS` | Exact priority-fee tip for a swap build when the caller passes **no** fee. Unset (default) → auto-high, a 0.003 SOL *cap* rather than a flat charge; a caller-supplied fee always wins. A tx broadcast with no tip is how one lands nowhere |
 | `READINESS_MIN_SAMPLE` | Counted closes required before `/dev/paper-trade` gives a readiness verdict (default `30`); below it the verdict reads `insufficient`, and the UI can toggle the gate off |
 | `WALLET_SESSION_SECRET` | httpOnly wallet session cookie signing |
 

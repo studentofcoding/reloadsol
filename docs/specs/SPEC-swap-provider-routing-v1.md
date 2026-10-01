@@ -335,20 +335,30 @@ Residual risk: the fan-out doubles the number of quote calls per swap (T5c).
 
 ## 4. Implementation tasks
 
-- [ ] **T1 — delete the dead Ultra integration. PROPOSED, NOT APPROVED.** Remove
-      `src/utils/jupiter-ultra.ts`, `src/app/api/jupiter/ultra/order/route.ts`,
-      `src/app/api/jupiter/ultra/execute/route.ts`. Pre-check still holds: nothing calls them —
-      `fetchUltraOrderDirect` POSTs to a **GET-only** `/order`, so it 404s on arrival.
-      **This is the one deletion still awaiting an explicit go-ahead**, and it is deliberately *not* covered
-      by the "keep Raptor" decision — Ultra is a different provider, and §3 locks it as *delete*. Left
-      unchecked so the board cannot read as if it were already done.
-- [x] **T2 — no env cleanup needed (verified 2026-10-01).** `JUPITER_ULTRA_API_BASE` /
-      `JUPITER_ULTRA_CLIENT_PLATFORM` were never declared in any env example or doc — they existed only as
-      inline fallbacks inside `jupiter-ultra.ts`.
-- [ ] **T3 — never treat `/order` 200 as success.** Audit every `/order` consumer for a
-      `response.ok`-only check. The failure mode is `200` + empty `transaction` +
-      `errorMessage: "Insufficient funds"`. `prepareJupiterSwapOrder` already throws; keep that
-      assertion and cover the empty-tx case with a unit test.
+- [x] **T1 — delete the dead Ultra integration. DONE (2026-10-01).** Removed
+      `src/utils/jupiter-ultra.ts`, `src/app/api/jupiter/ultra/order/route.ts` and
+      `src/app/api/jupiter/ultra/execute/route.ts`. Verified first that they referenced **only each other** —
+      a closed island, nothing in `src/` imported them — so the deletion is behaviour-free.
+- [ ] **T16 — reclaim still rides the deprecated Ultra host (new, found while doing T1).**
+      `jupiter-reclaim.ts:11` sets `JUPITER_RECLAIM_CRAFT_BASE` from `JUPITER_ULTRA_API_BASE`, defaulting to
+      `https://ultra-api.jup.ag`, and posts `/reclaim/craft`. Ultra is officially deprecated in favour of Swap
+      V2, so **the close-empty-ATAs path depends on a host the venue is retiring**. Unlike the module deleted
+      in T1, this one *works* — it is not the POST-to-a-GET-route bug. Worth confirming the sanctioned reclaim
+      endpoint before that host is switched off, which is exactly what the T1 audit surfaced by accident.
+- [x] **T2 — one env var was wrongly called dead. CORRECTED (verified 2026-10-01).**
+      `JUPITER_ULTRA_CLIENT_PLATFORM` was never declared anywhere — it existed only as an inline fallback
+      inside the deleted `jupiter-ultra.ts`, so it is gone with it. **`JUPITER_ULTRA_API_BASE` is NOT dead**:
+      `src/utils/jupiter-reclaim.ts:11` reads it as the base for `POST /reclaim/craft`. An earlier draft of
+      this task claimed "no env cleanup needed" on the grounds that both vars were local to the deleted file;
+      that was **wrong**, and the var is kept. See the new T16 — deleting T1 is what surfaced it.
+- [x] **T3 — audit every `/order` consumer. DONE (2026-10-01) — and it found a live gap.**
+      `/order` is called in exactly one file (`jupiter-swap-quote.ts`), by two consumers.
+      `fetchJupiterSwapQuoteDirect` (server) had the full guard chain — 429, `!ok`, 200-with-`errorMessage`
+      → `venueRefused`, missing `outAmount`. **`fetchJupiterSwapQuote` (the proxied one) did not**, and that
+      is the path a **browser** uses (`direct` is false in a tab) — so a proxied venue refusal read as a
+      generic failure, the caller fell back to Lite, and Lite built a transaction the wallet could not pay
+      for. That is the T9b defect surviving on the path the UI actually takes. Fixed, with tests covering the
+      refusal *and* the not-a-refusal case.
 - [x] **T4 — the desk path never compares providers. REJECTED on measurement, 2026-10-01.** The premise was
       right — `collectSwapQuoteCandidates` is sequential and short-circuits, and `pickBestSwapQuote` has only
       ever been handed one candidate. But fanning Raptor and `/order` out in parallel was then measured on
@@ -371,8 +381,12 @@ Residual risk: the fan-out doubles the number of quote calls per swap (T5c).
 - [x] **T5c — the fan-out's budget question. MOOT — the fan-out was rejected (T4).** It asked whether one
       extra provider call per swap would push the trade lane over its 0.5 rps gate. With a single lane there
       is no added call. Kept as the record that the budget was checked *before* the design was dropped.
-- [ ] **T6 — make a rate-limited fallback legible.** A Lite 429 must not read as "no route exists";
-      surface it distinctly (pairs with the negative cache in `swap-quote-pick.ts`).
+- [x] **T6 — a 429 now reads as a rate limit, not a missing route. DONE (2026-10-01).**
+      `settleProvider` swallowed every failure identically, so a throttled lane was indistinguishable from a
+      dead pair and the engine answered `No route for this pair right now`. It now classifies each failure
+      (`QuoteFailure { provider, rateLimited }`, by 429 status or message) and the engine raises a distinct
+      `429 · "Quote providers are rate limited right now — try again shortly"` when **every** failure was a
+      throttle. Tests pin both directions: a 429 is a rate limit, an `ECONNRESET` is not.
 - [ ] **T7 — ship the harness.** Add `scripts/bench-swap-providers.mjs` + `npm run bench:swap-providers`:
       the read-only per-lane harness used here (isolated passes, `--only`, `--json`, tx dump for
       decode). No signing, no broadcast. Re-runnable so a future router change is measured, not assumed.
@@ -382,9 +396,15 @@ Residual risk: the fan-out doubles the number of quote calls per swap (T5c).
 - [x] **T9b — a venue refusal must abort, not fall back. DONE (§2.12).** `venueRefused` distinguishes
       `/order`'s 200-with-empty-tx from a transport fault, and `prepareDeskSwap` rethrows it instead of
       letting Lite build a transaction that can never land.
-- [ ] **T10 — an explicit priority fee on every send (new, §2.7).** Our live attempt without one was
-      broadcast and never landed. Whatever the lane, the send path must carry a priority fee; make the
-      default explicit and env-tunable rather than implicit.
+- [x] **T10 — the send path always carries a priority fee now. DONE (2026-10-01).**
+      An omitted fee reached the builder as `0` — **no tip** — which is why the first live attempt broadcast
+      and never landed. `resolveSwapPriorityFee` (`priority-fee.ts`) resolves it at the single prepare
+      boundary, the same place the transfer-fee floor is applied, so `/order`, the Lite fallback and the
+      Raptor path all inherit it. Omitted or `0` → **auto-high**, which is a 0.003 SOL *cap* rather than a
+      flat charge (the builder pays the venue's estimate, never more); an explicit number → that exact tip,
+      clamped; `SWAP_PRIORITY_FEE_LAMPORTS` → an env-tunable exact tip used **only** when the caller passed
+      nothing, so it can never override an intentional fee. The concrete instance of the bug
+      (`executors.ts`'s `priorityFee || 0`) and `buildSwapTransaction`'s misleading `= 0` default are gone.
 - [x] **T11 — the keyless backoff is a cliff, not a slope. STANDING RULE — no code pending.** A burst is
       absorbed, then the IP is locked out for ~120 s and even a trickle is refused; no retry or fan-out may
       hammer through that window, and a Lite 429 must never be read as "no route exists". Both hold by
@@ -429,7 +449,9 @@ Residual risk: the fan-out doubles the number of quote calls per swap (T5c).
 | `RAPTOR_API_BASE` / `RAPTOR_MAX_HOPS` / `RAPTOR_TOKEN_TOKEN_HOPS` | keep | Raptor is keyless. Hops are resolved **per pair** (`raptor-hops.ts`, T5) — `RAPTOR_MAX_HOPS` is the verified-mint ceiling only, never a global one |
 | `SWAP_TRANSFER_FEE_MARGIN_BPS` | **added** | headroom above a Token-2022 transfer fee so the fee cannot consume the whole slippage budget (§2.12). Default 30 |
 | `SWAP_TRANSFER_FEE_CACHE_MS` | **added** | how long a mint's fee schedule is cached. Default 600000 (10 min) |
-| `JUPITER_ULTRA_*` | **remove** | only the deleted code read them |
+| `SWAP_PRIORITY_FEE_LAMPORTS` | **added (T10)** | exact priority-fee tip used when a caller passes **no** fee. Unset (default) → auto-high, a 0.003 SOL cap. A caller-supplied fee always wins |
+| `JUPITER_ULTRA_API_BASE` | **keep** | **still read** by `src/utils/jupiter-reclaim.ts:11` as the base for `POST /reclaim/craft` on `ultra-api.jup.ag`. An earlier draft listed this as removable; it is not (T2/T16) |
+| `JUPITER_ULTRA_CLIENT_PLATFORM` | **remove** | never declared anywhere — only an inline fallback inside the deleted `jupiter-ultra.ts` |
 | DFlow / Titan keys | **do not add** | both rejected (§2.6) |
 
 ## 6. Non-goals
@@ -456,7 +478,10 @@ Residual risk: the fan-out doubles the number of quote calls per swap (T5c).
 ## 8. Verification
 
 1. `npm run lint && npm run build` clean after T1 (deletion is the only behavioural change).
-2. `grep -rn "JUPITER_ULTRA" src/ .env.docker.example` returns nothing.
+2. `grep -rn "jupiter-ultra\|jupiter/ultra" src/` returns **nothing** — the import graph is what matters.
+   Note `grep -rn "JUPITER_ULTRA" src/` still matches `jupiter-reclaim.ts` (`JUPITER_ULTRA_API_BASE`), which
+   is **correct and expected** — that var is live (T2/T16). An earlier draft of this criterion demanded zero
+   matches; that was wrong and would have "passed" by deleting a var a live module needs.
 3. `npm run bench:swap-providers` reproduces the §2.1 shape: the Lite two-call lane fastest and
    returning a tx on every pair; Jupiter `/order` ~200 ms; all dumped txs decode with `feePayer = taker`.
 4. A live swap through the unchanged primary path still confirms.

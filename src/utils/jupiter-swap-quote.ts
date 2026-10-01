@@ -208,6 +208,22 @@ export async function fetchJupiterSwapQuote(
     )
   }
 
+  // `/order` reports a venue refusal as HTTP 200 with an empty `transaction` plus a reason. The **browser**
+  // reaches `/order` through this proxied fetcher (`direct` is false in a tab), so the same distinction the
+  // direct path makes has to be made here too — otherwise a refusal reads as a generic failure, the caller
+  // falls back to Lite, and Lite happily builds a transaction the wallet cannot pay for.
+  const refusal =
+    body && typeof body === 'object'
+      ? (body as { errorMessage?: unknown })
+      : null
+  if (refusal && typeof refusal.errorMessage === 'string' && refusal.errorMessage.length > 0) {
+    throw new JupiterSwapQuoteError(
+      `Jupiter refused the order: ${refusal.errorMessage}`,
+      422,
+      { venueRefused: true },
+    )
+  }
+
   if (body && typeof body === 'object' && 'outAmount' in body) {
     const mapped = body as JupiterQuoteDisplay
     if (/^\d+$/.test(mapped.outAmount) && Number(mapped.outAmount) > 0) {

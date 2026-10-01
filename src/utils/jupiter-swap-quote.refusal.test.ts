@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { fetchJupiterSwapQuoteDirect } from '@/utils/jupiter-swap-quote'
+import { fetchJupiterSwapQuote, fetchJupiterSwapQuoteDirect } from '@/utils/jupiter-swap-quote'
 import { resetJupiterQuoteCachesForTests } from '@/utils/jupiter-swap-quote'
 
 const SOL = 'So11111111111111111111111111111111111111112'
@@ -21,6 +21,49 @@ function stubOrder(payload: Record<string, unknown>, status = 200) {
     text: async () => JSON.stringify(payload),
   }) as unknown as Response)
 }
+
+/**
+ * A **browser** reaches `/order` through the proxied fetcher (`direct` is false in a tab), so the refusal
+ * has to be recognised there too. It was not — a proxied refusal read as a generic failure, the caller fell
+ * back to Lite, and Lite built a transaction the wallet could not pay for. Same defect as the direct path,
+ * on the path the UI actually uses.
+ */
+describe('fetchJupiterSwapQuote — the proxied path the UI uses', () => {
+  beforeEach(() => {
+    resetJupiterQuoteCachesForTests()
+    vi.unstubAllGlobals()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('flags a venue refusal carried through the proxy', async () => {
+    vi.stubGlobal('fetch', stubOrder({ errorMessage: 'Insufficient funds' }))
+
+    await expect(
+      fetchJupiterSwapQuote({
+        inputMint: SOL,
+        outputMint: USDC,
+        amount: '1000000',
+        slippageBps: 100,
+      }),
+    ).rejects.toSatisfy((e: { venueRefused?: boolean }) => e.venueRefused === true)
+  })
+
+  it('does not flag a plain payload that merely fails to map', async () => {
+    vi.stubGlobal('fetch', stubOrder({ somethingElse: true }))
+
+    await expect(
+      fetchJupiterSwapQuote({
+        inputMint: SOL,
+        outputMint: USDC,
+        amount: '1000000',
+        slippageBps: 100,
+      }),
+    ).rejects.toSatisfy((e: { venueRefused?: boolean }) => !e.venueRefused)
+  })
+})
 
 /**
  * `/order` reports a wallet that cannot pay as HTTP 200 with an empty `transaction` and an

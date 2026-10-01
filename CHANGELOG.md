@@ -8,6 +8,38 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a swap built with no priority fee, and a venue refusal the browser could not see
+
+Two live defects, both found by auditing rather than by a report.
+
+**A build with no tip.** An omitted `priorityFeeLamports` reached the builder as `0` — no priority fee at
+all — which is exactly how the first live swap of this workstream broadcast and never landed. Every other
+surface in the repo already resolved an omitted fee to auto-high; the swap boundary did not.
+`resolveSwapPriorityFee` now runs at the single prepare point, beside the transfer-fee floor, so `/order`,
+the Lite fallback and the Raptor path all inherit a real fee. Omitted or `0` → auto-high (a 0.003 SOL *cap*,
+not a flat charge — the builder pays the venue's estimate). An explicit fee wins, and
+`SWAP_PRIORITY_FEE_LAMPORTS` sets an exact tip for callers that pass none.
+
+**A venue refusal the browser could never see.** `/order` reports "your wallet cannot pay" as HTTP **200**
+with an empty `transaction` plus a reason — the one simulation we have. The direct fetcher learned to abort
+on that; the **proxied** fetcher the browser actually uses did not, so a refusal read as a generic failure
+and the caller fell back to Lite, which cannot simulate and happily built a transaction that could never
+land. Both paths now flag it identically.
+
+### Changed — a 429 reads as a rate limit, not a missing route
+
+Provider failures were swallowed identically, so a throttled lane was indistinguishable from a dead pair
+and the UI answered "no route for this pair right now". Failures are now classified, and when *every* lane
+was throttled the engine says so: `429 · "Quote providers are rate limited right now"`.
+
+### Removed — the dead Ultra swap integration
+
+`src/utils/jupiter-ultra.ts` and its two routes are gone. They referenced only each other, nothing imported
+them, and `fetchUltraOrderDirect` POSTed to a GET-only endpoint. Auditing them surfaced something worth
+knowing: `JUPITER_ULTRA_API_BASE` is **not** dead — `jupiter-reclaim.ts` uses it as the base for
+`POST /reclaim/craft`, so the close-empty-ATAs path still rides the Ultra host that is being deprecated
+(tracked as T16).
+
 ### Changed — the swap warm fires on intent, not on every edit
 
 Both bulk forms warmed their prepared swaps 400 ms after every settled edit. That warm is a **taker-scoped

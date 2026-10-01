@@ -26,7 +26,7 @@ import {
   passesImpactGate,
   type SwapQuoteProvider,
 } from '@/utils/swap-quote-pick'
-import { pickParallelSwapQuote } from '@/utils/swap-quote-parallel'
+import { pickParallelSwapQuote, type QuoteFailure } from '@/utils/swap-quote-parallel'
 import {
   fetchRaptorQuote,
   fetchRaptorQuoteDirect,
@@ -222,14 +222,27 @@ async function loadEstimate(req: SolanaQuoteRequest, slippageBps: number): Promi
     )
   }
 
-  const picked = await pickParallelSwapQuote({
-    inputMint: req.inputMint,
-    outputMint: req.outputMint,
-    amount: String(req.amount),
-    slippageBps,
-    direct,
-  })
+  const failures: QuoteFailure[] = []
+  const picked = await pickParallelSwapQuote(
+    {
+      inputMint: req.inputMint,
+      outputMint: req.outputMint,
+      amount: String(req.amount),
+      slippageBps,
+      direct,
+    },
+    undefined,
+    (failure) => failures.push(failure),
+  )
   if (!picked) {
+    // A lane that answered 429 has not said "no route" — it has said "not right now". Reporting a throttle
+    // as a missing route is how a perfectly quotable pair gets treated as dead.
+    if (failures.length > 0 && failures.every((f) => f.rateLimited)) {
+      throw new QuoteEngineError(
+        'Quote providers are rate limited right now — try again shortly',
+        429,
+      )
+    }
     throw new QuoteEngineError('No route for this pair right now', 502)
   }
   return attachDecimals(

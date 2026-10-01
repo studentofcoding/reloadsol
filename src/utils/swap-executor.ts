@@ -52,6 +52,7 @@ import {
 import { beginTradeInFlight } from "@/utils/trade-inflight";
 import {
   priorityFeeCacheToken,
+  resolveSwapPriorityFee,
   type JupiterPrioritizationFeeLamports,
 } from "@/utils/priority-fee";
 import type { SwapQuote, SwapTransaction } from "@/types";
@@ -304,8 +305,17 @@ export async function prepareSwapTransaction(
     params.inputMint,
     params.slippageBps,
   );
+
+  // An omitted priority fee reached the builder as `0` — no tip — which is how a tx gets broadcast and
+  // never lands. Resolve it here, once, alongside the fee floor so every lane below inherits a real tip.
+  const priorityFeeLamports = resolveSwapPriorityFee(params.priorityFeeLamports);
+
   const withFloor: PrepareSwapParams =
-    slippageBps === params.slippageBps ? params : { ...params, slippageBps };
+    slippageBps === params.slippageBps &&
+    priorityFeeCacheToken(priorityFeeLamports) ===
+      priorityFeeCacheToken(params.priorityFeeLamports)
+      ? params
+      : { ...params, slippageBps, priorityFeeLamports };
 
   // Live arb passes maxHops and must keep Raptor hops, not the desk Jupiter path.
   if (withFloor.maxHops != null) {
@@ -378,11 +388,11 @@ export async function buildPreparedSwap(
   return prepareSwapTransaction(params);
 }
 
-/** Build swap tx via the gated winning provider. */
+/** Build swap tx via the gated winning provider. An omitted fee resolves to auto (see `resolveSwapPriorityFee`). */
 export async function buildSwapTransaction(
   quote: SwapQuote,
   userPublicKey: string,
-  priorityFeeLamports: JupiterPrioritizationFeeLamports = 0,
+  priorityFeeLamports?: JupiterPrioritizationFeeLamports,
   options?: {
     direct?: boolean;
     feeAccount?: string;
