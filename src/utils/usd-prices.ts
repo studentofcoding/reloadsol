@@ -168,7 +168,16 @@ async function fetchMints(mints: string[]): Promise<void> {
   }
 }
 
-export async function getUsdPrices(mints: string[]): Promise<UsdPricesResult> {
+/**
+ * @param opts.fresh Skip the stale-serve window: an entry past its fresh TTL is re-fetched
+ *   instead of being returned as-is. The exit path needs a current price — serving a value up
+ *   to `USD_PRICE_STALE_TTL_SEC` old would just move the trigger lag from detection into the
+ *   price, so the SL/TP monitor opts in while background refresh stays the default elsewhere.
+ */
+export async function getUsdPrices(
+  mints: string[],
+  opts?: { fresh?: boolean },
+): Promise<UsdPricesResult> {
   const unique = [...new Set(mints.filter((m) => typeof m === 'string' && m.length > 0))]
   const prices: Record<string, number> = {}
   const unpriced: string[] = []
@@ -187,7 +196,7 @@ export async function getUsdPrices(mints: string[]): Promise<UsdPricesResult> {
       applyEntry(mint, entry, prices, unpriced)
       continue
     }
-    if (now - entry.timestamp <= staleMs) {
+    if (!opts?.fresh && now - entry.timestamp <= staleMs) {
       applyEntry(mint, entry, prices, unpriced)
       staleRefresh.push(mint)
       continue

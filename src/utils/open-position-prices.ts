@@ -110,12 +110,15 @@ export async function getOpenPositionPrices(
   let skipGmgn = !process.env.GMGN_API_KEY?.trim()
   const stillMissing: string[] = []
 
-  if (!skipGmgn) {
-    const gmgnResults = await mapPool(missing, GMGN_CONCURRENCY, async (mint) => {
+  async function gmgnPass(mints: string[]): Promise<void> {
+    if (skipGmgn || mints.length === 0) {
+      stillMissing.push(...mints)
+      return
+    }
+    const results = await mapPool(mints, GMGN_CONCURRENCY, async (mint) => {
       try {
         const info = await tokenInfo({ chain, address: mint })
-        const price = parseGmgnTokenPriceUsd(info)
-        return { mint, price }
+        return { mint, price: parseGmgnTokenPriceUsd(info) }
       } catch (err) {
         if (err instanceof GmgnApiError && err.code === 'RATE_LIMIT') {
           skipGmgn = true
@@ -123,8 +126,7 @@ export async function getOpenPositionPrices(
         return { mint, price: null as number | null }
       }
     })
-
-    for (const { mint, price } of gmgnResults) {
+    for (const { mint, price } of results) {
       if (price != null && price > 0) {
         out[mint] = price
         await writeAndPublish(mint, price, 'gmgn')
@@ -132,13 +134,12 @@ export async function getOpenPositionPrices(
         stillMissing.push(mint)
       }
     }
-  } else {
-    stillMissing.push(...missing)
   }
 
-  if (stillMissing.length > 0) {
-    // Jupiter has no robinhood coverage; DexScreener indexes the RH DEXes.
-    if (chain === 'robinhood') {
+  if (chain === 'robinhood') {
+    // GMGN covers robinhood; DexScreener indexes the RH DEXes and is the fallback.
+    await gmgnPass(missing)
+    if (stillMissing.length > 0) {
       await mapPool(stillMissing, GMGN_CONCURRENCY, async (mint) => {
         try {
           const price = await getTokenPriceUsd(RH_CHAIN_ID, mint as Address)
@@ -150,20 +151,33 @@ export async function getOpenPositionPrices(
           console.warn('[open-position-prices] DexScreener fallback failed:', err)
         }
       })
-    } else {
+    }
+  } else {
+    // Batched source FIRST. GMGN takes one request per mint, so the ~161 open positions cost
+    // ~40 serial round-trips at GMGN_CONCURRENCY=4 — measured at 52-81s on prod. That outran
+    // the 60s pass interval, so the job lock stayed held, every other fire was skipped, and an
+    // exit crossing between passes waited 2-4 min for its notification. Jupiter's price v3
+    // takes 50 ids per request (4 requests for 161 mints). GMGN is kept as the fallback, so its
+    // round count is now whatever the batch could not price rather than the whole set.
+    const batched: string[] = []
+    if (missing.length > 0) {
       try {
-        const { prices: jup } = await getUsdPrices(stillMissing)
-        for (const mint of stillMissing) {
+        const { prices: jup } = await getUsdPrices(missing, { fresh: true })
+        for (const mint of missing) {
           const price = jup[mint]
           if (typeof price === 'number' && Number.isFinite(price) && price > 0) {
             out[mint] = price
             await writeAndPublish(mint, price, 'jupiter')
+          } else {
+            batched.push(mint)
           }
         }
       } catch (err) {
-        console.warn('[open-position-prices] Jupiter fallback failed:', err)
+        console.warn('[open-position-prices] batched Jupiter failed:', err)
+        batched.push(...missing)
       }
     }
+    await gmgnPass(batched)
   }
 
   return out
