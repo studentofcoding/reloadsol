@@ -3,6 +3,12 @@ import type { GmgnStrategy } from '@/strategies/types'
 import { getNativeUsd } from '@/utils/native-usd'
 import { simWalletForChain } from '@/strategies/sim-wallets'
 import { buildTradingRecord, insertTradingRecord } from '@/utils/trading-records-db'
+import {
+  createBrainRiskSession,
+  resolveSimOpenSize,
+  stampBrainRisk,
+  type BrainRiskSession,
+} from '@/utils/brain-regime-risk'
 
 export const GMGN_SIM_WALLET =
   process.env.GMGN_SIM_WALLET_ADDRESS || 'gmgn-sim'
@@ -28,6 +34,8 @@ export async function openGmgnSimPosition(params: {
   symbol: string
   entryFeatures: Record<string, unknown>
   entryPriceUsd: number
+  /** Created once per sim cycle so the recipe/params fetch is shared across candidates. */
+  brainRiskSession?: BrainRiskSession
 }): Promise<boolean> {
   const chain = params.strategy.chain ?? 'sol'
   // solAmount / solPrice are native-token denominated; that's ETH on robinhood.
@@ -35,6 +43,28 @@ export async function openGmgnSimPosition(params: {
     params.strategy.config.execution.simBuyNative ??
     params.strategy.config.execution.simBuySol
   const solPrice = await getNativeUsd(chain)
+
+  // Level 1 market scalar, on the same path as mcap/signals/trending. Resolved before the spine so
+  // a stand-down skips the open entirely rather than recording a zero-size position.
+  const session = params.brainRiskSession ?? createBrainRiskSession()
+  const sized = await resolveSimOpenSize({
+    session,
+    strategyId: params.strategy.id,
+    baseSol,
+  })
+  if (sized.skip) {
+    const { appendSpineDecision, spineSkipDecision } = await import('@/strategies/spine-tick-log')
+    await appendSpineDecision(
+      spineSkipDecision(
+        'gmgn_sim_track',
+        params.mintAddress,
+        'size',
+        sized.risk.standDown ? 'brain_risk_stand_down' : 'brain_risk_zero_size',
+        params.symbol,
+      ),
+    )
+    return false
+  }
 
   const entryAt = new Date().toISOString()
   const entryMcap = readFiniteNumber(params.entryFeatures.gmgn_market_cap_usd)
@@ -65,7 +95,7 @@ export async function openGmgnSimPosition(params: {
     chain,
     features: fullFeatures,
     priceUsd: params.entryPriceUsd > 0 ? params.entryPriceUsd : null,
-    baseSol,
+    baseSol: sized.sol,
     baseExit: params.strategy.config.exit,
     entryMcap,
   })
@@ -83,7 +113,9 @@ export async function openGmgnSimPosition(params: {
   }
   const solAmount = spine.solAmount
   const priceUsd = spine.priceUsd
-  const stampedFeatures = spine.features
+  // Stamp the applied scalar so a row is auditable on its own, and so a later re-tune can tell
+  // whether the risk layer was in the path at all.
+  const stampedFeatures = stampBrainRisk(spine.features, sized.risk, { sizedSol: solAmount })
   const tokenAmount =
     priceUsd > 0 && solPrice > 0 ? (solAmount * solPrice) / priceUsd : solAmount * 1_000_000
 

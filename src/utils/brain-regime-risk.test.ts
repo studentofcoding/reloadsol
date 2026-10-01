@@ -7,6 +7,7 @@ import {
   pickActiveLegoRecipe,
   resetBrainRiskWarnForTests,
   resolveBrainRegimeRisk,
+  resolveSimOpenSize,
   riskCellFromGrid,
   scaleOpenSize,
   stampBrainRisk,
@@ -362,5 +363,43 @@ describe('createBrainRiskSession', () => {
       brain_risk_state: 'Mixed',
       brain_sized_sol: 0.01,
     })
+  })
+})
+
+describe('resolveSimOpenSize', () => {
+  /** Every domain opens through this, so its three outcomes have to stay pinned. */
+  function sessionReturning(risk: ReturnType<typeof localBrainRisk>) {
+    return { resolve: async () => risk }
+  }
+
+  it('scales the base stake by the applied market scalar', async () => {
+    const sized = await resolveSimOpenSize({
+      session: sessionReturning({ ...localBrainRisk(), applied: true, source: 'live', sizeScale: 0.25 }),
+      strategyId: 'gmgn_sm_kol_combined',
+      baseSol: 0.02,
+    })
+    expect(sized.skip).toBe(false)
+    expect(sized.sol).toBe(0.005)
+  })
+
+  it('is the identity when the brain is unavailable, so an unwired env cannot silently zero a desk', async () => {
+    const sized = await resolveSimOpenSize({
+      session: sessionReturning(localBrainRisk('MARKET_BRAIN_TOKEN is not set')),
+      strategyId: 'social_only_fomo_gt7',
+      baseSol: 0.02,
+    })
+    expect(sized.skip).toBe(false)
+    expect(sized.sol).toBe(0.02)
+  })
+
+  it('skips rather than opening at a zero stake when the brain stands down', async () => {
+    // A 0 scale must skip the open: passing 0 into the spine would write a zero-size position.
+    const sized = await resolveSimOpenSize({
+      session: sessionReturning({ ...localBrainRisk(), applied: true, source: 'live', sizeScale: 0, standDown: true }),
+      strategyId: 'att_rh',
+      baseSol: 0.02,
+    })
+    expect(sized.skip).toBe(true)
+    expect(sized.sol).toBe(0)
   })
 })

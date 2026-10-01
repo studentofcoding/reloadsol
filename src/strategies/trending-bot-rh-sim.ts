@@ -5,6 +5,12 @@
  * none of that exists on robinhood, so RH runs on trading_records alone.
  */
 
+import {
+  createBrainRiskSession,
+  resolveSimOpenSize,
+  stampBrainRisk,
+  type BrainRiskSession,
+} from '@/utils/brain-regime-risk'
 import { fetchTradingRecordsForWallet } from './db'
 import { decideRhTrendingExit } from './exit-ladder'
 import { getActiveStrategiesWithState } from './load-strategy'
@@ -254,6 +260,8 @@ async function buySim(params: {
   strategy: TrendingBotStrategy
   /** REL-20: records are collected and bulk-inserted by the cycle caller. */
   collect: (record: TrackingRecord) => void
+  /** Created once per cycle so the recipe/params fetch is shared across tokens. */
+  brainRiskSession?: BrainRiskSession
   token: {
     token_address: string
     token_symbol: string
@@ -265,7 +273,17 @@ async function buySim(params: {
   }
 }): Promise<void> {
   const { strategy, token } = params
-  const nativeAmount = strategy.buy_amount_native ?? strategy.buy_amount_sol
+  // Level 1 market scalar, on the same path as mcap/signals/social/gmgn. This RH sim had no brain
+  // wiring at all, so att_rh ran at full configured size while every other family was cut — which is
+  // why its rows carried no `brain_size_scale` and a flat 0.0015 stake.
+  const session = params.brainRiskSession ?? createBrainRiskSession()
+  const sized = await resolveSimOpenSize({
+    session,
+    strategyId: strategy.id,
+    baseSol: strategy.buy_amount_native ?? strategy.buy_amount_sol,
+  })
+  if (sized.skip) return
+  const nativeAmount = sized.sol
   const nativeUsd = await getNativeUsd(CHAIN)
   const priceUsd = token.price > 0 ? token.price : 0.000001
   const tokenAmount = nativeUsd > 0 ? (nativeAmount * nativeUsd) / priceUsd : 0
@@ -314,7 +332,7 @@ async function buySim(params: {
       trading_simulation: {
         entry_at: entryAt,
         entry_price_usd: priceUsd,
-        entry_features: entryFeatures,
+        entry_features: stampBrainRisk(entryFeatures, sized.risk, { sizedSol: nativeAmount }),
       },
     }),
   )

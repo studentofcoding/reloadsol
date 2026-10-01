@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getActiveSocialForSim } from '@/strategies/load-social'
 import { mergeEntryFeaturesForOutcome } from '@/strategies/entry-feature-snapshot'
 import {
+  createBrainRiskSession,
+  resolveSimOpenSize,
+  stampBrainRisk,
+} from '@/utils/brain-regime-risk'
+import {
   buildFullEntryFeatureSnapshot,
   ensureCompleteBuyFeaturesForOutcome,
 } from '@/strategies/resolve-entry-snapshot'
@@ -264,6 +269,10 @@ async function runSimTrack(request: NextRequest) {
       skipped: string[]
     }> = []
 
+    // Level 1 market scalar for every strategy — one session per cycle so the recipe/params fetch
+    // is shared across candidates, and one code path with mcap/signals/gmgn/trending.
+    const brainRiskSession = createBrainRiskSession()
+
     for (const strategy of strategies) {
       let opened = 0
       let closed = 0
@@ -461,12 +470,24 @@ async function runSimTrack(request: NextRequest) {
           spinePassDecision,
           spineSkipDecision,
         } = await import('@/strategies/spine-tick-log')
+        const sized = await resolveSimOpenSize({
+          session: brainRiskSession,
+          strategyId: strategy.id,
+          baseSol: strategy.config.execution.simBuySol,
+        })
+        if (sized.skip) {
+          skipped.push(
+            `${symbol}: ${sized.risk.standDown ? 'brain_risk_stand_down' : 'brain_risk_zero_size'}`,
+          )
+          continue
+        }
+
         const spine = await prepareTargetMachinePaperOpen({
           mint: candidate.tokenAddress,
           chain: SOCIAL_CHAIN,
           features: fullFeatures,
           priceUsd: entryPriceUsd,
-          baseSol: strategy.config.execution.simBuySol,
+          baseSol: sized.sol,
           baseExit: strategy.config.exit,
           precomputedOhlc: ohlc,
         })
@@ -497,7 +518,9 @@ async function runSimTrack(request: NextRequest) {
           strategy,
           mintAddress: candidate.tokenAddress,
           symbol,
-          entryFeatures: spine.features,
+          // Stamp the applied scalar so the row is auditable on its own, and so a later re-tune can
+          // tell whether the risk layer was in the path at all.
+          entryFeatures: stampBrainRisk(spine.features, sized.risk, { sizedSol: spine.solAmount }),
           entryPriceUsd: spine.priceUsd,
           solAmount: spine.solAmount,
           effectiveExit: spine.effectiveExit,
