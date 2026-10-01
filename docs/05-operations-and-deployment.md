@@ -24,6 +24,24 @@ Condensed from `PRODUCTION_DEPLOYMENT.md`, `OPERATIONS_TRACKING_GUIDE.md` (**emp
 
 Preflight checks in `scripts/docker-deploy.sh` (`verify_env_and_compose`): exactly one `WEB_PORT=` and one `CRON_PORT=` line; `SHYFT_API_KEY` set and not the placeholder; merged compose shows **one** published cron port. DB stack is started **first** (`start_db_stack` → `scripts/start-db-stack.sh` uses `docker-compose.yml` + `docker-compose.prod.yml` only — **no host Postgres publish**; Flowey keeps `127.0.0.1:5432`). `docker-compose.migrate.yml` is **cutover only** (`127.0.0.1:5433:5432`); `docker-deploy.sh` / `docker-up.sh` never merge it.
 
+### Measured RPC capacity — do not lean on it before reading this
+
+Measured on prod 2026-10-01 against a Solana Tracker RPC (`*.secure.rpc.solanatracker.io`), the host the `raptor` trade stack sends and confirms through. `RPC_MAX_REQ_PER_SEC=5` is the documented number; **the behaviour behind it is the part that bites**:
+
+| Property | Measured |
+|---|---|
+| Sustained rate | **~4.9 req/s** regardless of concurrency — 5 workers and 8 workers both delivered `30 ok / 6 s`; the extra workers only bought 429s (108 vs 216) |
+| Burst behaviour | **Rejects, does not queue.** 6 requests posted at once → **0 succeeded, 6× 429**; the same 6 spaced 250 ms → 6/6 ok |
+| JSON-RPC batch | Hard cap **10** (`-32600 "Batch size exceeds limit of 10"`), but the rate counter counts **per call** — `N=5` returns 5 results, `N=6..10` returns `429 "Rate limit reached"`. **Batching buys nothing here** |
+| `getMultipleAccounts` | **Up to 100 accounts in ONE call** (~207 ms). 5 concurrent ×100 keys = 500 accounts in 433 ms. This is the only real lever: ~5 req/s × 100 = **~500 accounts/s** steady state |
+| Latency floor | ~200–240 ms per call |
+| Jito / bundles | `sendBundle`, `getBundleStatuses`, `getTipAccounts` → **method not found**. `sendTransaction` *is* supported. **No private submission** — a tip sent through Raptor is a plain transfer, not MEV protection |
+| Landmines | `getRecentPrioritizationFees` → **504 after ~50 s** (it hangs — nothing in this repo calls it, keep it that way). `getProgramAccounts` requires ≥1 filter |
+
+**The operational rule:** pace requests with a serial min-interval (~200 ms). A fan-out that posts them together gets **nothing back**, and raising concurrency does not raise throughput — it only raises the 429 count. Where the work is account reads, batch them into `getMultipleAccounts` instead of issuing more calls.
+
+Env anchors: `RPC_MAX_REQ_PER_SEC`, `SOLANATRACKER_RPC_URL` (`src/utils/rpc-urls.ts`).
+
 ## 2. Docker stack
 
 Services in `docker-compose.yml` (compose files: `docker-compose.yml` + `docker-compose.prod.yml` for deploy; `docker-compose.migrate.yml` for host-bound DB cutover; `docker-compose.dev.yml`/`override.yml` for dev):

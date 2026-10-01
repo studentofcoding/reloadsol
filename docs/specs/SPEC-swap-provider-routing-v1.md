@@ -228,6 +228,24 @@ Read from `src/utils/swap-executor.ts`, not inferred:
 actually missing: a client-side simulate on the non-Jupiter fallbacks, the transfer-fee slippage floor, an
 explicit priority fee, and the batch budget work below.
 
+### 2.11b Can N legs be composed into ONE transaction? Measured on both lanes — no.
+
+Asked whether a bulk of N buys could become a single transaction. Measured on prod 2026-10-01 by composing real wallet holdings (token→SOL) and serialising, mirroring the repo's own `flattenLegInstructions`. **Nothing was signed or sent.**
+
+| instruction source | 1 leg | 2 legs | per-leg accounts |
+|---|---|---|---|
+| Jupiter Lite (thin route) | 522 b | 869 b — fits | — |
+| Jupiter Lite (fat route) | 1011 b | **1241 b — over** | 38–64 |
+| **Raptor `/swap-instructions`** (free lane) | **952 b** | **serialize throws — over** | 29–39 |
+
+**The lane is not the blocker.** Raptor's instructions are marginally leaner than Jupiter's (29–39 accounts vs 38–64, and no `cleanupInstruction`) — one leg drops 1011 → 952 bytes — but N=2 still overflows 1232. The cost is structural: ~230 bytes per leg even with ALT compression, so five legs ≈ 1,900 bytes, **~57% over**. Compute is a second, smaller wall: the compose attaches compute-budget instructions only to leg 0, so leg 0's own `SetComputeUnitLimit` (measured 115k–245k) becomes tx-wide; overriding it to 1.4M did **not** rescue N=2, because bytes bind first.
+
+ALTs are mandatory rather than a lever — with lookup tables disabled, **even N=1 throws**.
+
+**Conclusion: one transaction is capped at ~2 legs, and only for thin routes.** Five is not reachable by tuning; it would need an on-chain program (which the existing `ponytail:` note in `sol-arb/atomic.ts` also names) or fewer legs per tx.
+
+**Bonus capability:** Raptor exposes **`POST /swap-instructions`** on the free lane (`quoteResponse` from its own `GET /quote`), with a payload shape nearly identical to Jupiter's — so instruction building need not ride the keyed 0.5 rps lane. Worth knowing even though the compose ceiling stands.
+
 ### 2.11 The batch — measured, and the one place Raptor wins
 
 `prepareBulkSwapTransaction` (`:986`) prepares **per token** — N tokens means N keyed `/order` calls, and
