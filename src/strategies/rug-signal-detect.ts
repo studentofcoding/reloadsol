@@ -17,7 +17,12 @@ import {
   getCachedTokenOhlc24h1m,
   tokenOhlcToRugBars,
 } from '@/strategies/token-map-chart'
-import { load1mOhlcv, type OhlcvMinute } from '@/strategies/token-metrics-history'
+import { load1mOhlcv } from '@/strategies/token-metrics-history'
+import {
+  recordRugSignalShadow,
+  type RugSignalShadowDecision,
+  type RugSignalShadowSource,
+} from '@/strategies/rug-signal-shadow'
 import {
   evaluateRugSignalFrom1m,
   isRugSignalEnabled,
@@ -41,18 +46,30 @@ export type RugSignalDetectResult = {
 }
 
 /**
- * The metrics series → the scorer's 1m bars.
+ * Vendor candles → the scorer's 1m bars.
  *
  * A minute is only a usable bar when all four prices were observed: `aggregateTo5m` drops a bar
  * with a missing o/h/l/c anyway, and without a price there is no shape to score. Volume is carried
  * only when present, so a bucket the source never observed keeps an absent volume instead of a
  * fabricated 0 — the band reads "unknown", not "flat".
  *
+ * Deliberately loose-typed so both callers share it: the series (`OhlcvMinute`, nullable fields)
+ * and the copier's own fetched candles (optional fields).
+ *
  * This is the adapter that makes the 30-point volume band reachable at all: `token_ohlc_bars` has
  * no volume and the 24h cache has it for a handful of mints, so before this the band scored 0 and
  * the signal was capped at 60 < the 80 threshold — it could never trip.
  */
-export function ohlcvMinutesToRugBars(minutes: OhlcvMinute[]): RugSignalBar[] {
+export function ohlcvMinutesToRugBars(
+  minutes: Array<{
+    t: number
+    o?: number | null
+    h?: number | null
+    l?: number | null
+    c?: number | null
+    v?: number | null
+  }>,
+): RugSignalBar[] {
   const out: RugSignalBar[] = []
   for (const minute of minutes) {
     if (!Number.isFinite(minute?.t)) continue
@@ -109,12 +126,17 @@ export async function detectRugSignal(params: {
   tokenAddress: string
   tokenSymbol?: string | null
   info?: Record<string, unknown> | null
+  /** Where this evaluation came from — a pipeline candidate, or the sweep's whole watch set. */
+  source?: RugSignalShadowSource
 }): Promise<RugSignalDetectResult> {
+  // A disabled detector records nothing: the shadow log must not fill up with "off".
   if (!isRugSignalEnabled()) {
     return { evaluated: false, wrote: false, eval: null, reason: 'disabled', barsSource: 'none' }
   }
 
   const mint = params.tokenAddress
+  const shadowSource: RugSignalShadowSource = params.source ?? 'gmgn_pipeline'
+  const mode = rugSignalMode()
   try {
     const thresholds = resolveRugSignalThresholds()
     const nowMs = Date.now()
@@ -148,6 +170,21 @@ export async function detectRugSignal(params: {
       barsSource = bars1m.length === 0 ? 'none' : cachedCandles.length > 0 ? 'cache' : 'own'
     }
     if (bars1m.length === 0) {
+      await recordRugSignalShadow({
+        chain: params.chain,
+        tokenAddress: mint,
+        symbol: params.tokenSymbol ?? null,
+        score: null,
+        breakdown: null,
+        barsSource,
+        barsUsed: 0,
+        decision: 'no_bars',
+        mode,
+        reason: 'no bars',
+        mcap: null,
+        liquidityUsd: null,
+        source: shadowSource,
+      })
       return { evaluated: false, wrote: false, eval: null, reason: 'no bars', barsSource }
     }
 
@@ -180,23 +217,44 @@ export async function detectRugSignal(params: {
       toMs(tracker?.first_seen_at) ?? toMs(params.info?.create_timestamp)
     const ageHours = firstMs != null ? (Date.now() - firstMs) / 3_600_000 : null
 
+    /**
+     * Every outcome lands in the shadow log — including `pass`, which is the control cohort the
+     * validation needs a base rate from. Fail-soft: a sink failure never changes the verdict.
+     */
+    const writeShadow = (
+      decision: RugSignalShadowDecision,
+      reason: string | null,
+      result: RugSignalEval | null,
+    ) =>
+      recordRugSignalShadow({
+        chain: params.chain,
+        tokenAddress: mint,
+        symbol: params.tokenSymbol ?? null,
+        score: result?.score ?? null,
+        breakdown: result ? (result.breakdown as unknown as Record<string, number>) : null,
+        barsSource,
+        barsUsed: bars1m.length,
+        decision,
+        mode,
+        reason,
+        mcap,
+        liquidityUsd,
+        source: shadowSource,
+      })
+
     const result = evaluateRugSignalFrom1m(
       { bars1m, mcap, liquidityUsd, ageHours },
       thresholds,
     )
 
     if (!result.isRug) {
-      return {
-        evaluated: true,
-        wrote: false,
-        eval: result,
-        reason: result.reasons[result.reasons.length - 1] ?? null,
-        barsSource,
-      }
+      const reason = result.reasons[result.reasons.length - 1] ?? null
+      await writeShadow('pass', reason, result)
+      return { evaluated: true, wrote: false, eval: result, reason, barsSource }
     }
 
-    const mode = rugSignalMode()
     if (mode === 'shadow') {
+      await writeShadow('would_rug', 'shadow', result)
       console.info('[rug-signal:counterfactual]', {
         mint,
         symbol: params.tokenSymbol ?? null,
@@ -210,6 +268,7 @@ export async function detectRugSignal(params: {
     }
 
     if (await isTokenRugged(mint, params.chain as AppNetwork).catch(() => false)) {
+      await writeShadow('pass', 'already rugged', result)
       return {
         evaluated: true,
         wrote: false,
@@ -225,6 +284,7 @@ export async function detectRugSignal(params: {
       source: 'rug-signal',
       chain: params.chain as AppNetwork,
     })
+    await writeShadow('would_rug', 'enforced', result)
     console.info('[rug-signal:trip]', {
       mint,
       symbol: params.tokenSymbol ?? null,

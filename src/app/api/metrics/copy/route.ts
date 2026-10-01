@@ -20,6 +20,15 @@ import {
   type CachedCoverage,
 } from '@/strategies/token-metrics-copier'
 import { recordMetricHours, recordMetricSnapshots, pruneTokenMetricsHistory } from '@/strategies/token-metrics-history'
+import { ohlcvMinutesToRugBars } from '@/strategies/rug-signal-detect'
+import {
+  evaluateRugSignalFrom1m,
+  isRugSignalEnabled,
+  resolveRugSignalThresholds,
+  rugSignalMode,
+  type RugSignalBar,
+} from '@/strategies/rug-signal'
+import { recordRugSignalShadow } from '@/strategies/rug-signal-shadow'
 import {
   DEFAULT_WATCH_MAX_MINTS,
   intEnv,
@@ -163,6 +172,12 @@ export async function POST(request: NextRequest) {
     let fetched = 0
     let fetchFailed = 0
     let parked = false
+    /**
+     * Candles kept for the shadow pass. The sweep is the only place that sees the **whole watch
+     * set**, so it is the only place that can produce a control cohort (tokens that do not
+     * collapse) — the pipeline call site only ever sees radar candidates.
+     */
+    const scored: Array<{ mint: string; bars: RugSignalBar[]; mcap: number | null }> = []
     await mapWithConcurrency(plan.fetch, concurrency, async (mint) => {
       if (parked || gmgnWebIsBlocked()) {
         parked = true
@@ -180,6 +195,19 @@ export async function POST(request: NextRequest) {
         now,
         windowSeconds: copyWindowSeconds(limit, COPY_RESOLUTION_SECONDS),
       })
+      const bars = ohlcvMinutesToRugBars(clipped)
+      if (bars.length > 0) {
+        // The market-cap candle's last observed close *is* the token's mcap — one source, one job.
+        let mcap: number | null = null
+        for (let i = bars.length - 1; i >= 0; i--) {
+          const close = bars[i]!.c
+          if (Number.isFinite(close) && close > 0) {
+            mcap = close
+            break
+          }
+        }
+        scored.push({ mint, bars, mcap })
+      }
       const result = await recordMetricHours({
         tokenAddress: mint,
         candles: clipped,
@@ -195,26 +223,84 @@ export async function POST(request: NextRequest) {
     //    batched (≤8 addresses per call), so the whole watch set costs ~19 calls on the copy lane.
     //    Soft: no liquidity in the response → no write, and it never touches vol_min.
     let liquidityRows = 0
+    const liquidityByMint = new Map<string, number>()
     if (mints.length > 0) {
       const safety = await fetchGmgnWebSafety(mints, { rps })
-      const samples = safety
-        .map((row) => ({
-          tokenAddress: row.address,
-          chain: 'sol',
-          liquidityUsd: row.liquidityUsd,
-        }))
-        .filter(
-          (s): s is { tokenAddress: string; chain: string; liquidityUsd: number } =>
-            typeof s.liquidityUsd === 'number' &&
-            Number.isFinite(s.liquidityUsd) &&
-            s.liquidityUsd > 0,
-        )
+      for (const row of safety) {
+        if (
+          typeof row.liquidityUsd === 'number' &&
+          Number.isFinite(row.liquidityUsd) &&
+          row.liquidityUsd > 0
+        ) {
+          liquidityByMint.set(row.address, row.liquidityUsd)
+        }
+      }
+      const samples = [...liquidityByMint.entries()].map(([tokenAddress, liquidityUsd]) => ({
+        tokenAddress,
+        chain: 'sol',
+        liquidityUsd,
+      }))
       if (samples.length > 0) {
         liquidityRows = await recordMetricSnapshots(samples, now, 'gmgn_web')
       }
     }
 
-    // 5) Retention — whole hours only.
+    // 5) SHADOW SCORING — score the whole watch set, not just the pipeline's radar candidates.
+    //
+    //    The bars are already in hand, so this is nearly free, and it is the *only* path that
+    //    records tokens which do **not** collapse — the control cohort the validation needs a base
+    //    rate from. It writes to the shadow log and never calls `markTokenRug`, so an `enforce`
+    //    mode cannot turn a measurement sweep into a decision.
+    let shadowRows = 0
+    let seriesFed = 0
+    if (isRugSignalEnabled() && scored.length > 0) {
+      const thresholds = resolveRugSignalThresholds()
+      const mode = rugSignalMode()
+      for (const entry of scored) {
+        const liquidityUsd = liquidityByMint.get(entry.mint) ?? null
+        const result = evaluateRugSignalFrom1m(
+          {
+            bars1m: entry.bars,
+            mcap: entry.mcap,
+            liquidityUsd,
+            // An unknown age never skips — the scorer's own rule — and the sweep has no tracker row.
+            ageHours: null,
+          },
+          thresholds,
+        )
+        if (result.breakdown.volume > 0) seriesFed++
+        await recordRugSignalShadow({
+          chain: 'sol',
+          tokenAddress: entry.mint,
+          symbol: null,
+          score: result.score,
+          breakdown: result.breakdown as unknown as Record<string, number>,
+          barsSource: 'series',
+          barsUsed: entry.bars.length,
+          decision: result.isRug ? 'would_rug' : 'pass',
+          mode,
+          reason: result.reasons[result.reasons.length - 1] ?? null,
+          mcap: entry.mcap,
+          liquidityUsd,
+          source: 'metrics_sweep',
+        })
+        shadowRows++
+      }
+    }
+
+    // Coverage must be loud: a watch set we could not score otherwise reads as "no rugs found".
+    if (scored.length < mints.length) {
+      const haveSeries = new Set(scored.map((s) => s.mint))
+      const uncovered = mints.filter((m) => !haveSeries.has(m))
+      console.warn('[metrics-copier] watch mints with no candle series this sweep', {
+        watch: mints.length,
+        withCandles: scored.length,
+        without: uncovered.length,
+        examples: uncovered.slice(0, 5),
+      })
+    }
+
+    // 6) Retention — whole hours only.
     let pruned = 0
     if (now.getUTCHours() % PRUNE_EVERY_HOURS === 0) {
       pruned = await pruneTokenMetricsHistory()
@@ -232,6 +318,9 @@ export async function POST(request: NextRequest) {
       hours: hoursWritten,
       slots: slotsAttempted,
       liquidity_rows: liquidityRows,
+      scored: scored.length,
+      shadow_rows: shadowRows,
+      series_fed: seriesFed,
       blocks,
       pruned,
       cadence_ok: cadenceOk,

@@ -245,3 +245,39 @@ from the sizing side.
 regardless of liquidity — which is probably intended, but it is the widest possible reading and worth one line
 confirming. And the 15 documented `RUG_SIG_*` keys are a large tuning surface for a module whose anchors are
 unfitted; nothing should move until B-2 lands, or the soak will be fitting noise.
+
+---
+
+## As built — 2026-10-01 (later the same day): measurement before enforcement
+
+**B-1 is resolved, as recommended.** `RUG_SIGNAL_MODE` now defaults to **`shadow`**: arming the detector
+(`RUG_SIGNAL_ENABLED=1`) can no longer write a `rug`, and enforcing requires the explicit
+`RUG_SIGNAL_MODE=enforce`. Arming and enforcing are two keystrokes, as the review asked. Zero production effect
+today — the feature ships off and there are no `RUG_*` keys in prod.
+
+**B-2's prerequisite now exists.** The pre-dump windows the review called a *prerequisite for enforce* are
+constructible: `token_metrics_history` holds per-minute **market-cap** candles (`o_min`/`h_min`/`l_min`/`c_min`,
+`db/init/55-token-metrics-ohlcv.sql`, unit corrected in `db/init/56-token-metrics-candle-unit.sql`) plus USD
+volume, and the validation harness labels each verdict by looking **forward** from its own timestamp — never
+backward from the dump, which is what made the old corpus circular.
+
+**The volume band is no longer inert.** The detector now reads the series first (`load1mOhlcv` →
+`ohlcvMinutesToRugBars`), so the own-1m path is no longer the only reachable source and the 30-point band can
+contribute. Measured on a real series: 268/268 5m bars carrying volume, against 0 before. The
+`own-1m ramp ⇒ score ≤ 60` cap still holds on the fallback path, and that is now pinned by a test rather than
+left to be discovered.
+
+**Observation is now durable and readable.** Every evaluation — trips *and* non-trips — lands in
+`rug_signal_shadow` (`src/strategies/rug-signal-shadow.ts`), surfaced at
+`GET /api/rug-signal/shadow?limit=&token=&decision=`. The `console.info` verdict was not queryable and is
+stripped from the production bundle entirely. Non-trips are recorded because they are the **control cohort**:
+without them there is no base rate, and the radar-only call site (`gmgn-pipeline.ts`) can never produce one.
+The metrics sweep scores the whole watch set for exactly this reason, and it never calls `markTokenRug`, so an
+`enforce` mode cannot turn a measurement sweep into a decision.
+
+**The harness and the acceptance rule.** `scripts/rug-signal-validate.mjs` (+
+`scripts/run-rug-signal-validate-on-vps.sh`) reports, per cohort: base rate, precision and recall at the
+threshold with Wilson intervals, per-day agreement, and a **minimum-sample floor below which the verdict is
+`inconclusive`** — not a number, and never "no effect". Per the operator's rule, an anchor may be called
+*fitted* only when the validation days agree. **Enforce stays gated on that:** if precision does not clear the
+base rate, the script says so and enforcement does not happen.

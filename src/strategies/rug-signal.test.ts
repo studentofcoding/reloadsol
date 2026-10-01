@@ -357,11 +357,15 @@ describe('config', () => {
     expect(th.windowBars).toBe(30)
   })
 
-  it('ships off by default, enforce when enabled, shadow on kill switch', () => {
+  it('ships off by default, arms into shadow, and enforces only when asked explicitly', () => {
     expect(isRugSignalEnabled({})).toBe(false)
     expect(isRugSignalEnabled({ RUG_SIGNAL_ENABLED: '1' })).toBe(true)
-    expect(rugSignalMode({})).toBe('enforce')
+    // Arming must never enforce on its own — enforcement is a separate, explicit keystroke.
+    expect(rugSignalMode({})).toBe('shadow')
+    expect(rugSignalMode({ RUG_SIGNAL_ENABLED: '1' })).toBe('shadow')
+    expect(rugSignalMode({ RUG_SIGNAL_MODE: 'enforce' })).toBe('enforce')
     expect(rugSignalMode({ RUG_SIGNAL_MODE: 'shadow' })).toBe('shadow')
+    expect(rugSignalMode({ RUG_SIGNAL_MODE: 'nonsense' })).toBe('shadow')
     expect(
       rugSignalMode({ RUG_SIGNAL_MODE: 'enforce', RUG_SIGNAL_KILL_SWITCH: '1' }),
     ).toBe('shadow')

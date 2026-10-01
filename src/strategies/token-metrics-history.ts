@@ -275,6 +275,28 @@ UPDATE token_metrics_history
 RETURNING token_address
 `
 
+/**
+ * Derive the hour's `mcap_close` from its own market-cap candles.
+ *
+ * The candle close *is* the token's mcap, so the two columns must agree — writing `mcap_close` from
+ * anywhere else (a trending payload's own reading of mcap) gives one value two sources and lets them
+ * drift. `COALESCE` with the stored value means an hour with no observed close keeps what it had
+ * rather than being nulled by a later volume-only write.
+ */
+const MCAP_FROM_CANDLES_SQL = `
+UPDATE token_metrics_history
+   SET mcap_close = COALESCE(
+         (SELECT c
+            FROM unnest(c_min) WITH ORDINALITY AS u(c, i)
+           WHERE c IS NOT NULL
+           ORDER BY i DESC
+           LIMIT 1),
+         token_metrics_history.mcap_close
+       ),
+       updated_at = NOW()
+ WHERE token_address = $1 AND chain = $2 AND hour_bucket = $3::timestamptz
+`
+
 export type RecordHoursResult = {
   /** Hour rows created or merged. */
   hoursWritten: number
@@ -326,6 +348,11 @@ export async function recordMetricHours(params: {
         [params.source],
       ])
       if ((rowCount ?? 0) > 0) hoursWritten++
+      // Keep `mcap_close` in step with its own candles. Only worth a statement when this write
+      // actually carried closes — a volume-only (cache) write has nothing to derive from.
+      if (closes.some((c) => c != null)) {
+        await query(MCAP_FROM_CANDLES_SQL, [tokenAddress, chain, plan.hourIso])
+      }
     }
   } catch (error) {
     console.warn('[token-metrics-history] write failed', {

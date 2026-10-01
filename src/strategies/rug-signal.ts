@@ -176,12 +176,18 @@ export function isRugSignalEnabled(env: EnvLike = process.env): boolean {
   return envFlag(env, 'RUG_SIGNAL_ENABLED', false)
 }
 
-/** Kill switch forces shadow; `off` is expressed by disabling the feature. */
+/**
+ * Shadow unless enforcement is asked for **explicitly**.
+ *
+ * This was the inverse until 2026-10-01, and that was the defect: `RUG_SIGNAL_ENABLED=1` alone
+ * produced an immediate `markTokenRug` write from anchors the SPEC itself calls unfitted, judged on
+ * a corpus that cannot represent the case being decided (a rug card's window ends *in* the dump).
+ * Arming the detector and enforcing its verdict are two separate keystrokes now. The kill switch
+ * still forces shadow; "off" is expressed by not arming the feature at all.
+ */
 export function rugSignalMode(env: EnvLike = process.env): 'shadow' | 'enforce' {
   if (envFlag(env, 'RUG_SIGNAL_KILL_SWITCH', false)) return 'shadow'
-  return env.RUG_SIGNAL_MODE?.trim().toLowerCase() === 'shadow'
-    ? 'shadow'
-    : 'enforce'
+  return env.RUG_SIGNAL_MODE?.trim().toLowerCase() === 'enforce' ? 'enforce' : 'shadow'
 }
 
 function finite(v: unknown): number | null {
