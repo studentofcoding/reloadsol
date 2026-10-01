@@ -138,6 +138,33 @@ Columns: `strategy_id`, `domain`, `token_address`, `entry_at`, `exit_at`, `pnl_p
 
 MCap sim entry pipeline (open phase): candidate → L1 rules (`mcap-sim-track.ts`) → social L1 gate (`social-snapshot.ts`) → **sim-outcome ML gate shadow** (`entry-ml-scorer.server.ts`) → **Pattern ML shadow** (`entry-pattern-scorer.server.ts`) → paper buy. `attachMlEntryShadow` (`src/strategies/ml-entry-shadow.ts`) merges `ml_gate_*` / `ml_pattern_*` into `entry_features`; both models are shadow-only until `*_ready` meta flags are true (`ML_GATE_MODE`, `ML_PATTERN_MODE` env; `pattern_ready` needs macro-F1 ≥ 0.60). Skip reasons (`ml_gate_reject`, `ml_pattern_reject`) are logged as counterfactuals, and mcap sim enforces when flags demand it; other domains log-only.
 
+### Exits are the untested half
+
+Entry is heavily instrumented; exits are not. Measured on the spine era (2026-09-30 → 10-01): avg win
+**+173.7%**, avg loss **−31.8%**, hit rate **47.2%** — so the break-even hit rate is **15.5%** and the desk
+runs at **3.05×** its requirement, with a payoff ratio R of **5.46**. An edge that far above break-even
+cannot be improved by hitting more often; it moves only through the payoff ratio, which is an **exit**
+property.
+
+| axis | state |
+|---|---|
+| Take-profit | swept three ways, inert: TP **142 / 189 / 283** → win rate **56.7 / 55.2 / 57.1%** |
+| **Stop-loss** | **never swept.** Every `search_mcap…` strategy runs **−31.7**; `mcap_enter_at_80` runs **−53.9** |
+| Dynamic exit | `ml_exit_overlay` built and wired — **shadow on 1136/1136 rows, applied on 0**; `gmgn_exit_boost` shadow on 243 |
+
+Sizing is out of this picture: since `b3c6570` (2026-10-01) `ml_size_mult` is flat, so a stake is the
+strategy's configured base × the Level 1 market scalar and nothing else — see the market-brain section of
+[`README.md`](../README.md).
+
+**Open, not implemented** — [specs/SPEC-exit-optimization-v1.md](specs/SPEC-exit-optimization-v1.md).
+P4 replays the stop from `token_ohlc_bars` (679 of 796 recent trades carry ≥20 bars across their
+entry→exit window, avg 81.8). The reading is deliberately **relative**: those bars are folded from 15s
+Jupiter spot samples, so their `low` is a *sampled* low that can under-trigger a tight stop. The bias largely
+cancels against the recorded outcomes (same bars), but it rules out any absolute-PnL claim — hence paired
+scoring with a per-token clustered CI and an explicit `inconclusive` state.
+P5 is likely already answered: [specs/SPEC-ml-shadow-lane-v1.md](specs/SPEC-ml-shadow-lane-v1.md) measures the
+overlay as `source='identity'` with **0 exit parameters changed**, which would close it with no code.
+
 ## 3b. Domains at a glance
 
 | Domain | Discovery input | UI | Outcome writer | Notes |
