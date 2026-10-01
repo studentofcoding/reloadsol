@@ -12,7 +12,6 @@ import {
 } from '@/strategies/gmgn-open-sim'
 import { computeOpenSimCycle } from '@/utils/simulation-trades'
 import { buildTradingRecord, insertTradingRecords } from '@/utils/trading-records-db'
-import type { TrackingRecord } from '@/utils/trading-tracker'
 import { getOpenPositionPrices } from '@/utils/open-position-prices'
 import { getNativeUsd } from '@/utils/native-usd'
 import { log } from '@/utils/unified-logger'
@@ -73,113 +72,6 @@ function collectRecentMints(
   }
 
   return recent
-}
-
-async function closeSimPosition(params: {
-  strategyId: string
-  chain: StrategyChain
-  mintAddress: string
-  symbol: string
-  entryAt: string | null
-  entryFeatures: Record<string, unknown>
-  closeReason: string
-  /** Wallet records already loaded by the cycle (avoids one fetch per close). */
-  records: TrackingRecord[]
-  /** Current price already batched by the cycle. */
-  currentPriceUsd: number | undefined
-  /** Close records are collected and bulk-inserted by the route. */
-  collect: (record: TrackingRecord) => void
-}): Promise<number> {
-  const simWallet = simWalletForChain(GMGN_SIM_WALLET, params.chain)
-  const cycle = computeOpenSimCycle(params.records, params.mintAddress)
-  if (!cycle) return 0
-
-  const sellPriceUsd = params.currentPriceUsd || cycle.weightedBuyPriceUsd
-  const solPrice = await getNativeUsd(params.chain)
-  const remaining = cycle.remainingTokenAmount
-  const solReceived =
-    sellPriceUsd && solPrice > 0
-      ? (remaining * sellPriceUsd) / solPrice
-      : cycle.totalSolBought
-
-  const pnlPct =
-    cycle.totalSolBought > 0
-      ? ((solReceived - cycle.totalSolBought) / cycle.totalSolBought) * 100
-      : 0
-
-  const record = buildTradingRecord({
-    walletAddress: simWallet,
-    chain: params.chain,
-    operationType: 'sell',
-    is_simulation: true,
-    simulation_type: 'strategy',
-    bot_strategy: params.strategyId,
-    close_position: true,
-    tokens: [
-      {
-        mintAddress: params.mintAddress,
-        symbol: params.symbol,
-        tokenAmount: remaining,
-        solAmount: solReceived,
-        priceUsd: sellPriceUsd,
-        solPrice,
-      },
-    ],
-    successCount: 1,
-    failureCount: 0,
-    totalTokens: 1,
-    solAmount: solReceived,
-    feesPaid: 0,
-    solPriceUsd: solPrice,
-    signatures: [`gmgn-sim-close-${Date.now()}`],
-    status: closeOutcomeStatusFromPnl(pnlPct),
-    trading_simulation: {
-      close_reason: params.closeReason,
-    },
-  })
-
-  params.collect(record)
-
-  const closeExtras = {
-    token_symbol: params.symbol,
-    exit_price_usd: sellPriceUsd,
-    close_reason: params.closeReason,
-    sol_spent: cycle.totalSolBought,
-    sol_received: solReceived,
-    initial_price_usd:
-      typeof params.entryFeatures.gmgn_price_usd === 'number'
-        ? params.entryFeatures.gmgn_price_usd
-        : cycle.weightedBuyPriceUsd,
-  }
-
-  const completeFeatures = await ensureCompleteBuyFeaturesForOutcome({
-    mintAddress: params.mintAddress,
-    buyFeatures: params.entryFeatures,
-    overrides: {
-      entryAt: params.entryAt,
-      tokenSymbol: params.symbol,
-      entryMcap: readFiniteNumber(params.entryFeatures.gmgn_market_cap_usd),
-      topHoldersPct: gmgnTopHoldersToPct(
-        readFiniteNumber(params.entryFeatures.gmgn_top_10_holder_rate),
-      ),
-    },
-    domain: 'gmgn',
-    extra: closeExtras,
-  })
-
-  await recordGmgnOutcome({
-    strategyId: params.strategyId,
-    chain: params.chain,
-    tokenAddress: params.mintAddress,
-    entryAt: params.entryAt,
-    exitAt: new Date().toISOString(),
-    pnlPct,
-    status: closeOutcomeStatusFromPnl(pnlPct),
-    isSimulated: true,
-    features: mergeEntryFeaturesForOutcome(completeFeatures ?? params.entryFeatures, closeExtras),
-  })
-
-  return pnlPct
 }
 
 async function openSimPosition(params: {

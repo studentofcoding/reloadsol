@@ -48,10 +48,8 @@ import {
   type SocialContext,
 } from '@/strategies/social/context'
 import {
-  appendSimPositionMonitorSnapshot,
   resolveTokenMonitorSnapshot,
 } from '@/strategies/sim-monitor-snapshots'
-import { checkGmgnLiveBoostForOpenPosition } from '@/strategies/gmgn-live-boost'
 import {
   fetchTradingRecordsForWallet,
   loadMcapSimClosedOutcomeKeys,
@@ -88,7 +86,6 @@ import {
   computeMcapSimPnlPct,
   fetchMcapTrackingRow,
   fetchMcapSimCandidateRows,
-  getMcapSimCloseReason,
   type McapSnapshot,
 } from '@/utils/mcap-tracker'
 import {
@@ -460,141 +457,6 @@ async function persistDailyRegimeTag(climate: { state?: string | null } | null):
   }
 }
 
-async function closeSimPosition(params: {
-  strategyId: string
-  chain: StrategyChain
-  mintAddress: string
-  symbol: string
-  entryAt: string | null
-  entryMcap: number
-  entryTemplate: 'first_seen' | 'milestone_80'
-  snapshot: McapSnapshot
-  closeReason: NonNullable<ReturnType<typeof getMcapSimCloseReason>>
-  /** REL-20: records are collected and bulk-inserted by the route per phase. */
-  collect: (record: TrackingRecord) => void
-}): Promise<number> {
-  const simWallet = simWalletForChain(MCAP_TRACKER_SIM_WALLET, params.chain)
-  // Scope to this strategy: an unscoped cycle is mint-wide, so this close would
-  // sell tokens another strategy bought and book the proceeds here.
-  const { scopeRecordsToStrategy } = await import('@/utils/simulation-trades')
-  const records = scopeRecordsToStrategy(
-    await fetchTradingRecordsForWallet(simWallet),
-    params.strategyId,
-  )
-  const cycle = computeOpenTradeCycle(records, params.mintAddress, 'sim')
-  if (!cycle) return 0
-
-  const exitMcap = params.snapshot.current_mcap
-  const pnlPct = computeMcapSimPnlPct(params.entryMcap, exitMcap)
-  const solPrice = await getNativeUsd(params.chain)
-  const remaining = cycle.remainingTokenAmount
-  // Value the exit at the position's cost × the realized price ratio — the sim's own definition of
-  // what it is worth. This used the constant `sellPriceUsd = 0.000001`, so every sell record carried
-  // a NOMINAL SOL amount: the ledger then saw buys at real size against sells worth ~0, which is why
-  // this strategy family showed 0-1% win rates over hundreds of positions while its mcap-ratio
-  // outcome looked like a winner. One placeholder price, two contradictory stories.
-  const solReceived = Math.max(0, cycle.totalSolBought * (1 + pnlPct / 100))
-  // The implied exit price, consistent with that amount. No tokens or no SOL price means no
-  // meaningful price — left undefined rather than invented.
-  const sellPriceUsd =
-    remaining > 0 && solPrice > 0 ? (solReceived * solPrice) / remaining : undefined
-
-  const record = buildTradingRecord({
-    walletAddress: simWallet,
-    chain: params.chain,
-    operationType: 'sell',
-    is_simulation: true,
-    simulation_type: 'strategy',
-    bot_strategy: params.strategyId,
-    close_position: true,
-    tokens: [
-      {
-        mintAddress: params.mintAddress,
-        symbol: params.symbol,
-        tokenAmount: remaining,
-        solAmount: solReceived,
-        priceUsd: sellPriceUsd,
-        solPrice,
-      },
-    ],
-    successCount: 1,
-    failureCount: 0,
-    totalTokens: 1,
-    solAmount: solReceived,
-    feesPaid: 0,
-    solPriceUsd: solPrice,
-    signatures: [`mcap-tracker-sim-close-${Date.now()}`],
-    status: closeOutcomeStatusFromPnl(pnlPct),
-  })
-
-  params.collect(record)
-
-  const buyRecord = [...records]
-    .reverse()
-    .find(
-      (rec) =>
-        rec.operationType === 'buy' &&
-        rec.bot_strategy === params.strategyId &&
-        rec.tokens?.some((t) => t.mintAddress === params.mintAddress),
-    )
-  const buyFeaturesRaw =
-    buyRecord?.trading_simulation &&
-    typeof buyRecord.trading_simulation === 'object' &&
-    buyRecord.trading_simulation.entry_features &&
-    typeof buyRecord.trading_simulation.entry_features === 'object'
-      ? (buyRecord.trading_simulation.entry_features as Record<string, unknown>)
-      : null
-  const buyFeatures = await ensureCompleteBuyFeaturesForOutcome({
-    mintAddress: params.mintAddress,
-    symbol: params.symbol,
-    entryAt: params.entryAt,
-    entryMcap: params.entryMcap,
-    entryTemplate: params.entryTemplate,
-    snapshot: params.snapshot,
-    buyFeatures: buyFeaturesRaw,
-  })
-
-  const closeFeatures = buildMcapOutcomeFeatures({
-    snapshot: params.snapshot,
-    entryTemplate: params.entryTemplate,
-    entryMcap: params.entryMcap,
-    exitMcap,
-    closeReason: params.closeReason,
-  })
-  const monitorSnapshots = appendMonitorSnapshot(
-    readMonitorSnapshotsFromFeatures(buyFeatures),
-    {
-      timestamp: new Date().toISOString(),
-      volume_5m: params.snapshot.volume_5m ?? null,
-      market_cap: exitMcap,
-    },
-  )
-
-  // The writer records how this close would really have filled (SHADOW: pnlPct unchanged).
-  // The cost basis must be the position's real stake: `solReceived` is a NOMINAL figure in this sim
-  // (sellPriceUsd is a placeholder), so deriving the stake from it yields ~0 and the record is
-  // skipped as unusable — silently, which is how this looked like "not wired".
-  const entryCostSol = cycle.totalSolBought
-
-  await recordMcapTrackerOutcome({
-    strategyId: params.strategyId,
-    chain: params.chain,
-    tokenAddress: params.mintAddress,
-    entryAt: params.entryAt,
-    exitAt: new Date().toISOString(),
-    pnlPct,
-    status: closeOutcomeStatusFromPnl(pnlPct),
-    isSimulated: true,
-    solAmount: entryCostSol,
-    features: mergeEntryFeaturesForOutcome(buyFeatures, {
-      ...closeFeatures,
-      monitor_snapshots: monitorSnapshots,
-    }),
-  })
-
-  return pnlPct
-}
-
 async function openLivePosition(params: {
   walletAddress: string
   strategyId: string
@@ -686,135 +548,6 @@ async function openLivePosition(params: {
     topHoldersPct: params.snapshot.top_holders_pct,
     features: scoredEntryFeatures,
   })
-}
-
-async function closeLivePosition(params: {
-  walletAddress: string
-  strategyId: string
-  mintAddress: string
-  symbol: string
-  entryAt: string | null
-  entryMcap: number
-  entryTemplate: 'first_seen' | 'milestone_80'
-  snapshot: McapSnapshot
-  closeReason: NonNullable<ReturnType<typeof getMcapSimCloseReason>>
-  slippageBps: number
-  /** REL-20: records are collected and bulk-inserted by the route per phase. */
-  collect: (record: TrackingRecord) => void
-}): Promise<number> {
-  const records = await fetchTradingRecordsForWallet(params.walletAddress)
-  const cycle = computeOpenTradeCycle(records, params.mintAddress, 'live')
-  if (!cycle) return 0
-
-  const buyRecord = [...records]
-    .reverse()
-    .find(
-      (rec) =>
-        rec.operationType === 'buy' &&
-        rec.bot_strategy === params.strategyId &&
-        rec.is_simulation === false &&
-        rec.tokens?.some((t) => t.mintAddress === params.mintAddress),
-    )
-  const buyFeatures =
-    buyRecord?.trading_simulation &&
-    typeof buyRecord.trading_simulation === 'object' &&
-    buyRecord.trading_simulation.entry_features &&
-    typeof buyRecord.trading_simulation.entry_features === 'object'
-      ? (buyRecord.trading_simulation.entry_features as Record<string, unknown>)
-      : null
-
-  const amountRaw =
-    typeof buyFeatures?.[RAPTOR_OUTPUT_AMOUNT_RAW_KEY] === 'string'
-      ? (buyFeatures[RAPTOR_OUTPUT_AMOUNT_RAW_KEY] as string)
-      : null
-  if (!amountRaw || amountRaw === '0') {
-    throw new Error(`Missing ${RAPTOR_OUTPUT_AMOUNT_RAW_KEY} for live close`)
-  }
-
-  const sell = await executeMcapRaptorSell(
-    params.mintAddress,
-    amountRaw,
-    params.slippageBps,
-    params.symbol,
-  )
-
-  const solSpent = cycle.totalSolBought
-  const pnlPct =
-    solSpent > 0 ? ((sell.solReceived - solSpent) / solSpent) * 100 : 0
-  const solPrice = await getSolPriceUSD()
-  const remaining = cycle.remainingTokenAmount
-
-  const record = buildTradingRecord({
-    walletAddress: params.walletAddress,
-    operationType: 'sell',
-    is_simulation: false,
-    simulation_type: 'strategy',
-    bot_strategy: params.strategyId,
-    close_position: true,
-    tokens: [
-      {
-        mintAddress: params.mintAddress,
-        symbol: params.symbol,
-        tokenAmount: remaining,
-        solAmount: sell.solReceived,
-        priceUsd: 0.000001,
-        solPrice,
-      },
-    ],
-    successCount: 1,
-    failureCount: 0,
-    totalTokens: 1,
-    solAmount: sell.solReceived,
-    feesPaid: 0,
-    solPriceUsd: solPrice,
-    signatures: [sell.signature],
-    status: closeOutcomeStatusFromPnl(pnlPct),
-  })
-
-  params.collect(record)
-
-  const exitMcap = params.snapshot.current_mcap
-  const completeBuyFeatures = await ensureCompleteBuyFeaturesForOutcome({
-    mintAddress: params.mintAddress,
-    symbol: params.symbol,
-    entryAt: params.entryAt,
-    entryMcap: params.entryMcap,
-    entryTemplate: params.entryTemplate,
-    snapshot: params.snapshot,
-    buyFeatures,
-  })
-  const closeFeatures = buildMcapOutcomeFeatures({
-    snapshot: params.snapshot,
-    entryTemplate: params.entryTemplate,
-    entryMcap: params.entryMcap,
-    exitMcap,
-    closeReason: params.closeReason,
-  })
-  const monitorSnapshots = appendMonitorSnapshot(
-    readMonitorSnapshotsFromFeatures(completeBuyFeatures),
-    {
-      timestamp: new Date().toISOString(),
-      volume_5m: params.snapshot.volume_5m ?? null,
-      market_cap: exitMcap,
-    },
-  )
-
-  await recordMcapTrackerOutcome({
-    strategyId: params.strategyId,
-    tokenAddress: params.mintAddress,
-    entryAt: params.entryAt,
-    exitAt: new Date().toISOString(),
-    pnlPct,
-    status: closeOutcomeStatusFromPnl(pnlPct),
-    isSimulated: false,
-    features: mergeEntryFeaturesForOutcome(completeBuyFeatures, {
-      ...closeFeatures,
-      monitor_snapshots: monitorSnapshots,
-      raptor_sell_signature: sell.signature,
-    }),
-  })
-
-  return pnlPct
 }
 
 export async function POST(request: NextRequest) {

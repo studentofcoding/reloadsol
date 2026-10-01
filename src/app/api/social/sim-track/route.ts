@@ -16,7 +16,6 @@ import { closeOutcomeStatusFromPnl } from '@/strategies/close-outcome-status'
 import { fetchTradingRecordsForWallet } from '@/strategies/db'
 import { computeOpenSimCycle } from '@/utils/simulation-trades'
 import { buildTradingRecord, insertTradingRecord, insertTradingRecords } from '@/utils/trading-records-db'
-import type { TrackingRecord } from '@/utils/trading-tracker'
 import { fetchTokenPricesForTracking } from '@/utils/trading-tracker'
 import { getOpenPositionPrices } from '@/utils/open-position-prices'
 import { getSolPriceUSD } from '@/utils/solana'
@@ -32,11 +31,7 @@ import {
 } from '@/strategies/social/social-only-discovery'
 import type { SocialStrategy } from '@/strategies/types'
 import {
-  decideMoonbagTrailingExit,
   getOpenStrategySimPositions as getOpenPositionsForStrategy,
-  moonbagExitConfig,
-  peakGainPctFromFeatures,
-  priceGainPct,
   type StrategySimOpenPosition as OpenPosition,
 } from '@/strategies/open-strategy-sim-positions'
 import { appendSimPositionMonitorSnapshot } from '@/strategies/sim-monitor-snapshots'
@@ -74,107 +69,6 @@ function readFiniteNumber(value: unknown): number | null {
     return Number.isFinite(n) ? n : null
   }
   return null
-}
-
-async function closeSimPosition(params: {
-  strategyId: string
-  mintAddress: string
-  symbol: string
-  entryAt: string | null
-  entryFeatures: Record<string, unknown>
-  closeReason: string
-  /** Wallet records already loaded by the cycle (avoids one fetch per close). */
-  records: TrackingRecord[]
-  /** Current price already batched by the cycle. */
-  currentPriceUsd: number | undefined
-  /** Close records are collected and bulk-inserted by the route. */
-  collect: (record: TrackingRecord) => void
-}): Promise<number> {
-  const cycle = computeOpenSimCycle(params.records, params.mintAddress)
-  if (!cycle) return 0
-
-  const sellPriceUsd = params.currentPriceUsd || cycle.weightedBuyPriceUsd
-  const solPrice = await getSolPriceUSD()
-  const remaining = cycle.remainingTokenAmount
-  const solReceived =
-    sellPriceUsd && solPrice > 0
-      ? (remaining * sellPriceUsd) / solPrice
-      : cycle.totalSolBought
-
-  const pnlPct =
-    cycle.totalSolBought > 0
-      ? ((solReceived - cycle.totalSolBought) / cycle.totalSolBought) * 100
-      : 0
-
-  const record = buildTradingRecord({
-    walletAddress: SOCIAL_SIM_WALLET,
-    operationType: 'sell',
-    is_simulation: true,
-    simulation_type: 'strategy',
-    bot_strategy: params.strategyId,
-    close_position: true,
-    tokens: [
-      {
-        mintAddress: params.mintAddress,
-        symbol: params.symbol,
-        tokenAmount: remaining,
-        solAmount: solReceived,
-        priceUsd: sellPriceUsd,
-        solPrice,
-      },
-    ],
-    successCount: 1,
-    failureCount: 0,
-    totalTokens: 1,
-    solAmount: solReceived,
-    feesPaid: 0,
-    solPriceUsd: solPrice,
-    signatures: [`social-sim-close-${Date.now()}`],
-    status: closeOutcomeStatusFromPnl(pnlPct),
-    trading_simulation: {
-      close_reason: params.closeReason,
-    },
-  })
-
-  params.collect(record)
-
-  const closeExtras = {
-    token_symbol: params.symbol,
-    exit_price_usd: sellPriceUsd,
-    close_reason: params.closeReason,
-    sol_spent: cycle.totalSolBought,
-    sol_received: solReceived,
-    initial_price_usd:
-      readFiniteNumber(params.entryFeatures.initial_price_usd) ??
-      cycle.weightedBuyPriceUsd,
-  }
-
-  const completeFeatures = await ensureCompleteBuyFeaturesForOutcome({
-    mintAddress: params.mintAddress,
-    buyFeatures: params.entryFeatures,
-    overrides: {
-      entryAt: params.entryAt,
-      tokenSymbol: params.symbol,
-    },
-    domain: 'social',
-    extra: closeExtras,
-  })
-
-  await recordSocialOutcome({
-    strategyId: params.strategyId,
-    tokenAddress: params.mintAddress,
-    entryAt: params.entryAt,
-    exitAt: new Date().toISOString(),
-    pnlPct,
-    status: closeOutcomeStatusFromPnl(pnlPct),
-    isSimulated: true,
-    features: mergeEntryFeaturesForOutcome(
-      completeFeatures ?? params.entryFeatures,
-      closeExtras,
-    ),
-  })
-
-  return pnlPct
 }
 
 async function openSimPosition(params: {
