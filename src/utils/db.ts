@@ -54,7 +54,26 @@ export async function query<T extends QueryResultRow = QueryResultRow>(
     throw new TypeError('Database circuit open (recent failures)');
   }
   try {
+    // #region debug
+    const __qT0 = Date.now();
+    // #endregion
     const result = await getPool().query<T>(sql, params);
+    // #region debug
+    // Names EVERY holder of a pool client, not just one path. The pool is 10 clients with a 5s
+    // acquire timeout, so the question is which queries occupy a client long enough that
+    // "timeout exceeded when trying to connect" fires for everyone else.
+    const __qMs = Date.now() - __qT0;
+    if (__qMs > 2000) {
+      const via = (new Error().stack ?? '')
+        .split('\n')
+        .slice(2, 6)
+        .map((s) => s.trim().replace(/^at\s+/, ''))
+        .join(' <- ');
+      console.warn(
+        `[q-debug] ms=${__qMs} rows=${result.rowCount ?? 0} sql=${sql.replace(/\s+/g, ' ').trim().slice(0, 80)} via=${via}`,
+      );
+    }
+    // #endregion
     recordDbSuccess();
     return { rows: result.rows, rowCount: result.rowCount ?? 0 };
   } catch (error) {
