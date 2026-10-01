@@ -87,12 +87,28 @@ why `max_age` takes 68 closes and every phantom win.
 
 Two consequences already visible in the same data: the `stop_loss` cohort exits at **−60.1% real** against a
 −32% threshold (the trigger evaluates a stale value too, just not frozen), and `sltp_monitor` has fired
-**`TP1: 0, TP2: 0, TP3: 0` across 211 finishes** — it compares a *price* against a target the strategies
-express in *mcap*.
+**`TP1: 0, TP2: 0, TP3: 0` across 211 finishes**.
+
+**The take-profit has never fired — and the cause is a dead branch, not the basis.** `checkSLTPTriggers`
+(`sl-tp-tracker.ts:588`) sends `position_type === 'bot'` rows down a path that reads **only**
+`tp1_percentage` / `tp2_percentage` / `tp3_percentage` (`:605`). `take_profit_percentage` is read **only** in
+the `manual` branch (`:644`), which a `bot` row can never reach. And `registerSimulatedSlTp`
+(`mcap-tracking/sim-track/route.ts:179`) registers **`positionType: 'bot'` with no TP ladder at all** — no
+`tp1Percentage`, no `tp2Percentage`, no `tp3Percentage`. So `take_profit_percentage = 200` is a field the
+worker **never evaluates**: `tp1_percentage` is NULL, the guard is falsy, and the whole TP block is skipped.
+
+The basis is *not* the cause here, and the registration says so deliberately:
+
+> *"The price basis is the REAL market price at entry (`priceUsd`), not the sim's mcap, because the tracker
+> refreshes `current_price` from the market — mixing the two would break the ratios."*
+> — `mcap-tracking/sim-track/route.ts:171-173`
+
+That is a correct choice, reached as a **workaround** for the fact that `sl_tp_positions` cannot express an
+mcap target (G2). The row is coherently price-based. What it cannot do is fire a target the code never reads.
 
 ## The standard (the contract)
 
-Every strategy, paper or live, satisfies all seven. Nothing else evaluates an exit.
+Every strategy, paper or live, satisfies all ten. Nothing else evaluates an exit.
 
 | # | Rule |
 |---|---|
@@ -105,6 +121,7 @@ Every strategy, paper or live, satisfies all seven. Nothing else evaluates an ex
 | **S7** | **Coverage is asserted.** A registry (or a test enumerating the sim-track routes) asserts that every strategy's open path reaches S2. The whole point of this SPEC is that "reaches one consumer" must be impossible to ship again. |
 | **S8** | **Every open carries its own exit contract.** At the moment a position opens it stamps the three things the exit needs, so no later step ever guesses or looks one up: **(a) the reference value** the thresholds are measured against, **(b) the basis** (`price` \| `mcap`) that reference value is in, **(c) the thresholds** (SL, TP, and the backstop) as they apply to *this* trade — the effective ones, not the strategy default. A position without a complete contract is uncloseable by policy, and the open fails loudly rather than producing one. |
 | **S9** | **One worker owns every exit.** `sltp_monitor` evaluates and executes for **all** strategies, paper and live, reading each position's S8 contract. It runs on its own clock (cheap, batched, bounded by open positions), decoupled from the 900s entry scans. |
+| **S10** | **The reference value is the price actually paid.** A position's `entry_price` is the **impact-included fill price** — `computeBuyFill().effectivePrice` = `spotPrice × (1 + impact + spread)` — not the market quote. A stop measured from a price the trade never paid is wrong from the first tick. **The helper already exists** (`execution-model.ts:162`, `resolveSimFill` at `sim-fill.ts:211`) and is currently exercised **only at close**, inside the shadow execution record (`sim-fill.ts:276`, `:335`). This rule is wiring, not new modelling. |
 
 ### The executor: the SL/TP worker owns every exit
 
@@ -133,13 +150,14 @@ else                              executeSellOrder(decision)   // live: real swa
 - It **already runs at 60s** (`SLTP_MONITOR_INTERVAL`), which is the right clock for an exit and is already
   decoupled from the entry scan.
 
-**The four gaps it must close, each a specific change:**
+**The five gaps it must close, each a specific change:**
 
 | # | Gap | Change |
 |---|---|---|
-| G1 | It **cannot close a paper position** — `isSimulatedPosition` exists so a paper stop never reaches `executeSellOrder` (which hardcodes `isSimulated: false`) | add the second executor: `recordSimClose()` — writes the sim close (`trading_records` + `strategy_outcomes`) and finishes the mirror row. **Structurally isolated**; the sim path must not be able to reach the real swap, with its own test |
-| G2 | `stop_loss_percentage` is a **bare number with no unit** — price for most strategies, mcap growth for the mcap family | S8's `basis` on the row. This is already breaking it today: **`Finished: 211 (SL: 211, TP1: 0, TP2: 0, TP3: 0)`** — it has never fired a take-profit, because it compares a price against targets the mcap family expresses in mcap |
-| G3 | **Six strategies have no rows at all** — `mcap_enter_at_80`, `mcap_enter_first_seen`, `att_rh`, both gmgn, social | every open path registers (S7 asserts it). Today registration correlates with a *dashboard* feature, not risk — the three that register have the **worst** real median (−66 to −75), and the most robust (`mcap_enter_at_80`, −14.3) has none |
+| G1 | It **cannot close a paper position.** The paper branch already exists and is reached (`monitorSLTPPositions:1256` → `markSimulatedPositionClosed`), but that function writes **only** `sl_tp_positions` — *"Deliberately DB-only: no chain, no wallet"* (`:766`). It retires the mirror row and writes nothing to `strategy_outcomes` / `trading_records` | the paper branch must **write the outcome**, not just flip the row: add `recordSimClose()`, which calls the sim's existing close writer (extracted, not duplicated) and finishes the mirror. **Structurally isolated** — `isSimulatedPosition` and `executeSellOrder`'s hardcoded `isSimulated: false` stay untouched, with the separation's own test |
+| G2 | `stop_loss_percentage` is a **bare number with no unit** — the row cannot say whether it means a price or mcap growth | S8's `basis` on the row, so the unit is *data* rather than a convention every caller must honour. (The mcap family already navigates this by registering a price-derived value — `sim-track/route.ts:171-173` — which is a workaround, not a declaration.) |
+| **G2b** | **The take-profit is never evaluated at all.** `bot` rows read only `tp1/2/3_percentage` (`:605`); `take_profit_percentage` is read only by the `manual` branch (`:644`) — and the sim registers `bot` **with no ladder** (`sim-track/route.ts:205`). Hence **`Finished: 211 (SL: 211, TP1: 0, TP2: 0, TP3: 0)`** | a `bot` row with no `tpN` ladder **falls back to `take_profit_percentage`** — a bot with one target behaves like one target. Pinned by gate 5 |
+| G3 | **Six strategies have no rows at all** — `mcap_enter_at_80`, `mcap_enter_first_seen`, `att_rh`, both gmgn, social. **And the chain must become per-row first:** `getCurrentTokenPrices` hardcodes `'sol'` (`:571`, *"sl_tp_positions is Solana live-only"*), so `att_rh` would be priced through the Solana path and evaluated against a wrong number | every open path registers (S7 asserts it); the chain is read off the row before `att_rh` is registered. Today registration correlates with a *dashboard* feature, not risk — the three that register have the **worst** real median (−66 to −75), and the most robust (`mcap_enter_at_80`, −14.3) has none |
 | G4 | The mcap closer reads a **cached** `mcap_growth_percent` (stale 18–481 min) | S1/S4: live value, and `stale` rather than a hold when it cannot be read |
 
 **The one hard risk, stated plainly.** The worker is the **live** path, and this adds a branch that writes a
@@ -227,8 +245,9 @@ Two consequences worth naming:
    answer is **3 of 9** — `mcap_enter_at_80`, `mcap_enter_first_seen`, `att_rh`, both gmgn and social have
    zero `sl_tp_positions` rows. The gate is 9 of 9.
 5. **The worker's take-profit fires.** It has never done so: `Finished: 211 (SL: 211, TP1: 0, TP2: 0, TP3: 0)`.
-   After the `basis` lands, a `mcap` position whose growth clears its TP must close as `take_profit` — if TP is
-   still 0, the basis is still wrong.
+   The discriminator is **G2b**: a `bot` row with no `tpN` ladder must fall back to `take_profit_percentage` and
+   close as `take_profit`. If TP is still 0 after that lands, the fallback is not being reached — the *basis*
+   is a red herring here and must not be blamed again.
 6. **The isolation test.** A test asserts a paper position cannot reach `executeSellOrder` — the one property
    that has kept a paper stop from spending real money. It must fail loudly if the branch is ever crossed.
 7. `tsc` · full `vitest` · `eslint` · build · the shrink-wrap deploy chain · a live smoke on the paper
@@ -236,9 +255,12 @@ Two consequences worth naming:
 
 ## Open items
 
-1. **The `basis` decision for the mcap family** — its TP is mcap-targeted (`cl_take_profit_pct` ~280) while
-   its SL is price-targeted (`cl_stop_loss_pct` ~−32). Those disagree in the same tick. S3 forces it into one
-   declared place, so it has to be answered rather than inherited.
+1. **The `basis` decision for the mcap family** — still open, but now better posed. The family's own sim
+   **already declares `price`** and documents why (`sim-track/route.ts:171-173`), so the question is not
+   "which basis?" but whether that workaround *becomes* the declaration (S8 stamps `basis: 'price'` and the
+   mcap target is converted at open) or the row gains a genuine `mcap` basis and the tracker supplies the
+   mcap. The two thresholds disagree in one tick (`cl_take_profit_pct` ~280 mcap vs `cl_stop_loss_pct` ~−32
+   price), so S3 forces one answer rather than leaving each route to pick.
 2. **`initial_price_usd` as an entry source.** This SPEC takes entry *and* exit from the bar series to avoid a
    second suspect input; whether `initial_price_usd` agrees with the entry bar should be measured, because the
    strategies' own PnL uses it.
