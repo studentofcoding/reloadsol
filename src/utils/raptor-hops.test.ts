@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { TOKENS } from '@/utils/solana'
 import {
+  RAPTOR_MAX_HOP_CEILING,
   RAPTOR_TOKEN_TOKEN_HOPS_DEFAULT,
   RAPTOR_VERIFIED_QUOTE_MINTS,
+  escalateRaptorHops,
   getRaptorTokenTokenHops,
+  isRaptorNoRouteError,
   isVerifiedQuoteMint,
   resolveRaptorHops,
 } from '@/utils/raptor-hops'
@@ -73,6 +76,42 @@ describe('isVerifiedQuoteMint', () => {
       [TOKENS.SOL, TOKENS.USDC, TOKENS.USDT].sort(),
     )
     expect(isVerifiedQuoteMint(DEW)).toBe(false)
+  })
+})
+
+/**
+ * Measured on prod 2026-10-01: the verified-mint assumption is DIRECTION-dependent. It holds for
+ * token→SOL, but on 40 real mints, 8 had no direct SOL pool and 500'd at the default ceiling of 1 —
+ * while quoting fine at 2. So a no-route answer needs a wider retry, not an escalation to Jupiter.
+ */
+describe('no-route escalation', () => {
+  it('recognises exactly the venue\'s no-route wording', () => {
+    expect(
+      isRaptorNoRouteError(
+        new Error('Raptor API failed (500): Failed to get quote: No direct route found and maxHops=1'),
+      ),
+    ).toBe(true)
+    expect(isRaptorNoRouteError(new Error('Raptor API failed (500): something else'))).toBe(false)
+    expect(isRaptorNoRouteError(new Error('Raptor API timed out after 15000ms'))).toBe(false)
+    expect(isRaptorNoRouteError(undefined)).toBe(false)
+  })
+
+  it('steps a verified-mint ceiling up to the token→token floor', () => {
+    // the SOL→token case: 1 is too low, 3 clears it
+    expect(escalateRaptorHops(1)).toBe(RAPTOR_TOKEN_TOKEN_HOPS_DEFAULT)
+  })
+
+  it('keeps stepping while there is room, then stops', () => {
+    expect(escalateRaptorHops(3)).toBe(4)
+    expect(escalateRaptorHops(RAPTOR_MAX_HOP_CEILING)).toBeNull()
+    expect(escalateRaptorHops(RAPTOR_MAX_HOP_CEILING + 5)).toBeNull()
+  })
+
+  it('never returns a value at or below what was already tried', () => {
+    for (let attempted = 1; attempted <= RAPTOR_MAX_HOP_CEILING + 2; attempted++) {
+      const wider = escalateRaptorHops(attempted)
+      if (wider != null) expect(wider).toBeGreaterThan(attempted)
+    }
   })
 })
 

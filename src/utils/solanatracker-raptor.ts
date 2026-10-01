@@ -1,5 +1,5 @@
 import { TOKENS } from "@/utils/solana";
-import { resolveRaptorHops } from "@/utils/raptor-hops";
+import { escalateRaptorHops, isRaptorNoRouteError, resolveRaptorHops } from "@/utils/raptor-hops";
 import {
   BUYBULK_PLATFORM_FEE_BPS,
   BUYBULK_SOL_FEE_ACCOUNT,
@@ -251,6 +251,32 @@ async function raptorFetch<T>(
   }
 }
 
+/**
+ * One wider retry when Raptor reports no route at this ceiling.
+ *
+ * The per-pair ceiling is chosen from the verified-mint assumption, which is **direction-dependent**: it
+ * holds for token→SOL but not for SOL→token (8 of 40 real mints had no direct SOL pool). Retrying here is
+ * free; escalating to the Jupiter picker instead would spend the 0.5 rps execution budget on a display
+ * quote. One step only — never a loop.
+ */
+async function withNoRouteRetry<T>(
+  hops: number,
+  inputMint: string,
+  outputMint: string,
+  run: (hops: number) => Promise<T>,
+): Promise<T> {
+  try {
+    return await run(hops);
+  } catch (error) {
+    const wider = isRaptorNoRouteError(error) ? escalateRaptorHops(hops) : null;
+    if (wider == null) throw error;
+    console.warn(
+      `[raptor] no direct route at maxHops=${hops} (${inputMint.slice(0, 6)}…→${outputMint.slice(0, 6)}…) — retrying at ${wider}`,
+    );
+    return run(wider);
+  }
+}
+
 /** Server-side: GET /quote */
 export async function fetchRaptorQuoteDirect(
   inputMint: string,
@@ -259,25 +285,31 @@ export async function fetchRaptorQuoteDirect(
   slippageBps: number,
   maxHops?: number,
 ): Promise<RaptorQuoteResponse> {
-  const params = new URLSearchParams({
-    inputMint,
-    outputMint,
-    amount,
-    slippageBps: String(slippageBps),
-    maxHops: String(resolveRaptorHops(inputMint, outputMint, { requested: maxHops ?? null })),
+  const hops = resolveRaptorHops(inputMint, outputMint, { requested: maxHops ?? null });
+  return withNoRouteRetry(hops, inputMint, outputMint, (h) => {
+    const params = new URLSearchParams({
+      inputMint,
+      outputMint,
+      amount,
+      slippageBps: String(slippageBps),
+      maxHops: String(h),
+    });
+    return raptorFetch<RaptorQuoteResponse>(`/quote?${params.toString()}`);
   });
-  return raptorFetch<RaptorQuoteResponse>(`/quote?${params.toString()}`);
 }
 
 /** Server-side: POST /quote-and-swap */
 export async function fetchRaptorQuoteAndSwapDirect(
   params: RaptorQuoteAndSwapParams,
 ): Promise<RaptorQuoteAndSwapResponse> {
-  return raptorFetch<RaptorQuoteAndSwapResponse>("/quote-and-swap", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(buildRaptorQuoteAndSwapBody(params)),
-  });
+  const hops = params.maxHops ?? resolveRaptorHops(params.inputMint, params.outputMint);
+  return withNoRouteRetry(hops, params.inputMint, params.outputMint, (h) =>
+    raptorFetch<RaptorQuoteAndSwapResponse>("/quote-and-swap", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(buildRaptorQuoteAndSwapBody({ ...params, maxHops: h })),
+    }),
+  );
 }
 
 /** Server-side: POST /send-transaction */

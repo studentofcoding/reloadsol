@@ -60,3 +60,35 @@ export function resolveRaptorHops(
   }
   return Math.max(verifiedHops, getRaptorTokenTokenHops(env))
 }
+
+/** Raptor's documented route depth ceiling. */
+export const RAPTOR_MAX_HOP_CEILING = 4
+
+/**
+ * Raptor answers `500 "No direct route found and maxHops=N"` when the per-pair ceiling is too low.
+ *
+ * The ceiling above is chosen from the **verified-mint assumption** — that a route touching SOL/USDC/USDT
+ * has a direct pool. Measured 2026-10-01 on 40 real mints: that holds for token→SOL, but **not for
+ * SOL→token**, where **8 of 40 had no direct SOL pool** and failed at the default ceiling of 1. So the
+ * assumption is direction-dependent, and the pair alone cannot tell you which way it will go.
+ *
+ * Retrying one step wider is free on this lane. What used to happen instead was the caller escalating to
+ * the keyed Jupiter picker — spending the 0.5 rps execution budget on a *display* quote, which is the
+ * same cascade that the token→token hop fix removed.
+ */
+export function isRaptorNoRouteError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /no direct route found/i.test(message)
+}
+
+/**
+ * The ceiling to retry at after a no-route answer, or `null` when there is nothing wider worth trying.
+ * Callers retry **once** — this is a step up, not a loop.
+ */
+export function escalateRaptorHops(attempted: number): number | null {
+  const wider = Math.min(
+    RAPTOR_MAX_HOP_CEILING,
+    Math.max(attempted + 1, getRaptorTokenTokenHops()),
+  )
+  return wider > attempted ? wider : null
+}

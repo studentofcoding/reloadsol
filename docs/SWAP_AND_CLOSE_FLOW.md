@@ -73,6 +73,13 @@ quote mint — SOL, USDC or USDT — and `RAPTOR_TOKEN_TOKEN_HOPS` (3) when neit
 and swap build goes through it, so a caller that omits `maxHops` can no longer pick the wrong value.
 Route selection is still where a better price comes from; the hop ceiling is now just correct per pair.
 
+**That verified-mint assumption is direction-dependent — measured 2026-10-01.** It holds for token→SOL,
+but on **SOL→token** (a buy) **8 of 40 real mints had no direct SOL pool** and answered
+`500 "No direct route found and maxHops=1"`; all 8 quoted fine at 2. So the pair alone cannot tell you
+which way it will go. A no-route answer now triggers **one wider retry on the free lane**
+(`escalateRaptorHops`), which is strictly better than what happened before: escalating to the keyed Jupiter
+picker spent the 0.5 rps execution budget on a *display* quote — the same cascade described above.
+
 **Cost of the estimate, measured.** Quoting the picker per selected token is what made **bulk** slow:
 5 tokens took **14.87s** wall (one token 14.87s) against **0.69s** on Raptor, because each picker call
 is one Jupiter background-lane request and that lane is capped and shared with in-process callers (the

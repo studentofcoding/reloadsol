@@ -384,6 +384,15 @@ Residual risk: the fan-out doubles the number of quote calls per swap (T5c).
       +1.31 % / −2.41 % spread this task was built on was a **five-pair artifact**, two of them majors.
       **Do not implement this.** The single lane is the lock (§3). If the ranker is ever handed two
       candidates, it should be because a measurement justified it — not because the plumbing allowed it.
+- [x] **T17 — the hop ceiling needed a retry, not just a per-pair value. DONE (2026-10-01).**
+      T5 resolved the ceiling **per pair**, but from the verified-mint assumption: *"a route touching
+      SOL/USDC/USDT has a direct pool"*. Measured on the **buy** direction — 40 real mints, SOL→token —
+      **8 had no direct SOL pool** and answered `500 "No direct route found and maxHops=1"`, while **all 8
+      quoted at 2**. That is ~20% of buys, and each one escalated to the **keyed Jupiter picker**, spending
+      the 0.5 rps execution budget on a display quote — the same cascade T5 removed for token→token, on the
+      direction nobody tested. The assumption is **direction-dependent**, so no larger constant fixes it:
+      `escalateRaptorHops` steps the ceiling up **once** on a no-route answer (`withNoRouteRetry`, applied at
+      both Raptor fetch sites — `/quote` and `/quote-and-swap`), which is free on this lane.
 - [x] **T5 — bound Raptor's hops per pair. DONE (d5d214a).** Confirmed live: `RAPTOR_MAX_HOPS=1` makes a
       token→token quote fail outright — `500 "Failed to get quote: No direct route found and maxHops=1"` —
       while `maxHops=2` and `3` return 200, and a SOL/USDC/USDT route returns 200 at 1. No UI surface passed

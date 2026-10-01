@@ -214,7 +214,7 @@ Copy from [`.env.docker.example`](.env.docker.example). Key groups:
 | `RPC_URL` | Comma-separated RPC URLs (max 5). Server `/api/rpc` proxy with failover. |
 | `NEXT_PUBLIC_RPC_URL` | Optional — browser uses `/api/rpc` proxy by default; set only for legacy direct-RPC paths. |
 | `RAPTOR_API_BASE` | Optional override for Solana Tracker Raptor swap API (default `https://raptor-beta.solanatracker.io`) |
-| `RAPTOR_MAX_HOPS` | Hop ceiling for a route touching SOL/USDC/USDT (default `1` — those have a direct pool). Arb uses `RAPTOR_MAX_HOPS_ARBITRAGE` |
+| `RAPTOR_MAX_HOPS` | Hop ceiling for a route touching SOL/USDC/USDT (default `1` — those usually have a direct pool). Arb uses `RAPTOR_MAX_HOPS_ARBITRAGE`. **The pool assumption is direction-dependent**: measured 2026-10-01, 8 of 40 real mints had no direct SOL pool on a **SOL→token** buy and failed at `1`. That no longer surfaces as a failure — a no-route answer now retries once at a wider ceiling on the free lane (`escalateRaptorHops`) instead of escalating to the keyed Jupiter picker |
 | `RAPTOR_TOKEN_TOKEN_HOPS` | Hops for a token→token pair, where no direct pool exists (default `3`). **Do not raise `RAPTOR_MAX_HOPS` to fix a token→token quote** — at `1` Raptor answers `500 "No direct route found"`, which escalated to the Jupiter picker and spent the 0.5 rps execution budget. Resolved per pair by `src/utils/raptor-hops.ts`; set `=1` to restore the old behaviour exactly |
 | `JUPITER_MAX_RPS` | Sustained Jupiter rate (default `0.5`, the measured-clean rate) |
 | `JUPITER_BURST` | Bucket capacity (default `8`; measured tolerance is ~8 sequential before 429) |
