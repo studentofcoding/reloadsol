@@ -11,6 +11,7 @@ import {
   resolveBuybulkSolFeeAccount,
 } from "@/utils/buybulk-fee";
 import { prepareJupiterLiteSwap } from "@/utils/jupiter-lite-swap";
+import { isVerifiedQuoteMint } from "@/utils/raptor-hops";
 import {
   executeJupiterSwap,
   executeJupiterSwapDirect,
@@ -1172,12 +1173,38 @@ export type PreparedSwapMeta = PreparedSwap;
  */
 export type BulkPrepareLane = "raptor" | "venued";
 
+/**
+ * Which builder a bulk leg uses — resolved **per pair**, exactly like the hop ceiling.
+ *
+ * Raptor's token→token build is broken at the program level: it returns a tx whose hop amounts do not sum
+ * to the input, and **Raptor's own program rejects it** — `Custom 6006 TotalAmountsMustBeEqualToAmountIn`,
+ * `raptor-v1/common_swap.rs:897`, caught on two live token→token sells 2026-10-02. Jupiter builds the same
+ * pair clean (CU 159,976 against Raptor's reverting 58,445). The guard stops those trades burning fees, but
+ * dropping every leg is not a working batch — so the lane has to follow the pair.
+ *
+ * A leg touching a verified mint (SOL/USDC/USDT) is the case Raptor genuinely wins: one ungated parallel
+ * round instead of N calls serialised behind the 0.5 rps keyed lane.
+ */
+export function resolveBulkPrepareLane(
+  inputMint: string,
+  outputMint: string,
+): BulkPrepareLane {
+  return isVerifiedQuoteMint(inputMint) || isVerifiedQuoteMint(outputMint)
+    ? "raptor"
+    : "venued";
+}
+
 export async function prepareBulkSwapTransaction(
   params: PrepareSwapParams,
-  options?: { lane?: BulkPrepareLane },
+  options?: { lane?: BulkPrepareLane | "auto" },
 ): Promise<{ tx: VersionedTransaction; meta: PreparedSwapMeta; outAmount?: string }> {
+  const lane =
+    !options?.lane || options.lane === "auto"
+      ? resolveBulkPrepareLane(params.inputMint, params.outputMint)
+      : options.lane;
+
   let prepared: PreparedSwap | null = null;
-  if (options?.lane === "raptor") {
+  if (lane === "raptor") {
     try {
       prepared = await prepareRaptorSwap(params);
     } catch (error) {
