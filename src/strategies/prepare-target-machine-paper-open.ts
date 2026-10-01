@@ -16,6 +16,7 @@ import {
 } from '@/strategies/target-machine-cl-size'
 import type { McapEffectiveExit } from '@/utils/mcap-sim-track'
 import type { SoftMlSize } from '@/strategies/ml-soft-size'
+import { impactedEntryPriceUsd, type ExitBasis } from './sim-exit-contract'
 
 export type PaperSpineStage = 'price' | 'rug' | 'size'
 
@@ -46,6 +47,14 @@ export type PrepareTargetMachinePaperOpenResult =
   | {
       ok: true
       priceUsd: number
+      /**
+       * The price actually paid (S10): `priceUsd` plus the modelled impact and spread. This is what
+       * the exit contract stamps as its reference value — a stop measured from the market quote is
+       * measured from a price the trade never paid.
+       */
+      impactedPriceUsd: number
+      /** What the thresholds are expressed in. 'price' today; the value that makes it declarable. */
+      exitBasis: ExitBasis
       solAmount: number
       p: number
       sized: SoftMlSize
@@ -102,9 +111,17 @@ export async function prepareTargetMachinePaperOpen(
     modelVersion: cl.modelVersion,
   })
 
+  // The reference the exit measures against: the price this size would actually have paid.
+  const impactedPriceUsd = impactedEntryPriceUsd({
+    spotPriceUsd: priceUsd,
+    notionalQuote: sized.sol,
+  })
+
   return {
     ok: true,
     priceUsd,
+    impactedPriceUsd,
+    exitBasis: 'price',
     solAmount: sized.sol,
     p: sized.p,
     sized,

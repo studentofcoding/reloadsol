@@ -13,6 +13,7 @@ import { fetchShyftAllTokensCached } from '@/utils/shyft-wallet-cache'
 import { mapShyftTokensToUserTokens } from '@/utils/shyft-wallet'
 import { fetchJupiterPortfolioDirect, mapPortfolioToUserTokens } from '@/utils/jupiter-portfolio'
 import { getOpenPositionPrices } from '@/utils/open-position-prices'
+import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
 
 /** Cached Shyft all_tokens, then Jupiter, then RPC token accounts. */
 async function fetchSlTpWalletTokens(
@@ -50,6 +51,11 @@ async function fetchSlTpWalletTokens(
 export interface SLTPPosition {
   /** Paper position: tracked, never executed on-chain (see isSimulatedPosition). */
   is_simulation?: boolean | null
+    /** The exit contract (S8). NULL on rows written before it existed — they read as 'price'. */
+    reference_kind?: 'price' | 'mcap' | null
+    reference_value?: number | null
+    exit_basis?: 'price' | 'mcap' | null
+    chain?: string | null
     id: string
     wallet_address: string
     token_address: string
@@ -445,6 +451,16 @@ export async function addSLTPPosition(params: {
     strategyId?: string
     /** Paper position: tracked and triggered, never executed on-chain. */
     isSimulation?: boolean
+    /**
+     * The exit contract (S8). `referenceKind` says what `referenceValue` is, `exitBasis` says what
+     * the thresholds are expressed in. Both default to 'price' with `referenceValue = entryPrice`,
+     * so a caller that predates the contract writes exactly what it wrote before.
+     */
+    referenceKind?: 'price' | 'mcap'
+    referenceValue?: number
+    exitBasis?: 'price' | 'mcap'
+    /** The chain the position is on. The worker prices Sim burns and Robinhood differently. */
+    chain?: string
     // Bot-specific TP levels
     tp1Percentage?: number
     tp1SellPercentage?: number
@@ -463,6 +479,10 @@ export async function addSLTPPosition(params: {
             takeProfitPercentage,
             positionType,
             strategyId,
+            referenceKind,
+            referenceValue,
+            exitBasis,
+            chain,
             tp1Percentage,
             tp1SellPercentage,
             tp2Percentage,
@@ -486,6 +506,10 @@ export async function addSLTPPosition(params: {
             take_profit_percentage: takeProfitPercentage,
             position_type: positionType,
             strategy_id: strategyId,
+            reference_kind: referenceKind ?? 'price',
+            reference_value: referenceValue ?? entryPrice,
+            exit_basis: exitBasis ?? 'price',
+            chain: chain ?? 'sol',
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
             is_active: true,
@@ -510,10 +534,11 @@ export async function addSLTPPosition(params: {
                tp1_percentage, tp1_sell_percentage, tp2_percentage,
                tp3_percentage, tp3_enabled,
                tp1_executed, tp2_executed, tp3_executed, sl_executed,
-               is_simulation
+               is_simulation,
+               reference_kind, reference_value, exit_basis, chain
              ) VALUES (
                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-               $16, $17, $18, $19, $20, $21, $22, $23, $24, $25
+               $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29
              ) RETURNING id`,
             [
                 position.wallet_address,
@@ -541,6 +566,10 @@ export async function addSLTPPosition(params: {
                 position.tp3_executed ?? false,
                 position.sl_executed ?? false,
                 params.isSimulation ?? false,
+                position.reference_kind ?? 'price',
+                position.reference_value ?? position.entry_price,
+                position.exit_basis ?? 'price',
+                position.chain ?? 'sol',
             ],
         )
 
@@ -566,14 +595,33 @@ export async function addSLTPPosition(params: {
 }
 
 // Function to get current token prices
-async function getCurrentTokenPrices(tokenAddresses: string[]): Promise<Map<string, number>> {
+/**
+ * Prices for a set of positions, grouped by the chain each row declares.
+ *
+ * This used to pass a hardcoded 'sol' for every row ("sl_tp_positions is Solana live-only"), which
+ * was true when only the mcap family registered. A Robinhood row priced through the Solana path
+ * returns a number that is not its price — and the exit would then be evaluated against it. The
+ * chain is read off the row (S8's `chain`, defaulting to 'sol' for every pre-existing row).
+ */
+async function getCurrentTokenPrices(
+    positions: Array<{ token_address: string; chain?: string | null }>,
+): Promise<Map<string, number>> {
     try {
-        const prices = await getOpenPositionPrices(tokenAddresses, 'sol') // sl_tp_positions is Solana live-only
+        const byChain = new Map<string, string[]>()
+        for (const position of positions) {
+            const chain = position.chain === 'robinhood' ? 'robinhood' : 'sol'
+            const mints = byChain.get(chain) ?? []
+            mints.push(position.token_address)
+            byChain.set(chain, mints)
+        }
 
         const priceMap = new Map<string, number>()
-        for (const [address, price] of Object.entries(prices)) {
-            if (typeof price === 'number' && price > 0) {
-                priceMap.set(address, price)
+        for (const [chain, mints] of Array.from(byChain.entries())) {
+            const prices = await getOpenPositionPrices(mints, chain as GmgnTradeChain)
+            for (const [address, price] of Object.entries(prices)) {
+                if (typeof price === 'number' && price > 0) {
+                    priceMap.set(address, price)
+                }
             }
         }
 
@@ -1219,8 +1267,7 @@ export async function monitorSLTPPositions(returnSummary: boolean = false): Prom
         log.info('price_tracking', 'Monitoring SL/TP positions', { count: filteredPositions.length })
 
         // Get current prices for all tokens
-        const tokenAddresses = filteredPositions.map(p => p.token_address)
-        const currentPrices = await getCurrentTokenPrices(tokenAddresses)
+        const currentPrices = await getCurrentTokenPrices(filteredPositions)
 
         // Check each position for triggers
         const triggerPromises = filteredPositions.map(async (position) => {
@@ -1316,8 +1363,7 @@ export async function runSLTPMonitorAndSummarize(): Promise<SLTPTrackingSummary>
         log.info('price_tracking', 'Monitoring SL/TP positions', { count: filteredPositions.length })
 
         // Get current prices for all tokens
-        const tokenAddresses = filteredPositions.map(p => p.token_address)
-        const currentPrices = await getCurrentTokenPrices(tokenAddresses)
+        const currentPrices = await getCurrentTokenPrices(filteredPositions)
 
         // Check each position for triggers
         const triggerPromises = filteredPositions.map(async (position) => {

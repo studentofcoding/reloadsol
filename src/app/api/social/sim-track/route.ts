@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getActiveSocialForSim } from '@/strategies/load-social'
+import { registerSimExitContract } from '@/strategies/sim-exit-contract'
 import { mergeEntryFeaturesForOutcome } from '@/strategies/entry-feature-snapshot'
 import {
   createBrainRiskSession,
@@ -182,6 +183,8 @@ async function openSimPosition(params: {
   symbol: string
   entryFeatures: Record<string, unknown>
   entryPriceUsd: number
+  /** The price actually paid (S10) — the impact-included fill. Falls back to `entryPriceUsd`. */
+  entryPriceImpactedUsd?: number
   solAmount: number
   effectiveExit: {
     takeProfitPct: number
@@ -235,6 +238,19 @@ async function openSimPosition(params: {
   })
 
   await insertTradingRecord(record)
+
+  // The exit contract (S8/S10): the worker now owns this position's exit too.
+  await registerSimExitContract({
+    chain: 'sol',
+    walletAddress: SOCIAL_SIM_WALLET,
+    strategyId: params.strategy.id,
+    mintAddress: params.mintAddress,
+    symbol: params.symbol,
+    positionSize: solAmount,
+    entryPriceUsd: params.entryPriceImpactedUsd ?? priceUsd,
+    basis: 'price',
+    thresholds: params.effectiveExit,
+  })
 
   const { notifyStrategyOpen } = await import('@/strategies/strategy-telegram-notify')
   notifyStrategyOpen({
@@ -522,6 +538,7 @@ async function runSimTrack(request: NextRequest) {
           // tell whether the risk layer was in the path at all.
           entryFeatures: stampBrainRisk(spine.features, sized.risk, { sizedSol: spine.solAmount }),
           entryPriceUsd: spine.priceUsd,
+          entryPriceImpactedUsd: spine.impactedPriceUsd,
           solAmount: spine.solAmount,
           effectiveExit: spine.effectiveExit,
         })

@@ -9,6 +9,7 @@ import {
   stampBrainRisk,
   type BrainRiskSession,
 } from '@/utils/brain-regime-risk'
+import { registerSimExitContract } from './sim-exit-contract'
 
 export const GMGN_SIM_WALLET =
   process.env.GMGN_SIM_WALLET_ADDRESS || 'gmgn-sim'
@@ -119,8 +120,9 @@ export async function openGmgnSimPosition(params: {
   const tokenAmount =
     priceUsd > 0 && solPrice > 0 ? (solAmount * solPrice) / priceUsd : solAmount * 1_000_000
 
+  const walletAddress = simWalletForChain(GMGN_SIM_WALLET, chain)
   const record = buildTradingRecord({
-    walletAddress: simWalletForChain(GMGN_SIM_WALLET, chain),
+    walletAddress,
     chain,
     operationType: 'buy',
     is_simulation: true,
@@ -158,6 +160,20 @@ export async function openGmgnSimPosition(params: {
   })
 
   await insertTradingRecord(record)
+
+  // The exit contract (S8/S10). Without this the position is invisible to the worker, and its
+  // exit is decided only by whatever closer this family happens to run.
+  await registerSimExitContract({
+    chain,
+    walletAddress,
+    strategyId: params.strategy.id,
+    mintAddress: params.mintAddress,
+    symbol: params.symbol,
+    positionSize: solAmount,
+    entryPriceUsd: spine.impactedPriceUsd,
+    basis: spine.exitBasis,
+    thresholds: spine.effectiveExit,
+  })
 
   const { notifyStrategyOpen } = await import('@/strategies/strategy-telegram-notify')
   notifyStrategyOpen({

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getActiveMcapTrackerStrategies } from '@/strategies/load-mcap-tracker'
 import { recordMcapTrackerOutcome } from '@/strategies/outcomes'
+import { registerSimExitContract, type SimExitThresholds } from '@/strategies/sim-exit-contract'
 import { closeOutcomeStatusFromPnl } from '@/strategies/close-outcome-status'
 import {
   appendMonitorSnapshot,
@@ -163,57 +164,6 @@ async function ensureCompleteBuyFeaturesForOutcome(params: {
   })
 }
 
-/**
- * Register a PAPER position with the SL/TP tracker so the paper user sees stops and targets the same
- * way a live position would.
- *
- * Two deliberate choices:
- *  - The price basis is the REAL market price at entry (`priceUsd`), not the sim's mcap, because the
- *    tracker refreshes `current_price` from the market — mixing the two would break the ratios. If no
- *    live price was resolved, no position is registered: inventing one would fabricate trigger data.
- *  - `isSimulation: true`, which is what stops the monitor from selling real tokens on a paper stop.
- *
- * The thresholds come from the strategy id, which is where this sim encodes them
- * (`..._sl_30_tp200_h48`); an id that does not parse registers nothing rather than guessing.
- */
-async function registerSimulatedSlTp(params: {
-  strategyId: string
-  chain: StrategyChain
-  mintAddress: string
-  symbol: string
-  solAmount: number
-  priceUsd?: number | null
-}): Promise<void> {
-  const price = Number(params.priceUsd)
-  if (!Number.isFinite(price) || price <= 0) return
-  const match = /sl_(-?\d+)_tp(\d+)/.exec(params.strategyId)
-  if (!match) return
-  const stopLossPercentage = -Math.abs(Number(match[1]))
-  const takeProfitPercentage = Math.abs(Number(match[2]))
-  if (!Number.isFinite(stopLossPercentage) || !Number.isFinite(takeProfitPercentage)) return
-
-  try {
-    const { addSLTPPosition } = await import('@/utils/sl-tp-tracker')
-    await addSLTPPosition({
-      walletAddress: simWalletForChain(MCAP_TRACKER_SIM_WALLET, params.chain),
-      tokenAddress: params.mintAddress,
-      tokenSymbol: params.symbol,
-      positionSize: params.solAmount,
-      entryPrice: price,
-      stopLossPercentage,
-      takeProfitPercentage,
-      positionType: 'bot',
-      strategyId: params.strategyId,
-      isSimulation: true,
-    })
-  } catch (error) {
-    console.warn(
-      '[mcap-sim] SL/TP registration skipped:',
-      error instanceof Error ? error.message : error,
-    )
-  }
-}
-
 async function openSimPosition(params: {
   strategyId: string
   chain: StrategyChain
@@ -230,6 +180,10 @@ async function openSimPosition(params: {
   brainRisk?: ResolvedBrainRisk
   /** Live USD at the spine pass. Missing stays unset — do not invent a price. */
   priceUsd?: number | null
+  /** The effective thresholds the spine resolved for THIS trade (S8), not the strategy's base. */
+  exitThresholds?: SimExitThresholds
+  /** The price actually paid (S10) — the impact-included fill. Falls back to `priceUsd`. */
+  entryPriceUsd?: number | null
   /** REL-20: records are collected and bulk-inserted by the route per phase. */
   collect: (record: TrackingRecord) => void
 }): Promise<void> {
@@ -440,15 +394,24 @@ async function openSimPosition(params: {
       features: scoredEntryFeatures,
     })
   }
-  // Paper position → tracked SL/TP (evaluated and recorded, never executed on-chain).
-  await registerSimulatedSlTp({
-    strategyId: params.strategyId,
-    chain: params.chain,
-    mintAddress: params.mintAddress,
-    symbol: params.symbol,
-    solAmount: params.solAmount,
-    priceUsd: params.priceUsd,
-  })
+  // Paper position → the exit contract (S8/S10), evaluated and recorded but never executed.
+  //
+  // The thresholds are the spine's EFFECTIVE exit — the cl/brain-adjusted ones this trade was
+  // actually opened under. The previous form re-parsed them out of the strategy id (`sl_30_tp200`),
+  // which is the strategy's *base* and re-introduces a value the trade was never sized against.
+  if (params.exitThresholds) {
+    await registerSimExitContract({
+      chain: params.chain,
+      walletAddress: simWallet,
+      strategyId: params.strategyId,
+      mintAddress: params.mintAddress,
+      symbol: params.symbol,
+      positionSize: params.solAmount,
+      entryPriceUsd: params.entryPriceUsd ?? priceUsd,
+      basis: 'price',
+      thresholds: params.exitThresholds,
+    })
+  }
 }
 
 /** Writes today's regime tag at most once per process per (day, state); failures may retry. */
@@ -1276,6 +1239,9 @@ async function runSimTrack(request: NextRequest) {
 
         let sized: { sol: number; mult: number }
         let sizedFeatures: Record<string, unknown>
+        // The spine's contract, carried out of the branch so the sim open can stamp it (S8/S10).
+        let spineExit: SimExitThresholds | null = null
+        let spineEntryPrice: number | null = null
         if (execMode.isSimulated) {
           const { prepareTargetMachinePaperOpen } = await import(
             '@/strategies/prepare-target-machine-paper-open'
@@ -1313,6 +1279,8 @@ async function runSimTrack(request: NextRequest) {
           }
           sized = spine.sized
           sizedFeatures = spine.features
+          spineExit = spine.effectiveExit
+          spineEntryPrice = spine.impactedPriceUsd
           await appendSpineDecision(
             spinePassDecision(
               'mcap_tracker_sim_track',
@@ -1401,6 +1369,8 @@ async function runSimTrack(request: NextRequest) {
             symbol: snapshot.token_symbol,
             solAmount: simSol,
             priceUsd: liveMetrics.price_usd,
+            entryPriceUsd: spineEntryPrice,
+            exitThresholds: spineExit ?? undefined,
             entryMcap: entry.entryMcap,
             entryTemplate: strategy.config.entryTemplate,
             entryAt: entry.entryAt,
