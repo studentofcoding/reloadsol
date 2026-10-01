@@ -292,14 +292,25 @@ Read-only client for [market-brain](https://market-brain.yonathanevanchristy.wor
 | `MARKET_BRAIN_OHLC` | on when token set | Prefer `GET /ohlc` (Bearer) for Freeview / token-chart / rug-shadow 1m bars. Falls back to SolanaTracker/GMGN on 5xx/timeout. Set `0` to force the local path. |
 | `MARKET_BRAIN_SCORE_RISK` | on when token set | Principal sim-open (`mcap_enter_first_seen`, `mcap_enter_at_80`) calls `GET /risk/from-score` after combined score and applies returned TP/SL/hold. Set `0` to disable. Brain miss → `riskSource=fallback_default`. |
 
-**Sim-open risk order** (first-cut mcap / trending-assign / signals):
+**Sim-open risk order** (every sim domain, via `resolveSimOpenSize()` in `src/utils/brain-regime-risk.ts`):
 
 1. Live `GET /regime/params?profile=<recipe.profileId|default>` wins for **sizeScale** (and first-cut TP/SL/hold)
 2. Else embedded `recipe.riskGrid[climate state]`
 3. Else keep local TP / SL / size (log once)
 4. Principal sim-opens then overlay TP/SL/hold from `GET /risk/from-score?score=&rugTrip=` (does not replace climate size). Disable with `MARKET_BRAIN_SCORE_RISK=0`.
 
-`sizeScale` multiplies size; `0` is stand-down (skip new sim opens).
+`sizeScale` multiplies size; `0` is stand-down (skip new sim opens). It is **tiered, not a curve**:
+`climateGate.ts` assigns `scale = SIZE_SCALE[sizeKind]` over `stand-down 0 · trim 0.25 · reduced ·
+neutral · full`, and a cascade/news veto caps the kind at `trim` — so a sustained de-risk regime holds a
+constant 0.25 by design. (The type comment describes `scale` as a continuous `Cash=0 … Hype=1` hint; the
+assignment is the lookup.)
+
+**Reach.** Before 2026-10-01 the scalar resolved on mcap/search, signals and the Solana trending cycle only,
+so gmgn, social and the Robinhood trending twin ran at full configured size with no stamp — staking ~9× the
+per-trade SOL of the scaled family. All domains now go through one path, so cross-family PnL/ROI compares
+strategies rather than wiring. Set `SIM_FOLDED_STRATEGIES` (comma-separated; default the four families the
+proposal register measured as losing) to control which families the `/dev/paper-trade` fold toggle removes —
+an explicit empty value folds nothing. See [docs/diagrams/12-proposal-register.html](docs/diagrams/12-proposal-register.html).
 
 Smoke: `GET /health` is public. Authenticated `GET /union` / `/jupiter` / `/bubble` / `/recipes` / `/regime/params?profile=default` / `/ohlc` / `/ohlc/patterns` / `/risk/from-score` need `Authorization: Bearer $MARKET_BRAIN_TOKEN`. Recipe writes need `Authorization: Bearer $MARKET_BRAIN_ADMIN_TOKEN`.
 

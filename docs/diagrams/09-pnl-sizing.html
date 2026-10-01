@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PnL (sized) — what the sizing knob actually does</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Fraunces:opsz,wght@9..144,400&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper:#fafaf7; --paper2:#f0efe9; --ink:#163b2a; --muted:#5b6b60;
+    --soft:#8a968d; --accent:#84cc16; --link:#2e5aa8;
+    --sans:'DM Sans', system-ui, sans-serif;
+    --serif:'Fraunces', serif;
+    --mono:'Geist Mono', ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { font-family:var(--sans); background:var(--paper); color:var(--ink); margin:0; padding:3rem 2rem 4rem; }
+  .wrap { max-width: 1080px; margin:0 auto; }
+  .eyebrow { font-family:var(--mono); font-size:.66rem; font-weight:500; letter-spacing:.18em; text-transform:uppercase; color:var(--muted); margin-bottom:.5rem; }
+  h1 { font-family:var(--serif); font-size:clamp(1.4rem,2.2vw + .5rem,2rem); font-weight:400; letter-spacing:-.02em; margin:0 0 .75rem; }
+  h2 { font-family:var(--serif); font-size:1.25rem; font-weight:400; margin:3rem 0 .35rem; }
+  .sub { color:var(--muted); font-size:.92rem; line-height:1.6; margin:0 0 2rem; max-width:70ch; }
+  .cards { display:grid; grid-template-columns:1.15fr 1fr .85fr; gap:1rem; margin:2rem 0 0; }
+  @media (max-width:820px){ .cards{ grid-template-columns:1fr; } }
+  .card { background:#fff; border:1px solid rgba(22,59,42,.12); border-radius:6px; padding:1.25rem; }
+  .card h3 { font-size:.95rem; font-weight:600; margin:0 0 .6rem; display:flex; align-items:center; gap:.5rem; }
+  .dot { width:7px; height:7px; border-radius:50%; display:inline-block; flex:none; }
+  .dot-coral { background:var(--accent); } .dot-ink{ background:var(--ink); } .dot-soft{ background:var(--soft); }
+  .card ul { margin:0; padding-left:1.1rem; }
+  .card li { font-size:.85rem; color:var(--muted); line-height:1.65; }
+  .card li b { color:var(--ink); font-weight:600; }
+  figure { margin:2.5rem 0 0; }
+  figcaption { font-family:var(--mono); font-size:.68rem; letter-spacing:.12em; text-transform:uppercase; color:var(--soft); margin-top:.9rem; }
+  .framed { background:var(--paper2); border:1px solid rgba(22,59,42,.12); border-radius:8px; padding:1.5rem; overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; margin-top:.5rem; }
+  caption { text-align:left; font-family:var(--mono); font-size:.68rem; letter-spacing:.12em; text-transform:uppercase; color:var(--soft); padding-bottom:.6rem; }
+  th { font-family:var(--mono); font-size:.62rem; font-weight:500; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); text-align:right; padding:.55rem .5rem; border-bottom:1px solid rgba(22,59,42,.28); white-space:nowrap; }
+  th:first-child, td:first-child { text-align:left; }
+  td { font-size:.82rem; padding:.5rem .5rem; border-bottom:1px solid rgba(22,59,42,.09); text-align:right; color:var(--muted); }
+  td.name { color:var(--ink); font-weight:500; }
+  td code, p code, li code { font-family:var(--mono); font-size:.72rem; color:var(--ink); background:none; }
+  .neg { color:#8a5a5a; }
+  .lead { color:var(--ink); font-weight:600; }
+  .focal-row td { background:rgba(132,204,22,.07); }
+  .ok { font-family:var(--mono); font-size:.68rem; color:var(--muted); }
+  pre { font-family:var(--mono); font-size:.74rem; line-height:1.7; color:var(--ink); background:#fff;
+        border:1px solid rgba(22,59,42,.12); border-radius:6px; padding:1rem 1.15rem; overflow-x:auto; margin:1rem 0 0; }
+  ul.findings { padding-left:1.1rem; margin:.5rem 0 0; }
+  ul.findings li { font-size:.88rem; color:var(--muted); line-height:1.75; margin-bottom:.5rem; }
+  ul.findings li b { color:var(--ink); }
+  footer { margin-top:4rem; padding-top:1.25rem; border-top:1px solid rgba(22,59,42,.12); font-family:var(--mono); font-size:.68rem; letter-spacing:.06em; color:var(--soft); line-height:1.8; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p class="eyebrow">Sizing · what PnL (sized) means</p>
+  <h1>PnL (sized) is a volume knob on a nearly constant signal</h1>
+  <p class="sub">Every SOL figure on the PnL dashboard is computed twice — once at a flat
+  <code>0.005 SOL</code> stake, once at the stake the sizing pipeline chose. This page is what sits
+  between those two numbers. Read straight from <code>strategy_outcomes</code> and
+  <code>trading_records</code> on production for <strong>2026-09-30</strong> and <strong>2026-10-01</strong>
+  (Asia/Bangkok). All of it is paper: every strategy is <code>execution_mode = sim_only</code> and
+  there are <strong>zero</strong> real outcome rows.</p>
+
+  <div class="cards">
+    <div class="card">
+      <h3><span class="dot dot-coral"></span>It is one number, twice</h3>
+      <ul>
+        <li><code>ml_size_mult</code> <b>equals</b> the closed-loop score <code>cl_p</code> — exact match on <b>748 of 748</b> rows.</li>
+        <li>The ML risk head it is documented to use (<code>ml_p_bad</code>) is stamped on <b>0 of 800</b> rows. It never runs.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3><span class="dot dot-ink"></span>The −65% is arithmetic</h3>
+      <ul>
+        <li>It is not a risk decision. Mean multiplier <b>0.356</b> on winners, <b>0.359</b> on losers.</li>
+        <li>Per SOL staked the two are the same edge: <b>+69.7%</b> flat, <b>+68.1%</b> sized.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3><span class="dot dot-soft"></span>The two-sided knob: rejected</h3>
+      <ul>
+        <li>Modelled on 646 rows, the normalized tilt returns <b>1.90 SOL</b> vs flat's <b>2.25</b> — token-clustered <b>t = −2.5</b>.</li>
+        <li>The one scheme that beat flat is the <b>fail-soft guard</b>: +2.30 SOL at 75.3% ROI, one line.</li>
+      </ul>
+    </div>
+  </div>
+
+  <figure>
+    <div class="framed">
+      <svg viewBox="0 0 1000 520" width="100%" role="img" aria-labelledby="flatsized-title flatsized-desc">
+        <title id="flatsized-title">Flat stake versus sized stake: two-day PnL in SOL</title>
+        <desc id="flatsized-desc">Grouped bar chart of PnL in SOL for a flat 0.005 SOL stake against the stake the sizing pipeline chose, for 30 September (full day) and 1 October (partial day). Flat returns 1.380 and 0.837 SOL; sized returns 0.465 and 0.311 SOL — about 34 and 37 percent of the flat figure, from identical trade lists.</desc>
+        <rect width="100%" height="100%" fill="#f0efe9"/>
+
+        <!-- gridlines + y axis -->
+        <line x1="80" y1="40" x2="960" y2="40" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="80" y1="135" x2="960" y2="135" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="80" y1="230" x2="960" y2="230" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="80" y1="325" x2="960" y2="325" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="80" y1="40" x2="80" y2="420" stroke="rgba(22,59,42,.25)" stroke-width="1"/>
+        <line x1="80" y1="420" x2="960" y2="420" stroke="rgba(22,59,42,.25)" stroke-width="1"/>
+        <text x="72" y="28" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="end" letter-spacing="0.14em">SOL</text>
+        <text x="72" y="43" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end">1.6</text>
+        <text x="72" y="138" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end">1.2</text>
+        <text x="72" y="233" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end">0.8</text>
+        <text x="72" y="328" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end">0.4</text>
+        <text x="72" y="423" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end">0.0</text>
+
+        <!-- SEP 30 group: flat accent, sized muted -->
+        <rect x="220" y="92" width="72" height="328" fill="#f0efe9"/>
+        <rect x="220" y="92" width="72" height="328" fill="rgba(132,204,22,.16)" stroke="#84cc16" stroke-width="1"/>
+        <rect x="308" y="310" width="72" height="110" fill="#f0efe9"/>
+        <rect x="308" y="310" width="72" height="110" fill="rgba(91,107,96,.15)" stroke="#5b6b60" stroke-width="1"/>
+        <text x="256" y="84" fill="#84cc16" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">+1.380</text>
+        <text x="344" y="302" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">+0.465</text>
+
+        <!-- OCT 1 group -->
+        <rect x="660" y="220" width="72" height="200" fill="#f0efe9"/>
+        <rect x="660" y="220" width="72" height="200" fill="rgba(132,204,22,.16)" stroke="#84cc16" stroke-width="1"/>
+        <rect x="748" y="348" width="72" height="72" fill="#f0efe9"/>
+        <rect x="748" y="348" width="72" height="72" fill="rgba(91,107,96,.15)" stroke="#5b6b60" stroke-width="1"/>
+        <text x="696" y="212" fill="#84cc16" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">+0.837</text>
+        <text x="784" y="340" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">+0.311</text>
+
+        <!-- category labels + per-group delta -->
+        <text x="300" y="444" fill="#163b2a" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Sep 30 · full day</text>
+        <text x="740" y="444" fill="#163b2a" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Oct 1 · 12h, partial</text>
+        <text x="300" y="464" fill="#8a968d" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">386 TRADES · −66%</text>
+        <text x="740" y="464" fill="#8a968d" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">250 TRADES · −63%</text>
+
+        <!-- legend strip -->
+        <line x1="80" y1="484" x2="960" y2="484" stroke="rgba(22,59,42,.12)" stroke-width="0.8"/>
+        <text x="80" y="500" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.14em">LEGEND</text>
+        <rect x="176" y="492" width="12" height="10" fill="rgba(132,204,22,.16)" stroke="#84cc16" stroke-width="1"/>
+        <text x="196" y="501" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">FLAT · 0.005 SOL ON EVERY TRADE</text>
+        <rect x="520" y="492" width="12" height="10" fill="rgba(91,107,96,.15)" stroke="#5b6b60" stroke-width="1"/>
+        <text x="540" y="501" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">SIZED · 0.005 × ML_SIZE_MULT</text>
+      </svg>
+    </div>
+    <figcaption>Same trade list, two stakes · bars are 0.005 SOL flat vs 0.005 × multiplier · 2 days to 2026-10-01 12:05 +07</figcaption>
+  </figure>
+
+  <h2>The two numbers, day by day</h2>
+  <table>
+    <caption>strategy_outcomes · is_simulated · aggregated by exit_at in Asia/Bangkok</caption>
+    <thead>
+      <tr><th>Day</th><th>Trades</th><th>W / L</th><th>Win %</th><th>Median</th><th>PF</th><th>Flat (SOL)</th><th>Sized (SOL)</th><th>Mean mult</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="name">2026-09-30 · full</td><td>386</td><td>173 / 163</td><td>44.8</td><td>0.00</td><td>6.08</td><td class="lead">+1.3798</td><td>+0.4648</td><td>0.355</td></tr>
+      <tr><td class="name">2026-10-01 · 12h</td><td>250</td><td>128 / 96</td><td>51.2</td><td>+0.87</td><td>6.80</td><td class="lead">+0.8369</td><td>+0.3110</td><td>0.356</td></tr>
+      <tr class="focal-row"><td class="name">two-day total</td><td>636</td><td>301 / 259</td><td>47.3</td><td>—</td><td>6.33</td><td class="lead">+2.2166</td><td class="lead">+0.7757</td><td>0.356</td></tr>
+    </tbody>
+  </table>
+  <p class="sub" style="margin-top:.9rem">The two days are not the same window: Sept 30 is complete, Oct 1 is
+  the first twelve hours. The rolling last-24h view (Sept 30 12:05 → now) is 445 closes, 223 / 173 / 49 breakeven,
+  50.1% win. <strong>The mean multiplier is 0.356 on both sides of the ledger</strong> — which is why the sized
+  column is the flat column at ~1/3 size.</p>
+
+  <h2>Where the multiplier comes from</h2>
+  <p class="sub" style="margin-bottom:0">One helper, one call site, one line that decides everything:</p>
+  <pre>// src/strategies/ml-soft-size.ts — softMlSize()
+mult = Math.max(SOL_ML_SIZE_FLOOR, (1 - pBad) * confidence)   // floor defaults 0.25
+
+// src/strategies/target-machine-cl-size.ts — sizeFromClosedLoop()
+softMlSize(baseSol, { pBad: 1 - p })                          // so (1 - pBad) collapses back to p
+// → mult = max(0.25, cl_p), and cl_p is stamped as cl_p on features.domain_features</pre>
+  <p class="sub" style="margin-top:1rem">Because <code>cl_p ≤ 1</code> and the expression is
+  <code>max(floor, cl_p)</code>, the function can only ever be a haircut — its ceiling is the flat stake.
+  It is structurally incapable of sizing <em>up</em>. And <code>ml_p_bad</code>, the risk head the docstring
+  describes, is written by neither path: <code>stampTargetMachineCl</code> calls
+  <code>stampMlSize(features, sized)</code> with no <code>pBad</code> extra.</p>
+
+  <figure>
+    <div class="framed">
+      <svg viewBox="0 0 1000 520" width="100%" role="img" aria-labelledby="ranks-title ranks-desc">
+        <title id="ranks-title">Median closed-loop score against win rate, per strategy</title>
+        <desc id="ranks-desc">Scatter plot of one point per strategy: median closed-loop score cl_p on the x axis against observed win rate on the y axis, for seven days. There is no cross-strategy relationship. The two search_mcap TP variants at cl_p 0.34 and 0.39 win 55 percent, while gmgn_sm_kol_combined sits at the same 0.39 with 13 percent and gmgn_kol_momentum at 0.42 with 12 percent. A dashed vertical guide joins the two points at cl_p 0.39 to show the inversion.</desc>
+        <rect width="100%" height="100%" fill="#f0efe9"/>
+
+        <!-- gridlines -->
+        <line x1="80" y1="40" x2="960" y2="40" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="80" y1="135" x2="960" y2="135" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="80" y1="230" x2="960" y2="230" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="80" y1="325" x2="960" y2="325" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="280" y1="40" x2="280" y2="420" stroke="rgba(22,59,42,.06)" stroke-width="0.8"/>
+        <line x1="480" y1="40" x2="480" y2="420" stroke="rgba(22,59,42,.06)" stroke-width="0.8"/>
+        <line x1="680" y1="40" x2="680" y2="420" stroke="rgba(22,59,42,.06)" stroke-width="0.8"/>
+        <line x1="880" y1="40" x2="880" y2="420" stroke="rgba(22,59,42,.06)" stroke-width="0.8"/>
+        <line x1="80" y1="40" x2="80" y2="420" stroke="rgba(22,59,42,.25)" stroke-width="1"/>
+        <line x1="80" y1="420" x2="960" y2="420" stroke="rgba(22,59,42,.25)" stroke-width="1"/>
+        <text x="72" y="28" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="end" letter-spacing="0.14em">WIN %</text>
+        <text x="72" y="43" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end">60</text>
+        <text x="72" y="138" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end">45</text>
+        <text x="72" y="233" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end">30</text>
+        <text x="72" y="328" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end">15</text>
+        <text x="72" y="423" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end">0</text>
+        <text x="80" y="444" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">0.30</text>
+        <text x="280" y="444" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">0.35</text>
+        <text x="480" y="444" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">0.40</text>
+        <text x="680" y="444" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">0.45</text>
+        <text x="880" y="444" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">0.50</text>
+        <text x="520" y="462" fill="#8a968d" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.14em">MEDIAN CLOSED-LOOP SCORE CL_P PER STRATEGY</text>
+
+        <!-- the inversion: one vertical score, opposite results -->
+        <line x1="436" y1="71" x2="436" y2="336" stroke="rgba(22,59,42,.20)" stroke-width="1" stroke-dasharray="4,3"/>
+
+        <!-- non-focal points -->
+        <circle cx="156" cy="209" r="5" fill="#f0efe9"/>
+        <circle cx="156" cy="209" r="5" fill="rgba(91,107,96,.20)" stroke="#5b6b60" stroke-width="1"/>
+        <text x="144" y="213" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end">M80</text>
+        <circle cx="244" cy="70" r="5" fill="#f0efe9"/>
+        <circle cx="244" cy="70" r="5" fill="rgba(91,107,96,.20)" stroke="#5b6b60" stroke-width="1"/>
+        <circle cx="244" cy="106" r="5" fill="#f0efe9"/>
+        <circle cx="244" cy="106" r="5" fill="rgba(91,107,96,.20)" stroke="#5b6b60" stroke-width="1"/>
+        <circle cx="568" cy="343" r="5" fill="#f0efe9"/>
+        <circle cx="568" cy="343" r="5" fill="rgba(91,107,96,.20)" stroke="#5b6b60" stroke-width="1"/>
+        <text x="580" y="347" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace">KOL</text>
+        <circle cx="880" cy="298" r="5" fill="#f0efe9"/>
+        <circle cx="880" cy="298" r="5" fill="rgba(91,107,96,.20)" stroke="#5b6b60" stroke-width="1"/>
+        <text x="868" y="302" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end">FOMO</text>
+
+        <!-- focal pair: same score, opposite outcome -->
+        <circle cx="436" cy="71" r="6" fill="#f0efe9"/>
+        <circle cx="436" cy="71" r="6" fill="rgba(132,204,22,.22)" stroke="#84cc16" stroke-width="1.2"/>
+        <circle cx="436" cy="336" r="6" fill="#f0efe9"/>
+        <circle cx="436" cy="336" r="6" fill="rgba(132,204,22,.22)" stroke="#84cc16" stroke-width="1.2"/>
+        <rect x="452" y="60" width="72" height="12" rx="2" fill="#f0efe9"/>
+        <text x="456" y="70" fill="#163b2a" font-size="8" font-family="'Geist Mono',monospace">S·TP150 55%</text>
+        <rect x="452" y="325" width="86" height="12" rx="2" fill="#f0efe9"/>
+        <text x="456" y="335" fill="#163b2a" font-size="8" font-family="'Geist Mono',monospace">GMGN·SMK 13%</text>
+        <rect x="256" y="62" width="88" height="12" rx="2" fill="#f0efe9"/>
+        <text x="260" y="72" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace">S·TP200/300 55%</text>
+
+        <!-- legend strip -->
+        <line x1="80" y1="484" x2="960" y2="484" stroke="rgba(22,59,42,.12)" stroke-width="0.8"/>
+        <text x="80" y="500" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.14em">LEGEND</text>
+        <circle cx="182" cy="497" r="5" fill="#f0efe9"/>
+        <circle cx="182" cy="497" r="5" fill="rgba(132,204,22,.22)" stroke="#84cc16" stroke-width="1.2"/>
+        <text x="196" y="500" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">THE INVERSION · SAME SCORE, OPPOSITE RESULT</text>
+        <circle cx="560" cy="497" r="5" fill="#f0efe9"/>
+        <circle cx="560" cy="497" r="5" fill="rgba(91,107,96,.20)" stroke="#5b6b60" stroke-width="1"/>
+        <text x="574" y="500" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">A STRATEGY · 7 DAYS · X AXIS IS NOT ZERO-BASED</text>
+      </svg>
+    </div>
+    <figcaption>One point per strategy · x = median cl_p, y = win rate · 7 days to 2026-10-01 · the x axis spans 0.30–0.52 by design</figcaption>
+  </figure>
+
+  <h2>Correction: the "within-strategy gradient" was four trades</h2>
+  <p class="sub">An earlier reading of this page claimed the score ranks trades <em>within</em> a strategy
+  (+87% → +138%) even though it does not rank them <em>across</em> strategies. That was wrong, and the
+  cause is worth keeping: a 5-way bucket over a 1.4×-wide band.</p>
+  <table>
+    <caption>the bucket that produced "+138" · search_mcap…tp300 · cl_p 0.383–0.389 · 09-25 → 10-01</caption>
+    <thead><tr><th>cl_p</th><th>Trades</th><th>Avg PnL %</th><th>Sum</th><th>Share of bucket</th></tr></thead>
+    <tbody>
+      <tr class="focal-row"><td class="name">0.383</td><td>4</td><td class="lead">+1157.9</td><td>+4,632</td><td><b>34.9%</b></td></tr>
+      <tr><td class="name">0.388</td><td>4</td><td>+38.5</td><td>+154</td><td>1.2%</td></tr>
+      <tr><td class="name">0.389</td><td>88</td><td>+96.6</td><td>+8,501</td><td>64.0%</td></tr>
+      <tr><td class="name">bucket average</td><td>96</td><td>+138.4</td><td>+13,287</td><td>—</td></tr>
+    </tbody>
+  </table>
+  <p class="sub" style="margin-top:.9rem">Four trades at <code>cl_p = 0.383</code> averaging +1158% carried
+  the whole bucket above +138. Compare the two tiers that actually have mass, which is the only honest
+  version of the test:</p>
+  <table>
+    <caption>the two mass tiers, same strategy and window · difference is 9.6 points against a standard error of 38.2</caption>
+    <thead><tr><th>cl_p tier</th><th>Trades</th><th>Avg PnL %</th><th>Std error</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr><td class="name">0.341</td><td>73</td><td>+87.0</td><td>31.2</td><td class="ok">—</td></tr>
+      <tr><td class="name">0.389</td><td>88</td><td>+96.6</td><td>22.1</td><td class="ok">t ≈ 0.25 · noise</td></tr>
+    </tbody>
+  </table>
+  <p class="sub" style="margin-top:.9rem"><strong>So the score does not rank trades, within a strategy or
+  across them.</strong> It is a near-constant (0.27–0.42 where scored, a 1.5× band) whose variation is
+  uncorrelated with the outcome. That is the premise the rest of this page now builds on — and it is why
+  the model below rejects the two-sided knob rather than shipping it.</p>
+  <h2>And across strategies it inverts outright</h2>
+  <p class="sub">The pooled comparison that reports "no signal" (winners 0.358 vs losers 0.359) is a
+  Simpson's-paradox artifact of mixing strategies whose <code>cl_p</code> baselines differ. The per-strategy
+  view is not "no signal" — it is a mild inverse.</p>
+  <table>
+    <caption>across strategies (7 days) — the same score, inverted</caption>
+    <thead><tr><th>Strategy</th><th>Median cl_p</th><th>Rows at 0.5</th><th>Win %</th><th>Avg PnL %</th></tr></thead>
+    <tbody>
+      <tr><td class="name">search_mcap_first_seen_sl_30_tp150_h48</td><td>0.389</td><td>0</td><td class="lead">55.0</td><td class="lead">+95.8</td></tr>
+      <tr><td class="name">search_mcap_first_seen_sl_30_tp200_h48</td><td>0.341</td><td>0</td><td>54.9</td><td>+114.5</td></tr>
+      <tr><td class="name">mcap_enter_first_seen</td><td>0.341</td><td>0</td><td>49.5</td><td>+103.0</td></tr>
+      <tr><td class="name">mcap_enter_at_80</td><td>0.319</td><td>0</td><td>33.3</td><td>+5.6</td></tr>
+      <tr><td class="name">gmgn_sm_kol_combined</td><td>0.389</td><td>11</td><td class="neg">13.2</td><td class="neg">−7.6</td></tr>
+      <tr><td class="name">gmgn_kol_momentum</td><td>0.422</td><td>11</td><td class="neg">12.2</td><td class="neg">−20.2</td></tr>
+      <tr><td class="name">social_only_fomo_gt7</td><td>0.500</td><td>15</td><td class="neg">19.2</td><td class="neg">−45.9</td></tr>
+    </tbody>
+  </table>
+  <p class="sub" style="margin-top:.9rem">The three losing strategies sit at the <em>top</em> of the score
+  range and the 55%-win mcap family sits in the middle of it. Note also what the 0.5 column is:
+  <code>cl_p = 0.5</code> is the fail-soft default when the model is absent — those rows also carry a
+  fail-soft take-profit of exactly 50, against a mean of 186.5 on the scored rows, which is a second
+  independent tell. It lands almost entirely on the losing strategies, so "no model" currently buys the
+  largest stake.</p>
+
+  <h2>Multiplier buckets, 48 hours</h2>
+  <table>
+    <caption>every outcome by the stamped multiplier · 800 rows · exit_at &gt; now() − 48h</caption>
+    <thead><tr><th>Multiplier</th><th>Trades</th><th>Win %</th><th>Avg PnL %</th><th>Share of gross wins</th></tr></thead>
+    <tbody>
+      <tr><td class="name">0.27 – 0.39 <span class="ok">cl_p present</span></td><td>725</td><td>49.1</td><td>+79.7</td><td>0.389 alone = <b>32.6%</b></td></tr>
+      <tr><td class="name">0.50 <span class="ok">fail-soft default</span></td><td>23</td><td class="neg">17.4</td><td class="neg">−46.8</td><td>—</td></tr>
+      <tr><td class="name">1.00 <span class="ok">stamped, no cl_p</span></td><td>52</td><td class="neg">36.5</td><td class="neg">−8.8</td><td>—</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Modelled: what Levels 1 and 2 would have returned</h2>
+  <p class="sub">The formulas, then a backtest on the only window that can carry one. The <code>cl_p</code>
+  spine is four days old — it first appears on <strong>09-25</strong> and only reaches full coverage on
+  <strong>09-30</strong> — so the testable sample is the same two days as the report at the top of this page:
+  <strong>646 trades</strong>, ~98% of them scored. Every scheme below is scored on those identical rows at
+  the same <code>0.005 SOL</code> base, so the only thing that differs between the bars is how the stake was
+  weighted.</p>
+
+  <pre>Level 2 — normalized tilt (the candidate)
+  q_s  = within-strategy percentile rank of cl_p        // 0..1
+  mult = 0.5 + q_s                                      // in [0.5, 1.5], mean about 1
+         1.0 where cl_p is missing or the 0.5 fail-soft
+
+Fail-soft guard (today's accident, made deliberate)
+  mult = 0.25 if cl_p IS NULL or cl_p = 0.5 else 1.0
+
+Level 1 — market scalar
+  mult = clamp(1 - beta * marketRisk, 0.25, 1.0)        // one number, applied to the whole book
+
+Realistic composition
+  stake = SIM_BASE_POSITION_SOL * marketScalar * multFailSoft</pre>
+
+  <figure>
+    <div class="framed">
+      <svg viewBox="0 0 1000 520" width="100%" role="img" aria-labelledby="schemes-title schemes-desc">
+        <title id="schemes-title">Modelled PnL and ROI for four sizing schemes</title>
+        <desc id="schemes-desc">Bar chart of PnL in SOL for four sizing schemes scored on the same 646 trades at a 0.005 SOL base. Flat returns 2.25 SOL at 69.5 percent return on stake; today's multiplier returns 0.79 SOL at 64.2 percent; the proposed normalized tilt returns 1.90 SOL at 67.5 percent; and flat with the missing-model guard sized down to 0.25 returns 2.30 SOL at 75.3 percent, the best of the four on both measures.</desc>
+        <rect width="100%" height="100%" fill="#f0efe9"/>
+
+        <line x1="80" y1="40" x2="960" y2="40" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="80" y1="116" x2="960" y2="116" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="80" y1="192" x2="960" y2="192" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="80" y1="268" x2="960" y2="268" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="80" y1="344" x2="960" y2="344" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="80" y1="40" x2="80" y2="420" stroke="rgba(22,59,42,.25)" stroke-width="1"/>
+        <line x1="80" y1="420" x2="960" y2="420" stroke="rgba(22,59,42,.25)" stroke-width="1"/>
+        <text x="72" y="28" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="end" letter-spacing="0.14em">SOL</text>
+        <text x="72" y="43" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end">2.5</text>
+        <text x="72" y="119" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end">2.0</text>
+        <text x="72" y="195" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end">1.5</text>
+        <text x="72" y="271" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end">1.0</text>
+        <text x="72" y="347" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end">0.5</text>
+        <text x="72" y="423" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end">0.0</text>
+
+        <rect x="146" y="78" width="88" height="342" fill="#f0efe9"/>
+        <rect x="146" y="78" width="88" height="342" fill="rgba(91,107,96,.15)" stroke="#5b6b60" stroke-width="1"/>
+        <text x="190" y="70" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">+2.25</text>
+
+        <rect x="366" y="300" width="88" height="120" fill="#f0efe9"/>
+        <rect x="366" y="300" width="88" height="120" fill="rgba(91,107,96,.15)" stroke="#5b6b60" stroke-width="1"/>
+        <text x="410" y="292" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">+0.79</text>
+
+        <rect x="586" y="131" width="88" height="289" fill="#f0efe9"/>
+        <rect x="586" y="131" width="88" height="289" fill="rgba(91,107,96,.15)" stroke="#5b6b60" stroke-width="1"/>
+        <text x="630" y="123" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">+1.90</text>
+
+        <rect x="806" y="70" width="88" height="350" fill="#f0efe9"/>
+        <rect x="806" y="70" width="88" height="350" fill="rgba(132,204,22,.16)" stroke="#84cc16" stroke-width="1"/>
+        <text x="850" y="62" fill="#84cc16" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">+2.30</text>
+
+        <text x="190" y="444" fill="#163b2a" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">A · flat</text>
+        <text x="410" y="444" fill="#163b2a" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">B · today</text>
+        <text x="630" y="444" fill="#163b2a" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">C · tilt</text>
+        <text x="850" y="444" fill="#163b2a" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">D · flat + guard</text>
+        <text x="190" y="464" fill="#8a968d" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">69.5% ROI</text>
+        <text x="410" y="464" fill="#8a968d" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">64.2% ROI</text>
+        <text x="630" y="464" fill="#8a968d" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">67.5% ROI</text>
+        <text x="850" y="464" fill="#8a968d" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">75.3% ROI</text>
+
+        <line x1="80" y1="484" x2="960" y2="484" stroke="rgba(22,59,42,.12)" stroke-width="0.8"/>
+        <text x="80" y="500" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.14em">LEGEND</text>
+        <rect x="176" y="492" width="12" height="10" fill="rgba(132,204,22,.16)" stroke="#84cc16" stroke-width="1"/>
+        <text x="196" y="501" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">BEST ON BOTH PnL AND ROI — ONE LINE, NO NEW MODEL</text>
+      </svg>
+    </div>
+    <figcaption>Same 646 rows, same 0.005 SOL base · only the stake weighting differs · 2026-09-30 → 10-01 · bar = PnL, label = ROI per SOL staked</figcaption>
+  </figure>
+
+  <table>
+    <caption>schemes scored on identical rows · the spine era · 2026-09-30 → 10-01</caption>
+    <thead><tr><th>Scheme</th><th>Trades</th><th>PnL (SOL)</th><th>ROI / SOL staked</th><th>vs flat</th></tr></thead>
+    <tbody>
+      <tr><td class="name">A · flat 1.0</td><td>646</td><td>+2.25</td><td>69.5%</td><td class="ok">baseline</td></tr>
+      <tr><td class="name">B · today: max(0.25, cl_p)</td><td>646</td><td>+0.79</td><td>64.2%</td><td class="neg">−1.46 SOL</td></tr>
+      <tr><td class="name">C · Level 2 normalized tilt</td><td>646</td><td>+1.90</td><td>67.5%</td><td class="neg">−0.35 SOL · t = −2.5</td></tr>
+      <tr class="focal-row"><td class="name">D · flat + fail-soft → 0.25</td><td>646</td><td class="lead">+2.30</td><td class="lead">75.3%</td><td class="lead">+0.05 SOL</td></tr>
+      <tr><td class="name">E · flat, 4 losing strategies dropped</td><td>571</td><td class="lead">+2.39</td><td class="lead">83.6%</td><td class="ok">+0.14 SOL on 75 fewer trades</td></tr>
+    </tbody>
+  </table>
+
+  <p class="sub" style="margin-top:1.2rem"><strong>Level 2 is rejected, not deferred.</strong> The tilt's
+  excess over flat is −10.7 points per trade — t = −4.54 if trades were independent. They are not (the same
+  token is traded many times), so cluster by token and it stays negative and significant: 332 clusters,
+  <strong>t = −2.52</strong>. It does not fail for want of power; it fails because the thing it tilts on has
+  no rank power to amplify.</p>
+
+  <p class="sub"><strong>Level 1 needs no model to state its expectation: it is exactly linear.</strong>
+  A uniform scalar multiplies every trade, so a 0.7 scalar returns 0.7 × the flat PnL and 0.7 × the drawdown
+  — there is nothing to fit, and no backtest can tell you anything a multiplication cannot. That is why it
+  can ship as a plain risk dial the moment someone names the signal that drives it. Today no such signal
+  exists: <code>market_regime_tags</code> stopped in July and appears on no recent close.</p>
+
+  <p class="sub"><strong>And what does pay is smaller than a knob.</strong> D — size the unscored trades down
+  to the 0.25 floor — beats flat on both PnL and ROI, and it is one line needing no new model. E — stop
+  trading four strategies that lose regardless of size — earns <em>more</em> PnL from 75 fewer trades. The two
+  are the same finding seen twice: every missing-model row lives in the strategies E drops. Those trades
+  should not be taken at all, so the correct stake for them is not a small one — it is zero.</p>
+
+  <figure>
+    <div class="framed">
+      <svg viewBox="0 0 1000 520" width="100%" role="img" aria-labelledby="twolayer-title twolayer-desc">
+        <title id="twolayer-title">The four stake layers, with the modelled verdict on each</title>
+        <desc id="twolayer-desc">Layer diagram of the four factors that could multiply into a position stake, each carrying the verdict from the backtest: the fail-soft guard is the one that paid, adding 0.05 SOL and 5.8 points of return on stake; the normalized tilt is rejected, underperforming flat by a token-clustered t of minus 2.5; the market scalar is exactly linear and has no signal driving it; and the base stake is the dial that actually sets the risk.</desc>
+        <rect width="100%" height="100%" fill="#f0efe9"/>
+
+        <!-- multiply chain, left margin: the glyph sits in the gap between bands, not inside one -->
+        <line x1="68" y1="100" x2="68" y2="388" stroke="rgba(22,59,42,.14)" stroke-width="0.8"/>
+        <rect x="58" y="141" width="20" height="14" rx="2" fill="#f0efe9"/>
+        <text x="68" y="152" fill="#5b6b60" font-size="10" font-family="'Geist Mono',monospace" text-anchor="middle">×</text>
+        <rect x="58" y="237" width="20" height="14" rx="2" fill="#f0efe9"/>
+        <text x="68" y="248" fill="#5b6b60" font-size="10" font-family="'Geist Mono',monospace" text-anchor="middle">×</text>
+        <rect x="58" y="333" width="20" height="14" rx="2" fill="#f0efe9"/>
+        <text x="68" y="344" fill="#5b6b60" font-size="10" font-family="'Geist Mono',monospace" text-anchor="middle">×</text>
+
+        <!-- BAND 1 — focal: the one layer that paid -->
+        <rect x="120" y="64" width="800" height="72" rx="6" fill="#f0efe9"/>
+        <rect x="120" y="64" width="800" height="72" rx="6" fill="rgba(132,204,22,.10)" stroke="#84cc16" stroke-width="1.2"/>
+        <rect x="136" y="80" width="52" height="14" rx="2" fill="transparent" stroke="rgba(132,204,22,.60)" stroke-width="0.8"/>
+        <text x="162" y="91" fill="#84cc16" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">DOWN</text>
+        <text x="212" y="94" fill="#163b2a" font-size="16" font-weight="600" font-family="'DM Sans',sans-serif">Fail-soft guard</text>
+        <text x="360" y="94" fill="#5b6b60" font-size="12" font-family="'DM Sans',sans-serif">per trade</text>
+        <text x="904" y="92" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="end" letter-spacing="0.06em">SHIP · +0.05 SOL AND +5.8PT ROI · ONE LINE</text>
+        <text x="904" y="112" fill="#8a968d" font-size="9" font-family="'Geist Mono',monospace" text-anchor="end" letter-spacing="0.06em">0.25 when the model is absent — today it gets 0.5</text>
+
+        <!-- BAND 2 — the rejected candidate -->
+        <rect x="120" y="160" width="800" height="72" rx="6" fill="#fafaf7"/>
+        <rect x="120" y="160" width="800" height="72" rx="6" fill="none" stroke="rgba(22,59,42,.14)" stroke-width="1"/>
+        <rect x="136" y="176" width="52" height="14" rx="2" fill="transparent" stroke="rgba(22,59,42,.30)" stroke-width="0.8"/>
+        <text x="162" y="187" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">SHAPE</text>
+        <text x="212" y="190" fill="#5b6b60" font-size="16" font-weight="600" font-family="'DM Sans',sans-serif">Normalized tilt</text>
+        <text x="360" y="190" fill="#5b6b60" font-size="12" font-family="'DM Sans',sans-serif">per trade</text>
+        <text x="904" y="188" fill="#8a5a5a" font-size="9" font-family="'Geist Mono',monospace" text-anchor="end" letter-spacing="0.06em">REJECTED · t = −2.5 VS FLAT ON 646 TRADES</text>
+        <text x="904" y="208" fill="#8a968d" font-size="9" font-family="'Geist Mono',monospace" text-anchor="end" letter-spacing="0.06em">percentile rank of cl_p · no rank power to amplify</text>
+
+        <!-- BAND 3 — the market level -->
+        <rect x="120" y="256" width="800" height="72" rx="6" fill="#fafaf7"/>
+        <rect x="120" y="256" width="800" height="72" rx="6" fill="none" stroke="rgba(22,59,42,.14)" stroke-width="1"/>
+        <rect x="136" y="272" width="52" height="14" rx="2" fill="transparent" stroke="rgba(22,59,42,.30)" stroke-width="0.8"/>
+        <text x="162" y="283" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">LEVEL</text>
+        <text x="212" y="286" fill="#163b2a" font-size="16" font-weight="600" font-family="'DM Sans',sans-serif">Market scalar</text>
+        <text x="352" y="286" fill="#5b6b60" font-size="12" font-family="'DM Sans',sans-serif">per book</text>
+        <text x="904" y="284" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="end" letter-spacing="0.06em">EXACTLY LINEAR · 0.7 SCALAR → 0.7 × PnL AND DRAWDOWN</text>
+        <text x="904" y="304" fill="#8a968d" font-size="9" font-family="'Geist Mono',monospace" text-anchor="end" letter-spacing="0.06em">no signal drives it yet — regime tags stopped in July</text>
+
+        <!-- BAND 4 — the level that actually moves -->
+        <rect x="120" y="352" width="800" height="72" rx="6" fill="#fafaf7"/>
+        <rect x="120" y="352" width="800" height="72" rx="6" fill="none" stroke="rgba(22,59,42,.14)" stroke-width="1"/>
+        <rect x="136" y="368" width="52" height="14" rx="2" fill="transparent" stroke="rgba(22,59,42,.30)" stroke-width="0.8"/>
+        <text x="162" y="379" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">BASE</text>
+        <text x="212" y="382" fill="#163b2a" font-size="16" font-weight="600" font-family="'DM Sans',sans-serif">Base stake</text>
+        <text x="320" y="382" fill="#5b6b60" font-size="12" font-family="'DM Sans',sans-serif">sets the level</text>
+        <text x="904" y="380" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="end" letter-spacing="0.06em">SIM_BASE_POSITION_SOL · 0.005 · ENV-TUNABLE</text>
+        <text x="904" y="400" fill="#8a968d" font-size="9" font-family="'Geist Mono',monospace" text-anchor="end" letter-spacing="0.06em">the dial that actually sets what you risk</text>
+
+        <!-- legend strip -->
+        <line x1="120" y1="452" x2="920" y2="452" stroke="rgba(22,59,42,.12)" stroke-width="0.8"/>
+        <text x="120" y="468" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.14em">LEGEND</text>
+        <rect x="216" y="460" width="12" height="10" fill="rgba(132,204,22,.10)" stroke="#84cc16" stroke-width="1.2"/>
+        <text x="236" y="469" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">THE ONE LAYER THAT PAID</text>
+        <rect x="520" y="460" width="12" height="10" fill="#fafaf7" stroke="rgba(22,59,42,.14)" stroke-width="1"/>
+        <text x="540" y="469" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">REJECTED ON EVIDENCE, OR NOT YET DRIVEN</text>
+        <text x="120" y="496" fill="#163b2a" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">STAKE = BASE × MARKET SCALAR × FAIL-SOFT GUARD          (LEVEL 2 DROPPED)</text>
+      </svg>
+    </div>
+    <figcaption>Four candidate layers, one verdict each · only the down-only guard earns its place on the evidence</figcaption>
+  </figure>
+
+  <h2>What this means</h2>
+  <ul class="findings">
+    <li><b>PnL (sized) is not a risk-adjusted number — it is PnL (flat) times the average multiplier.</b>
+    With the multiplier at ~0.356 on winners and ~0.359 on losers, the sized line is the flat line at
+    one-third size: +68.1% per SOL staked against +69.7%. The <code>sizingEffectPct</code> of −65% is
+    arithmetic, not a finding.</li>
+    <li><b>It cannot maximize profit, by construction.</b> <code>mult = max(0.25, cl_p)</code> with
+    <code>cl_p ∈ [0,1]</code> means the ceiling is the flat stake. There is no branch that sizes up a
+    high-conviction trade — so the knob is a volume control wearing a risk control's name.</li>
+    <li><b>And it does not minimize loss either, because the score has no rank power at all.</b> Not within a
+    strategy (the two mass tiers are +87.0 on n=73 against +96.6 on n=88, t ≈ 0.25) and not across them (gmgn
+    sits at 0.389–0.422 with a 12–13% win rate while the 55%-win mcap family sits at 0.341–0.389). What looked
+    like a within-strategy gradient was four trades. Fed into any multiplier — today's or the proposed
+    two-sided one — an unranked score is just noise applied to the stake.</li>
+    <li><b>The two-sided knob is therefore rejected, not deferred.</b> Modelled on all 646 rows of the only
+    fully-covered window, the normalized tilt returns +1.90 SOL against flat's +2.25, at 67.5% ROI against
+    69.5% — and it stays significantly negative after clustering by token (<strong>t = −2.52</strong>, 332
+    clusters) rather than the t = −4.54 you get by pretending the trades are independent. It does not fail for
+    wanting power. It fails because it amplifies a signal that is not there. Building it shadow-first would
+    have been the right process for a <em>promising</em> candidate; this one is not one.</li>
+    <li><b>The one scheme that beat flat is the fail-soft guard, and it is one line.</b> A missing model falls
+    soft to <code>cl_p = 0.5</code> — today the <em>largest</em> multiplier in the book — and those 37 rows win
+    16.2% (15 of social's 26 rows; zero in every mcap family). Sizing them down to the 0.25 floor returns
+    +2.30 SOL at 75.3% ROI, beating flat on both. Note the direction: the fix is to size absence of evidence
+    <em>down</em>, not to make it neutral — moving 0.5 → 1.0 makes results worse, not better.</li>
+    <li><b>The biggest lever is not sizing at all.</b> Dropping the four strategies that lose regardless of
+    stake returns +2.39 SOL at 83.6% ROI on 571 trades — more PnL from 75 fewer trades. And the guard and the
+    selection turn out to be one finding seen twice: every missing-model row lives in the strategies the drop
+    removes. Those trades should not be taken at all, so the correct stake is not a small one, it is zero.</li>
+    <li><b>Level 1 costs nothing to state and nothing to build, because it is linear.</b> A uniform market
+    scalar returns exactly its own value times the flat PnL and the drawdown — a 0.7 scalar is a 30% haircut
+    on both. There is no model to fit; it ships as a risk dial the moment a signal is named. Today none is:
+    <code>market_regime_tags</code> stopped in July and is on no recent close.</li>
+    <li><b>Sizing is a rounding error next to selection, and that is the honest summary of this page.</b> Every
+    sizing scheme lands inside a 0.5 SOL band over two days; choosing which strategies to run is worth an order
+    of magnitude more, and it needs no new model, no shadow period and no risk headroom. And the risk-cap
+    question stays open regardless: prod carries <code>MAX_SOL_AT_RISK=0.1</code> against a paper peak of 0.42
+    SOL, so anything that raises the average stake from today's 0.38 has to be paired with a lower base.</li>
+  </ul>
+
+  <footer>
+    Source: <code>strategy_outcomes</code> on production (reloadsol_db) · windows: 2026-09-30 / 2026-10-01 Asia/Bangkok, by <code>exit_at</code><br>
+    <code>cl_p</code> spine coverage: first row 09-25, 0.8% · 50.1% on 09-29 · 94.6% on 09-30 · 98.5% on 10-01 — so the backtest runs on the 646-row spine era only<br>
+    Code read: <code>src/strategies/ml-soft-size.ts</code> · <code>src/strategies/target-machine-cl-size.ts</code> · <code>src/strategies/pnl-dashboard.ts</code> · <code>src/strategies/db.ts</code> · <code>src/app/api/pnl/daily/route.ts</code><br>
+    Nothing was changed by this analysis. Companion page: <code>08-strategy-readiness.html</code> (go-live assessment)
+  </footer>
+
+</div>
+</body>
+</html>

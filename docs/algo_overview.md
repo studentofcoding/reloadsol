@@ -294,8 +294,10 @@ to hold), **peak simultaneous exposure × the observed clip** (the binding capit
 profit factor / R:R / expectancy mean + median. Profit factor is the headline because the expectancy
 mean is right-tail driven; the median is shown beside it. Amounts are in the chain's native unit
 (SOL vs ETH — the RH twin sizes in ETH) and are never summed across chains. The observed clip sits
-below the configured one because `scaleOpenSize(…, brainRisk)` scales it down (2026-09-29: 0.00097
-SOL/trade against a 0.01 config).
+below the configured one because `resolveSimOpenSize(…, brainRisk)` scales it down (2026-09-29: 0.00097
+SOL/trade against a 0.01 config). Since 2026-10-01 that scalar reaches **every** sim domain through one
+path, so the observed clip is now comparable across families — before the fix gmgn and social opened at
+full configured size (no scalar, no stamp) and staked ~9× the per-trade SOL of the scaled mcap family.
 
 Peak open is an **interval-overlap sweep over `strategy_outcomes`' own `[entry_at, exit_at)`
 intervals** (open positions counted to `now()`). Do not compute it from buy/sell records: a position

@@ -8,6 +8,44 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — every strategy on one market scalar, and a fold toggle on the paper desk
+
+**The scalar had a reach gap, not a signal gap.** `brain_size_scale` (market brain → `scaleOpenSize`) was
+resolved by mcap, signals and the Solana trending cycle only. gmgn, social and the Robinhood trending twin
+(`att_rh`) opened at their full configured stake with no scalar and no stamp at all. Measured on prod before
+the fix: `brain_size_scale` present on **597/597** mcap/search rows and **0** of gmgn (40), social (14) and
+att_rh (26). The consequence was an inverted book — the two losing families staked **~9×** the per-trade SOL
+of the winning one (`0.0078` / `0.0085` against `0.00088`) while the 0.25 haircut landed only on the winner.
+
+- New `resolveSimOpenSize()` in `brain-regime-risk.ts` — one path for every domain: resolve, skip on
+  stand-down, else `scaleOpenSize()`. A stand-down **skips the open** rather than passing a 0 stake into the
+  spine, which would record a zero-size position.
+- Wired in `gmgn-open-sim.ts`, the social `sim-track` candidate loop (one session per cycle) and
+  `trending-bot-rh-sim.ts` `buySim` — that last one had no brain wiring whatsoever, which is the source of
+  att_rh's flat `0.0015` and its missing stamp. mcap/signals already used the same semantics and are
+  unchanged.
+- Three new tests pin the semantics: it scales by the scalar, it is the **identity when the brain is
+  unavailable** (so an unset `MARKET_BRAIN_TOKEN` can never silently zero a desk), and it **skips on
+  stand-down**.
+
+**The scalar is tiered, not a curve — which is why it reads a constant 0.25.** Verified live 2026-10-01: the
+brain answers `ok: true`, `stale: false`, `h = 0.5758`, `cascadeVeto: true`, headline "BTC is dumping — beware".
+`climateGate.ts` maps `scale = SIZE_SCALE[sizeKind]` over five values (`stand-down 0 · trim 0.25 · reduced ·
+neutral · full`) and a cascade veto clamps to `trim`, so a sustained dump regime *should* hold 0.25. Worth
+knowing: the type comment describes `scale` as a continuous `Cash=0 … Hype=1` hint while the assignment is a
+tier lookup, so it emits five discrete values.
+
+**Fold toggle on `/dev/paper-trade`.** A `fold` flag removes the four families the register measured as losing
+at every stake (`gmgn_sm_kol_combined`, `gmgn_kol_momentum`, `social_only_fomo_gt7`, `att_rh`), resolved
+server-side so the aggregate, the per-day drill-down, the ledger and the open-position list cannot disagree.
+Measured on prod: folding moves 675 → 595 closes and **raises** the PnL total 47,433 → 50,394
+percentage-points, because the folded families are net-negative. Env-overridable via `SIM_FOLDED_STRATEGIES`
+(an explicit empty value folds nothing, which is how the toggle's off state is spelled server-side).
+
+The fold and the scalar are separate layers on purpose: the scalar standardises *how much* is staked, the
+fold decides *whether* a strategy trades at all — so a family re-tuned later is already measured on the same
+risk footing as its neighbours.
+
 ### Fixed — the ML label backfill no longer outlives the proxy, plus user rugs counted per dev
 
 **Backfill.** `POST /api/strategies/ml/backfill-labels` failed with `Unexpected token '<', "<!DOCTYPE "...`.
