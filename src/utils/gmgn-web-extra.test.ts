@@ -111,6 +111,21 @@ describe('gmgn-web-extra', () => {
     expect(rows[1]).toMatchObject({ address: 'B', isHoneypot: true, isSafe: false })
   })
 
+  it('takes a pace override so a bulk safety sweep stays off the live lane', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({
+        code: 0,
+        data: {
+          list: [{ token_address: 'A', liquidity: '123.45', is_honeypot: 'no', is_safe: 'yes' }],
+        },
+      }),
+    )
+    const rows = await fetchGmgnWebSafety(['A'], { rps: 2 })
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.liquidityUsd).toBeCloseTo(123.45, 5)
+    expect(String(fetchSpy.mock.calls[0][0])).toContain('meme_quote_info')
+  })
+
   it('parses token_stat percentages with the 0–1 → percent rule', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       jsonResponse({

@@ -278,16 +278,16 @@ Both default **off**, and neither gates anything: they record + label only, suff
 UI `/dev/dev-reputation` (profitable devs vs ban list, top-10 tokens each). Read APIs:
 `GET /api/dev/reputation`, `GET /api/gmgn/risk-chips` (bulk chips for list surfaces).
 
-### Metrics series — 1m OHLCV (`metrics_copier`)
+### Metrics series — 1m volume + market-cap candles (`metrics_copier`)
 
 The durable per-token series (`token_metrics_history`: one row per (token, UTC hour) carrying five 1m arrays —
-`vol_min`, `o_min`, `h_min`, `l_min`, `c_min` — i.e. the **complete 1m candle**, which `token_ohlc_bars`
-cannot give you because its `volume` is NULL everywhere). Filled by `POST /api/metrics/copy`, cheapest lane
-first: the 24h 1m candle cache for free, then one paced GMGN-web candle call per remaining watch mint. Each
-field is first-writer-wins independently, and `NULL` means *not observed* — never 0. Its only hazard is a
-**cadence longer than the window a single call covers** (501 × 1m ≈ 8.35 h): the minutes in the gap are never
-re-served, so a daily sweep would silently hole the series. See
-[docs/GMGN_RATE_BUDGET.md](docs/GMGN_RATE_BUDGET.md).
+`vol_min` (USD volume) plus `o_min`, `h_min`, `l_min`, `c_min`, which are **market-cap** candle values from
+GMGN's `token_mcap_candles`). Filled by `POST /api/metrics/copy`, cheapest lane first: the 24h 1m candle cache
+for free (volume only — its bars are *prices*, and the two differ by ~10⁹, so it must not write the mcap
+columns), then one paced GMGN-web candle call per remaining watch mint. Each field is first-writer-wins
+independently, and `NULL` means *not observed* — never 0. Its only hazard is a **cadence longer than the window
+a single call covers** (501 × 1m ≈ 8.35 h): the minutes in the gap are never re-served, so a daily sweep would
+silently hole the series. See [docs/GMGN_RATE_BUDGET.md](docs/GMGN_RATE_BUDGET.md).
 
 | Variable | Default | Description |
 |----------|---------|-------------|

@@ -146,25 +146,20 @@ export function planCopyTargets(input: CopyPlanInput): CopyPlan {
 }
 
 /**
- * Cached bars → the writer's candle shape, carrying **the whole candle**, not just the volume.
+ * Cached bars → **volume only**.
  *
- * The cache's bars already hold open/high/low/close alongside volume, and the copy lane's
- * `GmgnWebCandle` is already `{t, o, h, l, c, v}` — both fit this shape structurally, so nothing is
- * dropped between the source and the row. A missing or non-numeric field is dropped by
- * `planSlotWrites`, which is the single place that rule lives.
+ * The 24h cache holds token *prices* from the chart path, while `token_metrics_history`'s candle
+ * columns are **market cap** (GMGN's `token_mcap_candles`). Measured on prod, the two differ by
+ * ~10^9: `{gmgn_web}` rows had a median open of 586,287 and `{cache_copy}` rows 0.00143. Writing
+ * the cache's prices into those columns put two quantities in one column, so any reader computing a
+ * ratio across such rows saw a fake ~10^9x ramp. Volume is USD on both sides, so the cache still
+ * contributes that — and only that.
  */
 export function toCandleVolumes(bars: CopierCacheBar[]): CandleVolume[] {
   const out: CandleVolume[] = []
   for (const bar of bars) {
     if (!Number.isFinite(bar?.time)) continue
-    out.push({
-      t: bar.time,
-      o: bar.open,
-      h: bar.high,
-      l: bar.low,
-      c: bar.close,
-      v: bar.volume,
-    })
+    out.push({ t: bar.time, v: bar.volume })
   }
   return out
 }

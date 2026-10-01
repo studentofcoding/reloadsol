@@ -289,16 +289,29 @@ function yesNo(value: unknown): boolean | null {
   return null
 }
 
-/** Batch safety (`meme_quote_info`) — up to the shared web batch size per call. */
-export async function fetchGmgnWebSafety(mints: string[]): Promise<GmgnWebSafety[]> {
+/**
+ * Batch safety (`meme_quote_info`) — up to the shared web batch size per call.
+ *
+ * `rps` puts the call on the bulk copy lane instead of the live one, so a sweep that needs
+ * liquidity for the whole watch set cannot pace the chart/risk lane.
+ */
+export async function fetchGmgnWebSafety(
+  mints: string[],
+  opts?: { rps?: number | null },
+): Promise<GmgnWebSafety[]> {
   const unique = [...new Set(mints.map((m) => m.trim()).filter(Boolean))]
   if (unique.length === 0) return []
   const out: GmgnWebSafety[] = []
   for (const batch of chunkGmgnWebAddresses(unique)) {
-    const json = await callJson('POST', '/api/v1/meme_quote_info', {
-      chain: 'sol',
-      addresses: batch,
-    })
+    const json = await callJson(
+      'POST',
+      '/api/v1/meme_quote_info',
+      {
+        chain: 'sol',
+        addresses: batch,
+      },
+      { rps: opts?.rps },
+    )
     if (!json || !isRecord(json.data)) continue
     const list = json.data.list
     if (!Array.isArray(list)) continue

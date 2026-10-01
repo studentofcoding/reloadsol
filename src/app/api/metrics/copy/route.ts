@@ -2,6 +2,7 @@ import { NextRequest, NextResponse, connection } from 'next/server'
 import { log } from '@/utils/unified-logger'
 import {
   fetchGmgnWebCandlesPaced,
+  fetchGmgnWebSafety,
   gmgnWebCopyRps,
   gmgnWebIsBlocked,
   takeGmgnWebBlockCount,
@@ -18,7 +19,7 @@ import {
   toCandleVolumes,
   type CachedCoverage,
 } from '@/strategies/token-metrics-copier'
-import { recordMetricHours, pruneTokenMetricsHistory } from '@/strategies/token-metrics-history'
+import { recordMetricHours, recordMetricSnapshots, pruneTokenMetricsHistory } from '@/strategies/token-metrics-history'
 import {
   DEFAULT_WATCH_MAX_MINTS,
   intEnv,
@@ -189,7 +190,31 @@ export async function POST(request: NextRequest) {
       return candles.length
     })
 
-    // 4) Retention — whole hours only.
+    // 4) LIQUIDITY — the series' `liquidity_close` had no writer at all (0 rows), which leaves the
+    //    C20 band and any series-derived label without the input they need. `meme_quote_info` is
+    //    batched (≤8 addresses per call), so the whole watch set costs ~19 calls on the copy lane.
+    //    Soft: no liquidity in the response → no write, and it never touches vol_min.
+    let liquidityRows = 0
+    if (mints.length > 0) {
+      const safety = await fetchGmgnWebSafety(mints, { rps })
+      const samples = safety
+        .map((row) => ({
+          tokenAddress: row.address,
+          chain: 'sol',
+          liquidityUsd: row.liquidityUsd,
+        }))
+        .filter(
+          (s): s is { tokenAddress: string; chain: string; liquidityUsd: number } =>
+            typeof s.liquidityUsd === 'number' &&
+            Number.isFinite(s.liquidityUsd) &&
+            s.liquidityUsd > 0,
+        )
+      if (samples.length > 0) {
+        liquidityRows = await recordMetricSnapshots(samples, now, 'gmgn_web')
+      }
+    }
+
+    // 5) Retention — whole hours only.
     let pruned = 0
     if (now.getUTCHours() % PRUNE_EVERY_HOURS === 0) {
       pruned = await pruneTokenMetricsHistory()
@@ -206,6 +231,7 @@ export async function POST(request: NextRequest) {
       parked,
       hours: hoursWritten,
       slots: slotsAttempted,
+      liquidity_rows: liquidityRows,
       blocks,
       pruned,
       cadence_ok: cadenceOk,
