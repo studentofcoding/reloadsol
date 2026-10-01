@@ -17,7 +17,10 @@ This document summarizes how bulk swaps and token account closures work across t
 
 ## Directional (desk) swap quote
 
-The desk path — `fetchSwapQuote` / `prepareSwapTransaction` **without** `maxHops` — is
+**Two entry points, and they are not the same call.** A *surface* asks `getSwapQuote`
+(`src/utils/jupiter.ts`) — a display estimate, routed through the shared quote engine
+(`src/utils/quote-engine.ts`, [SPEC](specs/SPEC-quote-engine-v1.md)) and never on the execution lane. The
+*executor* asks `fetchSwapQuote` / `prepareSwapTransaction` **without** `maxHops`, which is
 **Jupiter-only**, gated by absolute price impact (`SWAP_QUOTE_MAX_IMPACT_PCT`, default **15%**):
 
 1. **Jupiter Swap V2** — `api.jup.ag/swap/v2/order` (proxied `/api/jupiter/quote`; needs `JUPITER_API_KEY`). This is the primary and, normally, the only candidate.
@@ -34,11 +37,18 @@ by highest `outAmount`, then lower impact, then `PROVIDER_TIE_RANK` (raptor → 
 jupiter_swap — the Raptor rank is unused while only Jupiter is collected). Fail-soft: a 429 on V2
 does not fail Lite.
 
-**A display surface quotes through the shared engine, not a local fetch.** `BulkTokenSeller`'s estimate
-now asks `src/utils/quote-engine.ts` for a `purpose: 'estimate'` quote: **Raptor first** — ungated, and
-it answers a whole batch in well under a second — escalating to the picker above **only when Raptor is
-unavailable or its own impact fails the gate**. `purpose: 'execute'` is a different lane entirely (see
-the desk path above) and is never cached.
+**Every display surface quotes through the shared engine, not a local fetch.** `getSwapQuote` is the one
+function the signals tab's buy/sell hovers and the PnL tracker's sell estimate already go through, so it now
+routes into `src/utils/quote-engine.ts` and adapts the result back with `solanaQuoteToSwapQuote` — those
+callers share **one keyed entry** instead of fetching the same sell estimate independently on the Jupiter
+background lane. The bulk buyer's and seller's estimates ask the engine directly.
+
+An `estimate` quote is **Raptor first** — ungated, and it answers a whole batch in well under a second —
+escalating to the picker above **only when Raptor is unavailable or its own impact fails the gate**.
+`purpose: 'execute'` is a different lane entirely (see the desk path above) and is never cached. Because a
+raw `outAmount` is a smallest-unit integer, an estimate also carries **`outDecimals`** for the output mint —
+read from the same cached mint-account call that answers the transfer-fee question, so it costs no extra
+lookup — and a surface shows **nothing** when the mint cannot be read rather than guessing an exponent.
 
 The engine resolves Raptor's hop ceiling **per pair** too, which is what fixed the token→token 500 below.
 That guardrail is load-bearing: at `maxHops=1` a two-pool token quotes a single-hop, 38%-impact route,
@@ -88,9 +98,13 @@ so the execution's prepare is always live.
 
 **Known nuances.** The estimate quotes without `taker` while prepare adds one, so the two are not
 byte-identical and the number can shift slightly at click time (the executor re-quotes at prepare, so
-nothing unsafe executes). The prefetch window is short — `SWAP_PREPARE_TTL_MS` is **8s** — so a
-page-load prefetch is usually stale by click time and the click rebuilds; the estimate cannot rely on
-it. **Token → token sells** use the same path: `sellOutputMint` resolves the custom output with its own
+nothing unsafe executes). The **warm** (`warmResolvedPreparedSwap`) is a taker-scoped prepare, so it draws
+the same 0.5 rps lane an execution needs — which is why it fires on **intent** rather than on every edit:
+1.5 s of idle on the form, or immediately when the pointer or keyboard reaches the action button
+(`src/hooks/useWarmOnIntent.ts`, once per distinct set of inputs). `SWAP_PREPARE_TTL_MS` is **8s**, so even a
+fired warm is often stale by click time and the click rebuilds; nothing may depend on a cache hit, which is
+what makes a missed trigger cost latency only. **Token → token sells** use the same path: `sellOutputMint`
+resolves the custom output with its own
 symbol/decimals, and `swapPrepareCacheKey` includes `outputMint`, so a native-output swap can never be
 reused for a token-output quote.
 
@@ -107,7 +121,8 @@ Per [Solana Tracker Swap API](https://docs.solanatracker.io/guides/swap-api):
 
 | Helper | Purpose |
 |--------|---------|
-| `fetchSwapQuote` | Jupiter V2 (`/order`, no taker), Lite only if V2 fails; impact gate; pick winner |
+| `getSwapQuote` | **Surface entry** — routes into the quote engine as `purpose: 'estimate'` and adapts the result back; the signals hovers and the PnL sell estimate come through here |
+| `fetchSwapQuote` | Jupiter V2 (`/order`, no taker), Lite only if V2 fails; impact gate; pick winner. The engine's escalation path, and what the executor uses |
 | `prepareSwapTransaction` | Desk → Jupiter V2 (Lite fallback); arb (`maxHops`) → Raptor hops path |
 | `submitSignedSwap` | Shyft send or RPC; Raptor status poll only if tx was Raptor-built |
 | `executeClientSwap` | Single-tx: prepare → sign → submit → confirm |

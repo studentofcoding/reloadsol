@@ -1,6 +1,6 @@
 # SPEC — One Solana quote engine, and every trade layer derives from it v1
 
-**Status:** implementing (2026-10-01)
+**Status:** implemented (2026-10-01) — steps 1–4 shipped and live on prod; step 5 partly. See §4 for the per-step status and what is deliberately left open.
 **Date:** 2026-10-01
 **Surface:** `src/utils/quote-engine.ts` (new), `src/hooks/useQuote.ts` (new), `src/components/BulkTokenSeller.tsx`, `src/components/BulkTokenBuyer.tsx`, `src/components/signals/*`, `src/components/PnLTracker.tsx`
 **Lane:** Solana trade surfaces only (bulk buy, bulk sell, signals, PnL, DLMM fast swap)

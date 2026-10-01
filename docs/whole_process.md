@@ -13,7 +13,8 @@ ReloadSOL uses **three execution stacks** for swaps and closes, plus supporting 
 | Stack | Core functions | Used for |
 |-------|----------------|----------|
 | **Solana Tracker Raptor** | `executeBulkBuy`, `executeBulkSellAlt`, `executeClientSwap` | Bulk buy/sell; signals (LiveTab, BoardTab); PnL Fast Sell; server bots |
-| **Jupiter Lite API** | `getSwapQuote`, `getSwapTransaction` | Single buy/sell (LiveTab, BoardTab instant sell, SL/TP) |
+| **Jupiter Lite API** | `getSwapTransaction` (build) | Single buy/sell (LiveTab, BoardTab instant sell, SL/TP) |
+| **Quote engine** | `getSwapQuote` → `requestQuote` (`purpose: 'estimate'`) | Every **display** estimate — signals hovers, PnL sell estimate, bulk buyer/seller. Raptor-first, ungated; never the execution lane. Every surface reaches it through `getSwapQuote` |
 | **Jupiter Reclaim + manual SPL close** | `closeTokenAccounts`, `craftReclaimTransaction` | Bulk close; auto-close after 100% sell |
 
 | Supporting layer | Role |

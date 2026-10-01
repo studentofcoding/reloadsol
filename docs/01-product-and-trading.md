@@ -60,6 +60,15 @@ selection back to `sol`.
   whole batch in under a second — keeps its answer only while the impact passes the gate, and escalates
   to the Jupiter picker otherwise. That keeps a *displayed* number off the scarce 0.5 rps execution
   budget. `purpose: 'execute'` is never cached and always re-quotes.
+  **Every surface reaches it through one entry**: `getSwapQuote` (`src/utils/jupiter.ts`) routes into the
+  engine, so the signals hovers, the PnL sell estimate and the bulk forms share one keyed entry instead of
+  fetching the same quote independently on the Jupiter background lane. An estimate also carries the output
+  mint's `outDecimals` (read from the same cached mint-account call as the transfer fee), so a surface can
+  render `outAmount` as a token amount rather than a raw smallest-unit integer — and shows nothing when the
+  mint cannot be read rather than guessing a scale.
+  The buyer/seller **warm** draws that same 0.5 rps lane, so it fires on intent
+  (`src/hooks/useWarmOnIntent.ts`: 1.5 s of idle, or reaching the action button), not on every edit. A
+  missed trigger costs latency only — the click path builds on a cold cache.
   Raptor hops are resolved per pair (`src/utils/raptor-hops.ts`): 1 when either side is SOL/USDC/USDT
   (a direct pool exists), `RAPTOR_TOKEN_TOKEN_HOPS` (default 3) for a token→token pair, which at 1 hop
   returns `500 "No direct route found"`.
