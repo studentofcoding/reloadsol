@@ -3250,6 +3250,23 @@ export async function fetchTradingRecordsForWallet(
   opts?: { strategies?: string[]; sinceDays?: number; sinceLastClose?: boolean },
 ): Promise<import('@/utils/trading-tracker').TrackingRecord[]> {
   try {
+    // #region debug
+    // Names the caller of the slow hydrations. Postgres returns in ms; the cost is Node
+    // parsing the payload, and the pool client stays checked out for the whole of it — so
+    // the interesting number is this one, and the interesting fact is who asked.
+    const __dbgT0 = Date.now()
+    const __dbgLog = (n: number, branch: string) => {
+      const ms = Date.now() - __dbgT0
+      const via = (new Error().stack ?? '')
+        .split('\n')
+        .slice(2, 4)
+        .map((s) => s.trim().replace(/^at\s+/, ''))
+        .join(' <- ')
+      console.warn(
+        `[tr-debug] wallet=${walletAddress} rows=${n} ms=${ms} branch=${branch} opts=${JSON.stringify(opts ?? {})} via=${via}`,
+      )
+    }
+    // #endregion
     // `sinceLastClose` returns only the rows the position reconstruction actually needs.
     //
     // The bound is per (strategy, mint), NOT per mint: each strategy holds its own cycle on a
@@ -3285,6 +3302,9 @@ export async function fetchTradingRecordsForWallet(
           ORDER BY t.timestamp ASC`,
         [walletAddress, ...strategyValues],
       )
+      // #region debug
+      __dbgLog(rows.length, 'sinceLastClose')
+      // #endregion
       return rows.map((r) =>
         typeof r.data === 'string'
           ? (JSON.parse(r.data) as import('@/utils/trading-tracker').TrackingRecord)
@@ -3310,6 +3330,9 @@ export async function fetchTradingRecordsForWallet(
        ORDER BY timestamp ASC`,
       values,
     )
+    // #region debug
+    __dbgLog(rows.length, 'unbounded')
+    // #endregion
     return rows.map((r) =>
       typeof r.data === 'string'
         ? (JSON.parse(r.data) as import('@/utils/trading-tracker').TrackingRecord)
