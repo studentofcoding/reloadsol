@@ -77,6 +77,25 @@ export async function query<T extends QueryResultRow = QueryResultRow>(
     recordDbSuccess();
     return { rows: result.rows, rowCount: result.rowCount ?? 0 };
   } catch (error) {
+    // #region debug
+    // The pool's own view at the moment of failure. `waitingCount` is the direct measure of
+    // saturation: how many callers were queued for a client when this one gave up. If it is
+    // high while totalCount sits at max, the pool is simply too small for the concurrency; if
+    // it is 0, the failure is not pool exhaustion at all and the message is misleading.
+    try {
+      const p = getPool();
+      const via = (new Error().stack ?? '')
+        .split('\n')
+        .slice(2, 5)
+        .map((s) => s.trim().replace(/^at\s+/, ''))
+        .join(' <- ');
+      console.warn(
+        `[q-debug] FAILED total=${p.totalCount} idle=${p.idleCount} waiting=${p.waitingCount} err=${error instanceof Error ? error.message : String(error)} sql=${sql.replace(/\s+/g, ' ').trim().slice(0, 60)} via=${via}`,
+      );
+    } catch {
+      /* never let debug logging mask the real error */
+    }
+    // #endregion
     if (isDbConnectivityError(error)) {
       recordDbFailure();
     }
