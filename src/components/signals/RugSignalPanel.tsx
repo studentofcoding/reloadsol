@@ -302,15 +302,23 @@ export default function RugSignalPanel() {
             <div>
               <div className="mb-1 text-xs uppercase tracking-wide text-gray-500">condition met-rate</div>
               {run.conditions.map((c) => (
-                <div key={c.id} className="flex items-center gap-2 py-0.5">
-                  <span className="w-32 text-xs text-gray-400">{c.id}</span>
-                  <div className="h-3 flex-1 rounded-sm bg-gray-800">
-                    <div
-                      className={`h-3 rounded-sm ${c.metRate && c.metRate > 0 ? 'bg-lime-600' : 'bg-gray-700'}`}
-                      style={{ width: `${Math.max(1, (c.metRate ?? 0) * 100)}%` }}
-                    />
+                <div key={c.id} className="py-1">
+                  <div className="flex items-center gap-2">
+                    <span className="w-32 text-xs text-gray-400">{c.id}</span>
+                    <div className="h-3 flex-1 rounded-sm bg-gray-800">
+                      <div
+                        className={`h-3 rounded-sm ${c.metRate && c.metRate > 0 ? 'bg-lime-600' : 'bg-gray-700'}`}
+                        style={{ width: `${Math.max(1, (c.metRate ?? 0) * 100)}%` }}
+                      />
+                    </div>
+                    <span className="w-12 text-right text-xs text-gray-500">{pct(c.metRate)}</span>
                   </div>
-                  <span className="w-12 text-right text-xs text-gray-500">{pct(c.metRate)}</span>
+                  <div className="flex gap-3 pl-[8.5rem] text-[10px] text-gray-500">
+                    <span>p10 {num(c.p10)}</span>
+                    <span>p50 {num(c.p50)}</span>
+                    <span>p90 {num(c.p90)}</span>
+                    <span className="text-gray-400">threshold {num(c.threshold)}</span>
+                  </div>
                 </div>
               ))}
               {run.conditions.length === 0 && <p className="text-sm text-gray-500">none evaluated</p>}

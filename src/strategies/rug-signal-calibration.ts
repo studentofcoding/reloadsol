@@ -58,8 +58,15 @@ export type CalibrationRun = {
   scoreHistogram: Array<{ score: number; n: number }>
   /** Per component: average points, the observed maximum, and the component's own maximum. */
   components: Array<{ id: string; avgPoints: number; maxPoints: number; maxOf: number }>
-  /** Per staircase condition: how often it was met. `null` when it was never evaluable. */
-  conditions: Array<{ id: string; metRate: number | null }>
+  /** Per staircase condition: how often it was met, and where its values actually sit. */
+  conditions: Array<{
+    id: string
+    metRate: number | null
+    threshold: number | null
+    p10: number | null
+    p50: number | null
+    p90: number | null
+  }>
   /** Per band term: the observed distribution of its raw measure against its anchor. */
   measures: Array<{ id: string; p10: number | null; p50: number | null; p90: number | null }>
   /** The anchors this run actually used (env + overrides). */
@@ -244,6 +251,13 @@ export async function replayRugSignal(params: {
   const perComponentMax = new Map<string, number>()
   const conditionMet = new Map<string, number>()
   const conditionSeen = new Map<string, number>()
+  /**
+   * The measured values behind each condition, not just whether it passed. A met-rate alone says a
+   * condition is rare; the distribution says *where* to put the threshold, which is the operator's
+   * call rather than a number to guess at.
+   */
+  const conditionValues = new Map<string, number[]>()
+  const conditionThreshold = new Map<string, number>()
   const measureValues = new Map<string, number[]>()
   let trips = 0
   let best: { score: number; mint: string } | null = null
@@ -292,6 +306,14 @@ export async function replayRugSignal(params: {
       for (const condition of component.conditions ?? []) {
         conditionSeen.set(condition.id, (conditionSeen.get(condition.id) ?? 0) + 1)
         if (condition.met) conditionMet.set(condition.id, (conditionMet.get(condition.id) ?? 0) + 1)
+        if (condition.threshold != null && Number.isFinite(condition.threshold)) {
+          conditionThreshold.set(condition.id, condition.threshold)
+        }
+        if (condition.value != null && Number.isFinite(condition.value)) {
+          const values = conditionValues.get(condition.id) ?? []
+          values.push(condition.value)
+          conditionValues.set(condition.id, values)
+        }
       }
       for (const measure of component.measures ?? []) {
         if (measure.value == null || !Number.isFinite(measure.value)) continue
@@ -326,10 +348,17 @@ export async function replayRugSignal(params: {
         maxOf: perComponentMax.get(id) ?? 0,
       }))
       .sort((a, b) => b.maxOf - a.maxOf),
-    conditions: [...conditionSeen.entries()].map(([id, seen]) => ({
-      id,
-      metRate: seen > 0 ? (conditionMet.get(id) ?? 0) / seen : null,
-    })),
+    conditions: [...conditionSeen.entries()].map(([id, seen]) => {
+      const values = conditionValues.get(id) ?? []
+      return {
+        id,
+        metRate: seen > 0 ? (conditionMet.get(id) ?? 0) / seen : null,
+        threshold: conditionThreshold.get(id) ?? null,
+        p10: percentile(values, 0.1),
+        p50: percentile(values, 0.5),
+        p90: percentile(values, 0.9),
+      }
+    }),
     measures: [...measureValues.entries()].map(([id, values]) => ({
       id,
       p10: percentile(values, 0.1),
