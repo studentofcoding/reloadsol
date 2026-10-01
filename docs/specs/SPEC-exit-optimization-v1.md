@@ -125,6 +125,36 @@ as the exit-side rationale for tidying that lane rather than as a competing plan
 3. If lift is significant: promote behind `ML_EXIT_OVERLAY_MODE=shadow|enforce` (default `shadow`), fail-soft, with a kill switch — the repo's standing gate shape.
 4. Ship the **counterfactual reader** with it. A shadow sink with no reader is another dead store; both overlays have been invisible for their whole life, which is how they stayed inert unnoticed.
 
+### First run — the harness falsified its own premise (2026-10-01)
+
+`scripts/replay-stop-sweep.mjs`, prod, read-only, 2 days, **694 replayable of 813** trades, 875,688 bars.
+The sweep *did* produce significant-looking output — `−16` beat as-is by **+7.8 pp/trade, clustered t = 8.90**,
+and it survived the mcap/search-only robustness re-run (t = 8.76). **None of that is a result**, and the
+fidelity check built for exactly this reason is why:
+
+**Fidelity: replaying each trade's own recorded stop reproduces the recorded outcome on only 181/693 (26.1%).**
+
+The replay's trigger is not the live one. The diagnostic that explains it:
+
+| | |
+|---|---|
+| trades with a stop stamped | 780 |
+| **landed within 2 pp of their own stop** | **23** |
+| lost worse than −25% | **165**, averaging **−49.4%** |
+| winners | 390 (48.0%) |
+
+Only **23 of 780** exits land on the stop, and 165 sail far past one supposedly at −32. That is not a broken
+stop — it is a **poll-limited** one. The sims decide on a **900s** interval while the replay checks every
+**1-minute bar**, so a trade can run from −10% to −60% between two checks. The level is only approximately
+enforced and routinely slips.
+
+**Consequently the replay is invalid as a model of the live stop**: it fires on 69% of trades that the sim,
+checking every 15 minutes, never stopped. The `−16` row's t = 8.90 measures an impossibly fast trigger.
+
+**The lever is therefore not the stop *level* — it is the exit-check *cadence*.** Moving −32 to −16 changes
+almost nothing while the check still runs every 900s; both slip by a similar amount. That reframes P4, and it
+is why the next measurement is realised slippage per poll interval rather than another level.
+
 ## Locked decisions
 
 | # | Lock |
