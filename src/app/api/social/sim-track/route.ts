@@ -3,6 +3,7 @@ import { getActiveSocialForSim } from '@/strategies/load-social'
 import { registerSimExitContract } from '@/strategies/sim-exit-contract'
 import { mergeEntryFeaturesForOutcome } from '@/strategies/entry-feature-snapshot'
 import {
+  applyBrainRiskToExit,
   createBrainRiskSession,
   resolveSimOpenSize,
   stampBrainRisk,
@@ -357,7 +358,8 @@ async function runSimTrack(request: NextRequest) {
           features: fullFeatures,
           priceUsd: entryPriceUsd,
           baseSol: sized.sol,
-          baseExit: strategy.config.exit,
+          // The brain's TP/SL/hold override, as signals and trending already do.
+          baseExit: applyBrainRiskToExit(strategy.config.exit, sized.risk),
           precomputedOhlc: ohlc,
         })
         if (!spine.ok) {

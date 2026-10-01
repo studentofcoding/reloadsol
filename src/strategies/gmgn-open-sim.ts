@@ -4,6 +4,7 @@ import { getNativeUsd } from '@/utils/native-usd'
 import { simWalletForChain } from '@/strategies/sim-wallets'
 import { buildTradingRecord, insertTradingRecord } from '@/utils/trading-records-db'
 import {
+  applyBrainRiskToExit,
   createBrainRiskSession,
   resolveSimOpenSize,
   stampBrainRisk,
@@ -97,7 +98,10 @@ export async function openGmgnSimPosition(params: {
     features: fullFeatures,
     priceUsd: params.entryPriceUsd > 0 ? params.entryPriceUsd : null,
     baseSol: sized.sol,
-    baseExit: params.strategy.config.exit,
+    // The brain's TP/SL/hold override, as signals and trending already do. Without it this family
+    // stamped `brain_stop_loss_pct` on every row while opening against the raw strategy exit — a
+    // risk control recorded as though it were in effect.
+    baseExit: applyBrainRiskToExit(params.strategy.config.exit, sized.risk),
     entryMcap,
   })
   if (!spine.ok) {

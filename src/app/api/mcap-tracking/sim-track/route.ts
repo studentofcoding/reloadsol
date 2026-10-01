@@ -900,11 +900,11 @@ async function runSimTrack(request: NextRequest) {
             features: scoredEntryFeatures,
             priceUsd: liveMetrics.price_usd,
             baseSol: nativeBuyAmount,
-            baseExit: {
-              takeProfitPct: strategy.config.exit.takeProfitPct,
-              stopLossPct: strategy.config.exit.stopLossPct,
-              maxHoldHours: strategy.config.exit.maxHoldHours,
-            },
+            // Brain TP/SL/hold FIRST, then the spine's closed-loop adjustment on top — the same
+            // order signals and trending use. openSimPosition already did this for its own record,
+            // but the spine computes the exit CONTRACT, so leaving it out stamped thresholds the
+            // brain never agreed to.
+            baseExit: applyBrainRiskToExit(mcapTrackerToCanonical(strategy).exit, brainRisk),
             entryMcap: entry.entryMcap,
           })
           if (!spine.ok) {
