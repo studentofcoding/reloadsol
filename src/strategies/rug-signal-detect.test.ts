@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ohlcvMinutesToRugBars,
   rugSignalLookbackMs,
+  selectRugSignalBars,
 } from '@/strategies/rug-signal-detect'
 import {
   DEFAULT_RUG_SIGNAL_THRESHOLDS,
@@ -106,5 +107,114 @@ describe('rug-signal-detect — the volume band is reachable (P1)', () => {
       thresholds,
     )
     expect(evalResult.breakdown.volume).toBeGreaterThan(0)
+  })
+})
+
+describe('rug-signal-detect — series shorter than minBars falls back to own-1m', () => {
+  const minBars = DEFAULT_RUG_SIGNAL_THRESHOLDS.minBars
+  const full = risingFlatVolume1m(120)
+  const short = full.slice(0, 8) // < minBars 5m bars
+  const ownWithJunkVolume = full.map((b) => ({ ...b, v: 999 }))
+
+  it('keeps a judgeable series', () => {
+    const r = selectRugSignalBars({ series: full, cached: [], own: full, minBars })
+    expect(r.source).toBe('series')
+    expect(r.bars).toBe(full)
+  })
+
+  it('uses own-1m when the series is too short (not only when empty), volume-less', () => {
+    const r = selectRugSignalBars({ series: short, cached: [], own: ownWithJunkVolume, minBars })
+    expect(r.source).toBe('own')
+    expect(r.bars).toHaveLength(120)
+    expect(r.bars.every((b) => !('v' in b))).toBe(true)
+  })
+
+  it('still uses own-1m when the series is empty', () => {
+    const r = selectRugSignalBars({ series: [], cached: [], own: full, minBars })
+    expect(r.source).toBe('own')
+  })
+
+  it('keeps the short series when the fallback has nothing more', () => {
+    const r = selectRugSignalBars({ series: short, cached: [], own: short.slice(0, 3), minBars })
+    expect(r.source).toBe('series')
+    expect(r.bars).toBe(short)
+  })
+
+  it('prefers the 24h cache over own-1m (order unchanged) and keeps its volume', () => {
+    const r = selectRugSignalBars({ series: short, cached: full, own: full, minBars })
+    expect(r.source).toBe('cache')
+    expect(r.bars[0]!.v).toBe(100)
+  })
+
+  it('a short cache yields to a longer own-1m series', () => {
+    const r = selectRugSignalBars({ series: [], cached: short, own: full, minBars })
+    expect(r.source).toBe('own')
+  })
+
+  it('none when nothing exists', () => {
+    expect(selectRugSignalBars({ series: [], cached: [], own: [], minBars })).toEqual({
+      bars: [],
+      source: 'none',
+    })
+  })
+
+  it('own-1m rows cannot feed the volume band (stays unknown → 0)', () => {
+    const r = selectRugSignalBars({ series: short, cached: [], own: ownWithJunkVolume, minBars })
+    const scored = evaluateRugSignalFrom1m(
+      { bars1m: r.bars, mcap: 500_000, liquidityUsd: 5_000, ageHours: 1 },
+      DEFAULT_RUG_SIGNAL_THRESHOLDS,
+    )
+    expect(scored.breakdown.volume).toBe(0)
+  })
+})
+
+describe('detectRugSignal — shadow row is tagged own for the fallback', () => {
+  afterEach(() => {
+    vi.resetModules()
+    vi.restoreAllMocks()
+    delete process.env.RUG_SIGNAL_ENABLED
+    delete process.env.RUG_SIGNAL_MODE
+  })
+
+  it('records bars_source=own when the series is short and own-1m is longer', async () => {
+    process.env.RUG_SIGNAL_ENABLED = 'true'
+    process.env.RUG_SIGNAL_MODE = 'shadow'
+    const full = risingFlatVolume1m(120)
+    const recorded: Array<Record<string, unknown>> = []
+    vi.resetModules()
+    vi.doMock('@/utils/db', () => ({ queryOne: vi.fn(async () => null), query: vi.fn() }))
+    vi.doMock('@/utils/rug-list/service', () => ({
+      isTokenRugged: vi.fn(async () => false),
+      markTokenRug: vi.fn(),
+    }))
+    vi.doMock('@/strategies/token-metrics-history', () => ({
+      load1mOhlcv: vi.fn(async () => ohlcvFrom(full.slice(0, 6))),
+    }))
+    vi.doMock('@/strategies/token-map-chart', () => ({
+      getCachedTokenOhlc24h1m: vi.fn(async () => ({ candles: [], source: 'none' })),
+      loadOwn1mBars: vi.fn(async () =>
+        full.map((b) => ({ time: b.t, open: b.o, high: b.h, low: b.l, close: b.c, volume: 5 })),
+      ),
+      tokenOhlcToRugBars: (cs: Array<Record<string, number | undefined>>) =>
+        cs.map((c) => ({
+          t: c.time as number,
+          o: c.open as number,
+          h: c.high as number,
+          l: c.low as number,
+          c: c.close as number,
+          ...(c.volume != null ? { v: c.volume } : {}),
+        })),
+    }))
+    vi.doMock('@/strategies/rug-signal-shadow', () => ({
+      recordRugSignalShadow: vi.fn(async (row: Record<string, unknown>) => {
+        recorded.push(row)
+      }),
+    }))
+    const { detectRugSignal } = await import('@/strategies/rug-signal-detect')
+    const res = await detectRugSignal({ chain: 'solana', tokenAddress: 'MintOwn1' })
+    expect(res.barsSource).toBe('own')
+    expect(recorded).toHaveLength(1)
+    expect(recorded[0]!.barsSource).toBe('own')
+    expect(recorded[0]!.barsUsed).toBe(120)
   })
 })

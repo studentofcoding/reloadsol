@@ -143,7 +143,11 @@ export async function captureDetectSnapshot(params: {
   evalResult: OhlcRugEval
   reasons: string[]
 }> {
-  const { bars } = await fetchLastOhlcRugBars(params.tokenAddress)
+  // Own-1m fills an empty canonical series (same as Freeview), so a detect-time snapshot of a
+  // mint the 24h cache has not seen still has bars to evaluate.
+  const { bars } = await fetchLastOhlcRugBars(params.tokenAddress, OHLC_RUG_MAX_BARS, {
+    fallbackOwn1m: true,
+  })
   const evalResult = evaluateOhlcRugRules(bars)
   const snapshotId = await insertDetectSnapshot({
     tokenAddress: params.tokenAddress,

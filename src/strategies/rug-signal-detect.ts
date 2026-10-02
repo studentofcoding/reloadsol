@@ -24,6 +24,7 @@ import {
   type RugSignalShadowSource,
 } from '@/strategies/rug-signal-shadow'
 import {
+  aggregateTo5m,
   evaluateRugSignalFrom1m,
   isRugSignalEnabled,
   resolveRugSignalThresholds,
@@ -84,6 +85,55 @@ export function ohlcvMinutesToRugBars(
 export function rugSignalLookbackMs(windowBars: number): number {
   const bars = Number.isFinite(windowBars) && windowBars > 0 ? windowBars : 20
   return Math.max(bars * 5, 60) * 60_000 * 4
+}
+
+/** Drop volume — an own-1m row is a sampled spot price, so any `v` on it is not a real volume. */
+function withoutVolume(bars: RugSignalBar[]): RugSignalBar[] {
+  return bars.map(({ t, o, h, l, c }) => ({ t, o, h, l, c }))
+}
+
+/**
+ * Choose the scorer's 1m bars.
+ *
+ * The metrics series is preferred (only it carries per-minute volume). It is used as-is when it can
+ * be *judged* — i.e. it aggregates to at least `minBars` 5m bars. A series that exists but is too
+ * short used to win by default (`length > 0`) and the token scored `no_bars` even when a longer
+ * cache / own-1m series was sitting there. Now a short series yields to the fallback when the
+ * fallback has more to score; the fallback order is unchanged (24h cache, then own-1m).
+ *
+ * Own-1m bars are tagged `bars_source='own'` and stripped of volume, so the volume band reads
+ * "unknown" (never a fabricated number) and the series-only calibration/replay stays unpolluted.
+ */
+export function selectRugSignalBars(input: {
+  series: RugSignalBar[]
+  cached: RugSignalBar[]
+  own: RugSignalBar[]
+  minBars: number
+}): { bars: RugSignalBar[]; source: RugSignalBarsSource } {
+  const { series, cached, own, minBars } = input
+  const judgeable = (bars: RugSignalBar[]) => aggregateTo5m(bars).length >= minBars
+  if (series.length > 0 && judgeable(series)) return { bars: series, source: 'series' }
+
+  const fallback: { bars: RugSignalBar[]; source: RugSignalBarsSource } =
+    cached.length > 0
+      ? { bars: cached, source: 'cache' }
+      : own.length > 0
+        ? { bars: withoutVolume(own), source: 'own' }
+        : { bars: [], source: 'none' }
+
+  // Keep the short series only when the fallback adds nothing over it.
+  if (series.length > 0 && fallback.bars.length <= series.length) {
+    return { bars: series, source: 'series' }
+  }
+  // A short cache may still lose to a longer own-1m series.
+  if (
+    fallback.source === 'cache' &&
+    !judgeable(fallback.bars) &&
+    own.length > fallback.bars.length
+  ) {
+    return { bars: withoutVolume(own), source: 'own' }
+  }
+  return fallback
 }
 
 type TrackerRow = {
@@ -161,14 +211,14 @@ export async function detectRugSignal(params: {
       ).catch(() => null),
     ])
 
-    const seriesBars = ohlcvMinutesToRugBars(series)
-    let bars1m: RugSignalBar[] = seriesBars
-    let barsSource: RugSignalBarsSource = seriesBars.length > 0 ? 'series' : 'none'
-    if (bars1m.length === 0) {
-      const cachedCandles = cached?.candles ?? []
-      bars1m = tokenOhlcToRugBars(cachedCandles.length > 0 ? cachedCandles : own)
-      barsSource = bars1m.length === 0 ? 'none' : cachedCandles.length > 0 ? 'cache' : 'own'
-    }
+    const picked = selectRugSignalBars({
+      series: ohlcvMinutesToRugBars(series),
+      cached: tokenOhlcToRugBars(cached?.candles ?? []),
+      own: tokenOhlcToRugBars(own),
+      minBars: thresholds.minBars,
+    })
+    const bars1m: RugSignalBar[] = picked.bars
+    const barsSource: RugSignalBarsSource = picked.source
     if (bars1m.length === 0) {
       await recordRugSignalShadow({
         chain: params.chain,
