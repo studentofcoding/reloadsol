@@ -283,7 +283,10 @@ function AlgoTesterHubContent() {
         <StrategyAdminHub
           embedded={{
             view: "config",
-            panel: query.panel === "workers" ? "workers" : "",
+            // T3 step 5: the cron table lives on Health now, and `StrategyAdminHub` guards it with
+            // `showWorkers` (its call site at `:2542`). Passing "" retires the fold from Config — one
+            // flag, no second copy of the table, nothing removed from the hub that Health doesn't use.
+            panel: "",
             domain: query.domain,
             strategyId: query.strategyId,
             hideSharedFilters: true,
