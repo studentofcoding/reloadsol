@@ -461,6 +461,28 @@ export async function runTrendingBotRhSimCycle(): Promise<RhTrendingSimResult[]>
     const candidates = tokens.filter((t) => passesConditions(strategy, t))
     const maxOpenPositions =
       strategy.max_open_positions ?? RH_MAX_OPEN_POSITIONS_DEFAULT
+
+    // The funnel, logged before anything is skipped. Without this the only visible number was
+    // `current_stats.skipped`, which is CUMULATIVE — so "451 skipped" reads like 451 mints blocked
+    // when it is 451 decisions across every cycle since boot. This says which gate is actually
+    // binding, per cycle, with the values it compared.
+    const blockedCandidates = candidates.filter((t) =>
+      blocked.has(trendingReentryKey(strategyId, t.token_address)),
+    )
+    log.info('deviation_alert', 'RH sim candidate funnel', {
+      strategyId,
+      chain: CHAIN,
+      feed_tokens: tokens.length,
+      after_conditions: candidates.length,
+      already_open: candidates.filter((t) => openMints.has(t.token_address)).length,
+      blocked_by_guard: blockedCandidates.length,
+      blocked_sample: blockedCandidates.slice(0, 5).map((t) => t.token_symbol),
+      open_now: openMints.size,
+      max_open_positions: maxOpenPositions,
+      mcap_min: strategy.conditions?.min_market_cap,
+      mcap_max: strategy.conditions?.max_market_cap,
+    })
+
     for (const token of candidates) {
       if (openMints.has(token.token_address)) continue
       if (blocked.has(trendingReentryKey(strategyId, token.token_address))) {

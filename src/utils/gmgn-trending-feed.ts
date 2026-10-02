@@ -26,6 +26,22 @@ function trendingTtlSeconds(): number {
   return Number.isFinite(n) && n >= 60 ? Math.floor(n) : CACHE_TTL_SECONDS_DEFAULT
 }
 
+/**
+ * How many volume-ranked rows to request per chain.
+ *
+ * A lever because the downstream filters select from this list: at 100 against 76 survivors the
+ * candidate set is not the constraint, but lowering it would silently shrink what the sim can ever
+ * see. Same inline-read shape as the TTL above rather than importing the registry helper — this is a
+ * `utils` module and the strategies layer depends on it, not the other way round.
+ */
+const TRENDING_LIMIT_DEFAULT = 100
+
+function trendingLimit(): number {
+  const raw = process.env.GMGN_TRENDING_LIMIT
+  const n = raw ? Number(raw) : NaN
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : TRENDING_LIMIT_DEFAULT
+}
+
 // Collapse concurrent expiries (several clients polling at once must not each
 // trigger an upstream GMGN call).
 const inflight = new Map<string, Promise<unknown>>()
@@ -70,7 +86,7 @@ export async function getFilteredGmgnTrending(
         const rank = await marketTrending({
           chain,
           interval: '1h',
-          limit: 100,
+          limit: trendingLimit(),
           // Robinhood is too young for the Solana-tuned floor — let the local filter
           // decide what we expose instead of pre-filtering at the GMGN layer.
           ...(chain === 'robinhood'

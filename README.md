@@ -259,9 +259,28 @@ Chart fetches (`GET {origin}/chart/{token}`, response `oclhv`) use `SOLANATRACKE
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TRENDING_FEED` | `jupiter` (`gmgn` in prod) | Discovery source for the trending bot. `gmgn` reads the same cached GMGN market-rank snapshot the Trending Tokens list uses (one call / chain / `GMGN_TRENDING_TTL_SECONDS`). Discovery only — pricing and execution are unchanged. |
-| `TRENDING_REENTRY_COOLDOWN_MIN` | `1440` | Minutes a `(strategy, mint)` is blocked after a close, keyed on `strategy_outcomes`. Stops the open → close → reopen churn. |
-| `TRENDING_MAX_PURCHASES_PER_TOKEN` | `2` | Lifetime opens per `(strategy, mint)`. |
+| `TRENDING_REENTRY_COOLDOWN_MIN` | `1440` | Minutes a `(strategy, mint)` is blocked after a close, keyed on `strategy_outcomes`. Stops the open → close → reopen churn. `0` disables it. |
+| `TRENDING_MAX_PURCHASES_PER_TOKEN` | `2` | Opens per `(strategy, mint)`, counted over the loader window (not truly lifetime — see `loadClosedTrendingOutcomes`). `0` disables it. |
 | `TRENDING_DROP_RUGGED` | on | `false` disables dropping `token_rug_list` mints from the trending feed (list + bot candidates). |
+| `GMGN_TRENDING_LIMIT` | `100` | Volume-ranked rows requested per chain, before the local filters. The RH sim selects its candidates from this list. |
+
+### Robinhood sim levers
+
+The RH path picks candidates from the volume-ranked feed and filters them locally, so **this band decides
+what `att_rh` can ever open** — and it is the gate that binds before the re-entry guard does.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RH_MCAP_MIN` | `300000` | Lower bound of the RH candidate band. Was chosen when most volume-ranked rows sat inside it; on 2026-10-02 the live feed was mostly **below** it (36k / 66k / 70k), so the floor rejects most of the book. |
+| `RH_MCAP_MAX` | `2000000` | Upper bound of the same band. |
+| `RH_MAX_OPEN_POSITIONS_DEFAULT` | `10` | Fallback concurrent-position cap when a strategy row sets no `max_open_positions`. |
+| `RH_BUY_AMOUNT_ETH` | `0.0015` | RH sim entry size, ETH-denominated. |
+| `RH_SIM_BUY_ETH` | `0.001` | RH paper size. |
+| `RH_FILTER_*` | see `DEFAULT_FILTER_CONFIG` | `RH_FILTER_MCAP_MIN/MAX`, `RH_FILTER_PRICE_CHANGE_5M/1H/6H_MAX`, `RH_FILTER_ORGANIC_SCORE_MIN`, `RH_FILTER_TOP_HOLDERS_MAX`. **Currently inert** — nothing in the trending_bot chain reads `filtering`; `passesConditions` reads `strategy.conditions`, which is the `RH_MCAP_*` band above. |
+
+Every one of these falls back to its code default when unset, blank or unparseable, and reads at module
+load — so a change needs a container restart. `0` is a real value for the limiter-style knobs; deleting the
+variable is how you return to the default.
 
 ### Shadow risk — dev reputation + RugCheck (display-only)
 
