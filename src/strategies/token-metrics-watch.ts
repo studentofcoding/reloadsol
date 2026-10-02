@@ -89,25 +89,34 @@ export async function loadWatchMints(
  * sources do not all carry a symbol — adding a column to it risks the sweep for a display string.
  * This is a separate best-effort lookup, and a mint it does not know simply has no entry. A missing
  * symbol must stay missing rather than be invented from the address.
+ *
+ * **Fail-open, by construction.** A symbol is decoration on a row that is being written for other
+ * reasons, so this can never be allowed to block the sweep: any failure — timeout, open circuit
+ * breaker, a column that moved — returns no symbols and the row is written exactly as it was before
+ * this lookup existed. It is also why the caller must not await it in a way that can reject.
  */
 export async function loadWatchSymbols(mints: string[]): Promise<Map<string, string>> {
   const unique = [...new Set(mints.map((m) => m.trim()).filter(Boolean))]
   if (unique.length === 0) return new Map()
-  const { rows } = await query<{ token_address: string; token_symbol: string | null }>(
-    `SELECT token_address, MAX(token_symbol) AS token_symbol
-       FROM (
-         SELECT token_address, token_symbol FROM token_mcap_tracking
-          WHERE token_address = ANY($1::text[]) AND token_symbol IS NOT NULL AND token_symbol <> ''
-         UNION ALL
-         SELECT token_address, token_symbol FROM trending_token_tracker
-          WHERE token_address = ANY($1::text[]) AND token_symbol IS NOT NULL AND token_symbol <> ''
-       ) s
-      GROUP BY token_address`,
-    [unique],
-  )
-  const out = new Map<string, string>()
-  for (const row of rows) {
-    if (row.token_symbol) out.set(row.token_address, row.token_symbol)
+  try {
+    const { rows } = await query<{ token_address: string; token_symbol: string | null }>(
+      `SELECT token_address, MAX(token_symbol) AS token_symbol
+         FROM (
+           SELECT token_address, token_symbol FROM token_mcap_tracking
+            WHERE token_address = ANY($1::text[]) AND token_symbol IS NOT NULL AND token_symbol <> ''
+           UNION ALL
+           SELECT token_address, token_symbol FROM trending_token_tracker
+            WHERE token_address = ANY($1::text[]) AND token_symbol IS NOT NULL AND token_symbol <> ''
+         ) s
+        GROUP BY token_address`,
+      [unique],
+    )
+    const out = new Map<string, string>()
+    for (const row of rows) {
+      if (row.token_symbol) out.set(row.token_address, row.token_symbol)
+    }
+    return out
+  } catch {
+    return new Map()
   }
-  return out
 }
