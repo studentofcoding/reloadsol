@@ -3411,6 +3411,16 @@ function GmgnCard({
   sources?: Record<string, "stored" | "defaults">;
 }) {
   const d = strategy.config.discovery;
+  // T4: on a strategy card, "equal to the code default" *is* "inherited" — this row never overrode the
+  // family default. Deliberately not inside `SourceTag`: on the weights and shared-filter panels
+  // `defaults` is the right word (a global value sitting at stock), and only on a per-strategy card does
+  // it mean inherited. The vocabulary differs by scope, so it is mapped at the scope.
+  const src = (path: string) =>
+    sources?.[path] === "stored"
+      ? ("stored" as const)
+      : sources?.[path]
+        ? ("inherited" as const)
+        : undefined;
   const s = strategy.config.security;
   const e = strategy.config.execution;
   const x = strategy.config.exit;
@@ -3485,28 +3495,28 @@ function GmgnCard({
             value={limit}
             onChange={setLimit}
             step="1"
-            source={sources?.[`${strategy.id}.config.discovery.limit`]}
+            source={src(`${strategy.id}.config.discovery.limit`)}
           />
           <NumberField
             label="min trade USD"
             value={minUsd}
             onChange={setMinUsd}
             step="1"
-            source={sources?.[`${strategy.id}.config.discovery.minAmountUsd`]}
+            source={src(`${strategy.id}.config.discovery.minAmountUsd`)}
           />
           <NumberField
             label="max age (min)"
             value={maxAge}
             onChange={setMaxAge}
             step="1"
-            source={sources?.[`${strategy.id}.config.discovery.maxTradeAgeMinutes`]}
+            source={src(`${strategy.id}.config.discovery.maxTradeAgeMinutes`)}
           />
           <NumberField
             label="cluster min wallets"
             value={clusterMin}
             onChange={setClusterMin}
             step="1"
-            source={sources?.[`${strategy.id}.config.discovery.clusterMinWallets`]}
+            source={src(`${strategy.id}.config.discovery.clusterMinWallets`)}
           />
         </FieldGrid>
       </Section>
