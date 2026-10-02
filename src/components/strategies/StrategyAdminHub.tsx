@@ -3000,8 +3000,13 @@ function TrendingBotCard({
       {allocation != null && (
         <p className="text-xs text-gray-500 mb-2">Allocation: {(allocation * 100).toFixed(0)}%</p>
       )}
+      {/* T4 step 3: a switch with its effect stated — it decides who executes, it does not tune the
+          sections below. Unlabelled it reads as one more parameter beside the thresholds. */}
       <label className="text-xs text-gray-400 block mb-2">
-        Execution mode
+        Execution mode{' '}
+        <span className="font-mono text-[10px] uppercase tracking-wide text-gray-500">
+          switch · who executes: sim / live / both
+        </span>
         <ExecutionModeSelect value={execMode} onChange={setExecMode} />
       </label>
       <Section title="Execution">
@@ -3147,7 +3152,8 @@ function SignalsCard({
       <h3 className="font-semibold text-white">{strategy.name}</h3>
       <p className="text-xs text-gray-500 mb-3">{strategy.id} · template {strategy.config.template}</p>
       <label className="text-xs text-gray-400 block mb-2">
-        Execution mode
+        Execution mode{' '}
+        <span className="font-mono text-[10px] uppercase tracking-wide text-gray-500">switch</span>
         <ExecutionModeSelect value={execMode} onChange={setExecMode} />
       </label>
       <Section title="Query">
@@ -3332,7 +3338,8 @@ function McapTrackerCard({
         {strategy.id} · {entryTemplate}
       </p>
       <label className="text-xs text-gray-400 block mb-2">
-        Execution mode
+        Execution mode{' '}
+        <span className="font-mono text-[10px] uppercase tracking-wide text-gray-500">switch</span>
         <ExecutionModeSelect value={execMode} onChange={setExecMode} />
       </label>
       <label className="text-xs text-gray-400 block mb-2">
@@ -3502,7 +3509,8 @@ function GmgnCard({
         {strategy.id} · {source}
       </p>
       <label className="text-xs text-gray-400 block mb-2">
-        Execution mode
+        Execution mode{' '}
+        <span className="font-mono text-[10px] uppercase tracking-wide text-gray-500">switch</span>
         <ExecutionModeSelect value={execMode} onChange={setExecMode} />
       </label>
       <label className="text-xs text-gray-400 block mb-2">
@@ -3765,7 +3773,8 @@ function SocialCard({
       <p className="text-xs text-gray-500 mb-3">{strategy.id}</p>
       <p className="text-xs text-gray-400 mb-3">{strategy.description}</p>
       <label className="text-xs text-gray-400 block mb-2">
-        Execution mode
+        Execution mode{' '}
+        <span className="font-mono text-[10px] uppercase tracking-wide text-gray-500">switch</span>
         <ExecutionModeSelect value={execMode} onChange={setExecMode} />
       </label>
       <div className="grid grid-cols-2 gap-2 text-xs">
@@ -3965,7 +3974,8 @@ function DlmmCard({
     <div className="border border-gray-700 rounded-lg p-4 bg-gray-800 max-w-xl">
       <h3 className="font-semibold text-white mb-2">{strategy.name}</h3>
       <label className="text-xs text-gray-400 block mb-2">
-        Execution mode
+        Execution mode{' '}
+        <span className="font-mono text-[10px] uppercase tracking-wide text-gray-500">switch</span>
         <ExecutionModeSelect value={execMode} onChange={setExecMode} />
       </label>
       <Section title="Start conditions">
