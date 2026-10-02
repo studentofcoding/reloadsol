@@ -66,8 +66,13 @@ export type SeparationReport = {
     unlabellable: number
     collapses: number
     mints: number
+    /** Per **row** — the same mint contributes once per sweep, so this base is overstated. */
     baseRate: number | null
     baseCi: Interval | null
+    /** Per **distinct mint** — the base the per-mint buckets must be compared against. */
+    mintCollapses: number
+    mintBaseRate: number | null
+    mintBaseCi: Interval | null
   }
   staircase: Bucket[]
   liquidity: Bucket[]
@@ -278,9 +283,15 @@ export async function loadRugSignalSeparation(days = 4): Promise<SeparationRepor
   }
 
   // The plain-English read is the point of the page: what does the fixture actually show?
+  //
+  // Two base rates, because there are two populations. The buckets are per **distinct mint**, so
+  // comparing them to the per-row base would subtract a correlated sample from an independent one
+  // and manufacture a lift — the per-row base is the one that flatters.
   const byMint = dedupeByMint(labelled)
   const collapses = labelled.filter((r) => r.collapsed).length
   const base = cell(collapses, labelled.length)
+  const mintCollapses = byMint.filter((r) => r.collapsed).length
+  const mintBase = cell(mintCollapses, byMint.length)
   const staircase = staircaseView(byMint)
   const liquidity = liquidityView(byMint)
 
@@ -298,8 +309,10 @@ export async function loadRugSignalSeparation(days = 4): Promise<SeparationRepor
   })
 
   const daysWithFloor = perDay.filter((d) => d.staircaseTrips >= SEPARATION.minPositives)
+  // A day is only evidence if that day's own trips beat that day's own base rate — comparing every
+  // day to one pooled base rate lets a good day carry a bad one.
   const daysAgreeing = daysWithFloor.filter(
-    (d) => d.staircaseCollapses / Math.max(d.staircaseTrips, 1) > (base.rate ?? 0),
+    (d) => d.staircaseCollapses / Math.max(d.staircaseTrips, 1) > d.collapses / Math.max(d.rows, 1),
   )
   const staircaseTrips = cell(
     labelled.filter((r) => r.staircase >= 25 && r.collapsed).length,
@@ -307,13 +320,13 @@ export async function loadRugSignalSeparation(days = 4): Promise<SeparationRepor
   )
 
   let verdict: SeparationReport['verdict']
-  if (labelled.length < SEPARATION.minLabelled || base.rate == null) {
+  if (labelled.length < SEPARATION.minLabelled || mintBase.rate == null) {
     verdict = {
       state: 'inconclusive',
       text: `${labelled.length} labelled rows against a floor of ${SEPARATION.minLabelled}. Not "no effect"; not yet a result.`,
     }
-  } else if (collapses < SEPARATION.minPositives) {
-    verdict = { state: 'inconclusive', text: `Only ${collapses} collapses — there is nothing to predict yet.` }
+  } else if (mintCollapses < SEPARATION.minPositives) {
+    verdict = { state: 'inconclusive', text: `Only ${mintCollapses} collapses — there is nothing to predict yet.` }
   } else if (!staircaseTrips.conclusive) {
     verdict = {
       state: 'inconclusive',
@@ -322,14 +335,17 @@ export async function loadRugSignalSeparation(days = 4): Promise<SeparationRepor
         'Precision is undefined here, NOT zero — the rule has not fired enough times to say anything.',
     }
   } else {
-    const lift = (staircaseTrips.rate ?? 0) > base.rate
+    // Compared against the per-mint base: the trips are counted per row, so the base must be too.
+    const lift = (staircaseTrips.rate ?? 0) > mintBase.rate
+    const asPct = (v: number) => `${(v * 100).toFixed(1)}%`
     verdict = {
       state: lift ? 'lift' : 'no_lift',
       text: lift
-        ? `Staircase ≥ 25 carries signal: ${(staircaseTrips.rate! * 100).toFixed(1)}% against a base rate of ` +
-          `${(base.rate * 100).toFixed(1)}% (${daysAgreeing.length}/${daysWithFloor.length} days with enough trips agree).`
-        : `No lift: staircase ≥ 25 is ${(staircaseTrips.rate! * 100).toFixed(1)}% against a base rate of ` +
-          `${(base.rate * 100).toFixed(1)}%.`,
+        ? `Staircase ≥ 25 carries signal: ${asPct(staircaseTrips.rate!)} of trips collapse against a ` +
+          `${asPct(mintBase.rate)} base rate per distinct mint (${daysAgreeing.length}/${daysWithFloor.length} ` +
+          'days with enough trips beat their own base rate).'
+        : `No lift: staircase ≥ 25 is ${asPct(staircaseTrips.rate!)} against a ${asPct(mintBase.rate)} ` +
+          'base rate per distinct mint.',
     }
   }
 
@@ -344,6 +360,9 @@ export async function loadRugSignalSeparation(days = 4): Promise<SeparationRepor
       mints: byMint.length,
       baseRate: base.rate,
       baseCi: base.ci,
+      mintCollapses,
+      mintBaseRate: mintBase.rate,
+      mintBaseCi: mintBase.ci,
     },
     staircase: staircase.buckets,
     liquidity: liquidity.buckets,

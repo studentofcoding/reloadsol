@@ -508,10 +508,17 @@ export default function RugSignalPanel() {
               <span>unlabellable {separation.rows.unlabellable}</span>
               <span>distinct mints {separation.rows.mints}</span>
               <span className="text-gray-400">
-                collapses {separation.rows.collapses} · base rate {pct(separation.rows.baseRate)}
+                collapses {separation.rows.collapses} · base rate per row {pct(separation.rows.baseRate)}
                 {separation.rows.baseCi
                   ? ` [${pct(separation.rows.baseCi.lo)}, ${pct(separation.rows.baseCi.hi)}]`
                   : ''}
+              </span>
+              <span className="text-gray-300">
+                base rate per mint {pct(separation.rows.mintBaseRate)}
+                {separation.rows.mintBaseCi
+                  ? ` [${pct(separation.rows.mintBaseCi.lo)}, ${pct(separation.rows.mintBaseCi.hi)}]`
+                  : ''}{' '}
+                ({separation.rows.mintCollapses} collapses)
               </span>
             </div>
 
