@@ -11,7 +11,14 @@ import { getMergedMcapTrackerRegistry } from '@/strategies/load-mcap-tracker'
 import { getMergedGmgnRegistry } from '@/strategies/load-gmgn'
 import { getMergedSocialRegistry } from '@/strategies/load-social'
 import { getMergedDlmmStrategy } from '@/strategies/load-dlmm'
-import { TRENDING_BOT_STRATEGIES } from '@/strategies/registry'
+import {
+  TRENDING_BOT_STRATEGIES,
+  SIGNALS_STRATEGIES,
+  MCAP_TRACKER_STRATEGIES,
+  GMGN_STRATEGIES,
+  SOCIAL_STRATEGIES,
+  DLMM_STRATEGY_DEFAULTS,
+} from '@/strategies/registry'
 import { mapRegistryToCanonical } from '@/strategies/canonical-params'
 import { diffSource } from '@/strategies/config-source'
 import { parseStrategyChain } from '@/strategies/types'
@@ -67,6 +74,11 @@ export async function GET(request: NextRequest) {
       // identically on the page and mean opposite things, so the display must not have to infer it.
       sources: {
         trending_bot: diffSource(registry, TRENDING_BOT_STRATEGIES),
+        signals: diffSource(signalsRegistry, SIGNALS_STRATEGIES),
+        mcap_tracker: diffSource(mcapTrackerRegistry, MCAP_TRACKER_STRATEGIES),
+        gmgn: diffSource(gmgnRegistry, GMGN_STRATEGIES),
+        social: diffSource(socialRegistry, SOCIAL_STRATEGIES),
+        dlmm: diffSource(dlmmStrategy, DLMM_STRATEGY_DEFAULTS),
       },
       trending_bot: {
         defaults: TRENDING_BOT_STRATEGIES,
