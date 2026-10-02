@@ -249,10 +249,12 @@ export default function RugSignalPanel() {
     [mint, loadToken],
   )
 
-  // Start on the newest observation so the page opens on something real rather than an empty chart.
+  // Start on the newest observation so the page opens on something real — but prefer a row that has
+  // stored minutes, because a cache-sourced row has no chart series and would open on an empty chart.
   useEffect(() => {
     if (mint || entries.length === 0) return
-    void loadToken(entries[0]!.tokenAddress)
+    const withSeries = entries.find((e) => e.barsSource === 'series') ?? entries[0]!
+    void loadToken(withSeries.tokenAddress)
   }, [entries, mint, loadToken])
 
   const replay = useCallback(
