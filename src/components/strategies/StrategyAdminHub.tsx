@@ -4303,6 +4303,20 @@ function StrategyConfigTab({
           Smart money / KOL discovery via gmgn-cli. Paper sim wallet:{" "}
           <code className="text-xs">gmgn-sim</code>. Requires GMGN_API_KEY + gmgn-cli on server.
         </p>
+        {/* T4 step 2: the family row. Radar is family-scoped — every card's `r` falls back to
+            `DEFAULT_GMGN_RADAR`, so until this existed the same numbers rendered once per strategy,
+            which is the duplication the census measured (GmgnStrategyConfig 32 vs GmgnRadarConfig 8).
+            Read-only and sourced from the code default: the cards' radar sections stay the per-strategy
+            override editors, and this row is the thing they override. */}
+        <div className="mb-4 rounded border border-gray-700 bg-gray-800/50 px-3 py-2 text-xs text-gray-400">
+          <span className="font-mono text-[10px] uppercase tracking-wide text-gray-500 mr-2">
+            family default · radar
+          </span>
+          sticky pump {DEFAULT_GMGN_RADAR.stickyPumpPct}% · dump ban{" "}
+          {DEFAULT_GMGN_RADAR.dumpBanPct}% · mcap ≥{" "}
+          {DEFAULT_GMGN_RADAR.telegram?.minMcapUsd ?? "—"}
+          {DEFAULT_GMGN_RADAR.telegram?.singleThread ? " · telegram single-thread" : ""}
+        </div>
         <div className="grid gap-4 md:grid-cols-2">
           {gmgn.map((s) => (
             <GmgnCard
