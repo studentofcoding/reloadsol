@@ -25,22 +25,51 @@ export function FieldGrid({ children }: { children: React.ReactNode }) {
   return <div className="grid grid-cols-2 gap-2 text-xs">{children}</div>;
 }
 
+/**
+ * Where a field's current value came from — T7 of SPEC-config-taxonomy, and the rule the whole
+ * taxonomy rests on: a number on this page must say whether the system is using the stored value or
+ * falling back, because those read identically and mean completely different things. `inherited` is
+ * the family-default case: a strategy rendering a value it never overrode.
+ *
+ * Optional on every field, so a call site that does not know its source renders exactly as before
+ * rather than lying about it.
+ */
+type FieldSource = 'stored' | 'defaults' | 'inherited'
+
+const SOURCE_STYLE: Record<FieldSource, string> = {
+  stored: 'text-emerald-300/80',
+  defaults: 'text-amber-300/80',
+  inherited: 'text-gray-400',
+}
+
+export function SourceTag({ source }: { source?: FieldSource }) {
+  if (!source) return null
+  return (
+    <span className={`ml-1 font-mono text-[10px] ${SOURCE_STYLE[source]}`} title={`value from ${source}`}>
+      {source}
+    </span>
+  )
+}
+
 export function NumberField({
   label,
   value,
   onChange,
   colSpan,
   step,
+  source,
 }: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  colSpan?: 1 | 2;
-  step?: string;
+  label: string
+  value: string
+  onChange: (v: string) => void
+  colSpan?: 1 | 2
+  step?: string
+  source?: FieldSource
 }) {
   return (
     <label className={`text-gray-400 ${colSpan === 2 ? "col-span-2" : ""}`}>
       {label}
+      <SourceTag source={source} />
       <input
         type="number"
         step={step ?? "any"}
@@ -57,11 +86,13 @@ export function CheckboxField({
   checked,
   onChange,
   colSpan,
+  source,
 }: {
-  label: string;
-  checked: boolean;
-  onChange: (v: boolean) => void;
-  colSpan?: 1 | 2;
+  label: string
+  checked: boolean
+  onChange: (v: boolean) => void
+  colSpan?: 1 | 2
+  source?: FieldSource
 }) {
   return (
     <label
@@ -74,6 +105,7 @@ export function CheckboxField({
         className="rounded border-gray-600"
       />
       {label}
+      <SourceTag source={source} />
     </label>
   );
 }
