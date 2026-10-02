@@ -21,6 +21,7 @@ import HunterCandidateTabs, {
 import UniversalWalletButton from "@/components/UniversalWalletButton";
 import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import { formatAppTime } from "@/utils/datetime";
+import { candidatesAreFresh } from "@/utils/dlmm/candidate-freshness";
 
 function formatUsd(n: number) {
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
@@ -72,7 +73,11 @@ export default function DlmmDashboardPage() {
   );
 
   const generalCandidates: DisplayCandidate[] = useMemo(() => {
-    if (candidates.length > 0) {
+    // Presence is not freshness. Measured 2026-10-02: the screener had no cron entry and had not run for
+    // 35 days, so `candidates.length > 0` was true over stale rows and this surface showed one August
+    // candidate instead of the live pool list. Fall through to the pools whenever the screened set is
+    // older than the window — a stale value must not wear the clothes of a current one.
+    if (candidatesAreFresh(candidates, Date.now())) {
       return candidates.map((c) => {
         const pool = pools.find((p) => p.address === c.pool_address);
         return {
