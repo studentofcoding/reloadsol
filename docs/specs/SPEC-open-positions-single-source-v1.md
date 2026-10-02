@@ -96,41 +96,70 @@ one-poll grace in `visibleOpenBarPositions`, and `useIsClient` for the server/hy
 
 **Gate:** `tsc`, lint, build, and the bar renders identically. Nothing else moves in this step.
 
-### Step 2 — REVISED: `openPositions` is a working record, not a display list
+### Step 2 — REVISED AGAIN: the two surfaces are a superset and a filtered view, not duplicates
 
-**The original wording of this step was wrong, and reading the path end-to-end is what showed it.**
-It said "replace the inline derivation with `useOpenPositions()`; only the source of `positions`
-changes". That would break three live features.
+**This section has now been wrong twice. Both times the fix came from reading the code, not from
+reasoning about it. Keep that in mind before acting on the plan below.**
 
-`PnLTracker`'s `openPositions` state (`:179`) is not the hook's `OpenBarPosition[]`. It carries:
+#### What is actually true
 
-| extra field | consumer |
-|---|---|
-| `id` | bulk sell — `selectedTokens.has(pos.id)` (`:1307`, `:1327`) |
-| `isSimulation` | bulk sell — `positionsToSell.some(pos => !pos.isSimulation)` (`:1310`) |
-| `currentTokenPriceUsd` | bulk sell — `sellPriceUsd: position.currentTokenPriceUsd` (`:1348`) |
-| `pnlPercentage`, `currentUsdValue` | notifications (`:1604`), display |
-| `actualWalletBalance`, `walletTokenData` | `refreshWalletBalances` (`:1801`) |
-| `isLoadingPrice` | the per-position loading state |
+| | watchlist bar (`useOpenPositions`) | `PnLTracker.openPositions` |
+|---|---|---|
+| real, priced, held opens | **yes** | yes |
+| simulation positions | **no** | yes (`isSimulation`, `simulationType`) |
+| bot-operation positions | **no** | yes (`isBotOperation`, `botStrategy`) |
+| external / wallet-only holds | **no** — `listLiveOpenBarPositions` requires `weightedBuyPriceUsd > 0`, and `visibleOpenBarPositions` hides unpriced | yes, pushed in at `:1096` with `buyPriceUsd: 0` |
+| price cadence | react-query, `/api/prices/open/refresh`, **15 s**, no stream | `/api/prices/open/refresh` **plus** `/api/prices/open/stream` SSE with a **5 s** poll fallback (`:1930-1994`) |
 
-`useOpenPositions()` returns seven fields and none of those. Swapping the source would leave the sell
-button reading `undefined` for a price. So Step 2 is **a view-model migration**, not a source swap.
+The bar's list is therefore a **strict subset** of PnLTracker's. `PnLTracker` is the superset: it
+starts from the tracked cycles and then *adds* wallet tokens that no cycle covers (`:1080-1117`,
+"bought by bot or outside app") while *pruning* ghost/sold ones by holdings (`:1075`).
 
-**Revised Step 2:**
-1. **Done** (`9b70ba5` + this commit) — share the *formula*. `pctFromBaseline` replaces the inline
-   `((current - buy) / buy) * 100` at `:1848`. Verified equivalent: the guards above it
-   (`currentTokenPriceUsd > 0` at `:1841`, `buyPriceUsd > 0` at `:1847`) establish exactly the
-   positivity that is `pctFromBaseline`'s only null branch. Note `:1886` computes a *different*,
-   value-based percentage and is deliberately left alone.
-2. **Open** — widen the hook to carry the fields both surfaces need (`currentTokenPriceUsd` at
-   minimum; `id`/`isSimulation` are PnLTracker's own view-model concerns and should be *added by*
-   PnLTracker on top of the hook, not moved into it). Then `openPositions` becomes a thin mapping
-   from `useOpenPositions()` plus PnLTracker's own enrichment.
-3. **Open** — only after 2: retire the duplicate price poll (`:1902`, `:1942`) in favour of the
-   hook's react-query cache. PnLTracker additionally consumes an SSE stream the hook does not have,
-   so this needs its own decision rather than a straight deletion.
+**So "point PnLTracker at `useOpenPositions()`" is backwards.** It would delete simulation
+positions, bot-operation positions, and external wallet holds from the PnL panel — a functional
+regression dressed as a de-duplication. That is the opposite of the goal.
 
-**Gate:** unchanged — same wallet, same count, same percentage per mint, side by side in a browser.
+#### What the duplication actually is
+
+Not "the same set computed twice". It is:
+
+1. **Two derivations of the same primitives.** Both call `computeOpenTradeCycle` and both prune
+   against holdings, but through different helpers (`listLiveOpenBarPositions` vs the inline
+   `pruneOpenPositionsByHoldings` path) and against **different holdings sources** — the bar uses
+   `useWalletTokens` (browser react-query), PnLTracker uses `fetchSolWalletHoldings` with an RPC
+   fallback (`:1055-1071`). Same question, two answers.
+2. **Two pollers against one route.** Both POST `/api/prices/open/refresh`. PnLTracker adds the SSE
+   stream. The bar's 15 s poll is redundant *load*, not redundant truth.
+3. **~~Two percentage formulas~~** — fixed (shared `pctFromBaseline`).
+
+#### The corrected direction
+
+Invert it: **the superset must own the derivation, and the bar must consume a filtered view of it**
+— not the other way round.
+
+1. Extract the **classification**, once: a module that takes `(records, holdingsByMint)` and returns
+   every open position tagged `real | sim | bot | external`, with its cost basis. `PnLTracker`'s
+   `:1012-1125` is the source of truth for that logic — move it, do not rewrite it.
+2. The bar renders the `real && priced` subset of that output. Its population must not change, so
+   the filter is the acceptance test.
+3. Unify the **holdings source** as a second, separate decision — `useWalletTokens` vs
+   `fetchSolWalletHoldings` is a real divergence and neither is obviously right.
+4. Unify the **price transport** to PnLTracker's shape (SSE + 5 s fallback), since it is the faster
+   of the two, and let the bar come off polling entirely.
+
+**Sequencing note:** 1 and 2 must be verified against the same wallet in a browser before 3 or 4 —
+the whole point of the exercise is that these populations are subtle, and the failure mode is
+silently dropping a category from one surface.
+
+**Gate:** unchanged — same wallet, and every category (real, sim, bot, external) present on
+PnLTracker with the same percentage, while the bar's visible list is byte-identical to today's.
+
+#### Why this section keeps being wrong
+
+Both earlier versions were written from a partial read of one side. The correction each time came
+from reading the other side end-to-end. The lesson for whoever picks this up: neither
+`useOpenPositions` nor `openPositions` is the whole story, and the populations differ by *category*,
+not by accident.
 
 ### Step 3 — Retire the duplicate poll
 
