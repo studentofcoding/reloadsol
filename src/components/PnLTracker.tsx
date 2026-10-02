@@ -255,24 +255,17 @@ export default function PnLTracker() {
   const [selectedToken, setSelectedToken] = useState<string>("");
 
   // ✅ NEW: Notification state
-  const [notificationsEnabled, setNotificationsEnabled] = useState<boolean>(
-    () => {
-      if (typeof window !== "undefined") {
-        return localStorage.getItem("pnl-notifications-enabled") === "true";
-      }
-      return false;
-    },
-  );
+  // HYDRATION: these five preferences initialise to their DEFAULTS, and the stored value is applied
+  // in the `restorePnlPrefs` effect below.
+  //
+  // They used to be lazy `useState(() => localStorage.getItem(...))` initialisers, which run during
+  // the client's HYDRATION render as well as later ones. The server has no `localStorage`, so it
+  // rendered the defaults while the client's first paint rendered the stored values — server HTML
+  // != client HTML, i.e. React #418 (the `args[]=HTML` in the console). Anything read from a
+  // client-only store must be applied after hydration, not during it.
+  const [notificationsEnabled, setNotificationsEnabled] = useState<boolean>(false);
   const notificationPermission = useNotificationPermission();
-  const [notificationThreshold, setNotificationThreshold] = useState<number>(
-    () => {
-      if (typeof window !== "undefined") {
-        const saved = localStorage.getItem("pnl-notification-threshold");
-        return saved ? parseFloat(saved) : 50;
-      }
-      return 50;
-    },
-  );
+  const [notificationThreshold, setNotificationThreshold] = useState<number>(50);
   const [notifiedTokens, setNotifiedTokens] = useState<Set<string>>(new Set());
 
   // ✅ NEW: Use the modular PnL sharing system
@@ -294,13 +287,7 @@ export default function PnLTracker() {
 
   // Hint message state
   const [showClosedPositionsHint, setShowClosedPositionsHint] =
-    useState<boolean>(() => {
-      if (typeof window !== "undefined") {
-        const dismissed = localStorage.getItem("closedPositionsHintDismissed");
-        return dismissed !== "true";
-      }
-      return true;
-    });
+    useState<boolean>(true);
 
   // Sell quote state
   const [sellQuotes, setSellQuotes] = useState<Map<string, SwapQuote>>(
@@ -316,21 +303,35 @@ export default function PnLTracker() {
   const [isBotSyncActive, setIsBotSyncActive] = useState<boolean>(false);
 
   // ✅ NEW: P&L amount visibility state
-  const [hiddenPnLAmounts, setHiddenPnLAmounts] = useState<Set<string>>(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("hidden-pnl-amounts");
-      return saved ? new Set(JSON.parse(saved)) : new Set();
-    }
-    return new Set();
-  });
+  const [hiddenPnLAmounts, setHiddenPnLAmounts] = useState<Set<string>>(
+    new Set(),
+  );
 
   // ✅ NEW: Global P&L visibility state
-  const [globalPnLHidden, setGlobalPnLHidden] = useState<boolean>(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("global-pnl-hidden") === "true";
+  const [globalPnLHidden, setGlobalPnLHidden] = useState<boolean>(false);
+
+  // Apply the stored P&L preferences AFTER hydration. This is the counterpart to the default
+  // initialisers above: the effect runs once the client's first render already matches the
+  // server's, so restoring the stored values here cannot cause a mismatch.
+  useEffect(() => {
+    try {
+      setNotificationsEnabled(
+        localStorage.getItem("pnl-notifications-enabled") === "true",
+      );
+      const threshold = localStorage.getItem("pnl-notification-threshold");
+      if (threshold) setNotificationThreshold(parseFloat(threshold));
+      setShowClosedPositionsHint(
+        localStorage.getItem("closedPositionsHintDismissed") !== "true",
+      );
+      const hidden = localStorage.getItem("hidden-pnl-amounts");
+      if (hidden) setHiddenPnLAmounts(new Set(JSON.parse(hidden)));
+      setGlobalPnLHidden(
+        localStorage.getItem("global-pnl-hidden") === "true",
+      );
+    } catch {
+      // A malformed stored value must not take the panel down; the defaults already rendered.
     }
-    return false;
-  });
+  }, []);
 
   // ✅ NEW: Multi-select and drag functionality state
   const [selectedTokens, setSelectedTokens] = useState<Set<string>>(new Set());
