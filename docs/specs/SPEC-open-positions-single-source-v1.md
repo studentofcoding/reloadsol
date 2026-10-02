@@ -168,18 +168,21 @@ section got wrong.
 #### Revised plan
 
 1. ✅ Share the percentage formula (`19f59a1`).
-2. **Point `PnLTracker` at `useWalletTokens`** instead of its imperative
-   `fetchSolWalletHoldings` call at `:1055`. Same function underneath, so the data is identical;
-   the change is that there is now **one cache and one in-flight request** shared with the bar, and
-   the post-trade refresh reaches both. This is the actual "same question, two answers" defect.
-   *Open sub-question for discussion:* the hook passes `enrichPrices: true`, which PnLTracker does
-   not need (it has its own price path). Either add an option to skip enrichment on the shared
-   query, or accept the extra `/api/tokens/prices` load. **This is the one real trade-off.**
+2. ✅ **DONE (`4e1fa8d`)** — `PnLTracker` reads the shared `useWalletTokens` entry instead of calling
+   `fetchSolWalletHoldings` imperatively at `:1055`. The direct fetch and its RPC fallback are kept
+   for the cold path, so the change is additive. **Option B was chosen**, and not as a compromise:
+   `enrichPrices` is hardcoded `true` inside `fetchWalletTokens`, not a per-caller option, so
+   "skipping" it (option A) would have changed the shared query for all twelve
+   `useWalletTokens` consumers — including the `categorizeUserTokens` dust/zero-value lists that
+   the dust filtering depends on. Reading the already-cached entry adds **zero** upstream calls and
+   removes PnLTracker's own uncached Shyft round trip per recompute, plus it lets a post-trade
+   `refetchFresh()` reach the panel for the first time.
 3. **Do not** flatten the populations. The bar stays the filtered view; `PnLTracker` stays the
    superset. Whether the *classification* should also be extracted is a separate, lower-value job —
    parked.
 4. Price transport can later unify onto PnLTracker's shape (SSE + 5 s fallback, `:1963`) and let
-   the bar come off its 15 s poll. Depends on 2.
+   the bar come off its 15 s poll. **This is now the only remaining duplicate poll**, and it is the
+   next candidate.
 
 **What changed my mind twice:** the first two versions of this section treated the two surfaces as
 one computation done twice. They are not. They share one holdings *source* and differ in
