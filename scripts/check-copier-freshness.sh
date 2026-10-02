@@ -87,7 +87,12 @@ if [ -f "$REPO_DIR/.env" ]; then
   set -a; . "$REPO_DIR/.env" >/dev/null 2>&1 || true; set +a
 fi
 TOKEN="${TELEGRAM_BOT_TOKEN:-${TELEGRAM_TOKEN:-}}"
-CHAT="${TELEGRAM_CHAT_ID:-${TELEGRAM_CHAT_ID_ALERTS:-}}"
+# `TELEGRAM_ALERT_CHAT_ID` is the name this stack actually uses: `src/utils/telegram.ts` reads it in
+# four places (including `isTelegramConfigured`), and `scripts/soak-dev-reputation.mjs` already used
+# it. Looking for `TELEGRAM_CHAT_ID` / `TELEGRAM_CHAT_ID_ALERTS` meant this watchdog never sent
+# anything — it alerted to its log file and exited 1, which reads exactly like a working alert.
+# A watchdog that silently cannot deliver is worse than no watchdog, because it is trusted.
+CHAT="${TELEGRAM_ALERT_CHAT_ID:-${TELEGRAM_CHAT_ID:-${TELEGRAM_CHAT_ID_ALERTS:-}}}"
 if [ -n "$TOKEN" ] && [ -n "$CHAT" ]; then
   NOW=$(date +%s)
   LAST_ALERT=$(cat "$COOLDOWN_FILE" 2>/dev/null || echo 0)
