@@ -3640,7 +3640,12 @@ function GmgnCard({
           <NumberField label="max hold (h)" value={maxHold} onChange={setMaxHold} step="1" />
         </FieldGrid>
       </Section>
-      <Section title="Radar">
+      {/* T4 step 2, first structural fact made visible: radar is *family* level. `r` falls back to
+          `DEFAULT_GMGN_RADAR`, so every gmgn card without an override renders identical numbers here —
+          which is exactly the duplication the census counted (GmgnStrategyConfig 32 fields against
+          GmgnRadarConfig 8), and why this block is the first candidate for one shared family row.
+          Editing it still edits this strategy only; what you are looking at is the family default. */}
+      <Section title="Radar — family default (editing adds a per-strategy override)">
         <FieldGrid>
           <NumberField
             label="sticky pump %"
