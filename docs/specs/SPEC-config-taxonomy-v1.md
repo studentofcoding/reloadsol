@@ -1,9 +1,10 @@
 # SPEC — Categorise the config surface: by substrate, then by scope
 
-**Status:** **Implemented** — T1–T4 and T6 shipped; **T5 is half-done** (the lifecycle word ships for cron
-workers, but the strategy-level `trial | active | retired` and retiring the six `search_*` variants are
-outstanding). The body below is kept as the design record; **§ As built** records what landed and where the
-build diverged from the plan.
+**Status:** **Implemented** — T1–T4 and T6 shipped; **T5 is done as a derived view** (the lifecycle word
+ships for cron workers *and* strategies, and retired `search_*` variants are archived in the Config tab).
+Not done, and deliberately: a *stored* lifecycle column, and the storage-level collapse of the duplicated
+family blocks. The body below is kept as the design record; **§ As built** records what landed and where
+the build diverged from the plan.
 **Date:** 2026-10-02 (as-built 2026-10-03)
 **Provenance:** the `/debug` pass of 2026-10-02 over `/dev/algo-tester?tab=config` (the rendered page's
 full text) plus a code read of `AlgoTesterHub.tsx` — the Config tab is a dynamic import, fed by a single
@@ -22,7 +23,7 @@ instinct one layer down) · [SPEC-rug-verdict-block-v1.md](./SPEC-rug-verdict-bl
 | **T2** vacuity | **Shipped** | The Noul flip-readiness meter no longer renders green when its deciding band is empty — `ok={bars.agreementOk && !vacuousAgreement}` with "· vacuous" beside it; the token funnel states `spec_would_pass is false on all N rows`. Three live cases. |
 | **T3** Health tab | **Shipped** | `health` added to `ALGO_TESTER_TABS` / `TAB_LABELS`; a new `AlgoHealthPanel` carries `EarlyEnterNoulShadowPanel` (Noul funnel, peak/token lists, token funnel) and the Workers/cron table + `domain_heartbeat`. Config no longer carries them, and the cron table is one copy (`WorkersTable`), not two. |
 | **T4** four scopes | **Shipped** | **Global:** `CombinedScoreWeightsPanel` (v1 defaults shown beside the fields, per-field source). **Family:** a read-only `FamilyDefaultRow` renders each shared block once — gmgn radar / security / exit, signals scoring, mcap exit. **Overrides:** a card shows only the fields it overrode; the rest sits behind a `CardFieldReveal` *"show inherited (N)"* toggle, inherited greyed and overrides bold, and a never-overridden section collapses rather than leaving an empty titled shell. **Switches:** `ExecutionModeSelect` / notify toggles as effect-labelled badges. |
-| **T5** lifecycle | **Partial** | The lifecycle word ships for **cron workers**, derived from fields the row already carries (`disabled → retired`, succeeded → active, never → trial; `b0a9d9d`). **Outstanding:** the same `trial \| active \| retired` for **strategies**, and retiring the six `search_*` variants — neither is implemented. |
+| **T5** lifecycle | **Shipped (derived)** | **Workers:** `disabled → retired`, succeeded → active, never → trial (`b0a9d9d`). **Strategies:** the same rule over `is_active` + the latest closed `strategy_outcomes.exit_at` as `last_success_at` — `src/strategies/strategy-lifecycle.ts`, read via `GET /api/strategies/lifecycle`, rendered by `StrategyLifecycleGrid` on every family's cards. **`search_*`:** an inactive `search_{mcap,gmgn,signals}_*` row folds into a collapsed *"Archived search variants (N) — retired, not deleted"* group. There is no list of "the six" in code — they are DB-only rows spawned by `strategy-search-bandit.ts` — so the predicate is the id prefix + `retired`; a *live* search clone (cap 3) stays in the main grid. **Not done:** nothing is stored (no lifecycle column; flipping `is_active` back un-archives), and the storage-level collapse of the duplicated blocks the SPEC lists last — the family rows (T4) removed the duplication from the page, not from the rows. |
 | **T6** source / radius | **Shipped** | **Source (rule 1):** `SourceTag` + the route's `sources` diff. **Radius (rule 2):** stated where the number is — the weights panel's "two mechanisms answer to rug" note, the family-row labels, and the per-card override count. |
 
 **Where the build diverged from the plan** (kept, because a wrong record is worse than none):
