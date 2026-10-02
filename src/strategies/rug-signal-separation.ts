@@ -176,6 +176,35 @@ export function coreSweep(rows: SeparationRow[]): SweepPoint[] {
   })
 }
 
+/**
+ * **The clock for a rug verdict: a mint's first *held* minute.**
+ *
+ * Not `first_seen_at`. Measured 2026-10-02: that column is 100% populated inside
+ * `token_mcap_tracking`, but the table covers only ~17% of the scored corpus (1,943 of 2,353 mints
+ * absent, because the watch set is a 4-way union), 49 mints read as a *negative* age, and the median
+ * lag from first-seen to our first candle is **−18 minutes** — the copier's 501-bar backfill runs
+ * ahead of it. Our own series is therefore both the honest clock and the thing the feature block is
+ * built from, so the two cannot disagree.
+ *
+ * A minute counts only when its close is a finite positive number: `NULL` in these arrays means "not
+ * observed", never zero, so index 0 is not the answer — the first *valid* minute is.
+ */
+export function firstHeldMinute(
+  hours: Array<{ hour_bucket: string; c_min: number[] | null }>,
+): number | null {
+  for (const row of hours) {
+    const hourMs = Date.parse(row.hour_bucket)
+    if (!Number.isFinite(hourMs) || !Array.isArray(row.c_min)) continue
+    for (let i = 0; i < row.c_min.length; i++) {
+      const c = row.c_min[i]
+      if (typeof c === 'number' && Number.isFinite(c) && c > 0) {
+        return Math.floor((hourMs + i * 60_000) / 1000)
+      }
+    }
+  }
+  return null
+}
+
 /** Minute closes rebuilt from the per-hour `c_min` arrays. */
 function expandCloses(rows: Array<{ hour_bucket: string; c_min: number[] | null }>): Array<{ t: number; c: number }> {
   const out: Array<{ t: number; c: number }> = []

@@ -32,6 +32,10 @@ export type RugSignalThresholds = {
   windowBars: number
   /** Fewer bars than this in the window → the shape components are not evaluated. */
   minBars: number
+  /** 1m bars scored under the block basis — the fixed verdict window (SPEC-rug-verdict-block). */
+  windowBars1m: number
+  /** Fewer 1m bars than this → the block is not judged. */
+  minBars1m: number
   /** A: share of green bars that must be exceeded. */
   stairBullishMin: number
   /** A: mean gain on green bars that must not be reached. */
@@ -79,6 +83,8 @@ export type RugSignalThresholds = {
 export const DEFAULT_RUG_SIGNAL_THRESHOLDS: RugSignalThresholds = {
   windowBars: 20,
   minBars: 5,
+  windowBars1m: 10,
+  minBars1m: 6,
   stairBullishMin: 0.7,
   stairAvgGainMax: 0.05,
   stairPriceGainMin: 0.8,
@@ -200,6 +206,8 @@ export function resolveRugSignalThresholds(
   return {
     windowBars: envNum(env, 'RUG_SIG_WINDOW', d.windowBars),
     minBars: envNum(env, 'RUG_SIG_MIN_BARS', d.minBars),
+    windowBars1m: envNum(env, 'RUG_SIG_WINDOW_1M', d.windowBars1m),
+    minBars1m: envNum(env, 'RUG_SIG_MIN_BARS_1M', d.minBars1m),
     stairBullishMin: envNum(env, 'RUG_SIG_STAIR_BULLISH', d.stairBullishMin),
     stairAvgGainMax: envNum(env, 'RUG_SIG_STAIR_AVG_GAIN', d.stairAvgGainMax),
     stairPriceGainMin: envNum(env, 'RUG_SIG_STAIR_PRICE_GAIN', d.stairPriceGainMin),
@@ -654,6 +662,9 @@ export function evaluateRugSignal(
   }
 }
 
+/** Which bar basis scores the window: `5m` is the original aggregation, `1m` is the fixed block. */
+export type RugSignalBasis = '5m' | '1m'
+
 /** Convenience: build the scorer's input from 1m bars. */
 export function evaluateRugSignalFrom1m(
   input: {
@@ -663,7 +674,28 @@ export function evaluateRugSignalFrom1m(
     ageHours?: number | null
   },
   thresholds: Partial<RugSignalThresholds> = {},
+  opts: { basis?: RugSignalBasis } = {},
 ): RugSignalEval {
+  const basis = opts.basis ?? '5m'
+  if (basis === '1m') {
+    // The fixed block basis: score the minutes as recorded, over the 1m window pair. The 5m path is
+    // left byte-identical, so the two can be compared side by side until the new one is accepted —
+    // and the scorer's internals are not touched at all.
+    //
+    // The 1m pair is read from the caller's thresholds when it resolved them from env (the detector
+    // passes a full object), and falls back to the code defaults for a partial caller.
+    const windowBars1m = thresholds.windowBars1m ?? DEFAULT_RUG_SIGNAL_THRESHOLDS.windowBars1m
+    const minBars1m = thresholds.minBars1m ?? DEFAULT_RUG_SIGNAL_THRESHOLDS.minBars1m
+    return evaluateRugSignal(
+      {
+        bars: input.bars1m,
+        mcap: input.mcap,
+        liquidityUsd: input.liquidityUsd,
+        ageHours: input.ageHours,
+      },
+      { ...thresholds, windowBars: windowBars1m, minBars: minBars1m },
+    )
+  }
   return evaluateRugSignal(
     {
       bars: aggregateTo5m(input.bars1m),

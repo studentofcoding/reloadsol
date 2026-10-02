@@ -4,6 +4,7 @@ import {
   cell,
   coreSweep,
   dedupeByMint,
+  firstHeldMinute,
   labelForward,
   liquidityView,
   staircaseView,
@@ -167,5 +168,33 @@ describe('rug-signal-separation — samples', () => {
     expect(buckets[0]).toMatchObject({ label: '< 2%', n: 1, hits: 1 })
     expect(buckets[3]).toMatchObject({ label: '≥ 10%', n: 1, hits: 0 })
     expect(buckets.reduce((sum, b) => sum + b.n, 0)).toBe(2)
+  })
+})
+
+/**
+ * The verdict clock. It is deliberately our own series rather than `first_seen_at` (which covers only
+ * ~17% of the corpus and read as *negative* for 49 mints), and the NULL-vs-zero distinction is the
+ * whole reason index 0 is never the answer.
+ */
+describe('firstHeldMinute', () => {
+  const hour = (iso: string, c: Array<number | null>) => ({
+    hour_bucket: iso,
+    c_min: c as number[],
+  })
+
+  it('returns the first VALID minute, not index 0', () => {
+    const t = firstHeldMinute([hour('2026-10-02T00:00:00Z', [null, 0, 5, 6])])
+    expect(t).toBe(Date.parse('2026-10-02T00:02:00Z') / 1000)
+  })
+
+  it('skips an hour that holds nothing and takes the next', () => {
+    const t = firstHeldMinute([hour('2026-10-02T00:00:00Z', [null, null]), hour('2026-10-02T01:00:00Z', [7])])
+    expect(t).toBe(Date.parse('2026-10-02T01:00:00Z') / 1000)
+  })
+
+  it('returns null — never 0 — when no minute was ever held', () => {
+    expect(firstHeldMinute([])).toBeNull()
+    expect(firstHeldMinute([hour('2026-10-02T00:00:00Z', [null, 0])])).toBeNull()
+    expect(firstHeldMinute([hour('not-a-date', [5])])).toBeNull()
   })
 })
