@@ -1542,6 +1542,11 @@ export async function monitorSLTPPositions(returnSummary: boolean = false): Prom
                         domain: closeResult.domain,
                         closed: closeResult.closed,
                     })
+                    if (closeResult.claimedElsewhere) {
+                        // Another pass is closing this position right now. Neither a shadow nor a
+                        // failure: skip without counting, and let that pass retire the mirror.
+                        return
+                    }
                     if (!closeResult.closed) {
                         // No closer owns this family, so this is a SHADOW: the worker evaluated the
                         // position, the trigger fired, and it declines to act. That is how a strategy
@@ -1699,6 +1704,11 @@ export async function runSLTPMonitorAndSummarize(): Promise<SLTPTrackingSummary>
                         domain: closeResult.domain,
                         closed: closeResult.closed,
                     })
+                    if (closeResult.claimedElsewhere) {
+                        // Another pass is closing this position right now. Neither a shadow nor a
+                        // failure: skip without counting, and let that pass retire the mirror.
+                        return
+                    }
                     if (!closeResult.closed) {
                         // No closer owns this family, so this is a SHADOW: the worker evaluated the
                         // position, the trigger fired, and it declines to act. That is how a strategy
