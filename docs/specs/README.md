@@ -4,6 +4,7 @@ Implementable handoffs. Code PRs should follow these rather than re-litigating p
 
 | Spec | Status |
 |---|---|
+| [SPEC-trading-records-read-cost-v1.md](./SPEC-trading-records-read-cost-v1.md) | **To-spec (docs only). Next up.** Pool acquire failures 113/10 min and the SL/TP monitor completing 1 pass in 4 — the cause is one read (`fetchTradingRecordsForWallet`, ~7.8s of client-side parsing on an 11 MB wallet, ~25 reads/min). **Blocked on a correctness defect, not a bound:** the reconstruction reports open cycles **84–92 days** old while `sl_tp_positions` says the oldest live position is **2 days**, so a `sinceDays` window would re-open duplicates. Task 1 reconciles those cycles; then the window (index-friendly, 198 buffers vs 44,968) becomes safe. Both failed bounds and the numbers that killed them are recorded |
 | [SPEC-rug-filter-v1.md](./SPEC-rug-filter-v1.md) | To-spec (docs only). Bubblemaps + Jupiter organic rug filter for buy_bulk / reloadsol |
 | [SPEC-tracker-catch-train-v1.md](./SPEC-tracker-catch-train-v1.md) | Implementing. Tracker social join + decision-useful risk + catch-train strip |
 | [SPEC-early-enter-soft-gate-v1.md](./SPEC-early-enter-soft-gate-v1.md) | Implementing. Early Enter closed-loop soft gate + Tracker Z/Anomaly/Momentum/Risk filters + Analytics minimal+price |
