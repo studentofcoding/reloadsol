@@ -5,6 +5,10 @@
 # Usage:
 #   bash scripts/run-backfill-exit-contracts-on-vps.sh            # dry-run (default)
 #   APPLY=1 bash scripts/run-backfill-exit-contracts-on-vps.sh    # write
+#   EXTRA_ARGS="--strategy-hours=mcap_enter_at_80:12" bash scripts/run-backfill-exit-contracts-on-vps.sh
+#
+# The override exists for a strategy whose DB config carries no `exit` block. It is never inferred
+# from a strategy id — the value has to be stated, because it decides when a live position is closed.
 #
 # On APPLY the script writes a before-image inside the container; this wrapper copies it back to
 # ./backups/ so the rollback does not depend on the container's /tmp surviving.
@@ -12,6 +16,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VPS_HOST="${VPS_HOST:-flowey-vps}"
 APPLY="${APPLY:-0}"
+EXTRA_ARGS="${EXTRA_ARGS:-}"
 SCRIPT_LOCAL="$ROOT/scripts/backfill-exit-contracts-standalone.mjs"
 REMOTE="/tmp/backfill-exit-contracts-standalone.mjs"
 
@@ -25,6 +30,7 @@ ssh_vps "docker cp $REMOTE reloadsol-web:$REMOTE"
 
 ARGS=()
 if [[ "$APPLY" == "1" || "$APPLY" == "true" ]]; then ARGS+=(--apply); fi
+[[ -n "$EXTRA_ARGS" ]] && ARGS+=($EXTRA_ARGS)
 
 ssh_vps "docker exec -e NODE_PATH=/app/node_modules reloadsol-web node $REMOTE ${ARGS[*]:-}"
 
