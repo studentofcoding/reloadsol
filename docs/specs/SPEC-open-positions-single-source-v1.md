@@ -180,9 +180,23 @@ section got wrong.
 3. **Do not** flatten the populations. The bar stays the filtered view; `PnLTracker` stays the
    superset. Whether the *classification* should also be extracted is a separate, lower-value job —
    parked.
-4. Price transport can later unify onto PnLTracker's shape (SSE + 5 s fallback, `:1963`) and let
-   the bar come off its 15 s poll. **This is now the only remaining duplicate poll**, and it is the
-   next candidate.
+4. ⚠️ **PARTIAL (`07dbca6`)** — `open-price-stream.ts` is the shared transport: ONE `EventSource`,
+   re-opened with the **union** of subscribers' mints (the bar's set and PnLTracker's superset
+   genuinely differ, so a single subscriber's set serves neither). The bar now consumes it and gets
+   near-realtime prices instead of a 15 s poll.
+
+   **But PnLTracker is NOT wired to it yet** — it still holds its own `EventSource` (`:2001`). So
+   today there are still **two** connections; the module only makes it *possible* to have one. That
+   is the remaining piece, and it is a smaller change than this one because the module already
+   handles the union.
+
+   The bar's 15 s poll is deliberately kept as a safety net underneath the stream (`pricesQuery`
+   untouched, stream merges on top and wins per-mint). Ordering matters: a stream that never
+   connects degrades to exactly the old behaviour, and it cannot leave a stale price standing
+   because the poll keeps overwriting it. That is what made this safe to land without a browser.
+
+**Remaining after 4:** wire PnLTracker onto `subscribeOpenPrices` and drop its private `EventSource`
+— which is also what makes the "one connection" claim actually true.
 
 **What changed my mind twice:** the first two versions of this section treated the two surfaces as
 one computation done twice. They are not. They share one holdings *source* and differ in
