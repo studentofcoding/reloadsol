@@ -1,7 +1,12 @@
 # SPEC — The exit standard: one live valuation, one decision, every strategy
 
-**Status:** To-spec (docs only) — **for review, nothing implemented**. No code changed by this document.
-**Date:** 2026-10-01
+**Status:** **Implemented for S8/S9/S10** (the mechanism); S1–S7 (the valuation/decision rules) remain
+the to-spec recommendation. S8/S9/S10 shipped in the exit-standard work: `db/init/57-sl-tp-exit-contract.sql`
+adds the contract columns, `registerSimExitContract` is the single registration path for all five spine
+callers, the per-family closers were deleted (the mcap route's manage phase is gone, not disabled), and
+the 60s `sltp_monitor` worker owns every exit. See `CHANGELOG.md [Unreleased]` — "one exit evaluator, one
+exit worker, and one entry price".
+**Date:** 2026-10-01 (status updated 2026-10-02)
 **Provenance:** the debug trace of 2026-10-01 (`scripts/replay-stop-sweep.mjs --slippage`, prod reads) ·
 [SPEC-exit-optimization-v1.md](./SPEC-exit-optimization-v1.md) (P4/P5) · [12-proposal-register.html](../../docs/diagrams/12-proposal-register.html)
 **Related:** [SPEC-sizing-level-2-probabilistic-v1.md](./SPEC-sizing-level-2-probabilistic-v1.md) (the same

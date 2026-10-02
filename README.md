@@ -210,6 +210,9 @@ Copy from [`.env.docker.example`](.env.docker.example). Key groups:
 | `POSTGRES_PASSWORD` | Postgres superuser password |
 | `DATABASE_URL` | App connection via PgBouncer (`reloadsol-bouncer:5432` in compose) |
 | `DATABASE_URL_DIRECT` | Direct Postgres URL for pgcopydb/psql (`reloadsol-db:5432`) |
+| `DATABASE_POOL_MAX` | App pool size (code default `10`; **prod runs 25**). One client is held for the whole of a query *including the client-side parse*, so a multi-MB hydration occupies one for seconds. |
+| `DATABASE_POOL_CONN_TIMEOUT_MS` | How long a query waits for a free client before failing (default `5000`). This is the `timeout exceeded when trying to connect` message. |
+| `DB_SLOW_QUERY_MS` | Any query holding a client longer than this is logged as `[db-slow-query]` with its SQL and caller frames (default `5000`; `0` off). Slow queries never error — they fail their *neighbours*, so this is the only way to see them. |
 | `SHYFT_API_KEY` | Shyft dashboard API key — `all_tokens` holdings, `send_many_txns` batch sends, and `/api/rpc` fallback |
 | `RPC_URL` | Comma-separated RPC URLs (max 5). Server `/api/rpc` proxy with failover. |
 | `NEXT_PUBLIC_RPC_URL` | Optional — browser uses `/api/rpc` proxy by default; set only for legacy direct-RPC paths. |

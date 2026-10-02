@@ -665,7 +665,7 @@ async function runSimTrack(request: NextRequest) {
       // this replaces. `SELECT data` defers that detoast to the client instead.
       // The bound is worth it only where the payload is huge; this wallet is 6,302 rows. Do not
       // "optimise" this into a bound without re-measuring buffers.
-      let records = await fetchTradingRecordsForWallet(walletAddress)
+      const records = await fetchTradingRecordsForWallet(walletAddress)
       const openPositions = getOpenPositionsForStrategy(
         records,
         strategy.id,
@@ -681,9 +681,11 @@ async function runSimTrack(request: NextRequest) {
         trackingRows.map((row) => row.token_address),
       )
 
-      // REL-20: collect this strategy's trading-record writes per phase and
-      // flush once (UNNEST bulk insert) instead of one insert per position.
-      // The manage phase MUST flush before the open phase re-fetches records.
+      // REL-20: collect this strategy's trading-record writes and flush once (UNNEST bulk insert)
+      // instead of one insert per position. Every write this route makes is an OPEN, so there is
+      // exactly one flush — after the open loop. (This said "the manage phase MUST flush before the
+      // open phase re-fetches records", which outlived the manage phase by a long time and read as
+      // a reason to keep a redundant re-fetch; see the open gate below.)
       let pendingRecords: TrackingRecord[] = []
       const collect = (record: TrackingRecord) => {
         pendingRecords.push(record)
@@ -707,14 +709,13 @@ async function runSimTrack(request: NextRequest) {
       }
 
       if (runOpen) {
-      // Deliberately a SECOND read, not a reuse of the one above: the manage phase has since
-      // closed positions and flushed its writes, so the open gate must see the new state.
-      records = await fetchTradingRecordsForWallet(walletAddress)
-      const currentOpen = getOpenPositionsForStrategy(
-        records,
-        strategy.id,
-        execMode.isSimulated,
-      ).length
+      // Reuses the read above. This used to re-fetch "because the manage phase has since closed
+      // positions" — but the manage phase is gone (SPEC-strategy-exit-standard S9, see the note at
+      // the top of runSimTrack) and the only flushPending() in this route is the open-phase one at
+      // the bottom, so nothing writes between the two reads. It was a full extra wallet hydration
+      // per strategy per pass, computing an identical value: getOpenPositionsForStrategy over the
+      // same unmodified `records` with the same arguments. `openPositions` is that same value.
+      const currentOpen = openPositions.length
       const maxOpen = strategy.config.execution.maxOpenPositions
 
       const openRows =

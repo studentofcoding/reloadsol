@@ -8,6 +8,93 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the web process was dying every 90 seconds, and it presented as a database fault
+
+`FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory`, every ~90s.
+`defaultIsOpen` answered *"is this one mint already open?"* by hydrating the **entire** mcap sim
+wallet — 6,302 records / 11 MB of JSONB — for **every candidate** it was asked about. Instrumented
+on prod: 15 calls in 8 minutes at ~7.8s each, and the repeated multi-MB allocations blew the 512 MB
+heap.
+
+Everything that looked like a database problem was downstream of that death: `timeout exceeded when
+trying to connect` (a pool growing from scratch — `waiting=0` while `total` climbed, i.e. connection
+*establishment*, not exhaustion), EOFs on the SL/TP monitor, `Database circuit open`, an unhealthy
+container, and `/api/strategies/outcomes` returning 502. It is also why raising `DATABASE_POOL_MAX`
+from 10 to 25 changed nothing.
+
+The open set is now hydrated once per (wallet, strategy), bounded, and reused; a successful open
+invalidates it. Memory 418 MiB → 137 MiB, `restarts=0`, no heap OOM since.
+
+### Fixed — the SL/TP pass priced 161 positions one HTTP request at a time (`2ea8448`)
+
+`getCurrentTokenPrices` walked every open position through GMGN **one mint per request** at
+`GMGN_CONCURRENCY=4`. Measured against the pass's other phases: **pricing 81,142 ms**, reconcile
+0.75s, summary 0.04s. That alone outran the 60s interval, so the job lock stayed held, every other
+fire logged `skipped (job lock held)`, and the monitor effectively ran every 2–4 minutes — which is
+why exits posted 1–2 minutes late even after the notification path was made immediate.
+
+Jupiter's price v3 takes 50 ids per request (4 requests instead of ~160) and was already wired as
+the fallback; it now runs first, with GMGN handling only the remainder. Pricing **81,142 ms →
+7,628 ms**. `getUsdPrices` gained an opt-in `fresh` flag, because its default serves a stale entry
+(up to 120s) while refreshing — for an exit trigger that would only relocate the lag from detection
+into the price.
+
+### Fixed — the exit worker wrote one UPDATE per position, ~160 concurrent queries a pass (`508322c`)
+
+`UPDATE sl_tp_positions SET current_price … WHERE id = $1`, issued inside the trigger map. Against a
+25-client pool: `total=25 idle=0 waiting=4…9`, 273 acquire failures in five minutes, and unrelated
+requests — `/api/strategies/outcomes` among them — failing at the 5s timeout because they queued
+behind. One batched `unnest` statement replaces all of them, and it no longer scales with position
+count.
+
+### Fixed — the `sinceLastClose` read was a 120-second nested loop (`6c8f64f`)
+
+Joining the `last_close` CTE onto `trading_records` on JSONB **expressions** makes the key
+unhashable, so the planner estimated the CTE at `rows=1` and re-read the 1,350-row materialized
+subquery once per trading row:
+
+```
+Nested Loop Left Join   actual time=2282ms..120,096ms   rows=1360
+  Rows Removed by Join Filter: 110,031,740
+  -> Materialize  rows=711  loops=155,022
+  -> Sort: external merge  Disk: 64MB + 46MB + 46MB
+```
+
+Extracting `(strategy, mint, operationType, close_position)` once into `scoped` makes the key plain
+text, so it hash-joins. **120,096 ms → 861 ms**, sort now a 1.2 MB quicksort. Differential-checked
+on one prod snapshot before shipping: identical id sets on both wallets (1369/1369, 2609/2609, 0
+rows differing either way). The `(strategy, mint)` key and the `coalesce(lc.ts, to_timestamp(0))`
+epoch fallback are unchanged — an INNER JOIN would drop never-closed keys and make still-open
+positions read as closed.
+
+### Changed — the pool instrumentation is permanent, and the bound is not free
+
+`[db-slow-query]` (over `DB_SLOW_QUERY_MS`, default 5000) and `[db-pool]` (pool counters at the
+moment a client cannot be acquired) are kept deliberately. Neither incident above ever *errored* —
+both simply held clients until unrelated requests failed at their own call sites, which is why they
+went unseen. This is what found them.
+
+An earlier attempt to bound 14 call sites to `sinceLastClose` was **reverted on measurement**. The
+bound is the only reason the query extracts JSONB paths, and extracting them forces Postgres to
+detoast every row's `data` server-side; `SELECT data` defers that to the client. On
+`mcap-tracker-sim`: **2,307 buffers / 12 ms unbounded vs 44,968 buffers / 416 ms bounded** (~351 MB
+of buffer reads for an 11 MB wallet). The assumption it rested on — that the unbounded read cost
+~11s — was the 155k-row trending wallet, not the wallets it touched. The bounds that predate this
+work stay, because those wallets *are* the huge ones. A covering index was also tried and dropped:
+the planner ignored it and the query stayed at 10,279 ms under load.
+
+Likewise a projected read was dropped: measured, `tokens[]` + `trading_simulation` are **91%** of
+the payload and both are required, so only 8.9% is droppable — and building a projected JSONB
+measures *larger* (34 MB), because the computed value does not inherit the stored column's TOAST.
+
+### Removed — the mcap sim-track route's second full wallet read
+
+It re-fetched "because the manage phase has since closed positions". The manage phase is gone (exit
+standard S9) and the route's only `flushPending` is the open-phase one *after* the gate, so nothing
+wrote between the two reads — it recomputed an identical value from unmodified records. One full
+wallet hydration per strategy per pass, gone. The signals route's equivalent re-read is **kept**: its
+close phase really does flush first.
+
 ### Changed — one exit evaluator, one exit worker, and one entry price
 
 The exit path had four per-family closers, each with its own evaluator, running on the 900s entry
