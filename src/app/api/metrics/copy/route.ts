@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse, connection } from 'next/server'
 import { log } from '@/utils/unified-logger'
+import { hasTrendingTrackerSecret } from '@/utils/api-auth'
 import {
   fetchGmgnWebCandlesPaced,
   fetchGmgnWebSafety,
@@ -90,13 +91,9 @@ const PRUNE_EVERY_HOURS = 6
 /** How far back the 24h cache may legitimately reach (its own TTL, not the copy window). */
 const CACHE_REACH_SECONDS = 24 * 60 * 60
 
+/** TRENDING_TRACKER_SECRET only; fails closed when it is unset (no committed fallback). */
 function isServiceAuthorized(request: NextRequest): boolean {
-  const { searchParams } = new URL(request.url)
-  const key = searchParams.get('key')
-  const expected = process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending'
-  if (key && key === expected) return true
-  const auth = request.headers.get('authorization')
-  return auth === `Bearer ${expected}`
+  return hasTrendingTrackerSecret(request)
 }
 
 type CachedSeries = { candles: TokenOhlcBar[]; source: string }
