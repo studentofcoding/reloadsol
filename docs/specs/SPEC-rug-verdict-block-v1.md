@@ -189,6 +189,59 @@ the base rate **and** per-day agreement.
 3. **A 30-minute label window may be too short** for slower dumps; it is env-tunable, so this is a
    measurement, not a rewrite.
 
+## Custody of the sweep — added 2026-10-02, after the first live soak
+
+The verdict pipeline works, but its **custody is the weakest part of this design**, and the first day
+of production showed why. Evidence, measured:
+
+```
+copier_runs              6 of 12 runs never closed; the rest took a steady 356-363 s
+cron                     healthy — 1075 log lines / 40 min, OHLC + sl-tp firing on schedule
+cron, copier only        last invocation 18:16, then nothing for 85 minutes
+nginx (survives recreates)  "upstream prematurely closed connection" — 134 in 4 hours
+                            ~90% of those with no deploy anywhere near them
+.env                     INTERVAL=900, KILL_SWITCH=0, TIMEOUT=480, RPS=2  (all correct)
+```
+
+So the failures are **not** logic, not configuration, and not a slow sweep. The web process drops
+connections mid-request, which cuts a sweep off, and a cut-off sweep has consequences that compound.
+
+**A cut sweep costs far more than a sweep.** Each EOF leaves a `running` row (by design — that is the
+signal), but it also appears to leave the copier's *cron entry* dead: after the 18:16 EOF, no attempt
+fired for 85 minutes while every other job ran normally. A restart re-bound it —
+`📈 Metrics 1m volume copier: every 900 seconds`. So one killed sweep ≈ hours of a stalled corpus,
+not one lost measurement. **That amplification is the real price, and it is ours to fix.**
+
+**Ranked, cheapest-and-highest-leverage first:**
+
+1. **Fix the entry's fragility (Go, ~10 lines).** An entry that dies at runtime and silently stops is
+   a defect independent of the web issue. Whichever mechanism removes it — an un-recovered panic in
+   the job goroutine, or a runtime re-bind that fails to re-add — the fix is the same: the job wrapper
+   must be unable to lose the entry, and the re-bind must not be the only thing standing between a
+   failure and an 85-minute silence. Turns "hours of nothing" into "one skipped run".
+2. **Take the sweep out of the deploys' blast radius.** A 6-minute batch job inside the user-facing
+   app is killed by every recreate. Either run it from a **separate worker container on the same
+   image** (its own lifecycle; dodges both the deploy kills and the web aborts) or make it
+   **resumable via a cursor** so a death costs one chunk. Structural, and worth doing before any
+   further work is added to the path.
+3. **Fix the watchdog's age reading.** Its SQL had a bare aggregate with no `FROM copier_runs`, so the
+   statement errored — invisibly, because `q()` pipes stderr to `/dev/null`. It has been alerting every
+   15 minutes with a nonsense age (`~1000 min`) while reporting the correct last completion in the same
+   line. The stuck-row half works; the age half cries wolf, and an alert that always fires is a mute
+   alert. Also: stop discarding stderr, so a broken query is visible.
+4. **Re-verify before building on it.** T4's labels (29 verdicts are labellable) and whether
+   `RPS=2` took ~360 s toward ~200 s both need **one completed sweep**. Those are the difference
+   between deployed and proven.
+5. **Deploy discipline.** Don't recreate `web` while a sweep is in flight, or have the cron defer.
+   A mitigation, not a fix — moot if item 2 lands.
+6. **Do not add work to the sweep** until item 2. T3 and T4 both lengthened a path that already dies
+   under load; every addition widens the exposure window.
+
+**Belongs to another workstream, handed over with numbers:** the web process aborting mid-response
+(134 closes / 4 h, `oom=false`, socket dropped rather than reaped, ~90% with no deploy). Localising it
+wants container memory sampled **across** a sweep, not after it — the existing fix report claims
+stability the logs contradict.
+
 ## Verification
 
 - `rug_verdicts` has **one row per mint** and no mint is judged twice (the guard, asserted, not assumed).
