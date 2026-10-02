@@ -787,6 +787,9 @@ func (cs *CronService) Start() {
 
     cs.cron.Start()
     cs.logger.Success("✅ All cron jobs scheduled successfully")
+
+    // A daily job can be missed entirely, and nothing says so. See catchUpMissedDailyJobs.
+    go cs.catchUpMissedDailyJobs()
     cs.logger.Info("📊 Trending tracker: every 5 minutes")
     cs.logger.Info("📊 Filtered trending tracker: every 2 minutes")
     cs.logger.Info("📊 Unfiltered trending tracker: every 2 minutes")
@@ -1321,6 +1324,83 @@ func (cs *CronService) manualStrategyReportTrigger(w http.ResponseWriter, r *htt
         "message": "Strategy report digest triggered",
         "timestamp": time.Now().UTC().Format(time.RFC3339),
     })
+}
+
+// catchUpMissedDailyJobs runs a daily job once shortly after startup when its last recorded success
+// is older than its period.
+//
+// Why this exists. The daily jobs fire at fixed times, and every container recreate re-arms the
+// schedule from "now" — so a container replaced more than once a day can miss its window entirely,
+// and a missed daily job says nothing: there is no error to record. Measured on 2026-10-03:
+// `daily_summary` and `pnl_update` had not STARTED since 01/10 (proven by
+// `cron_worker_runtime.updated_at`, which the upsert bumps on any event at all), and
+// `strategy_report`, being `@every 24h`, had its next run pushed a full day out by every recreate so
+// it could never fire.
+//
+// Read-only against the app and fail-open on every path: if the snapshot is unreachable or
+// unreadable the catch-up does nothing and the normal schedule still applies. It can only ever ADD a
+// run that was already due, never suppress one.
+func (cs *CronService) catchUpMissedDailyJobs() {
+	type dailyJob struct {
+		id     string
+		period time.Duration
+		run    func()
+	}
+	jobs := []dailyJob{
+		{id: "daily_summary", period: 24 * time.Hour, run: cs.runDailySummary},
+		{id: "pnl_update", period: 24 * time.Hour, run: cs.runPnLUpdate},
+		{id: "strategy_report", period: 24 * time.Hour, run: cs.runStrategyReportDigest},
+	}
+
+	// This runs at container start, and the app is starting with it. Without the wait the snapshot
+	// read races the app's own boot and the catch-up silently does nothing — which is the shape of
+	// the bug it exists to fix.
+	time.Sleep(90 * time.Second)
+
+	url := fmt.Sprintf("%s/api/workers/runtime", cs.config.APIBaseURL)
+	body, err := cs.makeRequest("GET", url, map[string]string{"key": cs.config.TrendingSecret}, 30)
+	if err != nil {
+		cs.logger.Info(fmt.Sprintf("⏭️ daily catch-up skipped: runtime snapshot unavailable (%v)", err))
+		return
+	}
+
+	var parsed struct {
+		Workers []struct {
+			WorkerID      string `json:"worker_id"`
+			LastSuccessAt string `json:"last_success_at"`
+		} `json:"workers"`
+	}
+	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+		cs.logger.Info("⏭️ daily catch-up skipped: runtime snapshot unreadable")
+		return
+	}
+
+	lastSuccess := map[string]string{}
+	for _, w := range parsed.Workers {
+		lastSuccess[w.WorkerID] = w.LastSuccessAt
+	}
+
+	for _, job := range jobs {
+		at := lastSuccess[job.id]
+		if at == "" {
+			// Never recorded: a first deploy, or the row was reset. Due by definition.
+			cs.logger.Info(fmt.Sprintf("⏪ daily catch-up: %s has no recorded success — running now", job.id))
+			go job.run()
+			continue
+		}
+		t, parseErr := time.Parse(time.RFC3339, at)
+		if parseErr != nil {
+			cs.logger.Info(fmt.Sprintf("⏭️ daily catch-up: %s last_success_at unreadable — leaving it to the schedule", job.id))
+			continue
+		}
+		if time.Since(t) > job.period {
+			cs.logger.Info(fmt.Sprintf(
+				"⏪ daily catch-up: %s last succeeded %s ago (period %s) — running now",
+				job.id, time.Since(t).Round(time.Minute), job.period,
+			))
+			go job.run()
+		}
+	}
 }
 
 func (cs *CronService) manualReportPrecomputeTrigger(w http.ResponseWriter, r *http.Request) {

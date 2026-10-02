@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse, connection } from 'next/server'
 import { query } from '@/utils/db'
 import { calculateWalletPnL } from '@/utils/pnl-wallet'
+import { executionStatsForRecords } from '@/utils/pnl-execution-stats'
 
 function getPnLUpdateSecret(): string | null {
   return process.env.PNL_UPDATE_SECRET || process.env.PNL_UPDATE_TOKEN || null
@@ -43,9 +44,16 @@ interface TradingRecord {
 interface PnLResult {
   wallet_address: string
   total_pnl_usd: number
-  total_trades: number
-  successful_trades: number
-  success_rate: number
+  /**
+   * Three different units, named as such — see `executionStatsForRecords`. Previously `total_trades`
+   * (a record/batch count) sat next to `successful_trades` (a token count) and `success_rate` (a
+   * submit-time execution rate), which is why the log could print 454 successes out of 372 trades and
+   * `success_rate: 100` for a wallet that lost money.
+   */
+  total_records: number
+  tokens_bought: number
+  tokens_attempted: number
+  execution_success_rate: number
 }
 
 // Main PnL update function
@@ -91,17 +99,18 @@ async function updateAllUsersPnL(): Promise<PnLResult[]> {
     for (const [walletAddress, userRecords] of Array.from(walletRecords.entries())) {
       try {
         const totalPnL = calculateWalletPnL(userRecords)
-        const totalTrades = userRecords.length
-        const successfulTrades = userRecords.reduce((sum: number, r: TradingRecord) => sum + r.data.successCount, 0)
-        const totalAttempts = userRecords.reduce((sum: number, r: TradingRecord) => sum + r.data.successCount + r.data.failureCount, 0)
-        const successRate = totalAttempts > 0 ? (successfulTrades / totalAttempts) * 100 : 0
-        
+        // Execution stats, not trade stats: `userRecords.length` counts BATCHES while `successCount`
+        // counts TOKENS, so they were never comparable and the labels made the wrong reading the
+        // natural one. The units and the reasoning live in the helper.
+        const executionStats = executionStatsForRecords(userRecords.map((r) => r.data))
+
         const pnlResult: PnLResult = {
           wallet_address: walletAddress,
           total_pnl_usd: totalPnL,
-          total_trades: totalTrades,
-          successful_trades: successfulTrades,
-          success_rate: successRate
+          total_records: executionStats.total_records,
+          tokens_bought: executionStats.tokens_bought,
+          tokens_attempted: executionStats.tokens_attempted,
+          execution_success_rate: executionStats.execution_success_rate
         }
         
         results.push(pnlResult)
