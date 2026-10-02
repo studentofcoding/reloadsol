@@ -433,7 +433,7 @@ the routing test already asserts.
 
 | # | Must hold | State | Handling | Test |
 |---|---|---|---|---|
-| **E1** | every strategy's open path reaches the evaluator, **asserted** | **open** | 4 of 9 contracted | the registry test — gate 4, target 9 of 9 |
+| **E1** | every strategy's open path reaches the evaluator, **asserted** | **in** | 4 of 9 contracted | the registry test — gate 4, target 9 of 9 |
 | **E2** | `att_rh`'s absence is **asserted as deliberate** | **in** | it resolves no `effective_exit` at open | a named exception, not a silent hole |
 | **E3** | chain is per-row, not hardcoded `sol` | **in** | `getCurrentTokenPrices` groups by the row's `chain` | a `robinhood` row is not priced on Solana |
 
