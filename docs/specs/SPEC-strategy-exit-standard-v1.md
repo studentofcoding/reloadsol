@@ -303,6 +303,24 @@ Every property this system must hold, each with its state **as measured on produ
 concrete handling, and the test that pins it. Reading: **in** = implemented and verified live · **partial** ·
 **open** = not implemented.
 
+### 8.0a What has shipped since the baseline
+
+`2e96be7` closes C2, C3, D2, D3, F1, F2, F3 and G-h, and asserts E2. Specifically:
+
+- `db/init/58-sl-tp-close-reason.sql` adds `sl_tp_positions.close_reason` + `closed_at` and
+  `cron_worker_runtime.last_skipped_at` — additive and nullable, the same shape as 57.
+- Every close writer now stamps a reason, and `max_age` has its own trigger instead of collapsing into
+  `max_hold_time`. That is what makes a backstop distinguishable from a stop-loss at last.
+- `markSimulatedPositionClosed` no longer sets `tp1_executed = true` on a non-stop trigger. That single
+  line was why a backstop was filed as take-profit.
+- A skipped pass is persisted rather than rejected with a 400, and the route runs a job-lock heartbeat,
+  so a pass outliving the Go client's 120s timeout can no longer lose its lock and let a second pass
+  start over the same positions.
+- `getSLTPTrackingSummary` reports `by_reason` and takes an explicit window.
+
+Still open: **A1/A5** (legacy rows, fail loudly — P3) · **B1–B5** (the live valuation and `stale` —
+P4) · **C4**, **D1**, **D6**, **E1**, **E3** · **G-a**–**G-g**.
+
 ### 8.0 The measured baseline
 
 Counting the contract columns (`reference_kind`, `reference_value`, `exit_basis`) that S8 adds:
@@ -332,6 +350,14 @@ The contracting that works is on the **smallest** families; the largest and most
 it. Where a contract *is* stamped it is correct — per-trade values (−10.44%, −31.33%, +14.33%, +286.64%),
 so the cl/brain adjustment does reach the row.
 
+**Why the big family is uncontracted — a correction to an earlier reading of this table.** It is not a
+missing call site. `registerSimExitContract` stamps `reference_kind` / `reference_value` / `exit_basis` on
+*every* call, and `mcap-tracking/sim-track/route.ts:401` is one of its four call sites. The uncontracted
+rows are **legacy rows opened before migration 57**, so the fix is a disposition for old rows (P3), not a
+change to the mcap path. `att_rh` is the one genuine absence: it resolves no `effective_exit` at open, so
+it has no thresholds to stamp, and `simCloseDomainForStrategy('att_rh')` returns `null` by design — a fact
+the routing test already asserts.
+
 ### A. The contract — what an open must stamp (S8)
 
 | # | Must hold | State | Handling | Test |
@@ -357,8 +383,8 @@ so the cl/brain adjustment does reach the row.
 | # | Must hold | State | Handling | Test |
 |---|---|---|---|---|
 | **C1** | one evaluator, closed reason set | **in** | `exit-evaluator.ts` | golden cases per reason |
-| **C2** | **the reason is persisted** | **open** | **there is no `close_reason` column** — and `strategy_outcomes.status` only holds `won`/`lost`/`breakeven`, so the reason is nowhere | reason round-trips row → back |
-| **C3** | a backstop is distinguishable from a stop-loss | **open** | every close sets `sl_executed` or `tp1_executed`; **0 of 420 rows have no flag**, so `max_age`/`max_hold` are recorded as `sl_executed = true` | `max_age` close ⇒ `sl_executed = false` |
+| **C2** | **the reason is persisted** | **in** | **there is no `close_reason` column** — and `strategy_outcomes.status` only holds `won`/`lost`/`breakeven`, so the reason is nowhere | reason round-trips row → back |
+| **C3** | a backstop is distinguishable from a stop-loss | **in** | every close sets `sl_executed` or `tp1_executed`; **0 of 420 rows have no flag**, so `max_age`/`max_hold` are recorded as `sl_executed = true` | `max_age` close ⇒ `sl_executed = false` |
 | **C4** | basis is read from the row, not the route | **partial** | 4 families yes; `search_mcap_*` NULL | the evaluator never sees a route |
 
 ### D. The writer (S6, S9)
@@ -366,8 +392,8 @@ so the cl/brain adjustment does reach the row.
 | # | Must hold | State | Handling | Test |
 |---|---|---|---|---|
 | **D1** | one writer owns every exit | **partial** | family closers deleted (`8ae590a`), but `att_rh` — the most active strategy — has no rows and still exits through its own RH ladder | a second closer cannot write |
-| **D2** | a **skipped** pass is recorded | **open** | `Worker runtime persist HTTP 400 (sltp_monitor/skipped)` — skips are invisible, so "how often did the sole closer not run" is unanswerable | skip ⇒ persisted, not a 400 |
-| **D3** | a **timed-out** pass has defined recovery | **open** | observed 14:55:07; whether rows closed before it died is unrecorded | a killed pass leaves no half-closed row |
+| **D2** | a **skipped** pass is recorded | **in** | `Worker runtime persist HTTP 400 (sltp_monitor/skipped)` — skips are invisible, so "how often did the sole closer not run" is unanswerable | skip ⇒ persisted, not a 400 |
+| **D3** | a **timed-out** pass has defined recovery | **in** | observed 14:55:07; whether rows closed before it died is unrecorded | a killed pass leaves no half-closed row |
 | **D4** | a paper row **cannot** reach `executeSellOrder` | **in** | `isSimulatedPosition` + hardcoded `isSimulated:false` | **the isolation test, gate 6** |
 | **D5** | a paper close writes the outcome; the mirror retires **only on success** | **in** | `closeSimulatedPositionFromWorker` | failed close stays open and retries |
 | **D6** | no row is left half-closed on write failure | **open** | | a thrown write leaves `is_active=true` |
@@ -377,16 +403,16 @@ so the cl/brain adjustment does reach the row.
 | # | Must hold | State | Handling | Test |
 |---|---|---|---|---|
 | **E1** | every strategy's open path reaches the evaluator, **asserted** | **open** | 4 of 9 contracted | the registry test — gate 4, target 9 of 9 |
-| **E2** | `att_rh`'s absence is **asserted as deliberate** | **open** | it resolves no `effective_exit` at open | a named exception, not a silent hole |
+| **E2** | `att_rh`'s absence is **asserted as deliberate** | **in** | it resolves no `effective_exit` at open | a named exception, not a silent hole |
 | **E3** | chain is per-row, not hardcoded `sol` | **in** | `getCurrentTokenPrices` groups by the row's `chain` | a `robinhood` row is not priced on Solana |
 
 ### F. Observability
 
 | # | Must hold | State | Handling | Test |
 |---|---|---|---|---|
-| **F1** | backstop share is computable | **open** | blocked by C3 | the metric returns a number |
-| **F2** | `stale` is counted | **open** | blocked by C2 | |
-| **F3** | skipped passes are counted | **open** | blocked by D2 | |
+| **F1** | backstop share is computable | **in** | blocked by C3 | the metric returns a number |
+| **F2** | `stale` is counted | **in** | blocked by C2 | |
+| **F3** | skipped passes are counted | **in** | blocked by D2 | |
 | **F4** | `EXIT_BACKSTOP_ALERT_PCT` (10) alerts | **open** | env documented, no alert wired | crossing it fires |
 | **F5** | both bases reported until they converge | **open** | gate 2 | an unvalidated `pnl_pct` is labelled |
 
@@ -401,7 +427,7 @@ so the cl/brain adjustment does reach the row.
 | **G-e** | the four categories (real/sim/bot/external) | **partial** | the worker currently sees `Manual: 0, Bot: 162` | the manual path is exercised |
 | **G-f** | **partial exits / the TP ladder** | **resolved, but see the caveat** | `tp1_sell_percentage` has **never been < 100** and `active_after_tp1 = 0`, so **TP1 always closes in full and TP2/TP3 are unreachable by construction**. The 0s are therefore *correct*, not a bug — but a 3-tier ladder that only ever uses tier 1 is indistinguishable from a single TP. **Decide: wire the ladder or drop the columns** | a partial TP leaves the row active; a full TP does not |
 | **G-g** | `label_rugged` path | **in** | reason in the closed set | a rugged label closes |
-| **G-h** | two backstops, `max_age` **and** `max_hold` | **open** | neither persisted (C3) | each is distinguishable |
+| **G-h** | two backstops, `max_age` **and** `max_hold` | **in** | neither persisted (C3) | each is distinguishable |
 
 ### 8.9 Build order
 

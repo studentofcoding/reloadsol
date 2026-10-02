@@ -1,0 +1,116 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+// The row writer is the DB seam. Mocked so these stay pure: what matters here is the SHAPE of the
+// contract handed to the tracker, not the insert.
+vi.mock('@/utils/sl-tp-tracker', () => ({
+  addSLTPPosition: vi.fn(async () => 'row-1'),
+}))
+
+const { addSLTPPosition } = await import('@/utils/sl-tp-tracker')
+const { registerSimExitContract, impactedEntryPriceUsd } = await import('./sim-exit-contract')
+
+const base = {
+  chain: 'sol',
+  walletAddress: 'gmgn-sim',
+  strategyId: 'gmgn_sm_kol_combined',
+  mintAddress: 'MintAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+  symbol: 'TEST',
+  positionSize: 0.02,
+  entryPriceUsd: 1,
+  thresholds: { takeProfitPct: 200, stopLossPct: 30, maxHoldHours: 48 },
+}
+
+describe('registerSimExitContract — the contract every open stamps', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('stamps the basis, the reference value and a NEGATIVE stop', async () => {
+    await registerSimExitContract(base)
+
+    expect(addSLTPPosition).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceKind: 'price',
+        referenceValue: 1,
+        exitBasis: 'price',
+        isSimulation: true,
+        chain: 'sol',
+        // A stored +30 would sit above the entry and trip on the first tick.
+        stopLossPercentage: -30,
+        takeProfitPercentage: 200,
+      }),
+    )
+  })
+
+  it('falls back to the entry price as the reference when no basis is given', async () => {
+    await registerSimExitContract({ ...base, entryPriceUsd: 0.00042 })
+
+    expect(addSLTPPosition).toHaveBeenCalledWith(
+      expect.objectContaining({ referenceValue: 0.00042, exitBasis: 'price' }),
+    )
+  })
+
+  it('honours a declared mcap basis rather than inferring it from the caller', async () => {
+    await registerSimExitContract({
+      ...base,
+      basis: 'mcap',
+      referenceValue: 42000,
+    })
+
+    expect(addSLTPPosition).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceKind: 'mcap',
+        exitBasis: 'mcap',
+        referenceValue: 42000,
+      }),
+    )
+  })
+
+  it('registers the ladder as ONE target, which is why TP2/TP3 read 0 forever', async () => {
+    // This is deliberate, not a defect, and it is the reason the worker's TP2/TP3 counters are
+    // always 0: a `bot` row reads only the tpN ladder, so the single target is expressed as TP1 —
+    // and TP1 sells 100%, which closes the position, leaving no tiers above it to reach. A
+    // three-tier ladder that only ever uses tier 1 is indistinguishable from a single TP.
+    await registerSimExitContract(base)
+
+    expect(addSLTPPosition).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tp1Percentage: 200,
+        tp1SellPercentage: 100,
+        tp3Enabled: false,
+      }),
+    )
+  })
+
+  it('refuses to register without a usable entry price, rather than inventing one', async () => {
+    // Existing behaviour, kept: fabricating a price would fabricate trigger data.
+    expect(await registerSimExitContract({ ...base, entryPriceUsd: 0 })).toBeNull()
+    expect(await registerSimExitContract({ ...base, entryPriceUsd: Number.NaN })).toBeNull()
+    expect(addSLTPPosition).not.toHaveBeenCalled()
+  })
+
+  it('refuses to register when the thresholds are not real numbers', async () => {
+    expect(
+      await registerSimExitContract({
+        ...base,
+        thresholds: { takeProfitPct: Number.NaN, stopLossPct: 30, maxHoldHours: 48 },
+      }),
+    ).toBeNull()
+    expect(addSLTPPosition).not.toHaveBeenCalled()
+  })
+})
+
+describe('impactedEntryPriceUsd — the price S10 says the stop is measured from', () => {
+  it('returns the spot price unchanged when the inputs cannot support a fill', () => {
+    // Never zero: a caller must always get a usable reference.
+    expect(impactedEntryPriceUsd({ spotPriceUsd: 0, notionalQuote: 1 })).toBe(0)
+    expect(impactedEntryPriceUsd({ spotPriceUsd: 1, notionalQuote: 0 })).toBe(1)
+  })
+
+  it('never returns worse than the spot it was given, on a non-negative impact model', () => {
+    const spot = 0.001
+    const filled = impactedEntryPriceUsd({ spotPriceUsd: spot, notionalQuote: 1 })
+    expect(Number.isFinite(filled)).toBe(true)
+    expect(filled).toBeGreaterThanOrEqual(spot)
+  })
+})

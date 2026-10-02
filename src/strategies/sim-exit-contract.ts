@@ -115,6 +115,15 @@ export async function registerSimExitContract(params: {
       // is read only by the `manual` branch. Registering the TP as TP1 is what makes it fire at
       // all: without it `take_profit_percentage` is a field the worker never evaluates, which is
       // why `Finished: 211 (SL: 211, TP1: 0, TP2: 0, TP3: 0)`.
+      //
+      // The ladder is DEGENERATE ON PURPOSE, and that is why TP2/TP3 read 0 forever:
+      // `tp1SellPercentage: 100` means TP1 closes the whole position, and `tp3Enabled: false`
+      // disables the trailing tier. So the row carries one target, expressed as tier 1 — which
+      // makes a three-tier ladder indistinguishable from a single TP, and means the 0s are correct
+      // rather than a bug. Wiring real laddering is a separate behavioural change: it would alter
+      // how every open position exits, so it does not belong in a change that is otherwise
+      // recording what already happens. The tp2/tp3 columns stay for the manual path, which does
+      // use them.
       tp1Percentage: Math.abs(thresholds.takeProfitPct),
       tp1SellPercentage: 100,
       tp3Enabled: false,
