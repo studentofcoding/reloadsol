@@ -648,6 +648,39 @@ async function getCurrentTokenPrices(
     }
 }
 
+/**
+ * Persist the pass's prices in ONE statement.
+ *
+ * This was one `UPDATE ... WHERE id = $1` per position, issued inside the trigger map, so a pass
+ * with ~160 open positions fired ~160 concurrent queries at the pool. Measured against a
+ * 25-client pool: `total=25 idle=0 waiting=4…9` with 273 acquire failures in five minutes, and
+ * `/api/strategies/outcomes` failing at the 5s timeout because it queued behind them. Every
+ * waiter was one of these writes. One statement is one round-trip and removes the burst.
+ */
+async function persistCurrentPrices(
+    positions: Array<{ id: string; token_address: string }>,
+    prices: Map<string, number>,
+): Promise<void> {
+    const ids: string[] = []
+    const values: number[] = []
+    for (const position of positions) {
+        const price = prices.get(position.token_address)
+        if (typeof price === 'number' && Number.isFinite(price) && price > 0) {
+            ids.push(position.id)
+            values.push(price)
+        }
+    }
+    if (ids.length === 0) return
+    const ts = new Date().toISOString()
+    await query(
+        `UPDATE sl_tp_positions AS p
+            SET current_price = v.price, updated_at = v.ts
+           FROM unnest($1::uuid[], $2::numeric[], $3::timestamptz[]) AS v(id, price, ts)
+          WHERE p.id = v.id`,
+        [ids, values, ids.map(() => ts)],
+    )
+}
+
 // Function to check SL/TP triggers for a position
 function checkSLTPTriggers(position: SLTPPosition, currentPrice: number): SLTPTriggerResult {
     // The decision itself lives in `evaluateExit` (S2), so the worker, the sims and the live path
@@ -1274,6 +1307,8 @@ export async function monitorSLTPPositions(returnSummary: boolean = false): Prom
         // Get current prices for all tokens
         const currentPrices = await getCurrentTokenPrices(filteredPositions)
 
+        await persistCurrentPrices(filteredPositions, currentPrices)
+
         // Check each position for triggers
         const triggerPromises = filteredPositions.map(async (position) => {
             const currentPrice = currentPrices.get(position.token_address)
@@ -1285,14 +1320,6 @@ export async function monitorSLTPPositions(returnSummary: boolean = false): Prom
                 })
                 return
             }
-
-            // Update current price in database
-            await query(
-                `UPDATE sl_tp_positions
-                 SET current_price = $2, updated_at = $3
-                 WHERE id = $1`,
-                [position.id, currentPrice, new Date().toISOString()],
-            )
 
             // Check for triggers
             const triggerResult = checkSLTPTriggers(position, currentPrice)
@@ -1380,6 +1407,8 @@ export async function runSLTPMonitorAndSummarize(): Promise<SLTPTrackingSummary>
         // Get current prices for all tokens
         const currentPrices = await getCurrentTokenPrices(filteredPositions)
 
+        await persistCurrentPrices(filteredPositions, currentPrices)
+
         // Check each position for triggers
         const triggerPromises = filteredPositions.map(async (position) => {
             const currentPrice = currentPrices.get(position.token_address)
@@ -1391,14 +1420,6 @@ export async function runSLTPMonitorAndSummarize(): Promise<SLTPTrackingSummary>
                 })
                 return
             }
-
-            // Update current price in database
-            await query(
-                `UPDATE sl_tp_positions
-                 SET current_price = $2, updated_at = $3
-                 WHERE id = $1`,
-                [position.id, currentPrice, new Date().toISOString()],
-            )
 
             // Check for triggers
             const triggerResult = checkSLTPTriggers(position, currentPrice)
