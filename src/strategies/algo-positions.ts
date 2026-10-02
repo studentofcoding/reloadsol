@@ -282,19 +282,14 @@ export async function getAlgoPositions(params?: {
         throw error
       }
     })(),
-    // All four feed open-position reconstruction only, so each is bounded to its (strategy, mint)
-    // tail. This is a per-request route (/api/strategies/positions), and unbounded it moved the
-    // entire wallet — mcap-tracker-sim alone is 6,302 rows / 11 MB / ~11s — on every load.
-    fetchTradingRecordsForWallet(simWalletForChain(MCAP_TRACKER_SIM_WALLET, chain), {
-      sinceLastClose: true,
-    }),
-    fetchTradingRecordsForWallet(simWalletForChain(SIGNALS_SIM_WALLET, chain), {
-      sinceLastClose: true,
-    }),
-    fetchTradingRecordsForWallet(simWalletForChain(GMGN_SIM_WALLET, chain), {
-      sinceLastClose: true,
-    }),
-    isSol ? fetchTradingRecordsForWallet(SOCIAL_SIM_WALLET, { sinceLastClose: true }) : [],
+    // Unbounded on purpose — these four wallets are small, and the `sinceLastClose` bound makes
+    // Postgres detoast every row's `data` server-side for a plain indexed read that is far
+    // cheaper here (see the mcap-tracking sim-track route for the buffer measurement).
+    // Only the 155k-row trending wallet is worth bounding, and it is bounded below.
+    fetchTradingRecordsForWallet(simWalletForChain(MCAP_TRACKER_SIM_WALLET, chain)),
+    fetchTradingRecordsForWallet(simWalletForChain(SIGNALS_SIM_WALLET, chain)),
+    fetchTradingRecordsForWallet(simWalletForChain(GMGN_SIM_WALLET, chain)),
+    isSol ? fetchTradingRecordsForWallet(SOCIAL_SIM_WALLET) : [],
     // `trending-bot-sim-rh` holds 155k rows / 169 MB and grows forever, while only ~30k fall
     // inside 14 days. Hydrating it unbounded measured 19-78s and parks a pool client for that
     // whole time; alongside the five other wallets fetched here in parallel it occupies most of

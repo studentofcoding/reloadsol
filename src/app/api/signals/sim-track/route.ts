@@ -77,7 +77,7 @@ async function runSimTrack(request: NextRequest) {
     const strategies = await getActiveSignalsForSim(chain)
     if (strategies.length === 0) continue
     const simWallet = simWalletForChain(SIGNALS_SIM_WALLET_LOCAL, chain)
-    const records = await fetchTradingRecordsForWallet(simWallet, { sinceLastClose: true })
+    const records = await fetchTradingRecordsForWallet(simWallet)
 
     for (const strategy of strategies) {
       const openPositions = getOpenPositionsForStrategy(records, strategy.id)
@@ -142,9 +142,7 @@ async function runSimTrack(request: NextRequest) {
       // REL-20: flush close-phase writes before re-fetching records
       await flushPending('close')
 
-      const refreshedRecords = await fetchTradingRecordsForWallet(simWallet, {
-        sinceLastClose: true,
-      })
+      const refreshedRecords = await fetchTradingRecordsForWallet(simWallet)
       const currentOpen = getOpenPositionsForStrategy(refreshedRecords, strategy.id).length
       const maxOpen = strategy.config.execution.maxOpenPositions
 

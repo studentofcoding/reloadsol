@@ -109,10 +109,9 @@ async function runSimTrack(request: NextRequest) {
     const strategies = await getActiveGmgnForSim(chain)
     if (strategies.length === 0) continue
     const simWallet = simWalletForChain(GMGN_SIM_WALLET, chain)
-    // Safe to bound: collectRecentMints below keeps a SET of mints from rows inside the cooldown
-    // window, and the tail always retains each key's last close row — so a mint that would be
-    // collected from an older row is still collected from that close row.
-    const records = await fetchTradingRecordsForWallet(simWallet, { sinceLastClose: true })
+    // Unbounded on purpose — see the mcap-tracking route for the buffer measurement. The bound
+    // makes Postgres detoast every row's `data` server-side; this wallet is 836 rows.
+    const records = await fetchTradingRecordsForWallet(simWallet)
 
     for (const strategy of strategies) {
       let opened = 0
@@ -143,9 +142,7 @@ async function runSimTrack(request: NextRequest) {
         recentMints,
       })
 
-      const refreshedRecords = await fetchTradingRecordsForWallet(simWallet, {
-        sinceLastClose: true,
-      })
+      const refreshedRecords = await fetchTradingRecordsForWallet(simWallet)
       const currentOpen = getOpenPositionsForStrategy(refreshedRecords, strategy.id).length
       const maxOpen = strategy.config.execution.maxOpenPositions
 

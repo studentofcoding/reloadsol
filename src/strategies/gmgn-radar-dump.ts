@@ -40,7 +40,7 @@ export async function closeOpenSimsForRadarDump(params: {
 
   for (const wallet of SIM_WALLETS()) {
     try {
-      const records = await fetchTradingRecordsForWallet(wallet, { sinceLastClose: true })
+      const records = await fetchTradingRecordsForWallet(wallet)
       const cycle = computeOpenSimCycle(records, params.tokenAddress)
       if (!cycle) continue
 

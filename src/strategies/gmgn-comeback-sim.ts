@@ -37,7 +37,7 @@ export async function maybeOpenGmgnComebackSim(params: {
     strategies.find((s) => s.id === 'gmgn_sm_kol_combined') ??
     strategies[0]
 
-  const records = await fetchTradingRecordsForWallet(GMGN_SIM_WALLET, { sinceLastClose: true })
+  const records = await fetchTradingRecordsForWallet(GMGN_SIM_WALLET)
   const openMints = new Set<string>()
   let openCount = 0
   const seen = new Set<string>()

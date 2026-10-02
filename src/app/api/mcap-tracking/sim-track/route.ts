@@ -658,11 +658,14 @@ async function runSimTrack(request: NextRequest) {
       const nativeBuyAmount =
         strategy.config.execution.simBuyNative ?? strategy.config.execution.simBuySol
       const slippageBps = resolveMcapSlippageBps(strategy.config.execution.slippageBps)
-      // Bounded to each (strategy, mint)'s last full close — the exact form documented on
-      // fetchTradingRecordsForWallet and already used by db.ts:520 / :1412. `records` is read
-      // ONLY through getOpenPositionsForStrategy here, so the tail is what this needs; the
-      // unbounded form moved the whole wallet (6,302 rows / 11 MB, ~11s) per strategy per chain.
-      let records = await fetchTradingRecordsForWallet(walletAddress, { sinceLastClose: true })
+      // DELIBERATELY UNBOUNDED. `sinceLastClose` is not free: the bound is the only reason the
+      // query extracts JSONB paths server-side, and extracting them forces Postgres to detoast
+      // the whole `data` column for every row. Measured on mcap-tracker-sim — 44,968 buffers,
+      // 416ms idle and ~10s under load, against 2,307 buffers / 12ms for the plain indexed read
+      // this replaces. `SELECT data` defers that detoast to the client instead.
+      // The bound is worth it only where the payload is huge; this wallet is 6,302 rows. Do not
+      // "optimise" this into a bound without re-measuring buffers.
+      let records = await fetchTradingRecordsForWallet(walletAddress)
       const openPositions = getOpenPositionsForStrategy(
         records,
         strategy.id,
@@ -706,7 +709,7 @@ async function runSimTrack(request: NextRequest) {
       if (runOpen) {
       // Deliberately a SECOND read, not a reuse of the one above: the manage phase has since
       // closed positions and flushed its writes, so the open gate must see the new state.
-      records = await fetchTradingRecordsForWallet(walletAddress, { sinceLastClose: true })
+      records = await fetchTradingRecordsForWallet(walletAddress)
       const currentOpen = getOpenPositionsForStrategy(
         records,
         strategy.id,

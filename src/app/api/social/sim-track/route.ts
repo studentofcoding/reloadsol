@@ -171,9 +171,7 @@ async function runSimTrack(request: NextRequest) {
 
   try {
     const strategies = await getActiveSocialForSim()
-    const records = await fetchTradingRecordsForWallet(SOCIAL_SIM_WALLET, {
-      sinceLastClose: true,
-    })
+    const records = await fetchTradingRecordsForWallet(SOCIAL_SIM_WALLET)
     const results: Array<{
       strategyId: string
       discovered: number
@@ -237,9 +235,7 @@ async function runSimTrack(request: NextRequest) {
         })),
       )
 
-      const refreshedRecords = await fetchTradingRecordsForWallet(SOCIAL_SIM_WALLET, {
-        sinceLastClose: true,
-      })
+      const refreshedRecords = await fetchTradingRecordsForWallet(SOCIAL_SIM_WALLET)
       const currentOpen = getOpenPositionsForStrategy(refreshedRecords, strategy.id).length
       const maxOpen = strategy.config.execution.maxOpenPositions
 

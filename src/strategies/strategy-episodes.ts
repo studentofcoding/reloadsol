@@ -131,8 +131,7 @@ export async function mintHasOpenStrategyPositions(
   const walletChecks = await Promise.all(
     SIM_WALLETS.map(async (wallet) => {
       try {
-        // Four of these run in parallel per outcome insert (SIM_WALLETS.map), fire-and-forget.
-        const records = await fetchTradingRecordsForWallet(wallet, { sinceLastClose: true })
+        const records = await fetchTradingRecordsForWallet(wallet)
         const cycle = computeOpenSimCycle(records, tokenAddress)
         return Boolean(cycle && cycle.simulationType === 'strategy')
       } catch {

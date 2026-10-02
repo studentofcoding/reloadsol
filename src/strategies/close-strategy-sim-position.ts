@@ -106,9 +106,10 @@ export async function closePriceStrategySimPosition(params: {
 }): Promise<number> {
   const closeReason = params.closeReason ?? CLOSE_REASON
   const wallet = walletForDomain(params.domain, params.chain)
-  // Only the OPEN cycle is wanted, and the tail retains it whole — for a key with no full close
-  // the epoch fallback returns every row, so the cycle is reconstructable exactly as before.
-  const records = await fetchTradingRecordsForWallet(wallet, { sinceLastClose: true })
+  // Unbounded: the bound extracts JSONB paths server-side and forces Postgres to detoast every
+  // row's `data` (see the mcap-tracking sim-track route for the buffer measurement). These
+  // wallets are small, so the plain indexed read is cheaper.
+  const records = await fetchTradingRecordsForWallet(wallet)
   const cycle = computeOpenSimCycle(records, params.mintAddress)
   if (!cycle) return 0
 
@@ -208,9 +209,7 @@ export async function closeMcapStrategySimPositions(
   const failed: Array<{ token: string; error: string }> = []
   let closed = 0
   const wallet = simWalletForChain(MCAP_TRACKER_SIM_WALLET, chain)
-  // Runs per position from the 60s SL/TP worker, so unbounded it re-read 6,302 rows / 11 MB
-  // each time. Open positions only — bounded.
-  const records = await fetchTradingRecordsForWallet(wallet, { sinceLastClose: true })
+  const records = await fetchTradingRecordsForWallet(wallet)
   const allOpen = getOpenMcapSimPositions(records, strategyId)
   const open = options?.mintAddress
     ? allOpen.filter((p) => p.mintAddress === options.mintAddress)

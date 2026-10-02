@@ -59,8 +59,7 @@ function marketCapUsd(info: Record<string, unknown>): number | null {
 }
 
 async function hasOpenSim(mint: string): Promise<boolean> {
-  // Called per hot cluster from a 75s cron — bound it rather than moving the whole wallet each time.
-  const records = await fetchTradingRecordsForWallet(GMGN_SIM_WALLET, { sinceLastClose: true })
+  const records = await fetchTradingRecordsForWallet(GMGN_SIM_WALLET)
   const cycle = computeOpenSimCycle(records, mint)
   return Boolean(cycle)
 }
