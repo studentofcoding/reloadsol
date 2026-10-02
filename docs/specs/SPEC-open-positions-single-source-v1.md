@@ -1,6 +1,6 @@
 # SPEC — Open positions: one source of truth
 
-**Status:** **Steps 1 and 4 IMPLEMENTED** (`9b70ba5`, shipped). Steps 2–3 remain to-spec.
+**Status:** **All four steps IMPLEMENTED and shipped** (`9b70ba5`, `19f59a1`, `4e1fa8d`, `07dbca6`, `9cf9a78`). Browser-verified by the user 2026-10-02.
 **Date:** 2026-10-02
 **Author:** Command Code (this session)
 **Trigger:** "we have now have PnL on watchlist system check and make it one system instead of duality
@@ -23,12 +23,32 @@
 
 ### Still open
 
-- **Step 2 (revised)** — the open path has now been read end-to-end, and the original Step 2 was
-  wrong: `openPositions` is a working record with six fields the hook does not return, three of which
-  the **bulk sell** path depends on. The formula half is done (shared `pctFromBaseline`); the
-  source-swap half is a view-model migration. See the revised Step 2 below before starting it.
-- **Step 3** — retire the duplicate poll. Now depends on the revised Step 2, and PnLTracker's SSE
-  stream means it needs a decision rather than a deletion.
+Nothing. Steps 2 and 3 landed after this header was written, and the status line above was stale
+until 2026-10-02 — recorded here rather than silently corrected, because the header had said
+"Steps 2–3 remain to-spec" while the code had already shipped them:
+
+- **Step 2 (revised) — done** (`19f59a1` corrected the spec text, `4e1fa8d` shipped the half that
+  mattered). The original Step 2 was wrong three times over, each time from reading one surface
+  only: `openPositions` is a working record with six fields the hook does not return, three of which
+  the **bulk sell** path depends on (`selectedTokens.has(pos.id)` at `:1307`/`:1327`, the filter at
+  `:1310`, `sellPriceUsd: position.currentTokenPriceUsd` at `:1348`), so a source swap would have
+  broken bulk sell. The corrected form is that the two surfaces are a **superset and a filtered
+  view** — `PnLTracker` carries real/sim/bot/external, the bar is `real && priced` — which is a
+  difference in *category*, by design. Flattening would have deleted features, and `tsc` would have
+  passed because a dropped category is a runtime absence, not a type error.
+- **Step 3 — done** (`07dbca6`, `9cf9a78`). `utils/open-price-stream.ts` is one `EventSource` to
+  `/api/prices/open/stream`, re-opened with the **union** of subscribers' mints and refcounted per
+  mint (keyed on the mint-set string, not the array, to avoid a reconnect storm). PnLTracker's
+  private stream and its 5 s `startPollFallback` are gone; the react-query net re-polls at 15 s.
+  Note `grep "new EventSource"` returns **two** hits, not one — the other is
+  `trading-tracker.ts:779` on `/api/trading/subscribe`, a different endpoint and deliberately left
+  alone. Commit `9cf9a78`'s message claimed one; that claim is wrong and cannot be edited.
+
+### What is genuinely left
+
+- Nothing code-side. The only thing the four steps could not prove from here is the browser gate,
+  which is now satisfied: the user confirms the bar and the panel both render correctly, with all
+  four categories still present on `PnLTracker`.
 
 ---
 
