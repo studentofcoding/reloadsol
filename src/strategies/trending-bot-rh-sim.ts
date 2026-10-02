@@ -500,7 +500,13 @@ export async function runTrendingBotRhSimCycle(): Promise<RhTrendingSimResult[]>
     const blockedCandidates = candidates.filter((t) =>
       blocked.has(trendingReentryKey(strategyId, t.token_address)),
     )
-    log.info('deviation_alert', 'RH sim candidate funnel', {
+    // NOTE on the level: this is `warn`, not `info`, because `unified-logger` writes `info` through
+    // `console.log` and production's `removeConsole` strips it (`unified-logger.ts:77`) — so an
+    // `info` funnel would be a log that looks correct in dev and is silently absent where it matters.
+    // This path has been burned by exactly that before ("most of this path's instrumentation is
+    // console.log, which production's removeConsole strips, so the cycle looked silent" — CHANGELOG),
+    // and I repeated it; the first version of this line was `info`.
+    log.warn('deviation_alert', 'RH sim candidate funnel', {
       strategyId,
       chain: CHAIN,
       feed_tokens: tokens.length,

@@ -147,14 +147,28 @@ function writeLog(entry: ApiLogEntry | TradeLogEntry): void {
     const duration = entry.duration ? `[${entry.duration}ms]` : ''
     const requestId = entry.requestId ? `[${entry.requestId}]` : ''
 
+    // Level -> console METHOD, and the method is what decides production visibility.
+    //
+    // `next.config.js` sets `removeConsole: { exclude: ['error', 'warn'] }`, which keys off the method
+    // called, not the level attached to an entry. Sending every level through `console.log` therefore
+    // made `warn` and `critical` INVISIBLE in production while reading correctly in dev — the same
+    // shape as the note above, where this path looked silent because its instrumentation was
+    // `console.log`. Every `log.warn` in the codebase was affected, not just this file's callers.
+    const consoleFn =
+        entry.level === 'error' || entry.level === 'critical'
+            ? console.error
+            : entry.level === 'warn'
+              ? console.warn
+              : console.log
+
     // Different output formats for API vs Trade logs
     if ('endpoint' in entry && entry.endpoint) {
         const method = entry.method || 'UNKNOWN'
         const status = entry.response?.statusCode ? `[${entry.response.statusCode}]` : ''
-        console.log(`${prefix} ${timestamp} ${operation} ${requestId} [${method} ${entry.endpoint}] ${status} ${duration} - ${entry.message}`)
+        consoleFn(`${prefix} ${timestamp} ${operation} ${requestId} [${method} ${entry.endpoint}] ${status} ${duration} - ${entry.message}`)
     } else {
         const tokenInfo = 'tokenSymbol' in entry && entry.tokenSymbol ? `[${entry.tokenSymbol}]` : ''
-        console.log(`${prefix} ${timestamp} ${operation} ${requestId} ${tokenInfo} ${duration} - ${entry.message}`)
+        consoleFn(`${prefix} ${timestamp} ${operation} ${requestId} ${tokenInfo} ${duration} - ${entry.message}`)
     }
 
     // Log additional details for errors and critical issues
