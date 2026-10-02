@@ -38,7 +38,7 @@ the fetch path from wasting its budget.
 |---|---|
 | Store | Adopt the existing `token_ohlc_bars` (don't add a table, don't drop it) |
 | Cadence | `OHLC_SAMPLE_INTERVAL=15` s → 4 samples/minute so a real intra-minute high/low exists |
-| Watch set | mcap candidates in the 30k–2M band + `trending_token_tracker` rows + mints with a sim buy in the last 24 h; capped by `OHLC_SAMPLE_MAX_MINTS` (default 300); **sol only** (pricing is Jupiter) |
+| Watch set | mcap candidates in the 30k–2M band + `trending_token_tracker` rows + mints with a sim buy in the last 24 h + mints in `token_detect_snapshots` within `OHLC_SAMPLE_DETECT_WINDOW_MIN` (default 120 min); capped by `OHLC_SAMPLE_MAX_MINTS` (default 500, ceiling 1500; the metrics copier keeps its own 300 cap); **sol only** (pricing is Jupiter) |
 | Prices | `getUsdPrices` (Jupiter Price V3, 50 mints/call, shared 5 RPS gate) — never per-mint GMGN |
 | Volume | **NULL for sampler bars** — the sampler only has a Jupiter spot price in scope, *not* because no 1-minute volume exists. Volume is persisted separately in `token_metrics_history` by the `metrics_copier` worker; see [SPEC-rug-pattern-data-v1.md](./SPEC-rug-pattern-data-v1.md) §G1. |
 | Source order | live upstream (brain → ST → GMGN) → **own 1m series** → storage fallback (labels/detect) → no fake axis |
