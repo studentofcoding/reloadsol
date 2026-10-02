@@ -42,18 +42,17 @@ export default function NavigationTabs({
     "/sell",
     "/swap",
     "/history",
-    "/pnl",
+    "/dev/paper-trade",
     "/dev/search-token",
     "/dev/insight",
     "/dev/signals",
     "/dev/algo-tester",
     "/dev/dlmm",
     "/dev/social",
-    "/dev/fomo",
     "/dev/strategies",
     "/dev/token-search",
     "/dev/ohlc-labels",
-    "/dev/arbitrage",
+    "/dev/dev-reputation",
   ].some((path) => (pathname || "").startsWith(path));
 
   const handleTabClick = (tab: string) => {
@@ -158,7 +157,23 @@ export default function NavigationTabs({
                 </Link>
                 ) : null}
 
-                {can("/dev/search-token") ? (
+                {/* Took the "Paper" chip's slot: /dev/paper-trade is still reachable by URL, and the
+                    rug signal page is where that work now lives. */}
+                {can("/dev/rug-signal") ? (
+                    <Link
+                      href="/dev/rug-signal"
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
+                        isActive("/dev/rug-signal")
+                          ? "bg-gray-700 text-white"
+                          : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
+                      }`}
+                      title="Rug signal - reachability and soak"
+                      aria-label="Rug signal"
+                    >
+                      <span className="text-xs font-semibold">Rug</span>
+                    </Link>
+                    ) : null}
+                    {can("/dev/search-token") ? (
                 <Link
                   href="/dev/search-token"
                   className={`px-3 py-3 rounded-lg font-semibold ${navChromeItem} ${
@@ -324,18 +339,20 @@ export default function NavigationTabs({
                       </svg>
                     </Link>
                     ) : null}
-                    {can("/dev/fomo") ? (
+                    {/* Took the "Paper" chip's slot: /dev/paper-trade is still reachable by URL, and the
+                    rug signal page is where that work now lives. */}
+                {can("/dev/rug-signal") ? (
                     <Link
-                      href="/dev/fomo"
+                      href="/dev/rug-signal"
                       className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
-                        isActive("/dev/fomo")
+                        isActive("/dev/rug-signal")
                           ? "bg-gray-700 text-white"
                           : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
                       }`}
-                      title="FOMO tape"
-                      aria-label="FOMO tape"
+                      title="Rug signal - reachability and soak"
+                      aria-label="Rug signal"
                     >
-                      <span className="text-xs font-semibold">FOMO</span>
+                      <span className="text-xs font-semibold">Rug</span>
                     </Link>
                     ) : null}
                     {can("/dev/search-token") ? (
@@ -377,20 +394,20 @@ export default function NavigationTabs({
                       <span className="text-xs font-semibold">OHLC</span>
                     </Link>
                     ) : null}
-                    {can("/dev/arbitrage") ? (
+                    {can("/dev/dev-reputation") ? (
                     <Link
-                      href="/dev/arbitrage"
+                      href="/dev/dev-reputation"
                       className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
-                        isActive("/dev/arbitrage")
+                        isActive("/dev/dev-reputation")
                           ? "bg-gray-700 text-white"
                           : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
                       }`}
-                      title="SOL arbitration"
+                      title="Dev reputation"
                     >
-                      <span className="text-xs font-semibold">Arb</span>
+                      <span className="text-xs font-semibold">Devs</span>
                     </Link>
                     ) : null}
-                  </>
+                    </>
                 )}
               </>
             )}
@@ -603,7 +620,21 @@ export default function NavigationTabs({
             </Link>
             ) : null}
 
-            {can("/dev/search-token") ? (
+            {can("/dev/paper-trade") ? (
+                    <Link
+                      href="/dev/paper-trade"
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
+                        isActive("/dev/paper-trade")
+                          ? "bg-gray-700 text-white"
+                          : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
+                      }`}
+                      title="Paper trade PnL"
+                      aria-label="Paper trade PnL"
+                    >
+                      <span className="text-xs font-semibold">Paper</span>
+                    </Link>
+                    ) : null}
+                    {can("/dev/search-token") ? (
             <Link
               href="/dev/search-token"
               className={`flex shrink-0 flex-col items-center px-4 py-2 rounded-lg ${navChromeItem} ${
@@ -760,20 +791,23 @@ export default function NavigationTabs({
                   <span className="text-xs font-medium">Social</span>
                 </Link>
                 ) : null}
-                {can("/dev/fomo") ? (
-                <Link
-                  href="/dev/fomo"
-                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg ${navChromeItem} ${
-                    isActive("/dev/fomo")
-                      ? "bg-white text-black"
-                      : "text-gray-400"
-                  }`}
-                >
-                  <span className="mb-1 text-[10px] font-semibold">FOMO</span>
-                  <span className="text-xs font-medium">Tape</span>
-                </Link>
-                ) : null}
-                {can("/dev/search-token") ? (
+                {/* Took the "Paper" chip's slot: /dev/paper-trade is still reachable by URL, and the
+                    rug signal page is where that work now lives. */}
+                {can("/dev/rug-signal") ? (
+                    <Link
+                      href="/dev/rug-signal"
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
+                        isActive("/dev/rug-signal")
+                          ? "bg-gray-700 text-white"
+                          : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
+                      }`}
+                      title="Rug signal - reachability and soak"
+                      aria-label="Rug signal"
+                    >
+                      <span className="text-xs font-semibold">Rug</span>
+                    </Link>
+                    ) : null}
+                    {can("/dev/search-token") ? (
                 <Link
                   href="/dev/search-token"
                   className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg ${navChromeItem} ${
@@ -811,20 +845,20 @@ export default function NavigationTabs({
                   <span className="text-xs font-medium">Labels</span>
                 </Link>
                 ) : null}
-                {can("/dev/arbitrage") ? (
+                {can("/dev/dev-reputation") ? (
                 <Link
-                  href="/dev/arbitrage"
+                  href="/dev/dev-reputation"
                   className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg ${navChromeItem} ${
-                    isActive("/dev/arbitrage")
+                    isActive("/dev/dev-reputation")
                       ? "bg-white text-black"
                       : "text-gray-400"
                   }`}
                 >
-                  <span className="mb-1 text-sm font-bold">Arb</span>
-                  <span className="text-xs font-medium">Console</span>
+                  <span className="mb-1 text-sm font-bold">Devs</span>
+                  <span className="text-xs font-medium">Reputation</span>
                 </Link>
                 ) : null}
-              </>
+                </>
             )}
           </ScrollableMenuRow>
         </nav>

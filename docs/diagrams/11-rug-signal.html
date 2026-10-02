@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ReloadSOL · Rug signal — the staircase score</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --paper:#fafaf7; --paper2:#f0efe9; --ink:#163b2a; --muted:#5b6b60;
+    --soft:#8a968d; --accent:#84cc16; --link:#2e5aa8; --rule:rgba(22,59,42,0.14);
+    --sans:'DM Sans', system-ui, sans-serif;
+    --serif:'Fraunces', serif;
+    --mono:'Geist Mono', ui-monospace, monospace;
+  }
+  body { font-family:var(--sans); background:var(--paper); color:var(--ink); line-height:1.5; }
+  .wrap { max-width:1200px; margin:0 auto; padding:3.5rem 2rem 4rem; }
+  .eyebrow { font-family:var(--mono); font-size:.68rem; font-weight:500; letter-spacing:.2em; text-transform:uppercase; color:var(--muted); }
+  h1 { font-family:var(--serif); font-weight:400; font-size:clamp(1.6rem,3vw,2.4rem); letter-spacing:-.02em; margin:.4rem 0 .6rem; }
+  .lede { color:var(--muted); max-width:74ch; font-size:1rem; margin-bottom:2.25rem; }
+  .lede code, p code, li code { font-family:var(--mono); font-size:.8rem; color:var(--ink); background:rgba(22,59,42,0.05); padding:.05rem .28rem; border-radius:3px; }
+
+  .diagram { margin-bottom:1.75rem; overflow-x:auto; }
+  svg { width:100%; min-width:1000px; display:block; }
+
+  h2 { font-family:var(--mono); font-weight:500; font-size:.7rem; letter-spacing:.2em; text-transform:uppercase; color:var(--soft); margin:2.5rem 0 1rem; }
+  h2 .rule { display:inline-block; width:2.5rem; height:1px; background:var(--rule); vertical-align:middle; margin-right:.75rem; }
+
+  .callout { font-family:var(--serif); font-style:italic; font-size:1rem; color:var(--muted); margin:-.5rem 0 2rem; }
+  .callout b { font-style:normal; font-weight:600; color:var(--ink); }
+
+  .cards { display:grid; grid-template-columns:1.1fr 1.1fr 0.8fr; gap:1rem; }
+  @media (max-width:900px) { .cards { grid-template-columns:1fr; } }
+  .card { background:#fff; border:1px solid rgba(22,59,42,0.12); border-radius:6px; padding:1.25rem; }
+  .card .eyebrow { color:var(--soft); font-size:.62rem; }
+  .card-head { display:flex; align-items:center; gap:.5rem; margin:.45rem 0 .7rem; }
+  .card-head h3 { font-size:1rem; font-weight:600; }
+  .dot { width:7px; height:7px; border-radius:50%; flex:none; }
+  .dot.coral { background:var(--accent); } .dot.ink { background:var(--ink); } .dot.muted { background:var(--muted); }
+  .card ul { list-style:none; }
+  .card li { font-size:.86rem; color:var(--muted); padding-left:.9rem; position:relative; margin-bottom:.4rem; }
+  .card li::before { content:"—"; position:absolute; left:0; color:var(--soft); }
+  .card table { width:100%; border-collapse:collapse; }
+  .card td { font-family:var(--mono); font-size:.74rem; padding:.18rem 0; vertical-align:top; }
+  .card td:first-child { color:var(--muted); }
+  .card td:last-child { text-align:right; color:var(--ink); white-space:nowrap; }
+  .card tr + tr td { border-top:1px solid rgba(22,59,42,0.07); }
+
+  .footer { margin-top:3rem; padding-top:1rem; border-top:1px solid var(--rule); font-family:var(--mono); font-size:.72rem; color:var(--soft); display:flex; justify-content:space-between; flex-wrap:wrap; gap:.5rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">ReloadSOL · SPEC-rug-signal-v1</p>
+  <h1>The staircase that nothing called a rug</h1>
+  <p class="lede">Two copycat tokens (MINDX, SpaceX) printed a flat thin-volume base then a vertical
+  staircase up. Every surface read <code>inconclusive</code>. None of that copy was ours: it was the
+  RugCheck + dev-reputation chip — <code>39/100</code> is RugCheck's own <code>score_normalised</code>,
+  the risk words are RugCheck's own, and <code>inconclusive</code> is the dev scorer's
+  <code>sample &lt; 5</code> gate. Our candle spine says nothing about a ramp: <code>dump_10m</code> needs a
+  drop, <code>wick_reject</code> needs upper wicks, <code>volume_death</code> inverts, and
+  <code>up_only_10</code> demands ten of ten green bars — exactly what a staircase with pauses is not.</p>
+
+  <h2><span class="rule"></span>The scorer and its write path</h2>
+  <div class="diagram">
+  <svg viewBox="0 0 1160 520" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="rs-title rs-desc">
+    <title id="rs-title">Rug-signal scorer and its immediate write path</title>
+    <desc id="rs-desc">Market inputs — 5-minute bars aggregated from the 24h 1m cache or own token_ohlc_bars, plus mcap, liquidity and age — feed evaluateRugSignal, which scores four weighted components; a score at or above the RUG_SIG_THRESHOLD gate trips and calls markTokenRug with source rug-signal, which syncs one row into token_mcap_tracking label, trading_signals, token_rug_list and signal_ohlc_labels.</desc>
+    <defs>
+      <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#5b6b60"/></marker>
+      <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#84cc16"/></marker>
+    </defs>
+    <rect width="100%" height="100%" fill="#fafaf7"/>
+
+    <!-- Arrows (drawn before boxes) -->
+    <line x1="284" y1="196" x2="348" y2="196" stroke="#5b6b60" stroke-width="1.2" marker-end="url(#arrow)"/>
+    <rect x="292" y="176" width="48" height="12" rx="2" fill="#fafaf7"/>
+    <text x="316" y="185" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">1m→5m</text>
+
+    <line x1="548" y1="196" x2="612" y2="196" stroke="#5b6b60" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+    <line x1="812" y1="196" x2="876" y2="196" stroke="#84cc16" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+    <rect x="816" y="176" width="56" height="12" rx="2" fill="#fafaf7"/>
+    <text x="844" y="185" fill="#84cc16" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">TRIP</text>
+
+    <line x1="976" y1="252" x2="976" y2="340" stroke="#5b6b60" stroke-width="1.2" marker-end="url(#arrow)"/>
+    <rect x="984" y="286" width="72" height="12" rx="2" fill="#fafaf7"/>
+    <text x="992" y="295" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="start" letter-spacing="0.06em">SYNC</text>
+
+    <!-- N1 — inputs -->
+    <rect x="84" y="140" width="200" height="112" rx="6" fill="#fafaf7"/>
+    <rect x="84" y="140" width="200" height="112" rx="6" fill="rgba(91,107,96,0.10)" stroke="#8a968d" stroke-width="1"/>
+    <rect x="92" y="146" width="40" height="12" rx="2" fill="transparent" stroke="rgba(138,150,141,0.60)" stroke-width="0.8"/>
+    <text x="112" y="155" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">INPUT</text>
+    <text x="184" y="182" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Market inputs</text>
+    <text x="184" y="206" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">24h 1m cache → own bars</text>
+    <text x="184" y="224" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">mcap · liquidity · age</text>
+    <text x="184" y="242" fill="#8a968d" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">no new upstream</text>
+
+    <!-- N2 — scorer (focal) -->
+    <rect x="348" y="140" width="200" height="112" rx="6" fill="#fafaf7"/>
+    <rect x="348" y="140" width="200" height="112" rx="6" fill="rgba(132,204,22,0.12)" stroke="#84cc16" stroke-width="1"/>
+    <rect x="356" y="146" width="40" height="12" rx="2" fill="transparent" stroke="rgba(132,204,22,0.50)" stroke-width="0.8"/>
+    <text x="376" y="155" fill="#84cc16" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">SCORE</text>
+    <text x="448" y="182" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">evaluateRugSignal()</text>
+    <text x="448" y="206" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">A 40 · B 30 · C 20 · D 10</text>
+    <text x="448" y="224" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">A/D static · B/C bands 0→max</text>
+    <text x="448" y="242" fill="#8a968d" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">pure · no IO</text>
+
+    <!-- N3 — gate -->
+    <rect x="612" y="140" width="200" height="112" rx="6" fill="#fafaf7"/>
+    <rect x="612" y="140" width="200" height="112" rx="6" fill="#ffffff" stroke="#163b2a" stroke-width="1"/>
+    <rect x="620" y="146" width="36" height="12" rx="2" fill="transparent" stroke="rgba(22,59,42,0.40)" stroke-width="0.8"/>
+    <text x="638" y="155" fill="#163b2a" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">GATE</text>
+    <text x="712" y="182" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">score ≥ threshold</text>
+    <text x="712" y="206" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">default 80 · a ramp reaches 90</text>
+    <text x="712" y="224" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">age / liquidity guardrail</text>
+    <text x="712" y="242" fill="#8a968d" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">shadow logs, writes nothing</text>
+
+    <!-- N4 — write -->
+    <rect x="876" y="140" width="200" height="112" rx="6" fill="#fafaf7"/>
+    <rect x="876" y="140" width="200" height="112" rx="6" fill="#ffffff" stroke="#163b2a" stroke-width="1"/>
+    <rect x="884" y="146" width="40" height="12" rx="2" fill="transparent" stroke="rgba(22,59,42,0.40)" stroke-width="0.8"/>
+    <text x="904" y="155" fill="#163b2a" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">WRITE</text>
+    <text x="976" y="182" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">markTokenRug</text>
+    <text x="976" y="206" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">source = 'rug-signal'</text>
+    <text x="976" y="224" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">immediate — no dump wait</text>
+    <text x="976" y="242" fill="#8a968d" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">automated source ≠ user rug</text>
+
+    <!-- N5 — synced stores -->
+    <rect x="84" y="340" width="992" height="96" rx="6" fill="#fafaf7"/>
+    <rect x="84" y="340" width="992" height="96" rx="6" fill="rgba(22,59,42,0.05)" stroke="#5b6b60" stroke-width="1"/>
+    <rect x="92" y="346" width="56" height="12" rx="2" fill="transparent" stroke="rgba(91,107,96,0.45)" stroke-width="0.8"/>
+    <text x="120" y="355" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">SURFACES</text>
+    <text x="580" y="374" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">One write path, four synced stores</text>
+    <text x="580" y="398" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">token_mcap_tracking.label · trading_signals</text>
+    <text x="580" y="416" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">token_rug_list · signal_ohlc_labels</text>
+
+    <!-- Legend -->
+    <line x1="84" y1="456" x2="1076" y2="456" stroke="rgba(22,59,42,0.10)" stroke-width="0.8"/>
+    <text x="84" y="476" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.18em">LEGEND</text>
+    <rect x="172" y="468" width="14" height="10" rx="2" fill="rgba(132,204,22,0.12)" stroke="#84cc16" stroke-width="1"/>
+    <text x="192" y="476" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">Focal scorer</text>
+    <rect x="320" y="468" width="14" height="10" rx="2" fill="#ffffff" stroke="#163b2a" stroke-width="1"/>
+    <text x="340" y="476" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">Gate / writer</text>
+    <rect x="460" y="468" width="14" height="10" rx="2" fill="rgba(91,107,96,0.10)" stroke="#8a968d" stroke-width="1"/>
+    <text x="480" y="476" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">Input</text>
+    <rect x="568" y="468" width="14" height="10" rx="2" fill="rgba(22,59,42,0.05)" stroke="#5b6b60" stroke-width="1"/>
+    <text x="588" y="476" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">Synced store</text>
+    <line x1="724" y1="473" x2="752" y2="473" stroke="#84cc16" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+    <text x="760" y="476" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">trip → write</text>
+    <line x1="888" y1="473" x2="916" y2="473" stroke="#5b6b60" stroke-width="1" marker-end="url(#arrow)"/>
+    <text x="924" y="476" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">data flow</text>
+  </svg>
+  </div>
+  <p class="callout">The write is immediate and lands in the shared rug registry — so the tracker label,
+  the signal list, the rug list and the OHLC corpus all move together, and nothing can call a ramp
+  a rug on one surface while another still says <b>inconclusive</b>.</p>
+
+  <h2><span class="rule"></span>Score anatomy — a live ramp reaches 90 against an 80 threshold</h2>
+  <div class="diagram">
+  <svg viewBox="0 0 1160 300" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="rsb-title rsb-desc">
+    <title id="rsb-title">Weighted score anatomy against the 80 trip threshold</title>
+    <desc id="rsb-desc">A horizontal 0–100 scale split into four weighted components: staircase 40 (static), volume 30 (a band), liquidity 20 (a band), and dump 10 (static). The bands give 0 for the safest reading and their full weight for the riskiest, so staircase plus a flat-volume band plus a thin-liquidity band reaches 90 — above the dashed 80 trip threshold — while the dump's 10 points only arrive after a token has already fallen.</desc>
+    <defs>
+      <marker id="arrowb" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#5b6b60"/></marker>
+    </defs>
+    <rect width="100%" height="100%" fill="#fafaf7"/>
+
+    <!-- component bar: 8px per point on a 0..100 scale -->
+    <rect x="160" y="112" width="320" height="48" fill="rgba(132,204,22,0.18)" stroke="#84cc16" stroke-width="1"/>
+    <rect x="480" y="112" width="240" height="48" fill="rgba(91,107,96,0.14)" stroke="#5b6b60" stroke-width="1"/>
+    <rect x="720" y="112" width="160" height="48" fill="rgba(22,59,42,0.08)" stroke="#5b6b60" stroke-width="1"/>
+    <rect x="880" y="112" width="80" height="48" fill="rgba(22,59,42,0.02)" stroke="rgba(22,59,42,0.25)" stroke-width="1" stroke-dasharray="4,3"/>
+
+    <!-- segment labels -->
+    <text x="320" y="96" fill="#163b2a" font-size="10" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.04em">A · STAIRCASE 40</text>
+    <text x="600" y="96" fill="#5b6b60" font-size="10" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.04em">B · VOLUME 30</text>
+    <text x="800" y="96" fill="#5b6b60" font-size="10" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.04em">C · LIQUIDITY 20</text>
+    <text x="920" y="96" fill="#8a968d" font-size="10" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.04em">D · DUMP 10</text>
+
+    <!-- reachable bracket: 0 -> 90 -->
+    <line x1="160" y1="200" x2="880" y2="200" stroke="#5b6b60" stroke-width="1"/>
+    <line x1="160" y1="196" x2="160" y2="204" stroke="#5b6b60" stroke-width="1"/>
+    <line x1="880" y1="196" x2="880" y2="204" stroke="#5b6b60" stroke-width="1"/>
+    <text x="520" y="220" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">A LIVE RAMP CAN REACH AT MOST 90</text>
+
+    <!-- threshold marker -->
+    <line x1="800" y1="160" x2="800" y2="200" stroke="#84cc16" stroke-width="1.4" stroke-dasharray="5,4"/>
+    <rect x="804" y="172" width="84" height="16" rx="2" fill="#fafaf7"/>
+    <text x="808" y="184" fill="#84cc16" font-size="9" font-family="'Geist Mono',monospace" text-anchor="start" letter-spacing="0.06em">TRIP ≥ 80</text>
+
+    <!-- axis -->
+    <text x="160" y="236" fill="#8a968d" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">0</text>
+    <text x="960" y="236" fill="#8a968d" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">100</text>
+
+    <!-- caption -->
+    <text x="160" y="268" fill="#5b6b60" font-size="9.5" font-family="'Geist Mono',monospace" letter-spacing="0.02em">staircase 40 + volume 30 + liquidity 20 = 90 → clears the 80 threshold. D's 10 only arrives after the drop.</text>
+  </svg>
+  </div>
+  <p class="callout">Volume and liquidity are <b>bands</b>, not gates: 0 at the safest reading and the
+  full weight at the riskiest, so a merely flat-ish ramp lands part-way instead of all-or-nothing. The
+  liquidity band is linear from a 10% liq/mcap anchor — 5% scores 10, 1.5% scores 17 — and the volume
+  band averages two sub-signals: how far volume expansion lags price, and how dead-flat volume is.</p>
+
+  <h2><span class="rule"></span>Calibration — what the data said, and refused to say</h2>
+  <div class="cards">
+    <div class="card">
+      <p class="eyebrow">BLOCKER</p>
+      <div class="card-head"><span class="dot coral"></span><h3>Our 1m series has no volume</h3></div>
+      <ul>
+        <li><code>token_ohlc_bars.volume</code> is NULL on <b>875,535 of 875,535</b> rows.</li>
+        <li>The 15s sampler writes a Jupiter spot price into open/high/low/close and never writes volume.</li>
+        <li>So on the own-1m fallback the 30-point volume band is <b>inert</b> — a ramp tops out at 60 and can never trip. Fix the sampler to unblock calibration.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <p class="eyebrow">REFUTED</p>
+      <div class="card-head"><span class="dot ink"></span><h3>Thin volume ≠ risky</h3></div>
+      <ul>
+        <li><code>volume_at_entry / entry_mcap</code>, 4,407 outcomes, p50 by bucket: crash 0.70 · loss 0.34 · flat 0.24 · win&lt;100% 0.44 · win≥100% 0.75.</li>
+        <li>Thin volume tracks <b>flat</b>, not risky — both tails are the most active.</li>
+        <li>So the band is built on volume <i>shape vs price</i>, not on "low volume = danger".</li>
+      </ul>
+    </div>
+    <div class="card">
+      <p class="eyebrow">INCONCLUSIVE</p>
+      <div class="card-head"><span class="dot muted"></span><h3>No separation on the corpus</h3></div>
+      <ul>
+        <li><code>signal_ohlc_labels</code>, 1,712 rug vs 3,359 rising cards: <code>expansionRisk</code> p50 0.88 vs 0.96 (means 0.54 vs 0.62) — directionally <b>inverted</b>; <code>volCv</code> p50 0.90 vs 0.86.</li>
+        <li>The corpus anchors rug cards <i>at the dump</i>, so it cannot show a live pre-dump ramp.</li>
+        <li>Verdict: the anchors are chosen, not fitted. Fit them once volume lands.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2><span class="rule"></span>TL;DR — what shipped, what to tune, what's open</h2>
+  <div class="cards">
+    <div class="card">
+      <p class="eyebrow">DIAGNOSIS → CODE</p>
+      <div class="card-head"><span class="dot coral"></span><h3>RUG_SIGNAL.md, finally built</h3></div>
+      <ul>
+        <li>The ramp shape had a spec since forever (<code>strategies/RUG_SIGNAL.md</code>) and <b>zero</b> code — <code>rugScore</code>, <code>calculateRugScore</code>, <code>staircase</code> had no matches.</li>
+        <li>New: <code>rug-signal.ts</code> (pure scorer + 1m→5m), <code>rug-signal-detect.ts</code> (inputs → write), wired beside <code>attachRiskShadow</code> in <code>gmgn-pipeline.ts</code>.</li>
+        <li>Registered <code>'rug-signal'</code> as an <b>automated</b> rug source, else its verdicts would count as user rugs against the dev.</li>
+        <li>Reopens one spine lock on purpose: <code>SPEC-ohlc-rug-spine-v1</code> said “not a predictive rug oracle” — a staircase is pre-dump by definition, so this is a separate module and source.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <p class="eyebrow">TUNABLES (ALL ENV)</p>
+      <div class="card-head"><span class="dot ink"></span><h3><code>RUG_SIG_*</code> + <code>RUG_SIGNAL_*</code></h3></div>
+      <table>
+        <tr><td>RUG_SIGNAL_ENABLED</td><td>off</td></tr>
+        <tr><td>RUG_SIGNAL_MODE</td><td>enforce</td></tr>
+        <tr><td>RUG_SIG_THRESHOLD</td><td>80</td></tr>
+        <tr><td>RUG_SIG_WINDOW</td><td>20 bars</td></tr>
+        <tr><td>RUG_SIG_STAIR_BULLISH</td><td>0.70</td></tr>
+        <tr><td>RUG_SIG_STAIR_AVG_GAIN</td><td>0.05</td></tr>
+        <tr><td>RUG_SIG_STAIR_PRICE_GAIN</td><td>0.80</td></tr>
+        <tr><td>RUG_SIG_STAIR_WICK_VAR</td><td>0.02</td></tr>
+        <tr><td>RUG_SIG_VOL_CV_SAFE</td><td>0.35</td></tr>
+        <tr><td>RUG_SIG_VOL_EXPANSION_W</td><td>0.50</td></tr>
+        <tr><td>RUG_SIG_LIQ_SAFE_RATIO</td><td>0.10</td></tr>
+        <tr><td>RUG_SIG_DUMP_BAR</td><td>0.40</td></tr>
+        <tr><td>RUG_SIG_DUMP_DRAWDOWN</td><td>0.60</td></tr>
+        <tr><td>RUG_SIG_MAX_AGE_H</td><td>48</td></tr>
+        <tr><td>RUG_SIG_MAX_LIQ_USD</td><td>100000</td></tr>
+        <tr><td>RUG_SIGNAL_KILL_SWITCH</td><td>forces shadow</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <p class="eyebrow">VERIFIED E2E (LOCAL)</p>
+      <div class="card-head"><span class="dot muted"></span><h3>Green — nothing committed</h3></div>
+      <ul>
+        <li><code>tsc --noEmit</code> → exit 0.</li>
+        <li>New suite 21/21; full <code>vitest run</code> 307 files, 2085 passed, 1 skipped.</li>
+        <li><code>eslint .</code> 0 errors (pre-existing warnings only, none in the touched files).</li>
+        <li><code>rm -rf .next &amp;&amp; npm run build</code> ok; <code>next start</code> booted, <code>GET /</code> 200, then stopped.</li>
+        <li><b>Open:</b> the volume band needs <code>token_ohlc_bars.volume</code> populated before it can be fitted — then commit + deploy.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>ReloadSOL · docs/diagrams/11-rug-signal.html</span>
+    <span>rug-signal · A40 B30 C20 D10 · 0–100 · threshold 80 · RUG_SIGNAL_ENABLED=1 to arm</span>
+  </div>
+</div>
+</body>
+</html>

@@ -4,7 +4,10 @@
  * (brain size scale, overlay audit) after a pass.
  */
 import { attachMlEntryShadow } from '@/strategies/ml-entry-shadow'
-import { attachOhlcRugShadow } from '@/strategies/ohlc-rug-shadow'
+import {
+  attachOhlcRugShadow,
+  type AttachOhlcRugShadowResult,
+} from '@/strategies/ohlc-rug-shadow'
 import { loadTargetMachineClScore } from '@/strategies/target-machine-cl-score'
 import {
   applyClosedLoopExit,
@@ -13,6 +16,7 @@ import {
 } from '@/strategies/target-machine-cl-size'
 import type { McapEffectiveExit } from '@/utils/mcap-sim-track'
 import type { SoftMlSize } from '@/strategies/ml-soft-size'
+import { impactedEntryPriceUsd, type ExitBasis } from './sim-exit-contract'
 
 export type PaperSpineStage = 'price' | 'rug' | 'size'
 
@@ -28,6 +32,10 @@ export type PrepareTargetMachinePaperOpenInput = {
     maxHoldHours: number
   }
   entryMcap?: number | null
+  /** Also read our own 1m `token_ohlc_bars` when the 24h cache is empty. */
+  fallbackOwn1m?: boolean
+  /** Caller already resolved the OHLC shadow (e.g. for a Noul state) — reuse it. */
+  precomputedOhlc?: AttachOhlcRugShadowResult
 }
 
 export type PrepareTargetMachinePaperOpenResult =
@@ -38,12 +46,20 @@ export type PrepareTargetMachinePaperOpenResult =
     }
   | {
       ok: true
+      /**
+       * The price actually paid (S10): the quote plus the modelled impact. This is the ONLY entry
+       * price the caller may use — for the record, the features and the exit contract alike.
+       */
       priceUsd: number
+      /** What the thresholds are expressed in. 'price' today; the value that makes it declarable. */
+      exitBasis: ExitBasis
       solAmount: number
       p: number
       sized: SoftMlSize
       effectiveExit: McapEffectiveExit
       features: Record<string, unknown>
+      ohlcBars: AttachOhlcRugShadowResult['bars']
+      ohlcSource: string
     }
 
 export async function prepareTargetMachinePaperOpen(
@@ -54,9 +70,12 @@ export async function prepareTargetMachinePaperOpen(
     return { ok: false, stage: 'price', reason: 'missing_price' }
   }
 
-  const ohlc = await attachOhlcRugShadow(input.mint, input.features, {
-    enforce: true,
-  })
+  const ohlc =
+    input.precomputedOhlc ??
+    (await attachOhlcRugShadow(input.mint, input.features, {
+      enforce: true,
+      fallbackOwn1m: input.fallbackOwn1m === true,
+    }))
   if (ohlc.reject) {
     return {
       ok: false,
@@ -90,9 +109,21 @@ export async function prepareTargetMachinePaperOpen(
     modelVersion: cl.modelVersion,
   })
 
+  // ONE price (S10): what this size would actually have paid, impact included.
+  //
+  // Every consumer reads this same value — the trading record, the entry features, and the exit
+  // contract — because the alternative is what the system had until now: the record valuing the
+  // position at the market quote while the exit measured from the fill, so the recorded PnL and the
+  // trigger disagreed about the entry by exactly the impact.
+  const entryPriceUsd = impactedEntryPriceUsd({
+    spotPriceUsd: priceUsd,
+    notionalQuote: sized.sol,
+  })
+
   return {
     ok: true,
-    priceUsd,
+    priceUsd: entryPriceUsd,
+    exitBasis: 'price',
     solAmount: sized.sol,
     p: sized.p,
     sized,
@@ -103,7 +134,10 @@ export async function prepareTargetMachinePaperOpen(
     },
     features: {
       ...features,
-      initial_price_usd: priceUsd,
+      // The same one price, so the feature snapshot cannot disagree with the record or the contract.
+      initial_price_usd: entryPriceUsd,
     },
+    ohlcBars: ohlc.bars,
+    ohlcSource: ohlc.source,
   }
 }

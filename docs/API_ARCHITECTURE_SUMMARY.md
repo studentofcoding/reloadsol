@@ -84,6 +84,13 @@ Kanban / chart labeling and training OHLC.
 - **`GET /api/gmgn/detect-snapshot`**: Freeview last-10×1m OHLC + persist `token_detect_snapshots`.
 - **`GET /api/gmgn/token-ohlc`**: Solana Tracker OHLCV wrapper for charts / capture fallback.
 
+### Shadow risk — dev reputation + RugCheck (display-only, `(shadow)`)
+
+- **`GET /api/dev/reputation`**: dev ban / profitable-dev lists (`?verdict=ban|good|inconclusive|unknown`, `?limit=`), each row with the creator's top-10 tokens by ATH. UI `/dev/dev-reputation`.
+- **`GET /api/gmgn/risk-chips`**: bulk shadow chips for list surfaces (`?addresses=a,b,c`) — one query, keyed by mint.
+- Chips also ride on `GET /api/gmgn/token-snapshot` and `GET /api/gmgn/detect-snapshot` (`riskChip`), the tracker/signals rows, sim-open toasts and the radar summary — and on `entryFeatures` (`risk_verdict`, `risk_rugcheck_score_norm`, …).
+- Both flags default **off**; neither gates or sizes. Correlation is not yet significant → `DEV_REPUTATION_MODE` stays `shadow` ([specs/SPEC-dev-reputation-rugcheck-v1.md](./specs/SPEC-dev-reputation-rugcheck-v1.md)).
+
 Hooks: `usePotentialList`, `useRugList`, `useDlmmChartActions`.
 
 ## 7. Infrastructure & Monitoring

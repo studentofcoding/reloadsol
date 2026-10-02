@@ -43,6 +43,8 @@ import {
 } from "@/components/signals/tracker-insights";
 import { TrackerSocialLinks } from "@/components/signals/TrackerSocialLinks";
 import { TrackerCatchTrainStrip } from "@/components/signals/TrackerCatchTrainStrip";
+import RiskChip from "@/components/risk/RiskChip";
+import { useRiskChips } from "@/hooks/useRiskChips";
 import { TrackerHoldingChip } from "@/components/signals/TrackerHoldingChip";
 import RowTradePanel, {
   RowGmgnChart,
@@ -318,6 +320,7 @@ export default function TrackerTab() {
     chain: network,
   });
   const scoreBadges = scoreQuery.data ?? {};
+  const { chips: riskChips } = useRiskChips(tokenAddresses, network);
 
   const isRhNetwork = network === "robinhood";
   const rowHoldings = useSolRowHoldings(!isRhNetwork);
@@ -2494,6 +2497,10 @@ export default function TrackerTab() {
                         {labelChip}
                       </span>
                     ) : null}
+                    <RiskChip
+                      chip={riskChips[token.token_address]}
+                      className="shrink-0"
+                    />
                     <span
                       className={`text-2xl ${getGrowthColor(token.mcap_growth_percent)}`}
                     >

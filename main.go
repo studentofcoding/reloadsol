@@ -9,7 +9,9 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	neturl "net/url"
 	"os"
+	"regexp"
 	"runtime"
 	"strings"
 	"strconv"
@@ -180,7 +182,7 @@ func (dl *DiscordLogger) sendToDiscord(message DiscordMessage) {
 		return
 	}
 	
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 10 * time.Second, Transport: cronTransport}
 	
 	resp, err := client.Post(dl.webhookURL, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
@@ -228,7 +230,7 @@ type Config struct {
     SignalRefreshInterval int   // seconds
     SignalsSimInterval   int    // seconds
     McapTrackerSimInterval int  // seconds — manage/close path
-    McapTrackerSimOpenInterval int // seconds — open hot path
+    McapTrackerSimOpenInterval int // seconds — open hot path; no longer scheduled separately (the open phase runs inside the phase=all job)
     GmgnSimInterval      int    // seconds
     GmgnActivityPollInterval int // seconds
     GmgnRadarDigestInterval int // seconds (0 = disabled)
@@ -236,6 +238,7 @@ type Config struct {
     GmgnRosterWatchInterval int // seconds (0 = disabled)
     SocialSimInterval    int    // seconds
     StrategyReportInterval int  // seconds (0 = disabled)
+    ReportPrecomputeInterval int // seconds (0 = disabled)
     DLMMScreenInterval int    // seconds
     DLMMSimTrackInterval int // seconds
     DLMMManageInterval int    // seconds
@@ -245,6 +248,7 @@ type Config struct {
     DLMMSecret         string
     SolArbScanInterval int // seconds (0 = disabled)
     OhlcSampleInterval int // seconds — 1m OHLC sampler (0 = disabled)
+    MetricsCopyInterval int // seconds — 1m volume copier (0 = disabled)
     FomoWsEnabled      bool
 }
 
@@ -258,6 +262,7 @@ type CronService struct {
 }
 
 func NewCronService() *CronService {
+    intervalResolutions = nil // the startup audit describes THIS construction, not an earlier one
     config := &Config{
         APIBaseURL:     getEnv("API_BASE_URL", "https://reloadsol.app"),
         TrendingSecret: getEnv("TRENDING_TRACKER_SECRET", "r3l0ads0l-trending"),
@@ -267,173 +272,38 @@ func NewCronService() *CronService {
         // working once the web proxy sends the same value.
         TriggerSecret:  getEnv("TRIGGER_SECRET", getEnv("TRENDING_TRACKER_SECRET", "r3l0ads0l-trending")),
         DiscordWebhook: getEnv("DISCORD_WEBHOOK_URL", ""),
-        SLTPMonitorInterval: func() int {
-            if v := os.Getenv("SLTP_MONITOR_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
-                    return iv
-                }
-            }
-            return 60 // default 60s
-        }(),
-        SignalRefreshInterval: func() int {
-            if v := os.Getenv("SIGNAL_REFRESH_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
-                    return iv
-                }
-            }
-            return 60 // default 60s
-        }(),
-        SignalsSimInterval: func() int {
-            if v := os.Getenv("SIGNALS_SIM_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
-                    return iv
-                }
-            }
-            return 120 // default 120s
-        }(),
-        McapTrackerSimInterval: func() int {
-            if v := os.Getenv("MCAP_TRACKER_SIM_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
-                    return iv
-                }
-            }
-            return 120 // manage/close default 120s
-        }(),
-        McapTrackerSimOpenInterval: func() int {
-            if v := os.Getenv("MCAP_TRACKER_SIM_OPEN_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
-                    return iv
-                }
-            }
-            return 15 // open hot path default 15s
-        }(),
-        GmgnSimInterval: func() int {
-            if v := os.Getenv("GMGN_SIM_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
-                    return iv
-                }
-            }
-            return 120 // default 120s
-        }(),
-        SocialSimInterval: func() int {
-            if v := os.Getenv("SOCIAL_SIM_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
-                    return iv
-                }
-            }
-            return 90 // default 90s
-        }(),
-        GmgnActivityPollInterval: func() int {
-            if v := os.Getenv("GMGN_ACTIVITY_POLL_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
-                    return iv
-                }
-            }
-            return 180 // default 180s
-        }(),
-        GmgnRadarDigestInterval: func() int {
-            if v := os.Getenv("GMGN_RADAR_DIGEST_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
-                    return iv
-                }
-            }
-            return 86400 // default daily; set 0 to disable
-        }(),
-        GmgnWalletDiggerInterval: func() int {
-            if v := os.Getenv("GMGN_WALLET_DIGGER_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
-                    return iv
-                }
-            }
-            return 14400 // default 4h; set 0 to disable
-        }(),
-        GmgnRosterWatchInterval: func() int {
-            if v := os.Getenv("GMGN_ROSTER_WATCH_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
-                    return iv
-                }
-            }
-            return 75 // default 75s; set 0 to disable
-        }(),
-        StrategyReportInterval: func() int {
-            if v := os.Getenv("STRATEGY_REPORT_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
-                    return iv
-                }
-            }
-            return 86400 // default daily (86400s); set 0 to disable
-        }(),
-        DLMMScreenInterval: func() int {
-            if v := os.Getenv("DLMM_SCREEN_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
-                    return iv
-                }
-            }
-            return 300 // 5m
-        }(),
-        DLMMSimTrackInterval: func() int {
-            if v := os.Getenv("DLMM_SIM_TRACK_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
-                    return iv
-                }
-            }
-            return 300 // 5m
-        }(),
-        DLMMManageInterval: func() int {
-            if v := os.Getenv("DLMM_MANAGE_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
-                    return iv
-                }
-            }
-            return 60
-        }(),
-        RhClmmManageInterval: func() int {
-            if v := os.Getenv("RH_CLMM_MANAGE_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
-                    return iv
-                }
-            }
-            return 300 // 5m — alert-only cycle
-        }(),
-        RhLpScreenInterval: func() int {
-            if v := os.Getenv("RH_LP_SCREEN_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
-                    return iv
-                }
-            }
-            return 300 // 5m — Pools indexer refreshes 24h aggregates per minute
-        }(),
-        StrategySearchInterval: func() int {
-            if v := os.Getenv("STRATEGY_SEARCH_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
-                    return iv
-                }
-            }
-            return 21600 // 6h — offline walk-forward + spawn top-K
-        }(),
+        SLTPMonitorInterval: intervalFor("SLTPMonitorInterval"),
+        SignalRefreshInterval: intervalFor("SignalRefreshInterval"),
+        SignalsSimInterval: intervalFor("SignalsSimInterval"),
+        McapTrackerSimInterval: intervalFor("McapTrackerSimInterval"),
+        McapTrackerSimOpenInterval: intervalFor("McapTrackerSimOpenInterval"),
+        GmgnSimInterval: intervalFor("GmgnSimInterval"),
+        SocialSimInterval: intervalFor("SocialSimInterval"),
+        GmgnActivityPollInterval: intervalFor("GmgnActivityPollInterval"),
+        GmgnRadarDigestInterval: intervalFor("GmgnRadarDigestInterval"),
+        GmgnWalletDiggerInterval: intervalFor("GmgnWalletDiggerInterval"),
+        GmgnRosterWatchInterval: intervalFor("GmgnRosterWatchInterval"),
+        StrategyReportInterval: intervalFor("StrategyReportInterval"),
+        ReportPrecomputeInterval: intervalFor("ReportPrecomputeInterval"),
+        DLMMScreenInterval: intervalFor("DLMMScreenInterval"),
+        DLMMSimTrackInterval: intervalFor("DLMMSimTrackInterval"),
+        DLMMManageInterval: intervalFor("DLMMManageInterval"),
+        RhClmmManageInterval: intervalFor("RhClmmManageInterval"),
+        RhLpScreenInterval: intervalFor("RhLpScreenInterval"),
+        StrategySearchInterval: intervalFor("StrategySearchInterval"),
         DLMMSecret: getEnv("DLMM_MANAGE_SECRET", getEnv("TRENDING_TRACKER_SECRET", "r3l0ads0l-trending")),
-        SolArbScanInterval: func() int {
-            if v := os.Getenv("SOL_ARB_SCAN_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
-                    return iv
-                }
-            }
-            return 60 // default 60s; set 0 to disable
-        }(),
+        SolArbScanInterval: intervalFor("SolArbScanInterval"),
         // Own 1m OHLC series: 15s ticks give 4 samples per minute, which is what
         // makes a real intra-minute high/low possible.
-        OhlcSampleInterval: func() int {
-            if v := os.Getenv("OHLC_SAMPLE_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
-                    return iv
-                }
-            }
-            return 15 // default 15s; set 0 to disable
-        }(),
+        OhlcSampleInterval: intervalFor("OhlcSampleInterval"),
+        // 1m volume copier. GMGN's candle endpoint returns a SERIES (~8.35h of minutes per call),
+        // so the cadence governs snapshot freshness only, not slot completeness. Keep it well
+        // under that window or the gap loses minutes permanently.
+        MetricsCopyInterval: intervalFor("MetricsCopyInterval"),
         FomoWsEnabled: envBool("FOMO_WS_ENABLED", true),
     }
 
-	c := cron.New(cron.WithSeconds())
+	c := newStaggeredCron()
 	
 	// Initialize Discord logger
 	logger := NewDiscordLogger(config.DiscordWebhook, "ReloadSol Cron Service")
@@ -449,6 +319,7 @@ func NewCronService() *CronService {
 func (cs *CronService) Start() {
 	cs.logger.Info("🚀 Starting Cron Service for reloadsol...")
 	cs.initWorkerRegistry()
+	cs.auditIntervals()
 	cs.workers.SetOnChange(func(workerID, event, msg string) {
 		cs.persistWorkerRuntimeEvent(workerID, event, msg)
 	})
@@ -488,7 +359,7 @@ func (cs *CronService) Start() {
 	cs.workers.BindEntry(unfilteredEntryID, "unfiltered_trending")
 
     // SL/TP monitor – every M seconds (default 60)
-    sltpSpec := fmt.Sprintf("@every %ds", cs.config.SLTPMonitorInterval)
+    sltpSpec := everySpec(cs.config.SLTPMonitorInterval)
     sltpEntryID, err := cs.cron.AddFunc(sltpSpec, cs.runSLTPMonitor)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add SL/TP monitor cron job: %v", err))
@@ -497,7 +368,7 @@ func (cs *CronService) Start() {
     cs.workers.BindEntry(sltpEntryID, "sltp_monitor")
 
     // Signals refresh – every K seconds (default 60)
-    sigSpec := fmt.Sprintf("@every %ds", cs.config.SignalRefreshInterval)
+    sigSpec := everySpec(cs.config.SignalRefreshInterval)
     sigRefreshEntryID, err := cs.cron.AddFunc(sigSpec, cs.runSignalRefresh)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add signals refresh cron job: %v", err))
@@ -507,7 +378,7 @@ func (cs *CronService) Start() {
 
     // Own 1m OHLC sampler – every N seconds (default 15, 0 = disabled)
     if cs.config.OhlcSampleInterval > 0 {
-        ohlcSpec := fmt.Sprintf("@every %ds", cs.config.OhlcSampleInterval)
+        ohlcSpec := everySpec(cs.config.OhlcSampleInterval)
         ohlcEntryID, err := cs.cron.AddFunc(ohlcSpec, cs.runOhlcSample)
         if err != nil {
             cs.logger.Error(fmt.Sprintf("Failed to add OHLC sampler cron job: %v", err))
@@ -516,8 +387,19 @@ func (cs *CronService) Start() {
         cs.workers.BindEntry(ohlcEntryID, "ohlc_sampler")
     }
 
+    // 1m metrics copier – every N seconds (default 900, 0 = disabled)
+    if cs.config.MetricsCopyInterval > 0 {
+        metricsCopySpec := everySpec(cs.config.MetricsCopyInterval)
+        metricsCopyEntryID, err := cs.cron.AddFunc(metricsCopySpec, cs.runMetricsCopy)
+        if err != nil {
+            cs.logger.Error(fmt.Sprintf("Failed to add metrics copier cron job: %v", err))
+            log.Fatal("Failed to add metrics copier cron job:", err)
+        }
+        cs.workers.BindEntry(metricsCopyEntryID, "metrics_copier")
+    }
+
     // Signals sim track – every N seconds (default 120)
-    signalsSimSpec := fmt.Sprintf("@every %ds", cs.config.SignalsSimInterval)
+    signalsSimSpec := everySpec(cs.config.SignalsSimInterval)
     signalsSimEntryID, err := cs.cron.AddFunc(signalsSimSpec, cs.runSignalsSimTrack)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add signals sim track cron job: %v", err))
@@ -525,23 +407,21 @@ func (cs *CronService) Start() {
     }
     cs.workers.BindEntry(signalsSimEntryID, "signals_sim_track")
 
-    mcapTrackerSimOpenSpec := fmt.Sprintf("@every %ds", cs.config.McapTrackerSimOpenInterval)
-    mcapTrackerSimOpenEntryID, err := cs.cron.AddFunc(mcapTrackerSimOpenSpec, cs.runMcapTrackerSimOpen)
+    // MCap tracker sim: ONE job per interval (phase=all) instead of separate open and manage jobs. They share the single `mcap_tracker_sim` lock, and a real open run
+    // holds it for longer than any sane start offset (measured live: open at 11:12:20, manage at
+    // 11:12:35 still skipped), so two jobs could never both run per tick.
+    //
+    // The manage phase is GONE (the 60s SL/TP worker owns every exit), so phase=all now runs the
+    // open phase only. `?phase=manage` still parses and runs nothing.
+    mcapTrackerSimSpec := everySpec(cs.config.McapTrackerSimInterval)
+    mcapTrackerSimEntryID, err := cs.cron.AddFunc(mcapTrackerSimSpec, cs.runMcapTrackerSimAll)
     if err != nil {
-        cs.logger.Error(fmt.Sprintf("Failed to add mcap tracker sim open cron job: %v", err))
-        log.Fatal("Failed to add mcap tracker sim open cron job:", err)
-    }
-    cs.workers.BindEntry(mcapTrackerSimOpenEntryID, "mcap_tracker_sim_open")
-
-    mcapTrackerSimSpec := fmt.Sprintf("@every %ds", cs.config.McapTrackerSimInterval)
-    mcapTrackerSimEntryID, err := cs.cron.AddFunc(mcapTrackerSimSpec, cs.runMcapTrackerSimTrack)
-    if err != nil {
-        cs.logger.Error(fmt.Sprintf("Failed to add mcap tracker sim track cron job: %v", err))
-        log.Fatal("Failed to add mcap tracker sim track cron job:", err)
+        cs.logger.Error(fmt.Sprintf("Failed to add mcap tracker sim cron job: %v", err))
+        log.Fatal("Failed to add mcap tracker sim cron job:", err)
     }
     cs.workers.BindEntry(mcapTrackerSimEntryID, "mcap_tracker_sim_track")
 
-    gmgnSimSpec := fmt.Sprintf("@every %ds", cs.config.GmgnSimInterval)
+    gmgnSimSpec := everySpec(cs.config.GmgnSimInterval)
     gmgnSimEntryID, err := cs.cron.AddFunc(gmgnSimSpec, cs.runGmgnSimTrack)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add GMGN sim track cron job: %v", err))
@@ -549,7 +429,7 @@ func (cs *CronService) Start() {
     }
     cs.workers.BindEntry(gmgnSimEntryID, "gmgn_sim_track")
 
-    socialSimSpec := fmt.Sprintf("@every %ds", cs.config.SocialSimInterval)
+    socialSimSpec := everySpec(cs.config.SocialSimInterval)
     socialSimEntryID, err := cs.cron.AddFunc(socialSimSpec, cs.runSocialSimTrack)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add social sim track cron job: %v", err))
@@ -557,7 +437,7 @@ func (cs *CronService) Start() {
     }
     cs.workers.BindEntry(socialSimEntryID, "social_sim_track")
 
-    gmgnActivityPollSpec := fmt.Sprintf("@every %ds", cs.config.GmgnActivityPollInterval)
+    gmgnActivityPollSpec := everySpec(cs.config.GmgnActivityPollInterval)
     gmgnActivityPollEntryID, err := cs.cron.AddFunc(gmgnActivityPollSpec, cs.runGmgnActivityPoll)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add GMGN activity poll cron job: %v", err))
@@ -566,7 +446,7 @@ func (cs *CronService) Start() {
     cs.workers.BindEntry(gmgnActivityPollEntryID, "gmgn_activity_poll")
 
     if cs.config.GmgnRadarDigestInterval > 0 {
-        gmgnRadarDigestSpec := fmt.Sprintf("@every %ds", cs.config.GmgnRadarDigestInterval)
+        gmgnRadarDigestSpec := everySpec(cs.config.GmgnRadarDigestInterval)
         gmgnRadarDigestEntryID, err := cs.cron.AddFunc(gmgnRadarDigestSpec, cs.runGmgnRadarDigest)
         if err != nil {
             cs.logger.Error(fmt.Sprintf("Failed to add GMGN radar digest cron job: %v", err))
@@ -576,7 +456,7 @@ func (cs *CronService) Start() {
     }
 
     if cs.config.GmgnWalletDiggerInterval > 0 {
-        gmgnWalletDiggerSpec := fmt.Sprintf("@every %ds", cs.config.GmgnWalletDiggerInterval)
+        gmgnWalletDiggerSpec := everySpec(cs.config.GmgnWalletDiggerInterval)
         gmgnWalletDiggerEntryID, err := cs.cron.AddFunc(gmgnWalletDiggerSpec, cs.runGmgnWalletDigger)
         if err != nil {
             cs.logger.Error(fmt.Sprintf("Failed to add GMGN wallet digger cron job: %v", err))
@@ -586,7 +466,7 @@ func (cs *CronService) Start() {
     }
 
     if cs.config.GmgnRosterWatchInterval > 0 {
-        gmgnRosterWatchSpec := fmt.Sprintf("@every %ds", cs.config.GmgnRosterWatchInterval)
+        gmgnRosterWatchSpec := everySpec(cs.config.GmgnRosterWatchInterval)
         gmgnRosterWatchEntryID, err := cs.cron.AddFunc(gmgnRosterWatchSpec, cs.runGmgnRosterWatch)
         if err != nil {
             cs.logger.Error(fmt.Sprintf("Failed to add GMGN roster watch cron job: %v", err))
@@ -617,7 +497,7 @@ func (cs *CronService) Start() {
     cs.workers.BindEntry(socialCleanupEntryID, "social_cleanup")
 
     if cs.config.StrategyReportInterval > 0 {
-        reportSpec := fmt.Sprintf("@every %ds", cs.config.StrategyReportInterval)
+        reportSpec := everySpec(cs.config.StrategyReportInterval)
         reportEntryID, err := cs.cron.AddFunc(reportSpec, cs.runStrategyReportDigest)
         if err != nil {
             cs.logger.Error(fmt.Sprintf("Failed to add strategy report digest cron job: %v", err))
@@ -626,8 +506,19 @@ func (cs *CronService) Start() {
         cs.workers.BindEntry(reportEntryID, "strategy_report")
     }
 
+    // Report precompute – the consensus + paper-capital sections the reports endpoint reads.
+    if cs.config.ReportPrecomputeInterval > 0 {
+        precomputeSpec := everySpec(cs.config.ReportPrecomputeInterval)
+        precomputeEntryID, err := cs.cron.AddFunc(precomputeSpec, cs.runReportPrecompute)
+        if err != nil {
+            cs.logger.Error(fmt.Sprintf("Failed to add report precompute cron job: %v", err))
+            log.Fatal("Failed to add report precompute cron job:", err)
+        }
+        cs.workers.BindEntry(precomputeEntryID, "report_precompute")
+    }
+
     // DLMM screen – every N seconds (default 300)
-    dlmmScreenSpec := fmt.Sprintf("@every %ds", cs.config.DLMMScreenInterval)
+    dlmmScreenSpec := everySpec(cs.config.DLMMScreenInterval)
     dlmmScreenEntryID, err := cs.cron.AddFunc(dlmmScreenSpec, cs.runDLMMScreen)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add DLMM screen cron job: %v", err))
@@ -635,7 +526,7 @@ func (cs *CronService) Start() {
     }
     cs.workers.BindEntry(dlmmScreenEntryID, "dlmm_screen")
 
-    dlmmSimTrackSpec := fmt.Sprintf("@every %ds", cs.config.DLMMSimTrackInterval)
+    dlmmSimTrackSpec := everySpec(cs.config.DLMMSimTrackInterval)
     dlmmSimTrackEntryID, err := cs.cron.AddFunc(dlmmSimTrackSpec, cs.runDLMMSimTrack)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add DLMM sim track cron job: %v", err))
@@ -644,7 +535,7 @@ func (cs *CronService) Start() {
     cs.workers.BindEntry(dlmmSimTrackEntryID, "dlmm_sim_track")
 
     // DLMM manage – every M seconds (default 60)
-    dlmmManageSpec := fmt.Sprintf("@every %ds", cs.config.DLMMManageInterval)
+    dlmmManageSpec := everySpec(cs.config.DLMMManageInterval)
     dlmmManageEntryID, err := cs.cron.AddFunc(dlmmManageSpec, cs.runDLMMManage)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add DLMM manage cron job: %v", err))
@@ -653,7 +544,7 @@ func (cs *CronService) Start() {
     cs.workers.BindEntry(dlmmManageEntryID, "dlmm_manage")
 
     // RH CLMM manage (alert-only) – every N seconds (default 300)
-    rhClmmManageSpec := fmt.Sprintf("@every %ds", cs.config.RhClmmManageInterval)
+    rhClmmManageSpec := everySpec(cs.config.RhClmmManageInterval)
     rhClmmManageEntryID, err := cs.cron.AddFunc(rhClmmManageSpec, cs.runRhClmmManage)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add RH CLMM manage cron job: %v", err))
@@ -663,7 +554,7 @@ func (cs *CronService) Start() {
 
     // RH LP screen (paper) – every N seconds (default 300; 0 disables)
     if cs.config.RhLpScreenInterval > 0 {
-        rhLpScreenSpec := fmt.Sprintf("@every %ds", cs.config.RhLpScreenInterval)
+        rhLpScreenSpec := everySpec(cs.config.RhLpScreenInterval)
         rhLpScreenEntryID, err := cs.cron.AddFunc(rhLpScreenSpec, cs.runRhLpScreen)
         if err != nil {
             cs.logger.Error(fmt.Sprintf("Failed to add RH LP screen cron job: %v", err))
@@ -673,7 +564,7 @@ func (cs *CronService) Start() {
     }
 
     if cs.config.StrategySearchInterval > 0 {
-        searchSpec := fmt.Sprintf("@every %ds", cs.config.StrategySearchInterval)
+        searchSpec := everySpec(cs.config.StrategySearchInterval)
         searchEntryID, err := cs.cron.AddFunc(searchSpec, cs.runStrategySearch)
         if err != nil {
             cs.logger.Error(fmt.Sprintf("Failed to add strategy search cron job: %v", err))
@@ -683,7 +574,7 @@ func (cs *CronService) Start() {
     }
 
     if cs.config.SolArbScanInterval > 0 {
-        solArbSpec := fmt.Sprintf("@every %ds", cs.config.SolArbScanInterval)
+        solArbSpec := everySpec(cs.config.SolArbScanInterval)
         solArbEntryID, err := cs.cron.AddFunc(solArbSpec, cs.runSolArbScan)
         if err != nil {
             cs.logger.Error(fmt.Sprintf("Failed to add sol-arb scan cron job: %v", err))
@@ -731,6 +622,7 @@ func (cs *CronService) Start() {
     http.HandleFunc("/trigger/social-cleanup", cs.requireTriggerSecret(cs.manualSocialCleanupTrigger))
     http.HandleFunc("/trigger/social-wallet-poll", cs.requireTriggerSecret(cs.manualSocialWalletPollTrigger))
     http.HandleFunc("/trigger/strategy-report", cs.requireTriggerSecret(cs.manualStrategyReportTrigger))
+    http.HandleFunc("/trigger/report-precompute", cs.requireTriggerSecret(cs.manualReportPrecomputeTrigger))
     http.HandleFunc("/trigger/dlmm-screen", cs.requireTriggerSecret(cs.manualDLMMScreenTrigger))
     http.HandleFunc("/trigger/dlmm-sim-track", cs.requireTriggerSecret(cs.manualDLMMSimTrackTrigger))
     http.HandleFunc("/trigger/dlmm-manage", cs.requireTriggerSecret(cs.manualDLMMManageTrigger))
@@ -739,11 +631,15 @@ func (cs *CronService) Start() {
     http.HandleFunc("/trigger/strategy-search", cs.requireTriggerSecret(cs.manualStrategySearchTrigger))
     http.HandleFunc("/trigger/sol-arb-scan", cs.requireTriggerSecret(cs.manualSolArbScanTrigger))
     http.HandleFunc("/trigger/ohlc-sampler", cs.requireTriggerSecret(cs.manualOhlcSampleTrigger))
+    http.HandleFunc("/trigger/metrics-copier", cs.requireTriggerSecret(cs.manualMetricsCopyTrigger))
     http.HandleFunc("/trigger/fomo-ws", cs.requireTriggerSecret(cs.manualFomoWsTrigger))
     http.HandleFunc("/logs/test", cs.testDiscordLogs)
 
     cs.cron.Start()
     cs.logger.Success("✅ All cron jobs scheduled successfully")
+
+    // A daily job can be missed entirely, and nothing says so. See catchUpMissedDailyJobs.
+    go cs.catchUpMissedDailyJobs()
     cs.logger.Info("📊 Trending tracker: every 5 minutes")
     cs.logger.Info("📊 Filtered trending tracker: every 2 minutes")
     cs.logger.Info("📊 Unfiltered trending tracker: every 2 minutes")
@@ -752,9 +648,11 @@ func (cs *CronService) Start() {
     if cs.config.OhlcSampleInterval > 0 {
         cs.logger.Info(fmt.Sprintf("🕯️ OHLC 1m sampler: every %d seconds", cs.config.OhlcSampleInterval))
     }
+    if cs.config.MetricsCopyInterval > 0 {
+        cs.logger.Info(fmt.Sprintf("📈 Metrics 1m volume copier: every %d seconds", cs.config.MetricsCopyInterval))
+    }
     cs.logger.Info(fmt.Sprintf("🧪 Signals sim track: every %d seconds", cs.config.SignalsSimInterval))
-    cs.logger.Info(fmt.Sprintf("📈 MCap tracker sim open: every %d seconds", cs.config.McapTrackerSimOpenInterval))
-    cs.logger.Info(fmt.Sprintf("📈 MCap tracker sim manage: every %d seconds", cs.config.McapTrackerSimInterval))
+	cs.logger.Info(fmt.Sprintf("📈 MCap tracker sim (open only, phase=all): every %d seconds", cs.config.McapTrackerSimInterval))
     cs.logger.Info(fmt.Sprintf("🐋 GMGN sim track: every %d seconds", cs.config.GmgnSimInterval))
     cs.logger.Info(fmt.Sprintf("📣 Social sim track: every %d seconds", cs.config.SocialSimInterval))
     cs.logger.Info(fmt.Sprintf("🔥 GMGN activity poll: every %d seconds", cs.config.GmgnActivityPollInterval))
@@ -880,14 +778,17 @@ func (cs *CronService) runSignalsSimTrack() {
     cs.workers.Begin("signals_sim_track")
     cs.logger.Info("🧪 Running signals sim track...")
     url := fmt.Sprintf("%s/api/signals/sim-track?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
-    resp, err := cs.makeRequest("POST", url, nil)
+    // 180s like the gmgn/social sims: at the 30s default this was killed with
+    // `context deadline exceeded` on every tick even when the work was healthy.
+    resp, err := cs.makeRequest("POST", url, nil, 600)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ Signals sim track failed: %v", err))
         cs.workers.Fail("signals_sim_track", err.Error())
         return
     }
-    cs.logger.Success(fmt.Sprintf("✅ Signals sim track completed (%d bytes)", len(resp)))
-    cs.workers.Success("signals_sim_track")
+    if cs.finishSimJob("Signals sim track", "signals_sim_track", resp) {
+        return
+    }
 }
 
 func (cs *CronService) runMcapTrackerSimOpen() {
@@ -900,38 +801,20 @@ func (cs *CronService) runMcapTrackerSimOpen() {
     cs.workers.Begin("mcap_tracker_sim_open")
     cs.logger.Info("📈 Running mcap tracker sim open (phase=open)...")
     url := fmt.Sprintf("%s/api/mcap-tracking/sim-track?key=%s&phase=open", cs.config.APIBaseURL, cs.config.TrendingSecret)
-    resp, err := cs.makeRequest("POST", url, nil)
+    resp, err := cs.makeRequest("POST", url, nil, 120)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ MCap tracker sim open failed: %v", err))
         cs.workers.Fail("mcap_tracker_sim_open", err.Error())
         return
     }
-    cs.logger.Success(fmt.Sprintf("✅ MCap tracker sim open completed (%d bytes)", len(resp)))
-    cs.workers.Success("mcap_tracker_sim_open")
-}
-
-func (cs *CronService) runMcapTrackerSimTrack() {
-    if !cs.mcapSimManageMu.TryLock() {
-        cs.logger.Info("⏭️ MCap tracker sim manage skipped (still running)")
+    if cs.finishSimJob("MCap tracker sim open", "mcap_tracker_sim_open", resp) {
         return
     }
-    defer cs.mcapSimManageMu.Unlock()
-
-    cs.workers.Begin("mcap_tracker_sim_track")
-    cs.logger.Info("📈 Running mcap tracker sim manage (phase=manage)...")
-    url := fmt.Sprintf("%s/api/mcap-tracking/sim-track?key=%s&phase=manage", cs.config.APIBaseURL, cs.config.TrendingSecret)
-    resp, err := cs.makeRequest("POST", url, nil)
-    if err != nil {
-        cs.logger.Error(fmt.Sprintf("❌ MCap tracker sim manage failed: %v", err))
-        cs.workers.Fail("mcap_tracker_sim_track", err.Error())
-        return
-    }
-    cs.logger.Success(fmt.Sprintf("✅ MCap tracker sim manage completed (%d bytes)", len(resp)))
-    cs.workers.Success("mcap_tracker_sim_track")
 }
 
 func (cs *CronService) runMcapTrackerSimAll() {
-    // Manual full cycle: take manage lock so we do not overlap scheduled manage.
+    // Scheduled once per interval and also the manual full cycle: take the manage lock so we do
+    // not overlap another full run.
     if !cs.mcapSimManageMu.TryLock() {
         cs.logger.Info("⏭️ MCap tracker sim all skipped (manage still running)")
         return
@@ -941,42 +824,45 @@ func (cs *CronService) runMcapTrackerSimAll() {
     cs.workers.Begin("mcap_tracker_sim_track")
     cs.logger.Info("📈 Running mcap tracker sim track (phase=all)...")
     url := fmt.Sprintf("%s/api/mcap-tracking/sim-track?key=%s&phase=all", cs.config.APIBaseURL, cs.config.TrendingSecret)
-    resp, err := cs.makeRequest("POST", url, nil)
+    resp, err := cs.makeRequest("POST", url, nil, 600)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ MCap tracker sim track failed: %v", err))
         cs.workers.Fail("mcap_tracker_sim_track", err.Error())
         return
     }
-    cs.logger.Success(fmt.Sprintf("✅ MCap tracker sim track completed (%d bytes)", len(resp)))
-    cs.workers.Success("mcap_tracker_sim_track")
+    if cs.finishSimJob("MCap tracker sim track", "mcap_tracker_sim_track", resp) {
+        return
+    }
 }
 
 func (cs *CronService) runGmgnSimTrack() {
     cs.workers.Begin("gmgn_sim_track")
     cs.logger.Info("🐋 Running GMGN sim track...")
     url := fmt.Sprintf("%s/api/gmgn/sim-track?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
-    resp, err := cs.makeRequest("POST", url, nil, 180)
+    resp, err := cs.makeRequest("POST", url, nil, 600)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ GMGN sim track failed: %v", err))
         cs.workers.Fail("gmgn_sim_track", err.Error())
         return
     }
-    cs.logger.Success(fmt.Sprintf("✅ GMGN sim track completed (%d bytes)", len(resp)))
-    cs.workers.Success("gmgn_sim_track")
+    if cs.finishSimJob("GMGN sim track", "gmgn_sim_track", resp) {
+        return
+    }
 }
 
 func (cs *CronService) runSocialSimTrack() {
     cs.workers.Begin("social_sim_track")
     cs.logger.Info("📣 Running social sim track...")
     url := fmt.Sprintf("%s/api/social/sim-track?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
-    resp, err := cs.makeRequest("POST", url, nil, 180)
+    resp, err := cs.makeRequest("POST", url, nil, 600)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ Social sim track failed: %v", err))
         cs.workers.Fail("social_sim_track", err.Error())
         return
     }
-    cs.logger.Success(fmt.Sprintf("✅ Social sim track completed (%d bytes)", len(resp)))
-    cs.workers.Success("social_sim_track")
+    if cs.finishSimJob("Social sim track", "social_sim_track", resp) {
+        return
+    }
 }
 
 func (cs *CronService) runGmgnActivityPoll() {
@@ -1089,6 +975,23 @@ func (cs *CronService) runStrategyReportDigest() {
     }
     cs.logger.Success(fmt.Sprintf("✅ Strategy report digest completed (%d bytes)", len(resp)))
     cs.workers.Success("strategy_report")
+}
+
+// runReportPrecompute refreshes the stored `consensus` + `capital` sections the reports
+// endpoint reads (strategy_report_precompute). They are a 30-day bootstrap and a 3-day
+// capital sweep, so they do not need to be recomputed per request.
+func (cs *CronService) runReportPrecompute() {
+    cs.workers.Begin("report_precompute")
+    cs.logger.Info("🧮 Running strategy report precompute...")
+    url := fmt.Sprintf("%s/api/report-precompute/refresh?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
+    resp, err := cs.makeRequest("POST", url, nil)
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("❌ Report precompute failed: %v", err))
+        cs.workers.Fail("report_precompute", err.Error())
+        return
+    }
+    cs.logger.Success(fmt.Sprintf("✅ Report precompute completed (%s)", strings.TrimSpace(string(resp))))
+    cs.workers.Success("report_precompute")
 }
 
 func (cs *CronService) manualSignalsSimTrackTrigger(w http.ResponseWriter, r *http.Request) {
@@ -1273,6 +1176,97 @@ func (cs *CronService) manualStrategyReportTrigger(w http.ResponseWriter, r *htt
     })
 }
 
+// catchUpMissedDailyJobs runs a daily job once shortly after startup when its last recorded success
+// is older than its period.
+//
+// Why this exists. The daily jobs fire at fixed times, and every container recreate re-arms the
+// schedule from "now" — so a container replaced more than once a day can miss its window entirely,
+// and a missed daily job says nothing: there is no error to record. Measured on 2026-10-03:
+// `daily_summary` and `pnl_update` had not STARTED since 01/10 (proven by
+// `cron_worker_runtime.updated_at`, which the upsert bumps on any event at all), and
+// `strategy_report`, being `@every 24h`, had its next run pushed a full day out by every recreate so
+// it could never fire.
+//
+// Read-only against the app and fail-open on every path: if the snapshot is unreachable or
+// unreadable the catch-up does nothing and the normal schedule still applies. It can only ever ADD a
+// run that was already due, never suppress one.
+func (cs *CronService) catchUpMissedDailyJobs() {
+	type dailyJob struct {
+		id     string
+		period time.Duration
+		run    func()
+	}
+	jobs := []dailyJob{
+		{id: "daily_summary", period: 24 * time.Hour, run: cs.runDailySummary},
+		{id: "pnl_update", period: 24 * time.Hour, run: cs.runPnLUpdate},
+		{id: "strategy_report", period: 24 * time.Hour, run: cs.runStrategyReportDigest},
+	}
+
+	// This runs at container start, and the app is starting with it. Without the wait the snapshot
+	// read races the app's own boot and the catch-up silently does nothing — which is the shape of
+	// the bug it exists to fix.
+	time.Sleep(90 * time.Second)
+
+	url := fmt.Sprintf("%s/api/workers/runtime", cs.config.APIBaseURL)
+	body, err := cs.makeRequest("GET", url, map[string]string{"key": cs.config.TrendingSecret}, 30)
+	if err != nil {
+		cs.logger.Info(fmt.Sprintf("⏭️ daily catch-up skipped: runtime snapshot unavailable (%v)", err))
+		return
+	}
+
+	var parsed struct {
+		Workers []struct {
+			WorkerID      string `json:"worker_id"`
+			LastSuccessAt string `json:"last_success_at"`
+		} `json:"workers"`
+	}
+	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+		cs.logger.Info("⏭️ daily catch-up skipped: runtime snapshot unreadable")
+		return
+	}
+
+	lastSuccess := map[string]string{}
+	for _, w := range parsed.Workers {
+		lastSuccess[w.WorkerID] = w.LastSuccessAt
+	}
+
+	for _, job := range jobs {
+		at := lastSuccess[job.id]
+		if at == "" {
+			// Never recorded: a first deploy, or the row was reset. Due by definition.
+			cs.logger.Info(fmt.Sprintf("⏪ daily catch-up: %s has no recorded success — running now", job.id))
+			go job.run()
+			continue
+		}
+		t, parseErr := time.Parse(time.RFC3339, at)
+		if parseErr != nil {
+			cs.logger.Info(fmt.Sprintf("⏭️ daily catch-up: %s last_success_at unreadable — leaving it to the schedule", job.id))
+			continue
+		}
+		if time.Since(t) > job.period {
+			cs.logger.Info(fmt.Sprintf(
+				"⏪ daily catch-up: %s last succeeded %s ago (period %s) — running now",
+				job.id, time.Since(t).Round(time.Minute), job.period,
+			))
+			go job.run()
+		}
+	}
+}
+
+func (cs *CronService) manualReportPrecomputeTrigger(w http.ResponseWriter, r *http.Request) {
+    if r.Method != "POST" {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    cs.logger.Info("🔧 Manual report precompute trigger")
+    go cs.runReportPrecompute()
+    json.NewEncoder(w).Encode(map[string]interface{}{
+        "success": true,
+        "message": "Report precompute triggered",
+        "timestamp": time.Now().UTC().Format(time.RFC3339),
+    })
+}
+
 func (cs *CronService) runTrendingTracker() {
 	cs.workers.Begin("trending_tracker")
 	cs.logger.Info("🔍 Running trending tracker...")
@@ -1294,6 +1288,12 @@ func (cs *CronService) runTrendingTracker() {
 		return
 	}
 	
+	if isSkippedBody(resp) {
+		cs.logger.Info("⏭️ Trending tracker skipped (job lock held)")
+		cs.workers.Skipped("trending_tracker")
+		return
+	}
+
 	cs.logger.Success(fmt.Sprintf("✅ Trending tracker completed: %s", resp))
 	cs.workers.Success("trending_tracker")
 }
@@ -1444,6 +1444,16 @@ func (cs *CronService) runSLTPMonitor() {
 		return
 	}
 
+	// A held job lock means a previous pass is still running — the lock working, not a failure. It
+	// happens routinely because a pass can outlast the 60s interval. Checked on the raw body, the
+	// same way trending_tracker and dlmm_manage do it, because the route answers 409 with
+	// {success:false, skipped:true, reason} — a shape this struct must not have to model.
+	if isSkippedBody(resp) {
+		cs.logger.Info("⏭️ SL/TP monitor skipped (job lock held)")
+		cs.workers.Skipped("sltp_monitor")
+		return
+	}
+
 	// Parse the JSON response
 	var monitorResp SLTPMonitorResponse
 	if err := json.Unmarshal([]byte(resp), &monitorResp); err != nil {
@@ -1526,8 +1536,11 @@ func (cs *CronService) runDLMMScreen() {
     cs.workers.Begin("dlmm_screen")
     cs.logger.Info("🌊 Running DLMM screen...")
     url := fmt.Sprintf("%s/api/dlmm/screen", cs.config.APIBaseURL)
+    // The route authorises against DLMM_SCREEN_SECRET (src/utils/dlmm/config.ts `screenSecret`), which is
+    // a different env var from the DLMM_MANAGE_SECRET every other DLMM job sends. If the two ever differ the
+    // screener answers 401 on every tick and /dev/dlmm quietly shows month-old candidates.
     resp, err := cs.makeRequest("POST", url, map[string]string{
-        "key": cs.config.DLMMSecret,
+        "key": getEnv("DLMM_SCREEN_SECRET", cs.config.DLMMSecret),
     })
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ DLMM screen failed: %v", err))
@@ -1564,6 +1577,11 @@ func (cs *CronService) runDLMMManage() {
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ DLMM manage failed: %v", err))
         cs.workers.Fail("dlmm_manage", err.Error())
+        return
+    }
+    if isSkippedBody(resp) {
+        cs.logger.Info("⏭️ DLMM manage skipped (job lock held)")
+        cs.workers.Skipped("dlmm_manage")
         return
     }
     cs.logger.Success(fmt.Sprintf("✅ DLMM manage completed: %s", resp))
@@ -1624,6 +1642,11 @@ func (cs *CronService) runRhClmmManage() {
         cs.workers.Fail("rh_clmm_manage", err.Error())
         return
     }
+    if isSkippedBody(resp) {
+        cs.logger.Info("⏭️ RH CLMM manage skipped (job lock held)")
+        cs.workers.Skipped("rh_clmm_manage")
+        return
+    }
     cs.logger.Success(fmt.Sprintf("✅ RH CLMM manage completed: %s", resp))
     cs.workers.Success("rh_clmm_manage")
 }
@@ -1654,6 +1677,11 @@ func (cs *CronService) runRhLpScreen() {
         cs.workers.Fail("rh_lp_screen", err.Error())
         return
     }
+    if isSkippedBody(resp) {
+        cs.logger.Info("⏭️ RH LP screen skipped (job lock held)")
+        cs.workers.Skipped("rh_lp_screen")
+        return
+    }
     cs.logger.Success(fmt.Sprintf("✅ RH LP screen completed: %s", resp))
     cs.workers.Success("rh_lp_screen")
 }
@@ -1682,6 +1710,11 @@ func (cs *CronService) runStrategySearch() {
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ Strategy search failed: %v", err))
         cs.workers.Fail("strategy_search", err.Error())
+        return
+    }
+    if isSkippedBody(resp) {
+        cs.logger.Info("⏭️ Strategy search skipped (job lock held)")
+        cs.workers.Skipped("strategy_search")
         return
     }
     cs.logger.Success(fmt.Sprintf("✅ Strategy search completed: %s", resp))
@@ -1727,6 +1760,11 @@ func (cs *CronService) runOhlcSample() {
         cs.workers.Fail("ohlc_sampler", err.Error())
         return
     }
+    if isSkippedBody(resp) {
+        cs.logger.Info("⏭️ OHLC sampler skipped (job lock held)")
+        cs.workers.Skipped("ohlc_sampler")
+        return
+    }
     cs.logger.Success(fmt.Sprintf("✅ OHLC sampler completed: %s", resp))
     cs.workers.Success("ohlc_sampler")
 }
@@ -1741,6 +1779,54 @@ func (cs *CronService) manualOhlcSampleTrigger(w http.ResponseWriter, r *http.Re
     w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(map[string]string{
         "message":   "OHLC sampler triggered manually",
+        "timestamp": time.Now().UTC().Format(time.RFC3339),
+    })
+}
+
+// metricsCopyTimeoutSec returns the client timeout for one copier sweep.
+//
+// A cold sweep fetches hundreds of candles at a paced rate, so the default 30s would report a
+// *successful* sweep as a failure — it did exactly that on the first production sweep, leaving a
+// false error on the worker. Env-tunable; keep it under the route's own job lock (600s).
+func metricsCopyTimeoutSec() int {
+    if v := os.Getenv("METRICS_COPY_TIMEOUT_SEC"); v != "" {
+        if n, err := strconv.Atoi(v); err == nil && n > 0 {
+            return n
+        }
+    }
+    return 240
+}
+
+// runMetricsCopy sweeps the watch set for 1m candle volume into token_metrics_history.
+// 409 means another sweep holds the job lock — a skip, not a failure.
+func (cs *CronService) runMetricsCopy() {
+    cs.workers.Begin("metrics_copier")
+    url := fmt.Sprintf("%s/api/metrics/copy?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
+    resp, err := cs.makeRequest("POST", url, nil, metricsCopyTimeoutSec())
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("❌ Metrics copier failed: %v", err))
+        cs.workers.Fail("metrics_copier", err.Error())
+        return
+    }
+    if isSkippedBody(resp) {
+        cs.logger.Info("⏭️ Metrics copier skipped (job lock held)")
+        cs.workers.Skipped("metrics_copier")
+        return
+    }
+    cs.logger.Success(fmt.Sprintf("✅ Metrics copier completed: %s", resp))
+    cs.workers.Success("metrics_copier")
+}
+
+func (cs *CronService) manualMetricsCopyTrigger(w http.ResponseWriter, r *http.Request) {
+    if r.Method != "POST" {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    cs.logger.Info("🔧 Manual metrics copier trigger")
+    cs.runMetricsCopy()
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]string{
+        "message":   "metrics copier triggered manually",
         "timestamp": time.Now().UTC().Format(time.RFC3339),
     })
 }
@@ -1840,7 +1926,7 @@ func (cs *CronService) persistWorkerRuntimeEvent(workerID, event, msg string) {
 		return
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 10 * time.Second, Transport: cronTransport}
 	req, err := http.NewRequest("POST", url, bytes.NewReader(data))
 	if err != nil {
 		return
@@ -1862,12 +1948,69 @@ func (cs *CronService) persistWorkerRuntimeEvent(workerID, event, msg string) {
 	}
 }
 
+// isSkippedBody reports whether a response body is a withJobLock 409 skip
+// (`{"success":false,"skipped":true,...}`). makeRequest already returns such a body with a
+// nil error, so without this check every caller logs it as a success.
+func isSkippedBody(body string) bool {
+	var parsed map[string]interface{}
+	if json.Unmarshal([]byte(body), &parsed) != nil {
+		return false
+	}
+	skipped, ok := parsed["skipped"].(bool)
+	return ok && skipped
+}
+
+// finishSimJob reports the outcome of a sim-track call. Returns true when the tick was
+// skipped (the caller should stop); a skip is neither a success nor a failure, and marking
+// it a success is what hid the mcap sim's stalls.
+func (cs *CronService) finishSimJob(label, workerID, resp string) bool {
+	if isSkippedBody(resp) {
+		cs.logger.Info(fmt.Sprintf("⏭️ %s skipped (job lock held)", label))
+		cs.workers.Skipped(workerID)
+		return true
+	}
+	cs.logger.Success(fmt.Sprintf("✅ %s completed (%d bytes)", label, len(resp)))
+	cs.workers.Success(workerID)
+	return false
+}
+
+// Shared transport for every call the cron makes to the web app.
+//
+// The clients below set no transport, so they all used `http.DefaultTransport` — one process-global
+// connection pool with an `IdleConnTimeout` of **90 seconds**. Node closes an idle keep-alive
+// connection after its own default of **5 seconds**, so a pooled socket could sit dead for up to 85
+// seconds before being reused. These are POSTs, so Go does not retry a stale connection, and the
+// request fails immediately with `EOF` — which is exactly what the copier was reporting on roughly
+// half its runs, independent of load, with the process healthy.
+//
+// Expiring idle connections *below* the server's timeout removes the race. Pooling within a burst
+// (the several calls a single job makes back to back) still applies, which is the part worth keeping.
+var cronTransport = &http.Transport{
+	Proxy:                 http.ProxyFromEnvironment,
+	MaxIdleConns:          16,
+	MaxIdleConnsPerHost:   8,
+	IdleConnTimeout:       3 * time.Second,
+	TLSHandshakeTimeout:   10 * time.Second,
+	ExpectContinueTimeout: 1 * time.Second,
+}
+
+// secretQueryRe matches credential-bearing query parameters. Several call sites build `?key=<secret>`
+// into the URL themselves, so the full URL is a secret and must never reach a log line or an error
+// string — those strings are persisted (cron_worker_runtime.last_error) and served by
+// /api/workers/runtime.
+var secretQueryRe = regexp.MustCompile(`([?&](?:key|password|token|secret)=)[^&\s"]*`)
+
+func redactSecrets(s string) string {
+	return secretQueryRe.ReplaceAllString(s, "${1}REDACTED")
+}
+
 func (cs *CronService) makeRequest(method, url string, params map[string]string, timeoutSec ...int) (string, error) {
 	// Add query parameters
 	if len(params) > 0 {
 		url += "?"
 		for key, value := range params {
-			url += fmt.Sprintf("%s=%s&", key, value)
+			// Escaped: a secret containing & + or % would otherwise corrupt the query or smuggle a parameter.
+			url += fmt.Sprintf("%s=%s&", neturl.QueryEscape(key), neturl.QueryEscape(value))
 		}
 		url = url[:len(url)-1] // Remove trailing &
 	}
@@ -1877,7 +2020,7 @@ func (cs *CronService) makeRequest(method, url string, params map[string]string,
 		timeout = time.Duration(timeoutSec[0]) * time.Second
 	}
 
-	client := &http.Client{Timeout: timeout}
+	client := &http.Client{Timeout: timeout, Transport: cronTransport}
 	
 	req, err := http.NewRequest(method, url, nil)
 	if err != nil {
@@ -1898,11 +2041,12 @@ func (cs *CronService) makeRequest(method, url string, params map[string]string,
         req.Header.Set("Authorization", "Bearer "+cs.config.TrendingSecret)
     }
 
-	cs.logger.Info(fmt.Sprintf("Making %s request to %s", method, url))
+	cs.logger.Info(fmt.Sprintf("Making %s request to %s", method, redactSecrets(url)))
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("request failed: %w", err)
+		// net/http's *url.Error embeds the full URL, query string included.
+		return "", fmt.Errorf("request failed: %s", redactSecrets(err.Error()))
 	}
 	defer resp.Body.Close()
 

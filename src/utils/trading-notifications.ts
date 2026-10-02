@@ -3,6 +3,22 @@
  * Handles real-time notifications for trading operations across devices
  */
 
+/**
+ * The triggers a close can carry.
+ *
+ * `max_age` is deliberately separate from `max_hold_time`: they are different backstops (a stale
+ * tracker row vs a maximum hold), and a row that cannot say which fired makes S5's backstop share
+ * uncomputable. Both used to report `max_hold_time`.
+ */
+export type SlTpTriggerType =
+    | 'stop_loss'
+    | 'take_profit_1'
+    | 'take_profit_2'
+    | 'take_profit_3'
+    | 'max_hold_time'
+    | 'max_age'
+    | 'label_rugged'
+
 interface NotificationData {
     operationType?: 'buy' | 'sell' | 'close'
     tokenAddress?: string
@@ -10,7 +26,7 @@ interface NotificationData {
     amount?: number
     signature?: string
     // SL/TP specific fields
-    triggerType?: 'stop_loss' | 'take_profit_1' | 'take_profit_2' | 'take_profit_3' | 'max_hold_time'
+    triggerType?: SlTpTriggerType
     gainPercentage?: number
     sellPercentage?: number
 }
@@ -111,7 +127,7 @@ export const notifyBalanceUpdate = (walletAddress: string) =>
 export const notifySlTpTrigger = (
     walletAddress: string,
     tokenSymbol: string,
-    triggerType: 'stop_loss' | 'take_profit_1' | 'take_profit_2' | 'take_profit_3' | 'max_hold_time',
+    triggerType: SlTpTriggerType,
     gainPercentage: number,
     sellPercentage: number,
     signature?: string

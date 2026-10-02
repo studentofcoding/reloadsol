@@ -52,13 +52,118 @@ export type OhlcRugEval = {
 
 const EPS = 1e-12
 
+/** Default max age (s) of the newest bar relative to detect/eval time. */
+export const OHLC_RUG_MAX_BAR_AGE_SEC_DEFAULT = 180
+
+/**
+ * Max age (s) the newest bar may have before the window is "stale".
+ * `OHLC_RUG_MAX_BAR_AGE_SEC` overrides; `0` disables the guard; garbage → default.
+ */
+export function resolveOhlcRugMaxBarAgeSec(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const raw = env.OHLC_RUG_MAX_BAR_AGE_SEC?.trim()
+  if (!raw) return OHLC_RUG_MAX_BAR_AGE_SEC_DEFAULT
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n < 0) return OHLC_RUG_MAX_BAR_AGE_SEC_DEFAULT
+  return Math.floor(n)
+}
+
+function barTimeSec(bar: { t?: number; time?: number }): number | null {
+  const raw = bar.t ?? bar.time
+  if (raw == null || !Number.isFinite(raw)) return null
+  // Accept ms epochs defensively; bars are seconds everywhere else.
+  return raw > 1e12 ? Math.floor(raw / 1000) : raw
+}
+
+/**
+ * Age (s) of the newest bar vs `nowSec`; null when there are no timestamped bars.
+ */
+export function ohlcNewestBarAgeSec<T extends { t?: number; time?: number }>(
+  bars: T[],
+  nowSec: number,
+): number | null {
+  let newest: number | null = null
+  for (const b of bars) {
+    const t = barTimeSec(b)
+    if (t != null && (newest == null || t > newest)) newest = t
+  }
+  return newest == null ? null : nowSec - newest
+}
+
+/** True when the newest bar is older than `maxAgeSec` (`maxAgeSec <= 0` never stale). */
+export function isOhlcWindowStale<T extends { t?: number; time?: number }>(
+  bars: T[],
+  nowSec: number,
+  maxAgeSec: number,
+): boolean {
+  if (!(maxAgeSec > 0) || bars.length === 0) return false
+  const age = ohlcNewestBarAgeSec(bars, nowSec)
+  // No usable timestamp → cannot prove freshness → stale.
+  return age == null || age > maxAgeSec
+}
+
+/**
+ * Last N bars. With `opts.maxAgeSec` set, a series whose newest bar is older than
+ * that (relative to `opts.nowSec`, default now) returns [] instead of old bars.
+ * Without opts the behavior is unchanged (historical / as-of callers).
+ */
 export function takeLastOhlcBars<T extends { t?: number; time?: number }>(
   bars: T[],
   n = OHLC_RUG_MAX_BARS,
+  opts?: { nowSec?: number; maxAgeSec?: number },
 ): T[] {
+  if (opts?.maxAgeSec != null) {
+    const nowSec = opts.nowSec ?? Math.floor(Date.now() / 1000)
+    if (isOhlcWindowStale(bars, nowSec, opts.maxAgeSec)) return []
+  }
   if (bars.length <= n) return bars.slice()
   return bars.slice(bars.length - n)
 }
+
+/**
+ * Last-N window for Freeview rug rules.
+ * Canonical 24h bars win. An empty canonical series may use own-1m storage
+ * only when `fallbackOwn1m` is set (Freeview). Entry shadow stays canonical.
+ *
+ * Recency: when `maxAgeSec > 0`, a series whose newest bar is older than that vs
+ * `nowSec` is NOT current. A stale canonical series can still be replaced by a
+ * fresh own-1m series (Freeview); otherwise the result is `{ bars: [], source:
+ * 'stale' }` so callers skip instead of scoring a dead chart as live.
+ */
+export function resolveOhlcRugWindow(input: {
+  cached: OhlcRugBar[]
+  cachedSource: string
+  own?: OhlcRugBar[]
+  n?: number
+  fallbackOwn1m?: boolean
+  nowSec?: number
+  maxAgeSec?: number
+}): { bars: OhlcRugBar[]; source: string } {
+  const n = input.n ?? OHLC_RUG_MAX_BARS
+  const maxAgeSec = input.maxAgeSec ?? 0
+  const nowSec = input.nowSec ?? Math.floor(Date.now() / 1000)
+  const guard = maxAgeSec > 0 ? { nowSec, maxAgeSec } : undefined
+  let sawStale = false
+
+  if (input.cached.length > 0) {
+    const bars = takeLastOhlcBars(input.cached, n, guard)
+    if (bars.length > 0) {
+      return { bars, source: input.cachedSource || 'cached' }
+    }
+    sawStale = true
+  }
+  const own = input.own ?? []
+  if (input.fallbackOwn1m && own.length > 0) {
+    const bars = takeLastOhlcBars(own, n, guard)
+    if (bars.length > 0) return { bars, source: 'own-1m' }
+    sawStale = true
+  }
+  return { bars: [], source: sawStale ? 'stale' : 'none' }
+}
+
+export const OHLC_RUG_EMPTY_STORAGE =
+  'No bars in the 24h OHLC cache or own-1m storage.'
 
 function upperWickRatio(bar: OhlcRugBar): number | null {
   const range = bar.h - bar.l

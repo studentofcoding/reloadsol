@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { listLiveOpenBarPositions } from './open-bar-positions'
+import { listLiveOpenBarPositions, visibleOpenBarPositions } from './open-bar-positions'
 import type { TrackingRecord } from '@/utils/trading-tracker'
+import type { OpenBarPosition } from './open-bar-positions'
 
 const t0 = Date.parse('2026-09-01T00:00:00Z')
 
@@ -62,25 +63,77 @@ describe('listLiveOpenBarPositions', () => {
     expect(open[0].uiAmount).toBe(1000)
   })
 
-  it('appends the last untracked wallet hold and skips quote mints', () => {
+  // A hold with no live buy record is not a position. The old fallback rendered the last such hold,
+  // which is how an airdropped clone sharing a real token's ticker ("2 STONK") appeared in the bar.
+  it('drops wallet holds with no live buy record', () => {
     const holdings = new Map([
       [
         'MintEarly',
         { balanceRaw: 10, uiAmount: 2, decimals: 6, symbol: 'EARLY' },
       ],
       [
-        'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-        { balanceRaw: 1_000_000, uiAmount: 1, decimals: 6, symbol: 'USDC' },
-      ],
-      [
         'MintLast',
         { balanceRaw: 20, uiAmount: 3, decimals: 6, symbol: 'LAST' },
       ],
     ])
-    const open = listLiveOpenBarPositions([], holdings)
-    expect(open).toHaveLength(1)
-    expect(open[0].mintAddress).toBe('MintLast')
-    expect(open[0].untracked).toBe(true)
-    expect(open[0].buyPriceUsd).toBe(0)
+    expect(listLiveOpenBarPositions([], holdings)).toEqual([])
+  })
+
+  it('skips quote mints and dust even when a buy record exists', () => {
+    const usdc = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
+    const holdings = new Map([
+      [
+        usdc,
+        { balanceRaw: 1_000_000, uiAmount: 1, decimals: 6, symbol: 'USDC' },
+      ],
+      [
+        'MintDust',
+        { balanceRaw: 1, uiAmount: 0.0000001, decimals: 6, symbol: 'DUST' },
+      ],
+    ])
+    const open = listLiveOpenBarPositions(
+      [buy(usdc, 0.05), buy('MintDust', 0.05)],
+      holdings,
+    )
+    expect(open).toEqual([])
+  })
+})
+
+describe('visibleOpenBarPositions', () => {
+  const pos = (mint: string): OpenBarPosition => ({
+    mintAddress: mint,
+    symbol: 'TOK',
+    logoURI: null,
+    buyPriceUsd: 0.05,
+    balanceRaw: 1_000_000,
+    uiAmount: 1000,
+    decimals: 6,
+  })
+
+  it('keeps a priced position and drops an unpriced one (the clone signature)', () => {
+    const out = visibleOpenBarPositions([pos('Priced'), pos('Clone')], { Priced: 1.23 })
+    expect(out.map((p) => p.mintAddress)).toEqual(['Priced'])
+  })
+
+  it('keeps a position through one missed poll', () => {
+    const out = visibleOpenBarPositions([pos('Flicker')], {}, { Flicker: 9.99 })
+    expect(out.map((p) => p.mintAddress)).toEqual(['Flicker'])
+  })
+
+  it('drops an unpriced position once the feed HAS answered without it', () => {
+    const out = visibleOpenBarPositions(
+      [pos('Gone'), pos('Other')],
+      { Other: 1.5 },
+      {},
+    )
+    expect(out.map((p) => p.mintAddress)).toEqual(['Other'])
+  })
+
+  it('fails open when the feed answered nothing at all, so an outage cannot empty the bar', () => {
+    // Deliberate: an empty response means "we learned nothing", not "nothing has a price" — so a
+    // pricing outage cannot hide every real position. The clone-hiding rule needs an answer.
+    const all = [pos('A'), pos('B')]
+    expect(visibleOpenBarPositions(all, {})).toEqual(all)
+    expect(visibleOpenBarPositions(all, {}, {})).toEqual(all)
   })
 })

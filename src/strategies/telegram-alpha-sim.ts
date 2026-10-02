@@ -4,6 +4,7 @@ import { SIGNALS_SIM_WALLET, simWalletForChain } from '@/strategies/sim-wallets'
 import type { StrategyChain } from '@/strategies/types'
 import type { TrackingRecord } from '@/utils/trading-tracker'
 import type { McapEffectiveExit } from '@/utils/mcap-sim-track'
+import { registerSimExitContract } from './sim-exit-contract'
 
 export { SIGNALS_SIM_WALLET }
 
@@ -17,6 +18,8 @@ export async function openSignalsSimPosition(params: {
   entryFeatures: Record<string, unknown>
   /** Target machine / overlay exit frozen at open (same shape as mcap). */
   effectiveExit?: McapEffectiveExit | null
+  /** The price actually paid (S10) — the impact-included fill. Falls back to `priceUsd`. */
+  entryPriceImpactedUsd?: number
   /** REL-20: when provided, the record is collected for a later bulk insert
    *  instead of being inserted here (caller's flush surfaces DB errors). */
   collect?: (record: TrackingRecord) => void
@@ -76,6 +79,22 @@ export async function openSignalsSimPosition(params: {
     params.collect(record)
   } else {
     await insertTradingRecord(record)
+  }
+
+  // The exit contract (S8/S10): this position's exit now belongs to the worker, not only to the
+  // signals closer. Registered from the one function both the signals route and the crosscheck use.
+  if (params.effectiveExit) {
+    await registerSimExitContract({
+      chain,
+      walletAddress: simWalletForChain(SIGNALS_SIM_WALLET, chain),
+      strategyId: params.strategyId,
+      mintAddress: params.mintAddress,
+      symbol: params.symbol,
+      positionSize: params.solAmount,
+      entryPriceUsd: params.entryPriceImpactedUsd ?? params.priceUsd,
+      basis: 'price',
+      thresholds: params.effectiveExit,
+    })
   }
 
   const entryMcap =

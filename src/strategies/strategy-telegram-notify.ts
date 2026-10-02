@@ -1,5 +1,4 @@
 import type { StrategyDomain, StrategyNotifyConfig } from './types'
-import { scheduleOffRequestPath } from './schedule-off-request'
 import {
   DLMM_STRATEGY_DEFAULTS,
   GMGN_STRATEGIES,
@@ -164,12 +163,24 @@ export function telegramExtrasFromFeatures(
 
 /**
  * Open/close Telegram (including sharp PNG) must not run on the HTTP turn.
+ *
+ * Detached, and deliberately NOT `scheduleOffRequestPath`. That helper defers through Next's
+ * `after()`, which waits for the RESPONSE to finish — and the sim-track handler responds only once
+ * its whole cycle is done. A cycle runs for minutes, so a post for a position that opened early in
+ * the cycle went out at the end of it: observed as Telegram opens/closes arriving ~10 minutes after
+ * the position did. Detaching starts the work immediately and off the critical path, which is what
+ * "not on the HTTP turn" actually asks for; `after()` was buying a wait, not safety.
+ *
+ * Errors are swallowed here because the caller is fire-and-forget: an unhandled rejection must not
+ * reach the request that triggered it.
  */
 function scheduleStrategyTelegram(
   label: 'open' | 'close',
   work: () => Promise<void>,
 ): void {
-  scheduleOffRequestPath(`[strategy-telegram] ${label} notify failed`, work)
+  void work().catch((err) => {
+    console.error(`[strategy-telegram] ${label} notify failed:`, err)
+  })
 }
 
 export function notifyStrategyOpen(params: {

@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ReloadSOL · Token Info detect ledger</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --paper:#fafaf7; --paper2:#f0efe9; --ink:#163b2a; --muted:#5b6b60;
+    --soft:#8a968d; --accent:#84cc16; --link:#2e5aa8; --rule:rgba(22,59,42,0.14);
+    --sans:'DM Sans', system-ui, sans-serif;
+    --serif:'Fraunces', serif;
+    --mono:'Geist Mono', ui-monospace, monospace;
+  }
+  body { font-family:var(--sans); background:var(--paper); color:var(--ink); line-height:1.5; }
+  .wrap { max-width:1200px; margin:0 auto; padding:3.5rem 2rem 4rem; }
+  .eyebrow { font-family:var(--mono); font-size:.68rem; font-weight:500; letter-spacing:.2em; text-transform:uppercase; color:var(--muted); }
+  h1 { font-family:var(--serif); font-weight:400; font-size:clamp(1.6rem,3vw,2.4rem); letter-spacing:-.02em; margin:.4rem 0 .6rem; }
+  .lede { color:var(--muted); max-width:72ch; font-size:1rem; margin-bottom:2.25rem; }
+
+  .diagram { margin-bottom:1.75rem; overflow-x:auto; }
+  svg { width:100%; min-width:1000px; display:block; }
+
+  h2 { font-family:var(--mono); font-weight:500; font-size:.7rem; letter-spacing:.2em; text-transform:uppercase; color:var(--soft); margin:2.5rem 0 1rem; }
+  h2 .rule { display:inline-block; width:2.5rem; height:1px; background:var(--rule); vertical-align:middle; margin-right:.75rem; }
+
+  .cards { display:grid; grid-template-columns:1.1fr 1fr 0.9fr; gap:1rem; }
+  @media (max-width:900px) { .cards { grid-template-columns:1fr; } }
+  .card { background:#fff; border:1px solid rgba(22,59,42,0.12); border-radius:6px; padding:1.25rem; }
+  .card .eyebrow { color:var(--soft); font-size:.62rem; }
+  .card-head { display:flex; align-items:center; gap:.5rem; margin:.45rem 0 .7rem; }
+  .card-head h3 { font-size:1rem; font-weight:600; }
+  .dot { width:7px; height:7px; border-radius:50%; flex:none; }
+  .dot.coral { background:var(--accent); } .dot.ink { background:var(--ink); } .dot.muted { background:var(--muted); }
+  .card ul { list-style:none; }
+  .card li { font-size:.86rem; color:var(--muted); padding-left:.9rem; position:relative; margin-bottom:.4rem; }
+  .card li::before { content:"—"; position:absolute; left:0; color:var(--soft); }
+  .card code { font-family:var(--mono); font-size:.78rem; color:var(--ink); background:rgba(22,59,42,0.05); padding:.05rem .28rem; border-radius:3px; }
+
+  .footer { margin-top:3rem; padding-top:1rem; border-top:1px solid var(--rule); font-family:var(--mono); font-size:.72rem; color:var(--soft); display:flex; justify-content:space-between; flex-wrap:wrap; gap:.5rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">ReloadSOL · SPEC-token-info-universal-ledger-v1</p>
+  <h1>Write-once Token Info detect ledger</h1>
+  <p class="lede">The Freeview nine-tile panel is frozen once per <code>(chain, token_address)</code> at the first
+  Sol strategy detect, and every soft reader prefers that row. The live concentration hard ban at 65% keeps
+  reading the panel already in hand — this ledger never feeds it.</p>
+
+  <h2><span class="rule"></span>End-to-end flow — PR #96</h2>
+  <div class="diagram">
+  <svg viewBox="0 0 1160 660" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="tid-title tid-desc">
+    <title id="tid-title">Write-once Token Info detect ledger flow</title>
+    <desc id="tid-desc">Five Sol detect seams feed one write-once helper that inserts the frozen nine-tile panel into token_info_detect with ON CONFLICT DO NOTHING; deferred soft readers prefer that row, an append-only history may record later observations, and the concentration hard ban stays on the live panel instead of the ledger.</desc>
+    <defs>
+      <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#5b6b60"/></marker>
+      <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#84cc16"/></marker>
+      <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#2e5aa8"/></marker>
+    </defs>
+    <rect width="100%" height="100%" fill="#fafaf7"/>
+
+    <!-- Arrows (drawn before boxes) -->
+    <line x1="280" y1="238" x2="344" y2="238" stroke="#5b6b60" stroke-width="1.2" marker-end="url(#arrow)"/>
+    <rect x="288" y="218" width="48" height="12" rx="2" fill="#fafaf7"/>
+    <text x="312" y="227" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">PANEL</text>
+
+    <line x1="592" y1="238" x2="656" y2="238" stroke="#84cc16" stroke-width="1.2" marker-end="url(#arrow-accent)"/>
+    <rect x="598" y="218" width="52" height="12" rx="2" fill="#fafaf7"/>
+    <text x="624" y="227" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">INSERT</text>
+
+    <line x1="904" y1="238" x2="968" y2="238" stroke="#5b6b60" stroke-width="1.2" marker-end="url(#arrow)"/>
+    <rect x="914" y="218" width="44" height="12" rx="2" fill="#fafaf7"/>
+    <text x="936" y="227" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">READ</text>
+
+    <line x1="780" y1="284" x2="780" y2="352" stroke="#5b6b60" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+    <rect x="790" y="314" width="72" height="12" rx="2" fill="#fafaf7"/>
+    <text x="826" y="323" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="start" letter-spacing="0.06em">APPEND</text>
+
+    <path d="M 164,284 V 508 Q 164,516 172,516 H 344" fill="none" stroke="#84cc16" stroke-width="1" stroke-dasharray="4,4" marker-end="url(#arrow-accent)"/>
+    <rect x="232" y="498" width="72" height="12" rx="2" fill="#fafaf7"/>
+    <text x="268" y="507" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">LIVE EVAL</text>
+
+    <!-- N1 — detect seams (input) -->
+    <rect x="48" y="192" width="232" height="92" rx="6" fill="#fafaf7"/>
+    <rect x="48" y="192" width="232" height="92" rx="6" fill="rgba(91,107,96,0.10)" stroke="#8a968d" stroke-width="1"/>
+    <rect x="56" y="198" width="44" height="12" rx="2" fill="transparent" stroke="rgba(138,150,141,0.60)" stroke-width="0.8"/>
+    <text x="78" y="207" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">INPUT</text>
+    <text x="164" y="232" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Sol detect seams ×5</text>
+    <text x="164" y="254" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">mcap_first_seen · mcap_at_80</text>
+    <text x="164" y="270" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">social · gmgn_pipeline · trending</text>
+
+    <!-- N2 — write-once helper (focal) -->
+    <rect x="344" y="192" width="248" height="92" rx="6" fill="#fafaf7"/>
+    <rect x="344" y="192" width="248" height="92" rx="6" fill="rgba(132,204,22,0.12)" stroke="#84cc16" stroke-width="1"/>
+    <rect x="352" y="198" width="48" height="12" rx="2" fill="transparent" stroke="rgba(132,204,22,0.50)" stroke-width="0.8"/>
+    <text x="376" y="207" fill="#84cc16" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">HELPER</text>
+    <text x="468" y="232" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">insertTokenInfoDetectIfAbsent</text>
+    <text x="468" y="254" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">buildGmgnTokenSnapshot() → 9 tiles</text>
+    <text x="468" y="270" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">single writer · best-effort</text>
+
+    <!-- N3 — detect table (focal store) -->
+    <rect x="656" y="192" width="248" height="92" rx="6" fill="#fafaf7"/>
+    <rect x="656" y="192" width="248" height="92" rx="6" fill="rgba(132,204,22,0.12)" stroke="#84cc16" stroke-width="1"/>
+    <rect x="664" y="198" width="44" height="12" rx="2" fill="transparent" stroke="rgba(132,204,22,0.50)" stroke-width="0.8"/>
+    <text x="686" y="207" fill="#84cc16" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">STORE</text>
+    <text x="780" y="232" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">token_info_detect</text>
+    <text x="780" y="254" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">UNIQUE (chain, token_address)</text>
+    <text x="780" y="270" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">write-once · no UPDATE · no upsert</text>
+
+    <!-- N4 — soft readers -->
+    <rect x="968" y="192" width="176" height="92" rx="6" fill="#fafaf7"/>
+    <rect x="968" y="192" width="176" height="92" rx="6" fill="#ffffff" stroke="#163b2a" stroke-width="1"/>
+    <rect x="976" y="198" width="40" height="12" rx="2" fill="transparent" stroke="rgba(22,59,42,0.40)" stroke-width="0.8"/>
+    <text x="996" y="207" fill="#163b2a" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">SOFT</text>
+    <text x="1056" y="232" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Soft readers</text>
+    <text x="1056" y="254" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">preferTokenInfoForSoftUse</text>
+    <text x="1056" y="270" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">step 4 · deferred</text>
+
+    <!-- N5 — history (optional, dashed) -->
+    <rect x="656" y="352" width="248" height="76" rx="6" fill="#fafaf7"/>
+    <rect x="656" y="352" width="248" height="76" rx="6" fill="rgba(22,59,42,0.02)" stroke="rgba(22,59,42,0.20)" stroke-width="1" stroke-dasharray="4,3"/>
+    <rect x="664" y="358" width="36" height="12" rx="2" fill="transparent" stroke="rgba(22,59,42,0.25)" stroke-width="0.8"/>
+    <text x="682" y="367" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">OPT</text>
+    <text x="780" y="392" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">token_info_detect_history</text>
+    <text x="780" y="410" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">append-only · v1 writes none</text>
+
+    <!-- N6 — concentration hard ban (boundary, dashed) -->
+    <rect x="344" y="480" width="800" height="72" rx="6" fill="#fafaf7"/>
+    <rect x="344" y="480" width="800" height="72" rx="6" fill="rgba(132,204,22,0.05)" stroke="rgba(132,204,22,0.50)" stroke-width="1" stroke-dasharray="4,4"/>
+    <rect x="352" y="486" width="40" height="12" rx="2" fill="transparent" stroke="rgba(132,204,22,0.50)" stroke-width="0.8"/>
+    <text x="372" y="495" fill="#84cc16" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">HARD</text>
+    <text x="744" y="524" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Concentration ban — live &gt; 65%</text>
+    <text x="744" y="540" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">Top 10 / Dev / Bundlers · live snapshot · never reads this ledger</text>
+
+    <!-- Editorial callout -->
+    <text x="744" y="584" fill="#5b6b60" font-size="14" font-family="'Fraunces',serif" font-style="italic" text-anchor="middle">The detect row is soft-only — the ban keeps reading the live panel.</text>
+
+    <!-- Legend -->
+    <line x1="48" y1="612" x2="1112" y2="612" stroke="rgba(22,59,42,0.10)" stroke-width="0.8"/>
+    <text x="48" y="628" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.18em">LEGEND</text>
+    <rect x="136" y="620" width="14" height="10" rx="2" fill="rgba(132,204,22,0.12)" stroke="#84cc16" stroke-width="1"/>
+    <text x="156" y="628" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">Focal helper / store</text>
+    <rect x="340" y="620" width="14" height="10" rx="2" fill="rgba(91,107,96,0.10)" stroke="#8a968d" stroke-width="1"/>
+    <text x="360" y="628" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">Detect seam</text>
+    <rect x="500" y="620" width="14" height="10" rx="2" fill="rgba(22,59,42,0.02)" stroke="rgba(22,59,42,0.20)" stroke-width="1"/>
+    <text x="520" y="628" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">Deferred / append-only</text>
+    <rect x="712" y="620" width="14" height="10" rx="2" fill="rgba(132,204,22,0.05)" stroke="rgba(132,204,22,0.50)" stroke-width="1"/>
+    <text x="732" y="628" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">Hard path (not ledger)</text>
+    <line x1="900" y1="625" x2="928" y2="625" stroke="#5b6b60" stroke-width="1" marker-end="url(#arrow)"/>
+    <text x="936" y="628" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">data flow</text>
+  </svg>
+  </div>
+
+  <h2><span class="rule"></span>TL;DR — last plan &amp; implementation</h2>
+  <div class="cards">
+    <div class="card">
+      <p class="eyebrow">PLAN → CODE</p>
+      <div class="card-head"><span class="dot coral"></span><h3>SPEC steps 1–3 landed</h3></div>
+      <ul>
+        <li>Plan: <code>continue-pr96-token-info-detect-ledger</code> — land + deploy PR #96, which implements steps 1–3 of the merged SPEC (PR #91, <code>9a180f5</code>).</li>
+        <li>Shipped in <code>6492982</code>: 9 files, +822 lines — DDL, the single writer, 4 seams, the gmgn-web ledger probe.</li>
+        <li>Five Sol sources: <code>mcap_first_seen</code>, <code>mcap_at_80</code>, <code>social</code>, <code>gmgn_pipeline</code>, <code>trending</code>.</li>
+        <li>Robinhood twins deliberately unwired.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <p class="eyebrow">VERIFIED E2E (LOCAL)</p>
+      <div class="card-head"><span class="dot ink"></span><h3>Green</h3></div>
+      <ul>
+        <li><code>npx tsc --noEmit</code> → exit 0.</li>
+        <li><code>vitest</code> 4 files / 39 tests passed: token-info-detect, gmgn-pipeline, gmgn-web-multi, concentration-ban.</li>
+        <li>Write-once holds: <code>UNIQUE (chain, token_address)</code> + <code>ON CONFLICT DO NOTHING</code>; empty panel does not occupy the key.</li>
+        <li>Ban still live <code>&gt; 65</code> on Top 10 / Dev / Bundlers, not the ledger.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <p class="eyebrow">STILL OPEN</p>
+      <div class="card-head"><span class="dot muted"></span><h3>Release half not landed</h3></div>
+      <ul>
+        <li>PR #96 <code>OPEN</code>, <code>mergeStateStatus: UNSTABLE</code> — only red check is Vercel (suspected legacy, <code>vercel.json</code> is <code>{}</code>).</li>
+        <li>Uncommitted: trimmed test asserts + new <code>gmgn-pipeline.test.ts</code>; <code>next-env.d.ts</code> dirty.</li>
+        <li>Not done: commit → push → merge, VPS migration <code>42</code>, prod smoke counts, step-4 soft readers (deferred by design).</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>ReloadSOL · docs/diagrams/07-token-info-ledger.html</span>
+    <span>token_info_detect · 5 Sol seams · soft-only v1</span>
+  </div>
+</div>
+</body>
+</html>

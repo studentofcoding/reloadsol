@@ -5,20 +5,13 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from feature_schema import stage_columns
+
 PATTERN_TOP_SOURCE_GMGN_FOMO = "GMGN_Smart_Money_FOMO"
 
-PATTERN_FEATURE_COLUMNS = [
-    "log_first_mcap",
-    "log_mention_count_30m",
-    "unique_channels_30m",
-    "minutes_to_first_mention",
-    "smart_wallet_buy_count_1h",
-    "has_smart_wallet_buy",
-    "source_gmgn_smart_money_fomo",
-    "gmgn_activity_score_60m",
-    "log_gmgn_sm_wallets_60m",
-    "has_gmgn_hot_before_entry",
-]
+# Derived from the committed registry mirror (ml/feature-schema.json). Do not re-declare these
+# lists by hand — edit src/strategies/feature-registry.ts and run `npm run ml:export-schema`.
+PATTERN_FEATURE_COLUMNS = stage_columns("pattern", "default")
 
 MIN_PATTERN_ROWS = 60
 MIN_PATTERN_ROWS_PER_CLASS = 30
@@ -27,15 +20,7 @@ MIN_PATTERN_MACRO_F1 = 0.60
 # Social-side features that historically show 0 importance — coverage logging
 # exists to tell "missing at export time" apart from "present but uninformative".
 PATTERN_SOCIAL_FEATURE_COLUMNS = [
-    "log_mention_count_30m",
-    "unique_channels_30m",
-    "minutes_to_first_mention",
-    "smart_wallet_buy_count_1h",
-    "has_smart_wallet_buy",
-    "source_gmgn_smart_money_fomo",
-    "gmgn_activity_score_60m",
-    "log_gmgn_sm_wallets_60m",
-    "has_gmgn_hot_before_entry",
+    column for column in PATTERN_FEATURE_COLUMNS if column != "log_first_mcap"
 ]
 
 

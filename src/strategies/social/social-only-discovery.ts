@@ -190,6 +190,116 @@ export async function fetchFomoRollupCandidates(
   }
 }
 
+/** Burst window for FOMO detection (minutes). Env-tunable, default 30. */
+export function socialBurstWindowMinutes(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const n = Number(env.SOCIAL_BURST_WINDOW_MIN)
+  return Number.isFinite(n) && n > 0 ? n : 30
+}
+
+/**
+ * Burst row plus the mcap context the Jev state wants (same round trip).
+ */
+export type SocialBurstCandidate = SocialTokenRollupRow & {
+  mcap: number | null
+  first_mcap: number | null
+  mcap_growth_percent: number | null
+  organic_score: number | null
+  top_holders_pct: number | null
+}
+
+/**
+ * FOMO mention burst straight from `social_token_events` (source of truth),
+ * not the 5-min-sampled rollup whose 30m window decays and whose `top_source`
+ * blanks out between samples. A 2–19 min burst stays visible for the whole
+ * window, so a tick never misses it. Rows are rollup-shaped so
+ * `filterSocialOnlyCandidates` is reused unchanged.
+ */
+export async function loadFomoBurstCandidates(
+  entry: SocialStrategy['config']['entry'],
+  opts: { windowMinutes?: number; limit?: number; chain?: string } = {},
+): Promise<SocialBurstCandidate[]> {
+  const windowMinutes = opts.windowMinutes ?? socialBurstWindowMinutes()
+  const limit = opts.limit ?? 100
+  const chain = opts.chain ?? 'sol'
+  const source = (entry.topSource || PATTERN_TOP_SOURCE_GMGN_FOMO).trim()
+  const cutoff = new Date(Date.now() - windowMinutes * 60 * 1000).toISOString()
+  try {
+    const { rows } = await query<{
+      token_address: string
+      mention_count: number
+      first_seen_at: string | null
+      last_event_at: string | null
+      unique_channel_count_30m: number | null
+      mention_count_24h: number | null
+      fomo_buy_count_1h: number | null
+      fomo_edge_1h: number | null
+      mcap: number | null
+      first_mcap: number | null
+      mcap_growth_percent: number | null
+      organic_score: number | null
+      top_holders_pct: number | null
+    }>(
+      `SELECT e.token_address,
+              COUNT(*)::int AS mention_count,
+              MIN(e.occurred_at) AS first_seen_at,
+              MAX(e.occurred_at) AS last_event_at,
+              r.unique_channel_count_30m,
+              r.mention_count_24h,
+              r.fomo_buy_count_1h,
+              r.fomo_edge_1h,
+              m.current_mcap AS mcap,
+              m.first_mcap,
+              m.mcap_growth_percent,
+              m.organic_score,
+              m.top_holders_pct
+         FROM social_token_events e
+         LEFT JOIN social_token_rollups r ON r.token_address = e.token_address
+         LEFT JOIN token_mcap_tracking m
+                ON m.token_address = e.token_address AND m.chain = e.chain
+        WHERE e.event_type = 'mention'
+          AND e.source = $1
+          AND e.chain = $2
+          AND e.occurred_at >= $3
+        GROUP BY e.token_address, r.unique_channel_count_30m, r.mention_count_24h,
+                 r.fomo_buy_count_1h, r.fomo_edge_1h,
+                 m.current_mcap, m.first_mcap, m.mcap_growth_percent,
+                 m.organic_score, m.top_holders_pct
+       HAVING COUNT(*) > $4
+        ORDER BY mention_count DESC
+        LIMIT $5`,
+      [source, chain, cutoff, entry.minMentions30m, limit],
+    )
+    const now = new Date().toISOString()
+    return rows.map((row) => ({
+      token_address: row.token_address,
+      first_seen_at: row.first_seen_at,
+      first_source: source,
+      first_channel: null,
+      mention_count_5m: 0,
+      mention_count_30m: row.mention_count,
+      mention_count_24h: row.mention_count_24h ?? row.mention_count,
+      unique_channel_count_30m: row.unique_channel_count_30m ?? 0,
+      smart_wallet_buy_count_1h: 0,
+      smart_wallet_buy_sol_1h: 0,
+      top_source: source,
+      last_event_at: row.last_event_at,
+      updated_at: now,
+      fomo_buy_count_1h: row.fomo_buy_count_1h ?? 0,
+      fomo_edge_1h: row.fomo_edge_1h,
+      mcap: row.mcap,
+      first_mcap: row.first_mcap,
+      mcap_growth_percent: row.mcap_growth_percent,
+      organic_score: row.organic_score,
+      top_holders_pct: row.top_holders_pct,
+    }))
+  } catch (error) {
+    if (isMissingRelation(error)) return []
+    throw error
+  }
+}
+
 /** Mints with a mention from any of `sources` in the last 30 minutes. */
 export async function loadMintsWithRequiredMentionSources(
   sources: string[],

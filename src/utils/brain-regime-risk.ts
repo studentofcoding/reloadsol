@@ -328,6 +328,33 @@ export type BrainRiskSession = {
 }
 
 /**
+ * One path for every domain: resolve the market scalar and apply it to a sim stake.
+ *
+ * The scalar is Level 1 — a book-level, down-only risk dial — and it has to reach *every* strategy
+ * or the stack stops being comparable across them: a family that skips it runs at full size while
+ * its neighbours are cut, so a cross-family PnL or ROI comparison silently measures the wiring
+ * rather than the strategy. That is exactly what happened before this helper existed (mcap/search
+ * carried `brain_size_scale`, gmgn and social carried none, and the un-scaled families ran ~9x the
+ * per-trade stake of the scaled one).
+ *
+ * Callers opening sims should create the session once per cycle via `createBrainRiskSession()` and
+ * call this per strategy, so the recipe/params fetch is shared across candidates.
+ *
+ * `standDown` means the brain returned a zero scale: skip the open rather than passing a 0 stake
+ * into the spine, which would record a zero-size position.
+ */
+export async function resolveSimOpenSize(params: {
+  session: BrainRiskSession
+  strategyId: string
+  baseSol: number
+}): Promise<{ risk: ResolvedBrainRisk; sol: number; skip: boolean }> {
+  const risk = await params.session.resolve({ strategyId: params.strategyId })
+  if (risk.standDown) return { risk, sol: 0, skip: true }
+  const sol = scaleOpenSize(params.baseSol, risk)
+  return { risk, sol, skip: sol <= 0 }
+}
+
+/**
  * Cache recipes + /regime/params per profile for one sim-track / assign cycle.
  */
 export function createBrainRiskSession(

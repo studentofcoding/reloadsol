@@ -66,9 +66,10 @@ export async function GET() {
   } catch (error) {
     console.error('Error in SOL price endpoint:', error);
 
-    // If cache exists but is expired, use it anyway during error
+    // If cache exists but is expired, use it anyway during error — a real observed price is
+    // still real. What we never do is invent one.
     const cachedInfo = getCachedPriceInfo();
-    if (cachedInfo.price && cachedInfo.price !== 145) {
+    if (cachedInfo.price > 0) {
       return NextResponse.json(
         {
           ...cachedInfo,
@@ -85,18 +86,19 @@ export async function GET() {
       )
     }
 
-    // Fallback to default price if no cache is available
+    // No price has ever been observed: report unavailable rather than a fabricated number, so
+    // callers show an explicit unknown instead of converting at a made-up rate.
     return NextResponse.json(
       {
-        price: 145,
-        source: 'emergency_default',
-        error: 'Failed to fetch SOL price',
+        price: 0,
+        source: 'unavailable',
+        error: 'No SOL price available',
         message: error instanceof Error ? error.message : 'Unknown error'
       },
       {
-        status: 200,
+        status: 503,
         headers: {
-          'Cache-Control': 'public, max-age=5'
+          'Cache-Control': 'no-store'
         }
       }
     )

@@ -167,7 +167,7 @@ export class RealTradeExecutor implements TradeExecutor {
         outputMint: params.outputMint,
         amount: params.amount,
         slippageBps: params.slippageBps,
-        priorityFeeLamports: params.priorityFee || 0,
+        priorityFeeLamports: params.priorityFee,
         direct: true,
       })
 

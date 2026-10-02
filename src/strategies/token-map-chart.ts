@@ -25,6 +25,7 @@ import {
 } from '@/utils/market-brain'
 import { cacheGet, cacheSet } from '@/utils/redis-cache'
 import { acquireSolanaTrackerOhlcSlot } from '@/utils/solanatracker-ohlc-limit'
+import { fetchGmgnWebCandles } from '@/utils/gmgn-web-extra'
 
 /** ponytail: 10m collapses Freeview+Telegram+shadow bursts; last-good covers 429 */
 export const OHLC_24H_1M_CACHE_TTL_SEC = 600
@@ -699,21 +700,45 @@ async function fetchTokenOhlcUpstream(params: {
   }
 
   // GMGN kline fallback — skipped when Redis already holds a full 24h series.
-  if (params.skipGmgn) return { candles: [], source: 'none' }
-  try {
-    const candles = await fetchGmgnKlinePaged({
-      chain: 'sol',
-      address: params.tokenAddress,
-      resolution: params.type,
-      timeFrom: params.timeFrom,
-      timeTo: params.timeTo,
-      deadlineMs: params.deadlineMs,
-    })
-    if (candles.length === 0) return { candles: [], source: 'none' }
-    return { candles, source: 'gmgn' }
-  } catch {
-    return { candles: [], source: 'none' }
+  if (!params.skipGmgn) {
+    try {
+      const candles = await fetchGmgnKlinePaged({
+        chain: 'sol',
+        address: params.tokenAddress,
+        resolution: params.type,
+        timeFrom: params.timeFrom,
+        timeTo: params.timeTo,
+        deadlineMs: params.deadlineMs,
+      })
+      if (candles.length > 0) return { candles, source: 'gmgn' }
+    } catch {
+      // fall through to the internal web candles
+    }
   }
+
+  // GMGN **internal web** candles — free, keyless, tunnelled by our worker.
+  // The last live source before giving up (SolanaTracker is out of credits).
+  // Sol only; soft-fail. See docs/GMGN_INTERNAL_API.md.
+  if (params.gmgnChain === 'sol') {
+    const web = await fetchGmgnWebCandles(params.tokenAddress, params.type).catch(
+      () => null,
+    )
+    if (web && web.length > 0) {
+      return {
+        candles: web.map((b) => ({
+          time: b.t,
+          open: b.o,
+          high: b.h,
+          low: b.l,
+          close: b.c,
+          ...(b.v != null ? { volume: b.v } : {}),
+        })),
+        source: 'gmgn-web',
+      }
+    }
+  }
+
+  return { candles: [], source: 'none' }
 }
 
 export function tokenOhlcToRugBars(candles: TokenOhlcBar[]): OhlcRugBar[] {
@@ -811,6 +836,22 @@ export async function getCachedTokenOhlc24h1m(
 }
 
 /**
+ * Pure cache read (primary → last-good), with **no upstream call**.
+ *
+ * `getCachedTokenOhlc24h1m` deliberately fetches when the cache misses — correct for one chart,
+ * wrong for a bulk sweep, which would then hammer the live rate lane with 300 misses. The metrics
+ * copier uses this instead: a miss costs nothing and simply means "fetch this one on the copy
+ * lane".
+ */
+export async function readCachedTokenOhlc24h1m(
+  tokenAddress: string,
+): Promise<{ candles: TokenOhlcBar[]; source: string } | null> {
+  const primary = await readOhlcCache(ohlc24h1mCacheKey(tokenAddress))
+  if (primary) return primary
+  return readOhlcCache(ohlc24h1mLastGoodKey(tokenAddress))
+}
+
+/**
  * "Tracker" price series for the chart, chain-aware:
  * 1. `trending_token_tracker.price_history` (sol-only trending-token tracker).
  * 2. Per-position `monitor_snapshots` from `strategy_outcomes.features`
@@ -825,6 +866,16 @@ async function loadTrackerHistory(
   const direct = parsePriceHistory(metrics?.price_history)
   if (direct.length > 0) return direct
   return fetchOutcomeMonitorPriceHistory(tokenAddress, chain)
+}
+
+/** Last `lookbackSec` of our own 1m series (`token_ohlc_bars`). */
+export async function loadOwn1mBars(
+  tokenAddress: string,
+  lookbackSec = OHLC_24H_SPAN_SEC,
+): Promise<TokenOhlcBar[]> {
+  const timeTo = Math.floor(Date.now() / 1000)
+  const sinceSec = timeTo - Math.max(0, lookbackSec)
+  return loadOwnOhlcBars(tokenAddress, sinceSec, timeTo)
 }
 
 /**

@@ -133,6 +133,7 @@ describe('GET /api/trading/signals strategy list', () => {
       'mcap_enter_first_seen',
       'signals_default',
       'signals_sell_over_100',
+      'social_only_fomo_gt7',
     ])
     expect(body.strategies.every((row: { n: number }) => row.n === 0)).toBe(true)
     expect(fetchAndScoreSignals).toHaveBeenCalledWith(

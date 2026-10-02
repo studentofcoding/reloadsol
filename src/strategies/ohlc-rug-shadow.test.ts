@@ -47,7 +47,7 @@ describe('attachOhlcRugShadow', () => {
     vi.resetModules()
   })
 
-  it('shadow mode does not reject on trip', async () => {
+  it('shadow mode does not reject on trip, and returns the bars', async () => {
     vi.resetModules()
     vi.doMock('@/strategies/detect-snapshots', () => ({
       fetchLastOhlcRugBars: vi.fn().mockResolvedValue({
@@ -66,6 +66,8 @@ describe('attachOhlcRugShadow', () => {
     expect(result.reject).toBe(false)
     expect(result.features.ohlc_rug_trip).toBe(1)
     expect(result.features.a).toBe(1)
+    expect(result.bars).toHaveLength(2)
+    expect(result.source).toBe('test')
   })
 
   it('enforce mode rejects on trip', async () => {
@@ -98,5 +100,19 @@ describe('attachOhlcRugShadow', () => {
     const result = await attachOhlcRugShadow('MintEmpty', {}, { enforce: true })
     expect(result.reject).toBe(false)
     expect(result.features.ohlc_rug_skipped).toBe('no_bars_or_error')
+    expect(result.bars).toEqual([])
+  })
+
+  it('passes fallbackOwn1m through to the bars reader', async () => {
+    vi.resetModules()
+    const fetchMock = vi.fn().mockResolvedValue({ bars: [], source: 'none' })
+    vi.doMock('@/strategies/detect-snapshots', () => ({
+      fetchLastOhlcRugBars: fetchMock,
+    }))
+    const { attachOhlcRugShadow } = await import('@/strategies/ohlc-rug-shadow')
+    await attachOhlcRugShadow('MintFallback', {}, { fallbackOwn1m: true })
+    expect(fetchMock).toHaveBeenCalledWith('MintFallback', expect.any(Number), {
+      fallbackOwn1m: true,
+    })
   })
 })

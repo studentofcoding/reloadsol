@@ -39,7 +39,7 @@ type TrackerEntryHints = {
   entryMcap: number | null
 }
 
-type JupiterEntryHints = {
+export type JupiterEntryHints = {
   organicScore: number | null
   topHoldersPct: number | null
   volume5m: number | null
@@ -93,7 +93,7 @@ async function fetchTrackerEntryHints(
   }
 }
 
-async function fetchJupiterEntryHints(
+export async function fetchJupiterEntryHints(
   tokenAddress: string,
   opts: { needMeta: boolean; needVolume: boolean; needMcap: boolean },
 ): Promise<JupiterEntryHints | null> {

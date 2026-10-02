@@ -70,6 +70,38 @@ export async function GET(request: NextRequest) {
       maxAgeMinutes,
     })
 
+    // Social list: rows come from the live FOMO burst pool, not trading_signals.
+    if (selectedId === 'social_only_fomo_gt7') {
+      const { loadSocialBurstListPool } = await import(
+        '@/strategies/social/social-burst-list'
+      )
+      const pool = await loadSocialBurstListPool(chain, { limit })
+      const socialProjected = projectSignalsStrategyList({
+        chain,
+        selectedId,
+        pool,
+        limit,
+        scoreConfig: strategyConfig,
+        mcapById: {},
+        breakdown: [],
+      })
+      return NextResponse.json({
+        success: true,
+        params: {
+          limit,
+          recencyMinutes,
+          minGrowth,
+          includeStuck,
+          maxAgeMinutes,
+          strategy: selectedId,
+          chain,
+        },
+        stats: { returnedSignals: socialProjected.signals.length, earlyAlerts: 0 },
+        strategies: socialProjected.strategies,
+        signals: socialProjected.signals,
+      })
+    }
+
     // Mint membership only — picker n=/avg comes from /api/trading/signals/strategies.
     const [rawSignals, mcapRegistry, signalsRegistry] = await Promise.all([
       fetchAndScoreSignals(strategyConfig, { chain, keepCandidatePool: true }),

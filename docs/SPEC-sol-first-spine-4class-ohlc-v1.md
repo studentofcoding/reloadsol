@@ -3,7 +3,7 @@
 **Status:** draft (Wayfinder handoff)  
 **Date:** 2026-09-27  
 **Wayfinder map:** [Wayfinder: Sol-first spine — 3-class + OHLC second head](https://github.com/studentofcoding/reloadsol/issues/79) (all child tickets closed)  
-**Related:** [SPEC-target-machine-spine-v1.md](./SPEC-target-machine-spine-v1.md) (extend; do not fork a second paper desk), [SPEC-ohlc-rug-spine-v1.md](./SPEC-ohlc-rug-spine-v1.md), [docs/04-machine-learning.md](./04-machine-learning.md)
+**Related:** [SPEC-target-machine-spine-v1.md](./SPEC-target-machine-spine-v1.md) (extend; do not fork a second paper desk), [SPEC-ohlc-rug-spine-v1.md](./SPEC-ohlc-rug-spine-v1.md), [docs/04-machine-learning.md](./04-machine-learning.md), [SPEC-token-info-universal-ledger-v1.md](./specs/SPEC-token-info-universal-ledger-v1.md) (immutable detect Token Info ledger for the concentration soft path and later enrichment; does not replace 4-class labels or the live >65% hard ban)
 
 ## Goal
 

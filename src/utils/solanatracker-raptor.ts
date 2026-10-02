@@ -1,4 +1,5 @@
 import { TOKENS } from "@/utils/solana";
+import { escalateRaptorHops, isRaptorNoRouteError, resolveRaptorHops } from "@/utils/raptor-hops";
 import {
   BUYBULK_PLATFORM_FEE_BPS,
   BUYBULK_SOL_FEE_ACCOUNT,
@@ -17,12 +18,21 @@ export const RAPTOR_FETCH_TIMEOUT_MS = 20_000;
 export const RAPTOR_DEV_FEE_BPS = BUYBULK_PLATFORM_FEE_BPS;
 export const RAPTOR_DEV_FEE_ACCOUNT = BUYBULK_SOL_FEE_ACCOUNT;
 
-/** Direct/single-hop only — avoids multi-hop route failures on thin pump tokens. */
+/** Direct/single-hop only — correct for a leg through SOL/USDC/USDT, which has a direct pool. */
 export const RAPTOR_DEFAULT_MAX_HOPS = 1;
 
 /** Arb-only default — never applied to directional bots. */
 export const RAPTOR_DEFAULT_MAX_HOPS_ARBITRAGE = 3;
 
+/**
+ * The global hop ceiling from env.
+ *
+ * **Do not call this to build a quote.** A single global value cannot be right for both route kinds:
+ * at `1` a token→token pair has no direct pool and Raptor answers
+ * `500 "No direct route found and maxHops=1"`, which then escalated to the Jupiter picker and spent the
+ * 0.5 rps execution budget. Use `resolveRaptorHops(inputMint, outputMint)` from `@/utils/raptor-hops`,
+ * which keeps this value for a verified-mint leg and widens it for token→token.
+ */
 export function getRaptorMaxHops(): number {
   const raw = process.env.RAPTOR_MAX_HOPS?.trim();
   if (!raw) return RAPTOR_DEFAULT_MAX_HOPS;
@@ -174,7 +184,7 @@ export function buildRaptorQuoteAndSwapBody(
     slippageBps: params.slippageBps,
     wrapUnwrapSol: true,
     txVersion: "V0",
-    maxHops: params.maxHops ?? getRaptorMaxHops(),
+    maxHops: params.maxHops ?? resolveRaptorHops(params.inputMint, params.outputMint),
     priorityFee: priority.priorityFee,
     maxPriorityFee: priority.maxPriorityFee,
     // Canonical buy_bulk fee — ignore caller values so swaps cannot bypass 25 bps.
@@ -241,6 +251,32 @@ async function raptorFetch<T>(
   }
 }
 
+/**
+ * One wider retry when Raptor reports no route at this ceiling.
+ *
+ * The per-pair ceiling is chosen from the verified-mint assumption, which is **direction-dependent**: it
+ * holds for token→SOL but not for SOL→token (8 of 40 real mints had no direct SOL pool). Retrying here is
+ * free; escalating to the Jupiter picker instead would spend the 0.5 rps execution budget on a display
+ * quote. One step only — never a loop.
+ */
+async function withNoRouteRetry<T>(
+  hops: number,
+  inputMint: string,
+  outputMint: string,
+  run: (hops: number) => Promise<T>,
+): Promise<T> {
+  try {
+    return await run(hops);
+  } catch (error) {
+    const wider = isRaptorNoRouteError(error) ? escalateRaptorHops(hops) : null;
+    if (wider == null) throw error;
+    console.warn(
+      `[raptor] no direct route at maxHops=${hops} (${inputMint.slice(0, 6)}…→${outputMint.slice(0, 6)}…) — retrying at ${wider}`,
+    );
+    return run(wider);
+  }
+}
+
 /** Server-side: GET /quote */
 export async function fetchRaptorQuoteDirect(
   inputMint: string,
@@ -249,25 +285,31 @@ export async function fetchRaptorQuoteDirect(
   slippageBps: number,
   maxHops?: number,
 ): Promise<RaptorQuoteResponse> {
-  const params = new URLSearchParams({
-    inputMint,
-    outputMint,
-    amount,
-    slippageBps: String(slippageBps),
-    maxHops: String(maxHops ?? getRaptorMaxHops()),
+  const hops = resolveRaptorHops(inputMint, outputMint, { requested: maxHops ?? null });
+  return withNoRouteRetry(hops, inputMint, outputMint, (h) => {
+    const params = new URLSearchParams({
+      inputMint,
+      outputMint,
+      amount,
+      slippageBps: String(slippageBps),
+      maxHops: String(h),
+    });
+    return raptorFetch<RaptorQuoteResponse>(`/quote?${params.toString()}`);
   });
-  return raptorFetch<RaptorQuoteResponse>(`/quote?${params.toString()}`);
 }
 
 /** Server-side: POST /quote-and-swap */
 export async function fetchRaptorQuoteAndSwapDirect(
   params: RaptorQuoteAndSwapParams,
 ): Promise<RaptorQuoteAndSwapResponse> {
-  return raptorFetch<RaptorQuoteAndSwapResponse>("/quote-and-swap", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(buildRaptorQuoteAndSwapBody(params)),
-  });
+  const hops = params.maxHops ?? resolveRaptorHops(params.inputMint, params.outputMint);
+  return withNoRouteRetry(hops, params.inputMint, params.outputMint, (h) =>
+    raptorFetch<RaptorQuoteAndSwapResponse>("/quote-and-swap", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(buildRaptorQuoteAndSwapBody({ ...params, maxHops: h })),
+    }),
+  );
 }
 
 /** Server-side: POST /send-transaction */
@@ -320,7 +362,7 @@ export async function fetchRaptorQuote(
     outputMint,
     amount,
     slippageBps: String(slippageBps),
-    maxHops: String(maxHops ?? getRaptorMaxHops()),
+    maxHops: String(resolveRaptorHops(inputMint, outputMint, { requested: maxHops ?? null })),
   });
   const response = await fetch(`/api/solanatracker/quote?${query.toString()}`);
   if (!response.ok) {

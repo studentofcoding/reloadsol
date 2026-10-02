@@ -1,0 +1,1180 @@
+{
+  "types": 11,
+  "fields": 141,
+  "byType": [
+    {
+      "name": "SocialGateConfig",
+      "fields": 3
+    },
+    {
+      "name": "StrategyNotifyConfig",
+      "fields": 2
+    },
+    {
+      "name": "TokenFilterConfig",
+      "fields": 9
+    },
+    {
+      "name": "SignalsStrategyConfig",
+      "fields": 16
+    },
+    {
+      "name": "DlmmStrategyConfig",
+      "fields": 15
+    },
+    {
+      "name": "McapTrackerStrategyConfig",
+      "fields": 20
+    },
+    {
+      "name": "GmgnRosterConcurrenceConfig",
+      "fields": 15
+    },
+    {
+      "name": "GmgnRadarComebackConfig",
+      "fields": 7
+    },
+    {
+      "name": "GmgnRadarConfig",
+      "fields": 8
+    },
+    {
+      "name": "GmgnStrategyConfig",
+      "fields": 32
+    },
+    {
+      "name": "SocialStrategyConfig",
+      "fields": 14
+    }
+  ],
+  "rows": [
+    {
+      "type": "SocialGateConfig",
+      "field": "socialMinMentions30m",
+      "nested": false,
+      "bucket": "READ",
+      "app": 1,
+      "ui": 0
+    },
+    {
+      "type": "SocialGateConfig",
+      "field": "socialRequireSmartWalletBuy",
+      "nested": false,
+      "bucket": "READ",
+      "app": 1,
+      "ui": 0
+    },
+    {
+      "type": "SocialGateConfig",
+      "field": "socialMaxMinutesSinceFirstMention",
+      "nested": false,
+      "bucket": "READ",
+      "app": 1,
+      "ui": 0
+    },
+    {
+      "type": "StrategyNotifyConfig",
+      "field": "telegram",
+      "nested": false,
+      "bucket": "READ",
+      "app": 70,
+      "ui": 7
+    },
+    {
+      "type": "StrategyNotifyConfig",
+      "field": "ui",
+      "nested": false,
+      "bucket": "READ",
+      "app": 491,
+      "ui": 62
+    },
+    {
+      "type": "TokenFilterConfig",
+      "field": "enabled",
+      "nested": false,
+      "bucket": "READ",
+      "app": 87,
+      "ui": 33
+    },
+    {
+      "type": "TokenFilterConfig",
+      "field": "mcap",
+      "nested": false,
+      "bucket": "READ",
+      "app": 263,
+      "ui": 31
+    },
+    {
+      "type": "TokenFilterConfig",
+      "field": "priceChange5m",
+      "nested": false,
+      "bucket": "READ",
+      "app": 4,
+      "ui": 1
+    },
+    {
+      "type": "TokenFilterConfig",
+      "field": "priceChange1h",
+      "nested": false,
+      "bucket": "READ",
+      "app": 5,
+      "ui": 1
+    },
+    {
+      "type": "TokenFilterConfig",
+      "field": "priceChange6h",
+      "nested": false,
+      "bucket": "READ",
+      "app": 4,
+      "ui": 1
+    },
+    {
+      "type": "TokenFilterConfig",
+      "field": "organicScore",
+      "nested": false,
+      "bucket": "READ",
+      "app": 38,
+      "ui": 8
+    },
+    {
+      "type": "TokenFilterConfig",
+      "field": "topHoldersPercentage",
+      "nested": false,
+      "bucket": "READ",
+      "app": 13,
+      "ui": 2
+    },
+    {
+      "type": "TokenFilterConfig",
+      "field": "requireCompleteData",
+      "nested": false,
+      "bucket": "READ",
+      "app": 3,
+      "ui": 1
+    },
+    {
+      "type": "TokenFilterConfig",
+      "field": "checkManualTradingHistory",
+      "nested": false,
+      "bucket": "READ",
+      "app": 3,
+      "ui": 1
+    },
+    {
+      "type": "SignalsStrategyConfig",
+      "field": "template",
+      "nested": false,
+      "bucket": "READ",
+      "app": 49,
+      "ui": 3
+    },
+    {
+      "type": "SignalsStrategyConfig",
+      "field": "query",
+      "nested": false,
+      "bucket": "READ",
+      "app": 225,
+      "ui": 46
+    },
+    {
+      "type": "SignalsStrategyConfig",
+      "field": "query.limit",
+      "nested": true,
+      "bucket": "READ",
+      "app": 158,
+      "ui": 24
+    },
+    {
+      "type": "SignalsStrategyConfig",
+      "field": "query.recencyMinutes",
+      "nested": true,
+      "bucket": "READ",
+      "app": 14,
+      "ui": 2
+    },
+    {
+      "type": "SignalsStrategyConfig",
+      "field": "query.minGrowth",
+      "nested": true,
+      "bucket": "READ",
+      "app": 14,
+      "ui": 4
+    },
+    {
+      "type": "SignalsStrategyConfig",
+      "field": "query.holdGrowthFloor",
+      "nested": true,
+      "bucket": "READ",
+      "app": 5,
+      "ui": 0
+    },
+    {
+      "type": "SignalsStrategyConfig",
+      "field": "query.includeStuck",
+      "nested": true,
+      "bucket": "READ",
+      "app": 6,
+      "ui": 2
+    },
+    {
+      "type": "SignalsStrategyConfig",
+      "field": "query.maxAgeMinutes",
+      "nested": true,
+      "bucket": "READ",
+      "app": 8,
+      "ui": 3
+    },
+    {
+      "type": "SignalsStrategyConfig",
+      "field": "scoring",
+      "nested": false,
+      "bucket": "READ",
+      "app": 21,
+      "ui": 1
+    },
+    {
+      "type": "SignalsStrategyConfig",
+      "field": "enterScoreFloor",
+      "nested": false,
+      "bucket": "READ",
+      "app": 10,
+      "ui": 1
+    },
+    {
+      "type": "SignalsStrategyConfig",
+      "field": "social",
+      "nested": false,
+      "bucket": "READ",
+      "app": 146,
+      "ui": 17
+    },
+    {
+      "type": "SignalsStrategyConfig",
+      "field": "execution",
+      "nested": false,
+      "bucket": "READ",
+      "app": 87,
+      "ui": 8
+    },
+    {
+      "type": "SignalsStrategyConfig",
+      "field": "execution.simBuySol",
+      "nested": true,
+      "bucket": "READ",
+      "app": 11,
+      "ui": 2
+    },
+    {
+      "type": "SignalsStrategyConfig",
+      "field": "execution.simBuyNative",
+      "nested": true,
+      "bucket": "READ",
+      "app": 4,
+      "ui": 0
+    },
+    {
+      "type": "SignalsStrategyConfig",
+      "field": "execution.maxOpenPositions",
+      "nested": true,
+      "bucket": "READ",
+      "app": 13,
+      "ui": 2
+    },
+    {
+      "type": "SignalsStrategyConfig",
+      "field": "notify",
+      "nested": false,
+      "bucket": "READ",
+      "app": 35,
+      "ui": 3
+    },
+    {
+      "type": "DlmmStrategyConfig",
+      "field": "min_tvl",
+      "nested": false,
+      "bucket": "READ",
+      "app": 12,
+      "ui": 1
+    },
+    {
+      "type": "DlmmStrategyConfig",
+      "field": "min_fee_tvl",
+      "nested": false,
+      "bucket": "READ",
+      "app": 10,
+      "ui": 1
+    },
+    {
+      "type": "DlmmStrategyConfig",
+      "field": "min_organic_score",
+      "nested": false,
+      "bucket": "READ",
+      "app": 14,
+      "ui": 1
+    },
+    {
+      "type": "DlmmStrategyConfig",
+      "field": "min_holders",
+      "nested": false,
+      "bucket": "READ",
+      "app": 10,
+      "ui": 1
+    },
+    {
+      "type": "DlmmStrategyConfig",
+      "field": "take_profit_pct",
+      "nested": false,
+      "bucket": "READ",
+      "app": 20,
+      "ui": 1
+    },
+    {
+      "type": "DlmmStrategyConfig",
+      "field": "stop_loss_pct",
+      "nested": false,
+      "bucket": "READ",
+      "app": 23,
+      "ui": 1
+    },
+    {
+      "type": "DlmmStrategyConfig",
+      "field": "oor_timeout_min",
+      "nested": false,
+      "bucket": "READ",
+      "app": 14,
+      "ui": 1
+    },
+    {
+      "type": "DlmmStrategyConfig",
+      "field": "max_sol_per_position",
+      "nested": false,
+      "bucket": "READ",
+      "app": 9,
+      "ui": 1
+    },
+    {
+      "type": "DlmmStrategyConfig",
+      "field": "max_sol_at_risk",
+      "nested": false,
+      "bucket": "READ",
+      "app": 10,
+      "ui": 1
+    },
+    {
+      "type": "DlmmStrategyConfig",
+      "field": "bin_range_interval",
+      "nested": false,
+      "bucket": "READ",
+      "app": 10,
+      "ui": 1
+    },
+    {
+      "type": "DlmmStrategyConfig",
+      "field": "execution",
+      "nested": false,
+      "bucket": "READ",
+      "app": 87,
+      "ui": 8
+    },
+    {
+      "type": "DlmmStrategyConfig",
+      "field": "execution.simDeploySol",
+      "nested": true,
+      "bucket": "READ",
+      "app": 3,
+      "ui": 1
+    },
+    {
+      "type": "DlmmStrategyConfig",
+      "field": "execution.maxOpenPositions",
+      "nested": true,
+      "bucket": "READ",
+      "app": 13,
+      "ui": 2
+    },
+    {
+      "type": "DlmmStrategyConfig",
+      "field": "execution.minCandidateScore",
+      "nested": true,
+      "bucket": "READ",
+      "app": 3,
+      "ui": 1
+    },
+    {
+      "type": "DlmmStrategyConfig",
+      "field": "notify",
+      "nested": false,
+      "bucket": "READ",
+      "app": 35,
+      "ui": 3
+    },
+    {
+      "type": "McapTrackerStrategyConfig",
+      "field": "entryTemplate",
+      "nested": false,
+      "bucket": "READ",
+      "app": 19,
+      "ui": 2
+    },
+    {
+      "type": "McapTrackerStrategyConfig",
+      "field": "query",
+      "nested": false,
+      "bucket": "READ",
+      "app": 225,
+      "ui": 46
+    },
+    {
+      "type": "McapTrackerStrategyConfig",
+      "field": "query.recencyMinutes",
+      "nested": true,
+      "bucket": "READ",
+      "app": 14,
+      "ui": 2
+    },
+    {
+      "type": "McapTrackerStrategyConfig",
+      "field": "query.limit",
+      "nested": true,
+      "bucket": "READ",
+      "app": 158,
+      "ui": 24
+    },
+    {
+      "type": "McapTrackerStrategyConfig",
+      "field": "execution",
+      "nested": false,
+      "bucket": "READ",
+      "app": 87,
+      "ui": 8
+    },
+    {
+      "type": "McapTrackerStrategyConfig",
+      "field": "execution.simBuySol",
+      "nested": true,
+      "bucket": "READ",
+      "app": 11,
+      "ui": 2
+    },
+    {
+      "type": "McapTrackerStrategyConfig",
+      "field": "execution.simBuyNative",
+      "nested": true,
+      "bucket": "READ",
+      "app": 4,
+      "ui": 0
+    },
+    {
+      "type": "McapTrackerStrategyConfig",
+      "field": "execution.maxOpenPositions",
+      "nested": true,
+      "bucket": "READ",
+      "app": 13,
+      "ui": 2
+    },
+    {
+      "type": "McapTrackerStrategyConfig",
+      "field": "execution.slippageBps",
+      "nested": true,
+      "bucket": "READ",
+      "app": 52,
+      "ui": 13
+    },
+    {
+      "type": "McapTrackerStrategyConfig",
+      "field": "exit",
+      "nested": false,
+      "bucket": "READ",
+      "app": 185,
+      "ui": 11
+    },
+    {
+      "type": "McapTrackerStrategyConfig",
+      "field": "exit.stopLossPct",
+      "nested": true,
+      "bucket": "READ",
+      "app": 47,
+      "ui": 3
+    },
+    {
+      "type": "McapTrackerStrategyConfig",
+      "field": "exit.takeProfitPct",
+      "nested": true,
+      "bucket": "READ",
+      "app": 46,
+      "ui": 3
+    },
+    {
+      "type": "McapTrackerStrategyConfig",
+      "field": "exit.maxHoldHours",
+      "nested": true,
+      "bucket": "READ",
+      "app": 24,
+      "ui": 3
+    },
+    {
+      "type": "McapTrackerStrategyConfig",
+      "field": "entry",
+      "nested": false,
+      "bucket": "READ",
+      "app": 206,
+      "ui": 24
+    },
+    {
+      "type": "McapTrackerStrategyConfig",
+      "field": "entry.mcapMin",
+      "nested": true,
+      "bucket": "READ",
+      "app": 10,
+      "ui": 1
+    },
+    {
+      "type": "McapTrackerStrategyConfig",
+      "field": "entry.mcapMax",
+      "nested": true,
+      "bucket": "READ",
+      "app": 9,
+      "ui": 1
+    },
+    {
+      "type": "McapTrackerStrategyConfig",
+      "field": "entry.organicScoreMin",
+      "nested": true,
+      "bucket": "READ",
+      "app": 4,
+      "ui": 1
+    },
+    {
+      "type": "McapTrackerStrategyConfig",
+      "field": "entry.topHoldersPctMax",
+      "nested": true,
+      "bucket": "READ",
+      "app": 4,
+      "ui": 1
+    },
+    {
+      "type": "McapTrackerStrategyConfig",
+      "field": "social",
+      "nested": false,
+      "bucket": "READ",
+      "app": 146,
+      "ui": 17
+    },
+    {
+      "type": "McapTrackerStrategyConfig",
+      "field": "notify",
+      "nested": false,
+      "bucket": "READ",
+      "app": 35,
+      "ui": 3
+    },
+    {
+      "type": "GmgnRosterConcurrenceConfig",
+      "field": "chains",
+      "nested": false,
+      "bucket": "READ",
+      "app": 25,
+      "ui": 1
+    },
+    {
+      "type": "GmgnRosterConcurrenceConfig",
+      "field": "bands",
+      "nested": false,
+      "bucket": "READ",
+      "app": 13,
+      "ui": 1
+    },
+    {
+      "type": "GmgnRosterConcurrenceConfig",
+      "field": "bands.sol",
+      "nested": true,
+      "bucket": "READ",
+      "app": 615,
+      "ui": 69
+    },
+    {
+      "type": "GmgnRosterConcurrenceConfig",
+      "field": "bands.robinhood",
+      "nested": true,
+      "bucket": "READ",
+      "app": 143,
+      "ui": 38
+    },
+    {
+      "type": "GmgnRosterConcurrenceConfig",
+      "field": "minWallets",
+      "nested": false,
+      "bucket": "READ",
+      "app": 4,
+      "ui": 0
+    },
+    {
+      "type": "GmgnRosterConcurrenceConfig",
+      "field": "windowSec",
+      "nested": false,
+      "bucket": "READ",
+      "app": 9,
+      "ui": 0
+    },
+    {
+      "type": "GmgnRosterConcurrenceConfig",
+      "field": "minRunnerHitsSum",
+      "nested": false,
+      "bucket": "READ",
+      "app": 3,
+      "ui": 0
+    },
+    {
+      "type": "GmgnRosterConcurrenceConfig",
+      "field": "digMarketCap",
+      "nested": false,
+      "bucket": "READ",
+      "app": 3,
+      "ui": 0
+    },
+    {
+      "type": "GmgnRosterConcurrenceConfig",
+      "field": "rosterCap",
+      "nested": false,
+      "bucket": "READ",
+      "app": 3,
+      "ui": 0
+    },
+    {
+      "type": "GmgnRosterConcurrenceConfig",
+      "field": "minRunnerHits",
+      "nested": false,
+      "bucket": "READ",
+      "app": 4,
+      "ui": 0
+    },
+    {
+      "type": "GmgnRosterConcurrenceConfig",
+      "field": "minWinrate",
+      "nested": false,
+      "bucket": "READ",
+      "app": 3,
+      "ui": 0
+    },
+    {
+      "type": "GmgnRosterConcurrenceConfig",
+      "field": "minBuyCount",
+      "nested": false,
+      "bucket": "READ",
+      "app": 3,
+      "ui": 0
+    },
+    {
+      "type": "GmgnRosterConcurrenceConfig",
+      "field": "minPnl",
+      "nested": false,
+      "bucket": "READ",
+      "app": 3,
+      "ui": 0
+    },
+    {
+      "type": "GmgnRosterConcurrenceConfig",
+      "field": "wonOutcomesHours",
+      "nested": false,
+      "bucket": "READ",
+      "app": 3,
+      "ui": 0
+    },
+    {
+      "type": "GmgnRosterConcurrenceConfig",
+      "field": "tagDenylist",
+      "nested": false,
+      "bucket": "READ",
+      "app": 3,
+      "ui": 0
+    },
+    {
+      "type": "GmgnRadarComebackConfig",
+      "field": "enabled",
+      "nested": false,
+      "bucket": "READ",
+      "app": 87,
+      "ui": 33
+    },
+    {
+      "type": "GmgnRadarComebackConfig",
+      "field": "drawdownPct",
+      "nested": false,
+      "bucket": "READ",
+      "app": 2,
+      "ui": 1
+    },
+    {
+      "type": "GmgnRadarComebackConfig",
+      "field": "troughMcapMax",
+      "nested": false,
+      "bucket": "READ",
+      "app": 2,
+      "ui": 1
+    },
+    {
+      "type": "GmgnRadarComebackConfig",
+      "field": "recoverMultiple",
+      "nested": false,
+      "bucket": "READ",
+      "app": 2,
+      "ui": 1
+    },
+    {
+      "type": "GmgnRadarComebackConfig",
+      "field": "minRadarScore",
+      "nested": false,
+      "bucket": "READ",
+      "app": 4,
+      "ui": 1
+    },
+    {
+      "type": "GmgnRadarComebackConfig",
+      "field": "unbanOnComeback",
+      "nested": false,
+      "bucket": "READ",
+      "app": 2,
+      "ui": 1
+    },
+    {
+      "type": "GmgnRadarComebackConfig",
+      "field": "allowSimReopen",
+      "nested": false,
+      "bucket": "READ",
+      "app": 3,
+      "ui": 1
+    },
+    {
+      "type": "GmgnRadarConfig",
+      "field": "stickyPumpPct",
+      "nested": false,
+      "bucket": "READ",
+      "app": 4,
+      "ui": 1
+    },
+    {
+      "type": "GmgnRadarConfig",
+      "field": "dumpBanPct",
+      "nested": false,
+      "bucket": "READ",
+      "app": 4,
+      "ui": 1
+    },
+    {
+      "type": "GmgnRadarConfig",
+      "field": "stickyTtlMinutes",
+      "nested": false,
+      "bucket": "READ",
+      "app": 4,
+      "ui": 1
+    },
+    {
+      "type": "GmgnRadarConfig",
+      "field": "enterOverrideMinScore",
+      "nested": false,
+      "bucket": "READ",
+      "app": 4,
+      "ui": 1
+    },
+    {
+      "type": "GmgnRadarConfig",
+      "field": "comeback",
+      "nested": false,
+      "bucket": "READ",
+      "app": 8,
+      "ui": 1
+    },
+    {
+      "type": "GmgnRadarConfig",
+      "field": "telegram",
+      "nested": false,
+      "bucket": "READ",
+      "app": 70,
+      "ui": 7
+    },
+    {
+      "type": "GmgnRadarConfig",
+      "field": "telegram.singleThread",
+      "nested": true,
+      "bucket": "READ",
+      "app": 2,
+      "ui": 1
+    },
+    {
+      "type": "GmgnRadarConfig",
+      "field": "telegram.minMcapUsd",
+      "nested": true,
+      "bucket": "READ",
+      "app": 4,
+      "ui": 1
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "discovery",
+      "nested": false,
+      "bucket": "READ",
+      "app": 21,
+      "ui": 1
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "discovery.source",
+      "nested": true,
+      "bucket": "READ",
+      "app": 211,
+      "ui": 35
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "discovery.chain",
+      "nested": true,
+      "bucket": "READ",
+      "app": 302,
+      "ui": 47
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "discovery.side",
+      "nested": true,
+      "bucket": "READ",
+      "app": 193,
+      "ui": 32
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "discovery.limit",
+      "nested": true,
+      "bucket": "READ",
+      "app": 158,
+      "ui": 24
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "discovery.minAmountUsd",
+      "nested": true,
+      "bucket": "READ",
+      "app": 4,
+      "ui": 1
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "discovery.maxTradeAgeMinutes",
+      "nested": true,
+      "bucket": "READ",
+      "app": 3,
+      "ui": 1
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "discovery.clusterMinWallets",
+      "nested": true,
+      "bucket": "READ",
+      "app": 2,
+      "ui": 1
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "discovery.cooldownHours",
+      "nested": true,
+      "bucket": "READ",
+      "app": 2,
+      "ui": 0
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "security",
+      "nested": false,
+      "bucket": "READ",
+      "app": 25,
+      "ui": 2
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "security.enabled",
+      "nested": true,
+      "bucket": "READ",
+      "app": 87,
+      "ui": 33
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "security.requireRenouncedMint",
+      "nested": true,
+      "bucket": "READ",
+      "app": 2,
+      "ui": 0
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "security.requireRenouncedFreeze",
+      "nested": true,
+      "bucket": "READ",
+      "app": 2,
+      "ui": 0
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "security.maxTop10HolderRate",
+      "nested": true,
+      "bucket": "READ",
+      "app": 4,
+      "ui": 1
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "security.maxRugRatio",
+      "nested": true,
+      "bucket": "READ",
+      "app": 2,
+      "ui": 0
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "security.minSmartWallets",
+      "nested": true,
+      "bucket": "READ",
+      "app": 4,
+      "ui": 1
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "security.maxSniperCount",
+      "nested": true,
+      "bucket": "READ",
+      "app": 2,
+      "ui": 0
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "security.requireCreatorClosed",
+      "nested": true,
+      "bucket": "READ",
+      "app": 2,
+      "ui": 0
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "security.minLiquidityUsd",
+      "nested": true,
+      "bucket": "READ",
+      "app": 2,
+      "ui": 1
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "security.maxCandidatesPerTick",
+      "nested": true,
+      "bucket": "READ",
+      "app": 3,
+      "ui": 1
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "security.minVerdict",
+      "nested": true,
+      "bucket": "READ",
+      "app": 2,
+      "ui": 0
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "execution",
+      "nested": false,
+      "bucket": "READ",
+      "app": 87,
+      "ui": 8
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "execution.simBuySol",
+      "nested": true,
+      "bucket": "READ",
+      "app": 11,
+      "ui": 2
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "execution.simBuyNative",
+      "nested": true,
+      "bucket": "READ",
+      "app": 4,
+      "ui": 0
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "execution.maxOpenPositions",
+      "nested": true,
+      "bucket": "READ",
+      "app": 13,
+      "ui": 2
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "exit",
+      "nested": false,
+      "bucket": "READ",
+      "app": 185,
+      "ui": 11
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "exit.stopLossPct",
+      "nested": true,
+      "bucket": "READ",
+      "app": 47,
+      "ui": 3
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "exit.takeProfitPct",
+      "nested": true,
+      "bucket": "READ",
+      "app": 46,
+      "ui": 3
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "exit.maxHoldHours",
+      "nested": true,
+      "bucket": "READ",
+      "app": 24,
+      "ui": 3
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "radar",
+      "nested": false,
+      "bucket": "READ",
+      "app": 30,
+      "ui": 1
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "roster",
+      "nested": false,
+      "bucket": "READ",
+      "app": 19,
+      "ui": 5
+    },
+    {
+      "type": "GmgnStrategyConfig",
+      "field": "notify",
+      "nested": false,
+      "bucket": "READ",
+      "app": 35,
+      "ui": 3
+    },
+    {
+      "type": "SocialStrategyConfig",
+      "field": "entry",
+      "nested": false,
+      "bucket": "READ",
+      "app": 206,
+      "ui": 24
+    },
+    {
+      "type": "SocialStrategyConfig",
+      "field": "entry.minMentions30m",
+      "nested": true,
+      "bucket": "READ",
+      "app": 3,
+      "ui": 2
+    },
+    {
+      "type": "SocialStrategyConfig",
+      "field": "entry.topSource",
+      "nested": true,
+      "bucket": "READ",
+      "app": 5,
+      "ui": 1
+    },
+    {
+      "type": "SocialStrategyConfig",
+      "field": "entry.maxCandidatesPerTick",
+      "nested": true,
+      "bucket": "READ",
+      "app": 3,
+      "ui": 1
+    },
+    {
+      "type": "SocialStrategyConfig",
+      "field": "entry.requireMentionSources",
+      "nested": true,
+      "bucket": "READ",
+      "app": 2,
+      "ui": 1
+    },
+    {
+      "type": "SocialStrategyConfig",
+      "field": "entry.listenChannelPeers",
+      "nested": true,
+      "bucket": "READ",
+      "app": 3,
+      "ui": 1
+    },
+    {
+      "type": "SocialStrategyConfig",
+      "field": "execution",
+      "nested": false,
+      "bucket": "READ",
+      "app": 87,
+      "ui": 8
+    },
+    {
+      "type": "SocialStrategyConfig",
+      "field": "execution.simBuySol",
+      "nested": true,
+      "bucket": "READ",
+      "app": 11,
+      "ui": 2
+    },
+    {
+      "type": "SocialStrategyConfig",
+      "field": "execution.maxOpenPositions",
+      "nested": true,
+      "bucket": "READ",
+      "app": 13,
+      "ui": 2
+    },
+    {
+      "type": "SocialStrategyConfig",
+      "field": "exit",
+      "nested": false,
+      "bucket": "READ",
+      "app": 185,
+      "ui": 11
+    },
+    {
+      "type": "SocialStrategyConfig",
+      "field": "exit.stopLossPct",
+      "nested": true,
+      "bucket": "READ",
+      "app": 47,
+      "ui": 3
+    },
+    {
+      "type": "SocialStrategyConfig",
+      "field": "exit.takeProfitPct",
+      "nested": true,
+      "bucket": "READ",
+      "app": 46,
+      "ui": 3
+    },
+    {
+      "type": "SocialStrategyConfig",
+      "field": "exit.maxHoldHours",
+      "nested": true,
+      "bucket": "READ",
+      "app": 24,
+      "ui": 3
+    },
+    {
+      "type": "SocialStrategyConfig",
+      "field": "notify",
+      "nested": false,
+      "bucket": "READ",
+      "app": 35,
+      "ui": 3
+    }
+  ]
+}

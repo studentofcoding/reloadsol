@@ -33,15 +33,18 @@ import {
 import { executeClientSwap } from "@/utils/swap-executor";
 import { TOKENS } from "@/utils/solana";
 import {
-  fetchAxiomTokenInfo,
+  fetchTokenRiskData,
   getRiskIndicators,
   formatRiskDisplay,
   calculateFeeToMarketCapRatio,
-  AxiomTokenInfo,
+  TokenRiskInfo,
   RiskIndicators,
-} from "@/utils/axiom";
+} from "@/utils/token-risk";
 import { notifyTradingUpdate } from "@/utils/trading-notifications";
 import TradeOutcomeModal, { useTradeOutcome } from "@/components/TradeOutcomeModal";
+import { TrackerSocialLinks } from "@/components/signals/TrackerSocialLinks";
+import { useTokenPresence } from "@/hooks/useTokenPresence";
+import { TRACKER_AUTO_PRIORITY_FEE } from '@/utils/tracker-market-swap'
 
 interface TrendingToken {
   token_address: string;
@@ -155,6 +158,14 @@ export default function LiveTab() {
   const ownedTokenPrices = ownedPricesQuery.data ?? {};
 
   const [tokens, setTokens] = useState<TrendingToken[]>([]);
+
+  // Web/social presence for every rendered mint, fetched once for the whole tab
+  // (TokenCard closes over this — per-card useTokenPresence would fan out).
+  const presenceMints = useMemo(
+    () => [...tokens.map((t) => t.token_address), ...ownedMints],
+    [tokens, ownedMints],
+  );
+  const { presenceFor } = useTokenPresence(presenceMints);
   const [chartModalTokenAddress, setChartModalTokenAddress] = useState<
     string | null
   >(null);
@@ -208,17 +219,17 @@ export default function LiveTab() {
     {},
   );
   const [sidebarHovered, setSidebarHovered] = useState<string | null>(null);
-  const [axiomData, setAxiomData] = useState<
+  const [riskData, setRiskData] = useState<
     Map<
       string,
       {
-        data: AxiomTokenInfo | null;
+        data: TokenRiskInfo | null;
         risk: RiskIndicators | null;
         pairNotFound?: boolean;
       }
     >
   >(new Map());
-  const [loadingAxiom, setLoadingAxiom] = useState<Set<string>>(new Set());
+  const [loadingRisk, setLoadingRisk] = useState<Set<string>>(new Set());
 
   // State for kept and ignored tokens
   const [keptTokenIds, setKeptTokenIds] = useState<Set<string>>(new Set());
@@ -816,7 +827,7 @@ export default function LiveTab() {
         outputMint: token.token_address,
         amount: inputAmount,
         slippageBps: quote.slippageBps ?? 300,
-        priorityFeeLamports: 30000,
+        priorityFeeLamports: TRACKER_AUTO_PRIORITY_FEE,
         connection,
         signTransaction,
       });
@@ -1018,7 +1029,7 @@ export default function LiveTab() {
         outputMint: sellQuote.outputMint,
         amount: sellQuote.inAmount,
         slippageBps: sellQuote.slippageBps ?? 300,
-        priorityFeeLamports: 30000,
+        priorityFeeLamports: TRACKER_AUTO_PRIORITY_FEE,
         connection,
         signTransaction: async (tx) => {
           const [signed] = await signAllTransactions!([tx]);
@@ -1195,35 +1206,35 @@ export default function LiveTab() {
     setSidebarSellQuotes((prev) => ({ ...prev, [token.mintAddress]: null }));
   };
 
-  // Fetch Axiom data for a token
-  const fetchAxiomData = async (tokenAddress: string) => {
-    if (loadingAxiom.has(tokenAddress) || axiomData.has(tokenAddress)) return;
+  // Fetch TokenRisk data for a token
+  const fetchRiskData = async (tokenAddress: string) => {
+    if (loadingRisk.has(tokenAddress) || riskData.has(tokenAddress)) return;
 
-    setLoadingAxiom((prev) => new Set(prev).add(tokenAddress));
+    setLoadingRisk((prev) => new Set(prev).add(tokenAddress));
 
     try {
-      const result = await fetchAxiomTokenInfo(tokenAddress);
+      const result = await fetchTokenRiskData(tokenAddress);
       if (result.success && result.data) {
         // Find the token to get its market cap for fee analysis
         const token = tokens.find((t) => t.token_address === tokenAddress);
         const marketCap = token?.mcap || 0;
         const risk = getRiskIndicators(result.data, marketCap);
-        setAxiomData((prev) =>
+        setRiskData((prev) =>
           new Map(prev).set(tokenAddress, { data: result.data!, risk }),
         );
       } else if (result.requiresAuth) {
         // Handle authentication error gracefully
         console.warn(
-          "Axiom API requires authentication - risk data unavailable",
+          "TokenRisk API requires authentication - risk data unavailable",
         );
         // You could show a tooltip or notification here
       } else if (result.pairNotFound) {
         // Handle pair not found error gracefully
         console.warn(
-          `Token ${tokenAddress} not found in Axiom database - no risk data available`,
+          `Token ${tokenAddress} not found in TokenRisk database - no risk data available`,
         );
         // Store a special marker to indicate the token was checked but not found
-        setAxiomData((prev) =>
+        setRiskData((prev) =>
           new Map(prev).set(tokenAddress, {
             data: null as any,
             risk: null as any,
@@ -1232,9 +1243,9 @@ export default function LiveTab() {
         );
       }
     } catch (error) {
-      console.error(`Failed to fetch Axiom data for ${tokenAddress}:`, error);
+      console.error(`Failed to fetch TokenRisk data for ${tokenAddress}:`, error);
     } finally {
-      setLoadingAxiom((prev) => {
+      setLoadingRisk((prev) => {
         const newSet = new Set(prev);
         newSet.delete(tokenAddress);
         return newSet;
@@ -1255,7 +1266,7 @@ export default function LiveTab() {
         outputMint: quote.outputMint,
         amount: quote.inAmount,
         slippageBps: quote.slippageBps ?? 300,
-        priorityFeeLamports: 30000,
+        priorityFeeLamports: TRACKER_AUTO_PRIORITY_FEE,
         connection,
         signTransaction: async (tx) => {
           const [signed] = await signAllTransactions!([tx]);
@@ -1478,6 +1489,7 @@ export default function LiveTab() {
                 %
               </span>
             </div>
+            <TrackerSocialLinks social={presenceFor(token.token_address)} />
           </div>
         </div>
 
@@ -1728,7 +1740,7 @@ export default function LiveTab() {
           </div>
         )}
 
-        {/* Axiom Risk Indicators */}
+        {/* TokenRisk Risk Indicators */}
         <div className="mt-2 pt-2 border-t border-gray-700">
           <div className="flex items-center justify-between text-xs">
             <div className="flex items-center gap-1">
@@ -1742,8 +1754,8 @@ export default function LiveTab() {
             </div>
             <div className="flex items-center space-x-1">
               {(() => {
-                const tokenAxiomData = axiomData.get(token.token_address);
-                const isLoading = loadingAxiom.has(token.token_address);
+                const tokenRisk = riskData.get(token.token_address);
+                const isLoading = loadingRisk.has(token.token_address);
 
                 if (isLoading) {
                   return (
@@ -1754,10 +1766,10 @@ export default function LiveTab() {
                   );
                 }
 
-                if (!tokenAxiomData) {
+                if (!tokenRisk) {
                   return (
                     <button
-                      onClick={() => fetchAxiomData(token.token_address)}
+                      onClick={() => fetchRiskData(token.token_address)}
                       className="text-blue-400 hover:text-blue-300 text-xs"
                     >
                       Check Risk
@@ -1766,7 +1778,7 @@ export default function LiveTab() {
                 }
 
                 // Handle pair not found case
-                if (tokenAxiomData.pairNotFound) {
+                if (tokenRisk.pairNotFound) {
                   return (
                     <div className="px-2 py-1 rounded text-xs font-medium bg-gray-900/20 border border-gray-500/30 text-gray-400">
                       No Data
@@ -1774,7 +1786,7 @@ export default function LiveTab() {
                   );
                 }
 
-                const { risk } = tokenAxiomData;
+                const { risk } = tokenRisk;
                 if (!risk) return null;
 
                 const riskDisplay = formatRiskDisplay(risk.overallRisk);
@@ -1801,16 +1813,16 @@ export default function LiveTab() {
 
           {/* Detailed risk breakdown */}
           {(() => {
-            const tokenAxiomData = axiomData.get(token.token_address);
+            const tokenRisk = riskData.get(token.token_address);
             if (
-              !tokenAxiomData ||
-              tokenAxiomData.pairNotFound ||
-              !tokenAxiomData.data ||
-              !tokenAxiomData.risk
+              !tokenRisk ||
+              tokenRisk.pairNotFound ||
+              !tokenRisk.data ||
+              !tokenRisk.risk
             )
               return null;
 
-            const { data, risk } = tokenAxiomData;
+            const { data, risk } = tokenRisk;
             if (!data || !risk) return null;
 
             const insiderDisplay = formatRiskDisplay(risk!.insiderRisk);
@@ -2096,6 +2108,7 @@ export default function LiveTab() {
                               {pnl.toFixed(2)}%
                             </span>
                           </div>
+                          <TrackerSocialLinks social={presenceFor(token.mintAddress)} />
                         </div>
                         <div className="flex flex-col items-end gap-1">
                           {sidebarHovered === token.mintAddress &&

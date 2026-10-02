@@ -143,18 +143,24 @@ export interface AppLocalParts {
   second: number
 }
 
+/**
+ * Hoisted: `getAppLocalParts` is called once per tracked token in the mcap-tracking list
+ * (~31k calls/request) and the options are constant, so there is no reason to build an
+ * `Intl.DateTimeFormat` — which is expensive — on every call.
+ */
+const APP_LOCAL_PARTS_FORMATTER = new Intl.DateTimeFormat('en-GB', {
+  timeZone: APP_TIMEZONE,
+  year: 'numeric',
+  month: 'numeric',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: 'numeric',
+  second: 'numeric',
+  hour12: false,
+})
+
 export function getAppLocalParts(date: Date = new Date()): AppLocalParts {
-  const formatter = new Intl.DateTimeFormat('en-GB', {
-    timeZone: APP_TIMEZONE,
-    year: 'numeric',
-    month: 'numeric',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: 'numeric',
-    second: 'numeric',
-    hour12: false,
-  })
-  const parts = formatter.formatToParts(date)
+  const parts = APP_LOCAL_PARTS_FORMATTER.formatToParts(date)
   const get = (type: Intl.DateTimeFormatPartTypes) =>
     Number(parts.find((p) => p.type === type)?.value ?? 0)
 

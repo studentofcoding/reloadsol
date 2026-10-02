@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, beforeEach } from 'vitest'
 import {
   buildJupiterSwapQuoteUrl,
   jupiterExecuteOutcome,
@@ -139,7 +139,7 @@ describe('sell quote fallback banner', () => {
 
   it('banners only when every mint failed both sources', () => {
     expect(sellQuoteAllFailedBanner(0)).toBe(
-      'Failed to get quotes from Raptor. Please try again.',
+      'Failed to get swap quotes. Please try again.',
     )
   })
 })
@@ -161,5 +161,62 @@ describe('sellAmountRaw', () => {
   it('emits integer smallest units', () => {
     expect(sellAmountRaw(1_234_567_890)).toBe('1234567890')
     expect(sellAmountRaw(12.9)).toBe('12')
+  })
+})
+
+import {
+  jupiterOrderKey,
+  withJupiterOrderQuote,
+  resetJupiterQuoteCachesForTests,
+} from './jupiter-swap-quote'
+
+describe('jupiter order coalescing + quote cache', () => {
+  const base = { inputMint: 'So11111111111111111111111111111111111111112', outputMint: 'Mint', amount: '1000000', slippageBps: 20 }
+  const value = { inputMint: base.inputMint, outputMint: base.outputMint, inAmount: base.amount, outAmount: '42' } as never
+
+  beforeEach(() => resetJupiterQuoteCachesForTests())
+
+  it('joins identical in-flight requests into one upstream call', async () => {
+    let calls = 0
+    const load = async () => {
+      calls += 1
+      await new Promise((r) => setTimeout(r, 10))
+      return value
+    }
+    await Promise.all([
+      withJupiterOrderQuote(base, load),
+      withJupiterOrderQuote(base, load),
+      withJupiterOrderQuote(base, load),
+    ])
+    expect(calls).toBe(1)
+  })
+
+  it('reuses a plain quote inside the cache window', async () => {
+    let calls = 0
+    const load = async () => {
+      calls += 1
+      return value
+    }
+    await withJupiterOrderQuote(base, load)
+    await withJupiterOrderQuote(base, load)
+    expect(calls).toBe(1)
+  })
+
+  it('never caches or coalesces the execution prepare — a taker always fetches fresh', async () => {
+    const taker = { ...base, taker: 'Wallet1111111111111111111111111111111111111' }
+    let calls = 0
+    const load = async () => {
+      calls += 1
+      return value
+    }
+    await withJupiterOrderQuote(taker, load)
+    await withJupiterOrderQuote(taker, load)
+    expect(calls).toBe(2)
+  })
+
+  it('keys on every input, so a different amount is a different request', () => {
+    expect(jupiterOrderKey(base)).not.toBe(jupiterOrderKey({ ...base, amount: '2000000' }))
+    expect(jupiterOrderKey(base)).not.toBe(jupiterOrderKey({ ...base, slippageBps: 50 }))
+    expect(jupiterOrderKey(base)).not.toBe(jupiterOrderKey({ ...base, taker: 'Other' }))
   })
 })

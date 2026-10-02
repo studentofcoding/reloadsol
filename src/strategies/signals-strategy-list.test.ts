@@ -17,6 +17,7 @@ import {
   resolveSignalsListQueryStrategy,
   signalsListUniverse,
   type SignalsListPnlRow,
+  type SignalsListPoolItem,
 } from './signals-strategy-list'
 import type { StrategyReportBreakdown } from './types'
 
@@ -123,6 +124,7 @@ describe('rankSignalsListStrategies', () => {
       'mcap_enter_at_80',
       'mcap_enter_first_seen',
       'signals_default',
+      'social_only_fomo_gt7',
     ])
     expect(ranked[0]).toMatchObject({ avgPnlPct: 359, totalPnlPct: 359 * 38, n: 38 })
     expect(ranked[3]).toMatchObject({ avgPnlPct: null, totalPnlPct: null, n: 0 })
@@ -131,6 +133,7 @@ describe('rankSignalsListStrategies', () => {
       'Enter at 80% milestone',
       'Enter at first seen',
       'Default momentum',
+      'Social-only FOMO (>7)',
     ])
   })
 
@@ -181,6 +184,7 @@ describe('rankSignalsListStrategies', () => {
       'signals_sell_over_100',
       'mcap_enter_first_seen',
       'signals_default',
+      'social_only_fomo_gt7',
     ])
 
     const byId = rankSignalsListStrategies('sol', [
@@ -194,6 +198,7 @@ describe('rankSignalsListStrategies', () => {
       'mcap_enter_first_seen',
       'signals_default',
       'signals_sell_over_100',
+      'social_only_fomo_gt7',
     ])
   })
 
@@ -463,5 +468,58 @@ describe('signals strategy list guards', () => {
     expect(tabSrc).not.toContain('signals_active_strategy')
     expect(tabSrc).not.toContain('readSignalsStrategyTemplate')
     expect(noulSrc).toMatch(/parseOnOffEnv\(env\.EARLY_ENTER_NOUL_SOFT_ACTIVE,\s*false\)/)
+  })
+})
+
+describe('social burst list', () => {
+  function socialRow(mint: string, mentions: number): SignalsListPoolItem {
+    return {
+      ...candidate({ token_address: mint, mcap_growth_percent: 0 }),
+      score: mentions,
+      decision: 'enter',
+      rationale: `FOMO ${mentions} mentions / 30m`,
+      social_entry: true,
+      mention_count_30m: mentions,
+      top_source: 'GMGN_Smart_Money_FOMO',
+    }
+  }
+
+  it('lists burst rows for the social entry, most mentions first', () => {
+    const listed = project({
+      selectedId: 'social_only_fomo_gt7',
+      pool: [socialRow('mint-a', 9), socialRow('mint-b', 16)],
+    })
+    expect(listed.signals.map((s) => s.token_address)).toEqual(['mint-b', 'mint-a'])
+    expect(listed.strategies.map((s) => s.strategyId)).toContain('social_only_fomo_gt7')
+    // The burst count survives — the signals scorer must not overwrite it.
+    expect(listed.signals[0].score).toBe(16)
+    expect(listed.signals[0].decision).toBe('enter')
+    expect(listed.signals[0].rationale).toBe('FOMO 16 mentions / 30m')
+  })
+
+  it('resolves the social id as a list query', () => {
+    expect(resolveSignalsListQueryStrategy('social_only_fomo_gt7', 'sol')).toEqual({
+      ok: true,
+      strategyId: 'social_only_fomo_gt7',
+    })
+    // Robinhood has no social twin.
+    expect(resolveSignalsListQueryStrategy('social_only_fomo_gt7', 'robinhood').ok).toBe(false)
+  })
+
+  it('keeps social rows out of the signals and mcap selections', () => {
+    expect(
+      project({ selectedId: 'signals_sell_over_100', pool: [socialRow('mint-a', 12)] }).signals,
+    ).toEqual([])
+    expect(
+      project({ selectedId: 'mcap_enter_first_seen', pool: [socialRow('mint-a', 12)] }).signals,
+    ).toEqual([])
+  })
+
+  it('does not let a signals row match the social entry', () => {
+    const listed = project({
+      selectedId: 'social_only_fomo_gt7',
+      pool: [candidate({ token_address: 'mint-signals', mcap_growth_percent: 120 })],
+    })
+    expect(listed.signals).toEqual([])
   })
 })

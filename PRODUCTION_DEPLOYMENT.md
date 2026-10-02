@@ -85,6 +85,111 @@ On the VPS, `scripts/docker-deploy.sh` **skips** host `next build` when that sta
 
 Reuse a local build: `SKIP_LOCAL_BUILD=1 bash scripts/ship-standalone-to-vps.sh`.
 
+### Shipping while another workstream edits the tree
+
+`ship-standalone-to-vps.sh` runs `npm run build` against the **working tree**. If `git status`
+shows uncommitted changes you did not make (another agent/process is in the same checkout), that
+build embeds their in-flight code and the ship would push it to prod. Build from an isolated
+worktree at the exact commit instead — their files are never touched:
+
+```bash
+sha=$(git rev-parse origin/main)
+git worktree add --detach /tmp/clean-ship "$sha"
+cp -Rc node_modules /tmp/clean-ship/node_modules    # APFS clone; Turbopack REJECTS an out-of-root node_modules symlink
+ln -s "$PWD/.env" "$PWD/.env.local" /tmp/clean-ship/ # build-env parity (.env*, gitignored)
+rsync -a ml/artifacts/ /tmp/clean-ship/ml/artifacts/ # gitignored, traced into .next/standalone
+rsync -a ml/data/ /tmp/clean-ship/ml/data/
+(cd /tmp/clean-ship && SKIP_REMOTE_PULL=1 bash scripts/ship-standalone-to-vps.sh)
+git worktree remove --force /tmp/clean-ship && git worktree prune
+```
+
+`SKIP_REMOTE_PULL=1` because a detached worktree has no branch for the script's remote `git pull`.
+
+After shipping, confirm the stamp equals the VPS `HEAD` (`source scripts/standalone-git-stamp.sh;
+standalone_git_sha_matches_head`) and smoke `/api/health` with a real Host header. `main` moving
+again makes the stamp stale on the next commit — re-ship from the then-current `origin/main`;
+never hand-write the stamp to fake freshness.
+
+If the tree is clean you can ship straight from the repo root; only reach for the worktree when
+the checkout is dirty.
+
+The script now **enforces** that: `assert_clean_tree` refuses to ship when any tracked file is
+modified (`git status --porcelain --untracked-files=no` non-empty). The reason is the stamp itself
+— it records only the commit SHA, so a build from a dirty tree is byte-different from HEAD yet
+still passes the "matches HEAD" check on the next run and gets silently reused. Commit or stash
+first, or set `SHIP_ALLOW_DIRTY=1` when the deviation is deliberate. Untracked files (e.g.
+`exports/`) never block a ship.
+
+### Concurrent deploys: one lock, and never finish while web is down
+
+Two deploys that reach `docker compose up` at the same time do not queue. The second gets
+`Conflict. The container name "/<hash>_reloadsol-web" is already in use`, and the failed recreate can
+leave `reloadsol-web` **Dead** while nginx answers **502** — this happened for real when an artifact
+ship (`ship-standalone-to-vps.sh`) and a pull-triggered deploy (`docker-deploy.sh`, via the post-merge
+hook) ran together.
+
+Both paths now hold the **same** lock, `/tmp/reloadsol-deploy.lock` (override with `DEPLOY_LOCK`):
+
+- `docker-deploy.sh` already did — `flock -n 9`, skipping when held.
+- `ship-standalone-to-vps.sh` now does too, around `build web && up -d --no-deps web`, and reports
+  **exit 75** ("deploy busy") instead of racing.
+- Its post-up smoke is now a **gate**: one `--force-recreate --no-build web` retry, then a non-zero
+  exit. A ship can no longer print "Ship complete" while `/api/health` is failing.
+
+Recovering a wedged origin:
+
+```bash
+ssh flowey-vps 'docker ps -a --filter name=reloadsol-web'          # find Dead / Created ones
+ssh flowey-vps 'docker rm -f <container>'                          # ONLY non-running ones
+ssh flowey-vps 'cd ~/reloadsol && docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-deps web'
+ssh flowey-vps 'docker exec reloadsol-web cat .deploy-git-sha'     # which commit it actually serves
+```
+
+Before bringing web up on a tree, confirm it contains your commit
+(`git merge-base --is-ancestor <your-sha> HEAD`) so the recovery does not silently drop your work;
+afterwards check `/api/health` and the real pages with the `Host: reloadsol.app` header.
+
+## Memory & swap (3.7G VPS)
+
+Measured on `flowey-vps`: RAM use ~1.2G/3.7G is fine; the alarming number was swap at 46 %. It is
+**cold residue**, not pressure (`si/so` ≈ 0, memory PSI `full avg300` < 1 %), and it is a policy
+artefact, not a shortage:
+
+- **`vm.swappiness=60`** kept ~2 GB of reclaimable file cache and pushed ~960 MB of anonymous
+  process memory to disk (`Active(anon)+Inactive(anon) 982 MB` ≈ swap used 959 MB).
+- The swap is dominated by **host co-tenants** (`dockerd` ~61 MB, Tencent `YDService` ~49 MB,
+  `python`/`node` services); all reloadsol containers together are ~116 MB, `web` is 0.
+- **Postgres was under-buffered**: `shared_buffers=128MB` gave a **51 % heap hit ratio** and
+  ~400 MB of temp spills — `work_mem` was too *small*, not too large.
+
+What the repo now sets:
+
+- `scripts/ensure-swap.sh` also writes `/etc/sysctl.d/99-reloadsol-memory.conf`
+  (`vm.swappiness=10`, `vm.vfs_cache_pressure=50`) and applies it — idempotent, needs root, already
+  invoked by `docker-deploy.sh`. Override via `SWAPPINESS` / `VFS_CACHE_PRESSURE`.
+- `docker-compose.yml`: db `shared_buffers 256MB`, `work_mem 24MB`,
+  `effective_cache_size 1536MB`, `maintenance_work_mem 128MB`, limit `1G`; `web` gets
+  `NODE_OPTIONS=--max-old-space-size=512` (override `WEB_NODE_OPTIONS`); `web` and `reloadsol-db`
+  set `memswap_limit` equal to their memory limit so they cannot swap out (Compose v2 silently
+  ignores `mem_swappiness`; `memswap_limit` is the knob that binds).
+- Worst-case db memory ≈ `shared_buffers + DEFAULT_POOL_SIZE(30) × work_mem(24MB) ≈ 976MB`, under
+  the 1G limit.
+
+Apply (limits only bind on recreate) and verify:
+
+```bash
+sudo bash scripts/ensure-swap.sh
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-deps --force-recreate reloadsol-db web
+sysctl vm.swappiness                                   # 10
+docker inspect -f '{{.HostConfig.Memory}} {{.HostConfig.MemorySwappiness}}' reloadsol-db reloadsol-web
+docker exec reloadsol-db psql -U reloadsol -d reloadsol_db -tAc \
+  "SELECT sum(heap_blks_hit), sum(heap_blks_read) FROM pg_statio_user_tables"   # hit ratio climbs off 51%
+```
+
+Optional one-time reclaim of already-swapped pages (needs ~960 MB free; ~2 GB is available):
+`sudo swapoff -a && sudo swapon -a`. Do **not** set `vm.overcommit_memory=2` — `Committed_AS` is
+~46 GB (V8/thread VA reservations) against a ~4 GB commit limit.
+
 ## Edge nginx (Cloudflare → `reloadsol-nginx` :80)
 
 Multi-app origin on this VPS: `reloadsol.app`, `terminal.reloadsol.app`, `flowey.space` / `vs.flowey.space`.
@@ -217,9 +322,41 @@ Sim-only deployments can omit these (defaults apply; circuit breaker affects rea
 
 ```bash
 TRADING_KEYPAIR_JSON=[1,2,3,...]
-MAX_SOL_AT_RISK=1.0
+MAX_SOL_AT_RISK=0.1      # enforced on prod; per strategy: MAX_SOL_AT_RISK x allocation (25% default)
 MIN_SOL_BALANCE=0.1
 ```
+
+**Enabling a live trial is an env change, not a deploy** — and nothing is armed today: every row in
+`strategy_definitions` is `execution_mode = sim_only` and `MCAP_LIVE_TRADING_ENABLED` is unset.
+The live path is also narrow and fails safe: only `MCAP_LIVE_STRATEGY_ID` (`mcap_enter_first_seen`) is
+eligible, and `resolveExecutionMode('live_only', liveAvailable=false)` **skips the open** rather than
+substituting a simulated trade, so arming a strategy without the env produces no trades at all.
+
+Runbook for the first real fill:
+
+1. **Fund the wallet.** The trading wallet held `0.0955 SOL` — below the 0.1 cap — so a live trial
+   cannot clear fees until it is funded for at least the cap plus headroom.
+2. Set `MCAP_LIVE_TRADING_ENABLED=true` (with `TRADING_KEYPAIR_JSON` already present) and recreate web.
+3. Give the chosen strategy `execution_mode = 'live_only'` in `strategy_definitions` (one strategy only).
+4. Watch: `docker logs -f reloadsol-web`, the paper-trade dashboard, and the wallet on-chain.
+5. **Kill switch:** set `MCAP_LIVE_TRADING_ENABLED=false` and recreate — env only, no code change, and
+   the live path goes inert immediately while the paper desk keeps running.
+6. Record the first fill against what the sim predicted for the same signal (see the exec-model note in
+   the changelog). A fill you cannot compare to a prediction teaches nothing.
+
+**Cost model — corrected.** `SIM_PRIORITY_FEE_QUOTE` defaulted to 0.002 SOL **per side**, which is
+nothing like what we pay: the app sends 30,000 lamports (0.00003 SOL), and the chain's recent ask is
+~0 (`getRecentPrioritizationFees` → 0 micro-lamports/CU over 150 slots, globally and for Jupiter
+program transactions). At 0.002 the priority term alone was `0.002 x 2 x 17,684 ≈ 70 SOL` — the whole
+`-61.78` drag on a `+0.33` gross ledger, so that drag was a modelling artefact rather than a cost
+signal. The default is now 0.00003, matching the send fee.
+
+With the real fee the drag falls to roughly -2 SOL, still against the +0.33 gross — because
+`SIM_FEE_BPS=100` plus `SIM_SPREAD_BPS=50` model a 3% round trip against a desk whose gross edge is
+~2% (`realizedPnlPct` +1.97 over 14 days). Whether that 50 bps spread is real or double-counting the
+AMM fee is the next calibration question, and it is what the quote-calibration path exists to answer.
+**Size is not the problem:** at 0.005 SOL the real fixed cost is ~1.2%, so the fee floor is ~0.0001 SOL
+and current sizes are fee-viable.
 
 ## SSL / HTTPS
 
@@ -266,6 +403,16 @@ Manual cron triggers (cron container port 8080):
 curl -X POST http://127.0.0.1:8080/trigger/trending
 curl -X POST http://127.0.0.1:8080/trigger/sltp
 ```
+
+### Server logs: `console.info`/`console.log` are stripped in production
+
+`next.config.js` sets `removeConsole: { exclude: ['error', 'warn'] }` for production builds, so
+**only `console.error` and `console.warn` reach `docker logs`** — a success-path `console.info`
+is compiled out (verifiable: count `console.info` vs `console.warn` in
+`.next/standalone/.next/server/chunks`). "No log lines" therefore does **not** mean the code did
+not run. Anything an operator must see on the happy path has to use `console.warn`, or a counter
+exposed on an API route. Example: the GMGN web client logs successes at `info` (invisible) and
+only surfaces failures — `windowMisses` on the metrics line is the visible signal by design.
 
 ## Security checklist
 

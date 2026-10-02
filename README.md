@@ -210,10 +210,21 @@ Copy from [`.env.docker.example`](.env.docker.example). Key groups:
 | `POSTGRES_PASSWORD` | Postgres superuser password |
 | `DATABASE_URL` | App connection via PgBouncer (`reloadsol-bouncer:5432` in compose) |
 | `DATABASE_URL_DIRECT` | Direct Postgres URL for pgcopydb/psql (`reloadsol-db:5432`) |
+| `DATABASE_POOL_MAX` | App pool size (code default `10`; **prod runs 25**). One client is held for the whole of a query *including the client-side parse*, so a multi-MB hydration occupies one for seconds. |
+| `DATABASE_POOL_CONN_TIMEOUT_MS` | How long a query waits for a free client before failing (default `5000`). This is the `timeout exceeded when trying to connect` message. |
+| `DB_SLOW_QUERY_MS` | Any query holding a client longer than this is logged as `[db-slow-query]` with its SQL and caller frames (default `5000`; `0` off). Slow queries never error — they fail their *neighbours*, so this is the only way to see them. |
 | `SHYFT_API_KEY` | Shyft dashboard API key — `all_tokens` holdings, `send_many_txns` batch sends, and `/api/rpc` fallback |
 | `RPC_URL` | Comma-separated RPC URLs (max 5). Server `/api/rpc` proxy with failover. |
 | `NEXT_PUBLIC_RPC_URL` | Optional — browser uses `/api/rpc` proxy by default; set only for legacy direct-RPC paths. |
 | `RAPTOR_API_BASE` | Optional override for Solana Tracker Raptor swap API (default `https://raptor-beta.solanatracker.io`) |
+| `RAPTOR_MAX_HOPS` | Hop ceiling for a route touching SOL/USDC/USDT (default `1` — those usually have a direct pool). Arb uses `RAPTOR_MAX_HOPS_ARBITRAGE`. **The pool assumption is direction-dependent**: measured 2026-10-01, 8 of 40 real mints had no direct SOL pool on a **SOL→token** buy and failed at `1`. That no longer surfaces as a failure — a no-route answer now retries once at a wider ceiling on the free lane (`escalateRaptorHops`) instead of escalating to the keyed Jupiter picker |
+| `RAPTOR_TOKEN_TOKEN_HOPS` | Hops for a token→token pair, where no direct pool exists (default `3`). **Do not raise `RAPTOR_MAX_HOPS` to fix a token→token quote** — at `1` Raptor answers `500 "No direct route found"`, which escalated to the Jupiter picker and spent the 0.5 rps execution budget. Resolved per pair by `src/utils/raptor-hops.ts`; set `=1` to restore the old behaviour exactly |
+| `JUPITER_MAX_RPS` | Sustained Jupiter rate (default `0.5`, the measured-clean rate) |
+| `JUPITER_BURST` | Bucket capacity (default `8`; measured tolerance is ~8 sequential before 429) |
+| `JUPITER_TRADE_RESERVE` | Tokens held for the trade lane, never spent by background work (default `2`) |
+| `JUPITER_QUOTE_CACHE_MS` | Coalescing/quote cache window for non-taker quotes (default `4000`) |
+| `SWAP_PRIORITY_FEE_LAMPORTS` | Exact priority-fee tip for a swap build when the caller passes **no** fee. Unset (default) → auto-high, a 0.003 SOL *cap* rather than a flat charge; a caller-supplied fee always wins. A tx broadcast with no tip is how one lands nowhere |
+| `READINESS_MIN_SAMPLE` | Counted closes required before `/dev/paper-trade` gives a readiness verdict (default `30`); below it the verdict reads `insufficient`, and the UI can toggle the gate off |
 | `WALLET_SESSION_SECRET` | httpOnly wallet session cookie signing |
 
 ### Solana Tracker OHLC
@@ -248,9 +259,92 @@ Chart fetches (`GET {origin}/chart/{token}`, response `oclhv`) use `SOLANATRACKE
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TRENDING_FEED` | `jupiter` (`gmgn` in prod) | Discovery source for the trending bot. `gmgn` reads the same cached GMGN market-rank snapshot the Trending Tokens list uses (one call / chain / `GMGN_TRENDING_TTL_SECONDS`). Discovery only — pricing and execution are unchanged. |
-| `TRENDING_REENTRY_COOLDOWN_MIN` | `1440` | Minutes a `(strategy, mint)` is blocked after a close, keyed on `strategy_outcomes`. Stops the open → close → reopen churn. |
-| `TRENDING_MAX_PURCHASES_PER_TOKEN` | `2` | Lifetime opens per `(strategy, mint)`. |
+| `TRENDING_REENTRY_COOLDOWN_MIN` | `1440` | Minutes a `(strategy, mint)` is blocked after a close, keyed on `strategy_outcomes`. Stops the open → close → reopen churn. `0` disables it. |
+| `TRENDING_MAX_PURCHASES_PER_TOKEN` | `2` | Opens per `(strategy, mint)`, counted over the loader window (not truly lifetime — see `loadClosedTrendingOutcomes`). `0` disables it. |
 | `TRENDING_DROP_RUGGED` | on | `false` disables dropping `token_rug_list` mints from the trending feed (list + bot candidates). |
+| `GMGN_TRENDING_LIMIT` | `100` | Volume-ranked rows requested per chain, before the local filters. The RH sim selects its candidates from this list. |
+
+### `trading_records` read bound
+
+`fetchTradingRecordsForWallet` is floored at `TRADING_RECORDS_MAX_AGE_DAYS` (default **4**). Before it,
+a wallet read with no window pulled the entire history — `trading_records` is 164,382 rows / 270 MB and
+**one wallet holds 155,054 of them** — which saturated the connection pool (`[db-pool] idle=0`,
+connections dying with "Connection terminated unexpectedly"), slowed the SL/TP pass past its 120s client
+timeout, and cost roughly three quarters of the exit throughput. A 4-day floor reads **1.09%** of the
+table and takes the offending wallet from 155,054 rows to 92.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TRADING_RECORDS_MAX_AGE_DAYS` | `4` | Hard floor on any `trading_records` read. `sinceDays` can only **tighten** it. `0` disables it (old behaviour, old cost). |
+
+**This is only safe while every OPEN position is younger than the window.** A position older than the
+floor has no rows inside it, so the reconstruction sees no history and a **live** position reads as
+absent — silently, with nothing in the logs. `db.ts:3250` records the one time it happened (an open
+`att_rh` position at 10 days, 29/09).
+
+`check-sltp-closer-freshness.sh` asserts the margin on every tick and alerts at 80% of the window,
+because this is the one invariant the bound depends on. It reads the same variable, so changing one
+without the other cannot leave the guard wrong.
+
+### Robinhood sim levers
+
+The RH path picks candidates from the volume-ranked feed and filters them locally, so **this band decides
+what `att_rh` can ever open** — and it is the gate that binds before the re-entry guard does.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RH_MCAP_MIN` | `300000` | Lower bound of the RH candidate band. Was chosen when most volume-ranked rows sat inside it; on 2026-10-02 the live feed was mostly **below** it (36k / 66k / 70k), so the floor rejects most of the book. |
+| `RH_MCAP_MAX` | `2000000` | Upper bound of the same band. |
+| `RH_MAX_OPEN_POSITIONS_DEFAULT` | `10` | Fallback concurrent-position cap when a strategy row sets no `max_open_positions`. |
+| `RH_BUY_AMOUNT_ETH` | `0.0015` | RH sim entry size, ETH-denominated. |
+| `RH_SIM_BUY_ETH` | `0.001` | RH paper size. |
+| `RH_FILTER_*` | see `DEFAULT_FILTER_CONFIG` | `RH_FILTER_MCAP_MIN/MAX`, `RH_FILTER_PRICE_CHANGE_5M/1H/6H_MAX`, `RH_FILTER_ORGANIC_SCORE_MIN`, `RH_FILTER_TOP_HOLDERS_MAX`. **Currently inert** — nothing in the trending_bot chain reads `filtering`; `passesConditions` reads `strategy.conditions`, which is the `RH_MCAP_*` band above. |
+
+Every one of these falls back to its code default when unset, blank or unparseable, and reads at module
+load — so a change needs a container restart. `0` is a real value for the limiter-style knobs; deleting the
+variable is how you return to the default.
+
+### Shadow risk — dev reputation + RugCheck (display-only)
+
+Both default **off**, and neither gates anything: they record + label only, suffixed `(shadow)`
+([docs/specs/SPEC-dev-reputation-rugcheck-v1.md](docs/specs/SPEC-dev-reputation-rugcheck-v1.md)).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RUGCHECK_ENABLED` | `false` | Free keyless `GET /v1/tokens/{id}/report` → `token_risk_features` (`score_normalised`, named risks, insider graph, LP lock, creator balance) |
+| `RUGCHECK_MAX_REQ_PER_SEC` | `3` | Serial gate (~30 % of the measured ~10 rps clean ceiling) |
+| `RUGCHECK_TTL_S` | `900` | Per-mint cache |
+| `DEV_REPUTATION_ENABLED` | `false` | Score each creator from GMGN `created_tokens` (graduation rate + per-coin ATH) → `dev_reputation` |
+| `DEV_REPUTATION_MODE` | `shadow` | `enforce` only once the correlation is significant — it is **not** today |
+| `DEV_REPUTATION_KILL_SWITCH` | `false` | `true` forces shadow |
+| `DEV_REPUTATION_TTL_S` | `86400` | Per-creator cache |
+| `DEV_MIN_SAMPLE` · `DEV_BAN_MAX_GRADUATION` · `DEV_GOOD_MIN_GRADUATION` · `DEV_GOOD_MIN_ATH_MC` | `5` · `0.05` · `0.25` · `1000000` | Verdict thresholds (in-code defaults, env-tunable) |
+
+UI `/dev/dev-reputation` (profitable devs vs ban list, top-10 tokens each). Read APIs:
+`GET /api/dev/reputation`, `GET /api/gmgn/risk-chips` (bulk chips for list surfaces).
+
+### Metrics series — 1m volume + market-cap candles (`metrics_copier`)
+
+The durable per-token series (`token_metrics_history`: one row per (token, UTC hour) carrying five 1m arrays —
+`vol_min` (USD volume) plus `o_min`, `h_min`, `l_min`, `c_min`, which are **market-cap** candle values from
+GMGN's `token_mcap_candles`). Filled by `POST /api/metrics/copy`, cheapest lane first: the 24h 1m candle cache
+for free (volume only — its bars are *prices*, and the two differ by ~10⁹, so it must not write the mcap
+columns), then one paced GMGN-web candle call per remaining watch mint. Each field is first-writer-wins
+independently, and `NULL` means *not observed* — never 0. Its only hazard is a **cadence longer than the window
+a single call covers** (501 × 1m ≈ 8.35 h): the minutes in the gap are never re-served, so a daily sweep would
+silently hole the series. See [docs/GMGN_RATE_BUDGET.md](docs/GMGN_RATE_BUDGET.md).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `METRICS_COPY_INTERVAL` | `900` | Go cron cadence for `metrics_copier` (seconds; `0` disables). Must stay below the window one call covers. |
+| `METRICS_COPY_RPS` | `2` | Copy-lane rate budget — **its own lane**, independent of `GMGN_WEB_MAX_POST_PER_SEC`. Measured on the **candle** endpoint (the one the sweep uses): 96 requests / 2.6 MB clean at ~1.1 rps sustained, while a 240-call burst at 8 rps tripped a 429 across the whole Worker path (shared with the live chart/risk lanes). Ramp only while watching for 403/429. |
+| `METRICS_COPY_TIMEOUT_SEC` | `240` | Go cron's client timeout for one sweep. The default 30 s sits below a cold sweep and logged a successful one as a failure. |
+| `METRICS_COPY_CONCURRENCY` | `8` | Max in-flight candle calls per sweep. |
+| `METRICS_COPY_MAX_MINTS` | `300` | Watch-set cap for the sweep (shared with `ohlc_sampler`). |
+| `METRICS_COPY_LOOKBACK_MIN` | `240` | How far back a cached series must reach to skip the vendor call entirely. |
+| `METRICS_COPY_MAX_STALENESS_MIN` | `30` | A cache older than this counts as stale → fetch regardless (its recent minutes are missing). |
+| `METRICS_COPY_KILL_SWITCH` | — | `1` makes every sweep a no-op. |
+| `TOKEN_METRICS_RETENTION_DAYS` | `30` | Whole-hour retention prune. |
 
 ### Market-brain (optional)
 
@@ -267,14 +361,25 @@ Read-only client for [market-brain](https://market-brain.yonathanevanchristy.wor
 | `MARKET_BRAIN_OHLC` | on when token set | Prefer `GET /ohlc` (Bearer) for Freeview / token-chart / rug-shadow 1m bars. Falls back to SolanaTracker/GMGN on 5xx/timeout. Set `0` to force the local path. |
 | `MARKET_BRAIN_SCORE_RISK` | on when token set | Principal sim-open (`mcap_enter_first_seen`, `mcap_enter_at_80`) calls `GET /risk/from-score` after combined score and applies returned TP/SL/hold. Set `0` to disable. Brain miss → `riskSource=fallback_default`. |
 
-**Sim-open risk order** (first-cut mcap / trending-assign / signals):
+**Sim-open risk order** (every sim domain, via `resolveSimOpenSize()` in `src/utils/brain-regime-risk.ts`):
 
 1. Live `GET /regime/params?profile=<recipe.profileId|default>` wins for **sizeScale** (and first-cut TP/SL/hold)
 2. Else embedded `recipe.riskGrid[climate state]`
 3. Else keep local TP / SL / size (log once)
 4. Principal sim-opens then overlay TP/SL/hold from `GET /risk/from-score?score=&rugTrip=` (does not replace climate size). Disable with `MARKET_BRAIN_SCORE_RISK=0`.
 
-`sizeScale` multiplies size; `0` is stand-down (skip new sim opens).
+`sizeScale` multiplies size; `0` is stand-down (skip new sim opens). It is **tiered, not a curve**:
+`climateGate.ts` assigns `scale = SIZE_SCALE[sizeKind]` over `stand-down 0 · trim 0.25 · reduced ·
+neutral · full`, and a cascade/news veto caps the kind at `trim` — so a sustained de-risk regime holds a
+constant 0.25 by design. (The type comment describes `scale` as a continuous `Cash=0 … Hype=1` hint; the
+assignment is the lookup.)
+
+**Reach.** Before 2026-10-01 the scalar resolved on mcap/search, signals and the Solana trending cycle only,
+so gmgn, social and the Robinhood trending twin ran at full configured size with no stamp — staking ~9× the
+per-trade SOL of the scaled family. All domains now go through one path, so cross-family PnL/ROI compares
+strategies rather than wiring. Set `SIM_FOLDED_STRATEGIES` (comma-separated; default the four families the
+proposal register measured as losing) to control which families the `/dev/paper-trade` fold toggle removes —
+an explicit empty value folds nothing. See [docs/diagrams/12-proposal-register.html](docs/diagrams/12-proposal-register.html).
 
 Smoke: `GET /health` is public. Authenticated `GET /union` / `/jupiter` / `/bubble` / `/recipes` / `/regime/params?profile=default` / `/ohlc` / `/ohlc/patterns` / `/risk/from-score` need `Authorization: Bearer $MARKET_BRAIN_TOKEN`. Recipe writes need `Authorization: Bearer $MARKET_BRAIN_ADMIN_TOKEN`.
 

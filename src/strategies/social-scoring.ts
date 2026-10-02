@@ -7,7 +7,6 @@ export type SocialScoringWeights = {
   mentionTier3: number
   uniqueChannelBonus: number
   smartWalletBuyBonus: number
-  tier1WalletBonus: number
   alreadyPumpedPenalty: number
 }
 
@@ -17,7 +16,6 @@ export const DEFAULT_SOCIAL_SCORING_WEIGHTS: SocialScoringWeights = {
   mentionTier3: 25,
   uniqueChannelBonus: 10,
   smartWalletBuyBonus: 30,
-  tier1WalletBonus: 15,
   alreadyPumpedPenalty: 20,
 }
 
@@ -48,10 +46,6 @@ export function computeSocialScoreBoost(
   if (snapshot.has_smart_wallet_buy) {
     boost += weights.smartWalletBuyBonus
     notes.push(`smart_wallet_buy (+${weights.smartWalletBuyBonus})`)
-    if (snapshot.smart_wallet_buy_sol_1h >= 1) {
-      boost += weights.tier1WalletBonus
-      notes.push(`smart_wallet_sol>=1 (+${weights.tier1WalletBonus})`)
-    }
   } else if ((snapshot.fomo_buy_count_1h ?? 0) > 0) {
     // Trenches buyers: bonus scaled by their realized edge (0..1.5), not a flat +30.
     const edge = Math.max(0, Math.min(1.5, snapshot.fomo_edge_1h ?? 1))

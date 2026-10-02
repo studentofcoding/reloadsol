@@ -46,12 +46,32 @@ selection back to `sol`.
 
 ### Solana
 
-- **Solana Tracker Raptor** is still the preferred executor when it quotes a
-  1-hop route inside the impact gate, but directional `fetchSwapQuote` /
-  `prepareSwapTransaction` race **Raptor (`maxHops=1`) + Jupiter Lite + Jupiter
-  Swap `/order`**, discard routes above `SWAP_QUOTE_MAX_IMPACT_PCT` (default 15%),
-  and build via the winner: `prepareSwapTransaction` → wallet signs the returned v0 tx →
-  `submitSignedSwap` (Shyft or RPC) → poll `confirmed|failed|expired`
+- **Directional (desk) swaps execute on Jupiter.** `fetchSwapQuote` /
+  `prepareSwapTransaction` (no `maxHops`) quote **Jupiter Swap V2 `/order`**, fall back to
+  **Jupiter Lite only when V2 fails**, and discard routes above
+  `SWAP_QUOTE_MAX_IMPACT_PCT` (default 15%). Build:
+  `prepareSwapTransaction` → wallet signs the returned v0 tx → `submitSignedSwap`
+  (Jupiter `/execute` when the order carried a `requestId`, else Shyft or RPC) → poll
+  `confirmed|failed|expired`. **Solana Tracker Raptor is not on the desk execution path**
+  (`maxHops != null` → `prepareArbSwap`), and `TRADE_PROVIDER` selects the arb/legacy send stack rather
+  than moving desk swaps onto Raptor.
+  **Display estimates do go through the shared quote engine** (`src/utils/quote-engine.ts`,
+  `src/hooks/useQuote.ts`): a `purpose: 'estimate'` quote asks Raptor first — ungated, and it answers a
+  whole batch in under a second — keeps its answer only while the impact passes the gate, and escalates
+  to the Jupiter picker otherwise. That keeps a *displayed* number off the scarce 0.5 rps execution
+  budget. `purpose: 'execute'` is never cached and always re-quotes.
+  **Every surface reaches it through one entry**: `getSwapQuote` (`src/utils/jupiter.ts`) routes into the
+  engine, so the signals hovers, the PnL sell estimate and the bulk forms share one keyed entry instead of
+  fetching the same quote independently on the Jupiter background lane. An estimate also carries the output
+  mint's `outDecimals` (read from the same cached mint-account call as the transfer fee), so a surface can
+  render `outAmount` as a token amount rather than a raw smallest-unit integer — and shows nothing when the
+  mint cannot be read rather than guessing a scale.
+  The buyer/seller **warm** draws that same 0.5 rps lane, so it fires on intent
+  (`src/hooks/useWarmOnIntent.ts`: 1.5 s of idle, or reaching the action button), not on every edit. A
+  missed trigger costs latency only — the click path builds on a cold cache.
+  Raptor hops are resolved per pair (`src/utils/raptor-hops.ts`): 1 when either side is SOL/USDC/USDT
+  (a direct pool exists), `RAPTOR_TOKEN_TOKEN_HOPS` (default 3) for a token→token pair, which at 1 hop
+  returns `500 "No direct route found"`.
   (`src/utils/swap-executor.ts`, `src/utils/jupiter.ts` `executeBulkBuy`,
   `executeBulkSellAlt`, `executeClientSwap`; proxies `/api/solanatracker/*`,
   `/api/jupiter/lite/*`, `/api/jupiter/quote`).
@@ -60,8 +80,8 @@ selection back to `sol`.
   prefetch, and `executeBulkSellAlt`. Compact `ReloadHome` (native SOL only) is unused as a post-connect landing; connect goes to `/sell/{chain}`.
   PnL Fast Sell stays native SOL.
 - **Jupiter** handles pricing/metadata, the wallet token list (Portfolio), the `/swap`
-  Jupiter Terminal widget, account close/reclaim, and **Lite / Swap `/order` as
-  directional quote/prepare fallbacks** when Raptor has no 1-hop route or fails the impact gate.
+  Jupiter Terminal widget, account close/reclaim, and the **directional quote/prepare itself**
+  (Swap V2 `/order`, with Lite as the failure fallback).
 - **GMGN** on Solana is charts (embedded `gmgn.cc` iframes) plus a dev-only GMGN
   bound-wallet path in the bulk buyer (`useGmgnOnSol`); GMGN is not a Solana swap executor.
 - Tokens: cached Shyft `all_tokens` (`useWalletTokens.ts`, Jupiter Portfolio fallback); prices from the shared

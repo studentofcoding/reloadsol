@@ -818,9 +818,12 @@ class TradingTracker {
               break
 
             case 'keepalive':
-              // ✅ NEW: Only log keepalive in debug mode to reduce noise
+              // Unreachable for the server's keepalive: it is sent as a NAMED event
+              // (`event: keepalive`), which never fires `onmessage`. Kept for any future
+              // unnamed keepalive payload; the real listener is addEventListener('keepalive')
+              // below, which is what keeps `lastMessageTime` honest.
               if (process.env.NODE_ENV === 'development') {
-                console.log(`💓 [${connectionAttemptId}] SSE keepalive received`)
+                console.log(`💓 [${connectionAttemptId}] SSE keepalive (unnamed) received`)
               }
               break
 
@@ -831,6 +834,20 @@ class TradingTracker {
           console.error(`❌ [${connectionAttemptId}] Error parsing SSE message:`, error, 'Raw data:', event.data)
         }
       }
+
+      // The server sends its keepalive as a NAMED event (`event: keepalive`, every 15s) plus a
+      // `: keepalive` comment. A named event does NOT fire `onmessage`, and comments are ignored
+      // by EventSource entirely — so neither ever reached the `onmessage` handler above, and
+      // `lastMessageTime` only ever advanced on real trade updates.
+      //
+      // The health check reads exactly that field, so the connection was judged dead after 60s of
+      // QUIET TRADING even though it was healthy and beating every 15s: it tore down and rebuilt
+      // the EventSource (and the server-side connection) on that cycle, forever. What the check
+      // exists to measure is the CONNECTION, so this is the listener it was missing. A genuinely
+      // dead stream still trips — 60s is four missed 15s beats.
+      this.sseConnection.addEventListener('keepalive', () => {
+        this.lastMessageTime = Date.now()
+      })
 
       this.sseConnection.onerror = (error) => {
         clearTimeout(connectionTimeout)

@@ -52,16 +52,35 @@ export async function fetchMeteoraPools(options?: {
   }
 
   const page = options?.page ?? 1;
-  const limit = options?.limit ?? 50;
-  const sortBy = options?.sortBy ?? 'fee_tvl_ratio_24h:desc';
+  const want = options?.limit ?? 50;
+  // Sort by TVL, NOT by fee/TVL. Measured 2026-10-02 against the live API:
+  //   sort_by=fee_tvl_ratio_24h:desc -> tvl 0.0000, 0.0000, … 0.0001   -> 0 of 10 pass min_tvl
+  //   sort_by=tvl:desc               -> tvl 37.6M, 15.3M, 12.8M …     -> 10 of 10 pass min_tvl
+  // fee/tvl is fees ÷ tvl, so ranking by it descends into dust pools whose ratio is huge only because
+  // the denominator is ~0. Every one of them then fails the screener's `min_tvl` floor and the screen
+  // returns nothing — which is what produced 35 days of `candidateCount: 0`.
+  const sortBy = options?.sortBy ?? 'tvl:desc';
 
-  const result = await meteoraFetch<MeteoraPoolsResponse>('/pools', {
-    page,
-    limit,
-    sort_by: sortBy,
-  });
+  // The API IGNORES `limit` and caps `page_size` at 10 — measured: limit=10/50/100/200 all return 10
+  // rows. So a single call can never deliver the requested set; walk pages until we have enough.
+  const PAGE_SIZE_CAP = 10;
+  const MAX_PAGES = 20;
 
-  const pools = result.data ?? [];
+  const collected: MeteoraPool[] = [];
+  for (let p = page; collected.length < want && p - page < MAX_PAGES; p += 1) {
+    const result = await meteoraFetch<MeteoraPoolsResponse>('/pools', {
+      page: p,
+      limit: want,
+      sort_by: sortBy,
+    });
+    const batch = result.data ?? [];
+    if (batch.length === 0) break;
+    collected.push(...batch);
+    // A short page means there is nothing after it.
+    if (batch.length < PAGE_SIZE_CAP) break;
+  }
+
+  const pools = collected;
   poolsCache = {
     data: pools,
     expiresAt: now + DLMM_CONFIG.poolsCacheTtlMs,

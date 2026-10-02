@@ -13,12 +13,13 @@ ReloadSOL uses **three execution stacks** for swaps and closes, plus supporting 
 | Stack | Core functions | Used for |
 |-------|----------------|----------|
 | **Solana Tracker Raptor** | `executeBulkBuy`, `executeBulkSellAlt`, `executeClientSwap` | Bulk buy/sell; signals (LiveTab, BoardTab); PnL Fast Sell; server bots |
-| **Jupiter Lite API** | `getSwapQuote`, `getSwapTransaction` | Single buy/sell (LiveTab, BoardTab instant sell, SL/TP) |
+| **Jupiter Lite API** | `getSwapTransaction` (build) | Single buy/sell (LiveTab, BoardTab instant sell, SL/TP) |
+| **Quote engine** | `getSwapQuote` → `requestQuote` (`purpose: 'estimate'`) | Every **display** estimate — signals hovers, PnL sell estimate, bulk buyer/seller. Raptor-first, ungated; never the execution lane. Every surface reaches it through `getSwapQuote` |
 | **Jupiter Reclaim + manual SPL close** | `closeTokenAccounts`, `craftReclaimTransaction` | Bulk close; auto-close after 100% sell |
 
 | Supporting layer | Role |
 |------------------|------|
-| **Jupiter Portfolio** | Wallet token list + USD values (`useWalletTokens`); PnL Fast Sell / Refresh list holdings prune |
+| **Jupiter Portfolio** | Wallet token list + USD values (`useWalletTokens`) — Shyft `all_tokens` is the primary source, Jupiter Portfolio the fallback (`sol-wallet-holdings.ts`); PnL Fast Sell / Refresh list holdings prune |
 | **`/api/rpc` proxy** | On-chain read/write (balances, send, confirm, manual close) |
 | **GMGN iframe** | Price charts on `/buy`, `/sell`, ChartBuyModal (no swap execution) |
 | **Toast → buy bridge** | `add-token-to-buy` — toast token click appends mint on `/buy` + opens chart (not `/chart`) |
@@ -117,7 +118,7 @@ Wallet tokens: `useWalletTokens` → `GET /api/jupiter/portfolio` → `https://w
 2. `executeBulkBuy` splits budget per token; batches quote-and-swap (10 per batch).
 3. For each token: `fetchRaptorQuoteAndSwap` → `POST /api/solanatracker/swap` → Raptor `POST /quote-and-swap`.
 4. Wallet signs all swap transactions: `signAllTransactions`.
-5. Send (batches of 6): `sendRaptorTransaction` → `POST /api/solanatracker/send` → Raptor `POST /send-transaction`.
+5. Send (batches of 6): `submitSignedSwap` — Shyft, then RPC fallback. **Not** Raptor's `/send-transaction`.
 6. Confirm: `waitForRaptorConfirmation` (poll until `confirmed`; throws on pending timeout); RPC `confirmTransaction` on RPC fallback only.
 7. Track: `trackBuy` → `POST /api/operations/track`; `trackOperation` → `POST /api/trading/records`.
 8. Refresh token list via `useWalletTokens` / Jupiter Portfolio.
@@ -127,7 +128,7 @@ Wallet tokens: `useWalletTokens` → `GET /api/jupiter/portfolio` → `https://w
 | Route | Method | Purpose |
 |-------|--------|---------|
 | `/api/solanatracker/swap` | POST | Build swap tx (SOL → token) |
-| `/api/solanatracker/send` | POST | Broadcast signed tx via Raptor |
+| `/api/solanatracker/send` | POST | **Kept deliberately; unused today.** Raptor's `POST /send-transaction` answered 200 + a signature for txs that never landed, and `sendRaptorTransaction` has no caller (T13). The code stays because Raptor is retained — but whoever wires it must **verify on-chain first**, never trust the response |
 | `/api/solanatracker/transaction/[signature]` | GET | Poll swap status |
 | `/api/jupiter/portfolio` | GET | Wallet token list |
 | `/api/rpc` | POST | RPC fallback send/confirm |
@@ -136,7 +137,7 @@ Wallet tokens: `useWalletTokens` → `GET /api/jupiter/portfolio` → `https://w
 | `/api/solprice` | GET | SOL/USD for UI |
 | `/api/tokens/prices` | GET | Token prices (supporting) |
 | `/api/trending/search` | GET | Token search in buyer UI |
-| `/api/axiom/token-info` | GET | Risk analysis panel |
+| `/api/gmgn/token-snapshot` | GET | Risk analysis panel (replaced `/api/axiom/token-info`; route, hook and allow-list entry removed) |
 
 **External**
 
@@ -264,7 +265,7 @@ handleBuyToken
 
 | Internal API | External |
 |--------------|----------|
-| `/api/trading/records`, `/api/operations/track`, `/api/tokens/prices`, `/api/signals`, `/api/axiom/token-info`, `/api/rpc` | `lite-api.jup.ag/swap/v1/quote`, `lite-api.jup.ag/swap/v1/swap` |
+| `/api/trading/records`, `/api/operations/track`, `/api/tokens/prices`, `/api/signals`, `/api/gmgn/token-snapshot`, `/api/rpc` | `lite-api.jup.ag/swap/v1/quote`, `lite-api.jup.ag/swap/v1/swap` |
 
 #### B. BoardTab / Chart / ChartBuyModal — Raptor
 
@@ -367,7 +368,7 @@ handleFastSell
 
 | Internal API | External |
 |--------------|----------|
-| `/api/jupiter/portfolio` + Raptor + `/api/jupiter/reclaim/craft` + `/api/rpc` | Jupiter Portfolio + Raptor + Jupiter Ultra reclaim |
+| `/api/jupiter/portfolio` + `/api/jupiter/quote` + `/api/jupiter/reclaim/craft` + `/api/rpc` | Jupiter Portfolio + Jupiter Swap V2 + Jupiter Ultra reclaim |
 
 #### D. `/swap` — Jupiter Terminal
 
@@ -457,7 +458,7 @@ Server-side Jupiter Lite with configured keypair; not triggered from UI buttons.
 | `/api/solprice` | SOL/USD |
 | `/api/rpc/health`, `/api/rpc/diagnostics`, `/api/rpc/config` | RPC panel / auto-select |
 | `/api/signals` | LiveTab / BoardTab board state |
-| `/api/axiom/token-info` | Risk panel |
+| `/api/gmgn/token-snapshot` | Risk panel (superseded `/api/axiom/token-info`, and the route, hook and allow-list entry are now deleted) |
 | `/api/buy` | Legacy Jupiter Lite server buy (no UI) |
 | `/api/sl-tp-monitor` | Automated SL/TP sells (server keypair) |
 
@@ -554,7 +555,7 @@ See [architecture.md §9–10](./architecture.md#9-recent-improvements-jun-2026)
 | PnL cron auth fixed | `pnl_update` worker succeeds with `PNL_UPDATE_SECRET` |
 | Trending schema patch | `volume_5m` + related columns on `trending_token_tracker` |
 | OHLC | GMGN **embed** for UI charts; Solana Tracker candles via `/api/gmgn/token-ohlc` + `token_detect_snapshots` / `signal_ohlc_labels` |
-| Raptor bulk paths | Unchanged — still primary for `/buy`, `/sell`, chart buy |
+| Desk swap path | Jupiter Swap V2 `/order` (Lite only if V2 fails) is primary for `/buy`, `/sell`, chart buy; Raptor is arbitrage-only (`maxHops`) |
 
 | Next | Suggested action |
 |------|------------------|
@@ -572,13 +573,12 @@ See [architecture.md §9–10](./architecture.md#9-recent-improvements-jun-2026)
 | `src/components/BulkTokenSeller.tsx` | Bulk sell + close-only UI |
 | `src/utils/jupiter.ts` | `executeBulkBuy`, `executeBulkSellAlt`, `closeTokenAccounts`, Jupiter Lite helpers |
 | `src/utils/jupiter-reclaim.ts` | Jupiter `/reclaim/craft` client + tx injection |
-| `src/utils/solanatracker-raptor.ts` | Raptor API client + proxies |
+| `src/utils/solanatracker-raptor.ts` | Raptor API client + proxies (arbitrage swaps) |
 | `src/hooks/useWalletTokens.ts` | Jupiter Portfolio hook |
 | `src/utils/jupiter-portfolio.ts` | Portfolio fetch + mapping |
-| `src/components/signals/LiveTab.tsx` | Single buy/sell (Jupiter Lite) |
-| `src/components/signals/LiveTab.tsx` | Single buy/sell via `executeClientSwap` |
-| `src/components/signals/BoardTab.tsx` | Single buy (Raptor bulk), sell via `executeClientSwap` |
-| `src/components/PnLTracker.tsx` | Fast Sell (Raptor + close) |
+| `src/components/signals/LiveTab.tsx` | Single buy/sell via `executeClientSwap` (desk swap: Jupiter V2, Lite fallback) |
+| `src/components/signals/BoardTab.tsx` | Single buy + sell via `executeClientSwap` |
+| `src/components/PnLTracker.tsx` | Fast Sell (desk swap + Jupiter reclaim close) |
 | `src/app/(trade)/swap/SwapPageClient.tsx` | Jupiter Terminal |
 | `src/app/api/solanatracker/*` | Raptor proxy routes |
 | `src/app/api/jupiter/reclaim/craft/route.ts` | Reclaim proxy |

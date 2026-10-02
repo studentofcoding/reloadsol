@@ -2,9 +2,9 @@ import React, { useEffect, useState } from 'react';
 import {
   formatRiskDisplay,
   calculateFeeToMarketCapRatio,
-  type AxiomTokenInfo,
+  type TokenRiskInfo,
   type RiskIndicators,
-} from '@/utils/axiom';
+} from '@/utils/token-risk';
 import { useTokenRisk, type TokenRiskChain } from '@/hooks/useTokenRisk';
 
 type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH';
@@ -13,10 +13,10 @@ interface RiskAnalysisProps {
   tokenAddress: string;
   marketCap: number;
   onLoad?: () => void;
-  axiomData?: AxiomTokenInfo;
-  riskData?: RiskIndicators;
+  riskData?: TokenRiskInfo;
+  riskIndicators?: RiskIndicators;
   defaultExpanded?: boolean;
-  /** sol = Axiom; robinhood = GMGN security map */
+  /** sol = TokenRisk; robinhood = GMGN security map */
   chain?: TokenRiskChain;
 }
 
@@ -42,27 +42,27 @@ export default function RiskAnalysis({
   tokenAddress, 
   marketCap, 
   onLoad, 
-  axiomData: propAxiomData, 
-  riskData: propRiskData,
+  riskData: propData, 
+  riskIndicators: propRisk,
   defaultExpanded = false,
   chain = 'sol',
 }: RiskAnalysisProps) {
-  const hasPropData = !!(propAxiomData && propRiskData);
+  const hasPropData = !!(propData && propRisk);
   const query = useTokenRisk(tokenAddress, marketCap, chain, !hasPropData);
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   const onLoadCalledRef = React.useRef(false);
 
-  const axiomData = hasPropData ? propAxiomData! : query.data?.axiomData ?? null;
-  const risk = hasPropData ? propRiskData! : query.data?.risk ?? null;
+  const riskData = hasPropData ? propData! : query.data?.riskData ?? null;
+  const risk = hasPropData ? propRisk! : query.data?.risk ?? null;
   const isLoading = !hasPropData && query.isLoading;
   const error = !hasPropData && query.isError ? 'Failed to load risk data' : null;
 
   useEffect(() => {
-    if ((axiomData && risk) && onLoad && !onLoadCalledRef.current) {
+    if ((riskData && risk) && onLoad && !onLoadCalledRef.current) {
       onLoadCalledRef.current = true;
       onLoad();
     }
-  }, [axiomData, risk, onLoad]);
+  }, [riskData, risk, onLoad]);
 
   useEffect(() => {
     onLoadCalledRef.current = false;
@@ -76,11 +76,11 @@ export default function RiskAnalysis({
     return <div className="text-xs text-gray-400">Loading risk analysis...</div>;
   }
 
-  if (error || !axiomData || !risk) {
+  if (error || !riskData || !risk) {
     return <div className="text-xs text-gray-400">{error || 'No risk data available'}</div>;
   }
 
-  const feeToMcap = calculateFeeToMarketCapRatio(axiomData.totalPairFeesPaid, marketCap);
+  const feeToMcap = calculateFeeToMarketCapRatio(riskData.totalPairFeesPaid, marketCap);
   
   const calculateOrganicScore = () => {
     let score = 100;
@@ -135,19 +135,19 @@ export default function RiskAnalysis({
       <div className={`overflow-hidden transition-all duration-300 ease-in-out ${isExpanded ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'}`}>
         <div className="space-y-1 pt-2 border-t border-gray-700/50 mt-1">
           <div className="flex items-center justify-between">
-            <span className="text-gray-400">Insiders: {axiomData.insidersHoldPercent.toFixed(1)}%</span>
+            <span className="text-gray-400">Insiders: {riskData.insidersHoldPercent.toFixed(1)}%</span>
             <RiskBadge riskLevel={risk.insiderRisk} />
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-gray-400">Bundlers: {axiomData.bundlersHoldPercent.toFixed(1)}%</span>
+            <span className="text-gray-400">Bundlers: {riskData.bundlersHoldPercent.toFixed(1)}%</span>
             <RiskBadge riskLevel={risk.bundlerRisk} />
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-gray-400">Snipers: {axiomData.snipersHoldPercent.toFixed(1)}%</span>
+            <span className="text-gray-400">Snipers: {riskData.snipersHoldPercent.toFixed(1)}%</span>
             <RiskBadge riskLevel={risk.sniperRisk} />
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-gray-400">Top 10: {axiomData.top10HoldersPercent.toFixed(1)}%</span>
+            <span className="text-gray-400">Top 10: {riskData.top10HoldersPercent.toFixed(1)}%</span>
             <RiskBadge riskLevel={risk.concentrationRisk} />
           </div>
           <div className="flex items-center justify-between">
@@ -162,14 +162,14 @@ export default function RiskAnalysis({
           </div>
           <div className="flex items-center justify-between">
             <span className="text-gray-400">Holders:</span>
-            <span className="text-white">{axiomData.numHolders.toLocaleString()}</span>
+            <span className="text-white">{riskData.numHolders.toLocaleString()}</span>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-gray-400">Fees:</span>
             <span className="text-white">
               {chain === 'robinhood'
                 ? 'n/a (RH)'
-                : `${axiomData.totalPairFeesPaid.toFixed(1)} SOL`}
+                : `${riskData.totalPairFeesPaid.toFixed(1)} SOL`}
             </span>
           </div>
         </div>

@@ -21,6 +21,7 @@ import HunterCandidateTabs, {
 import UniversalWalletButton from "@/components/UniversalWalletButton";
 import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import { formatAppTime } from "@/utils/datetime";
+import { candidatesAreFresh } from "@/utils/dlmm/candidate-freshness";
 
 function formatUsd(n: number) {
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
@@ -72,7 +73,14 @@ export default function DlmmDashboardPage() {
   );
 
   const generalCandidates: DisplayCandidate[] = useMemo(() => {
-    if (candidates.length > 0) {
+    // Presence is not freshness. Measured 2026-10-02: the newest candidate was 35 days old, so
+    // `candidates.length > 0` was true over stale rows and this surface showed one August candidate
+    // instead of the live pool list. (The screener was NOT unscheduled — it ran every 15 minutes and
+    // returned zero, because `fetchMeteoraPools` sorted by fee/TVL and ranked into dust pools. That
+    // sort is now fixed; this gate guards the surface for whatever kills the screener next.)
+    // Fall through to the pools whenever the screened set is older than the window — a stale value must
+    // not wear the clothes of a current one.
+    if (candidatesAreFresh(candidates, Date.now())) {
       return candidates.map((c) => {
         const pool = pools.find((p) => p.address === c.pool_address);
         return {

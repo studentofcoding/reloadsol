@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The proposal register — every conditional change in one table</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Fraunces:opsz,wght@9..144,400&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper:#fafaf7; --paper2:#f0efe9; --ink:#163b2a; --muted:#5b6b60;
+    --soft:#8a968d; --accent:#84cc16; --link:#2e5aa8;
+    --sans:'DM Sans', system-ui, sans-serif;
+    --serif:'Fraunces', serif;
+    --mono:'Geist Mono', ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { font-family:var(--sans); background:var(--paper); color:var(--ink); margin:0; padding:3rem 2rem 4rem; }
+  .wrap { max-width: 1120px; margin:0 auto; }
+  .eyebrow { font-family:var(--mono); font-size:.66rem; font-weight:500; letter-spacing:.18em; text-transform:uppercase; color:var(--muted); margin-bottom:.5rem; }
+  h1 { font-family:var(--serif); font-size:clamp(1.4rem,2.2vw + .5rem,2rem); font-weight:400; letter-spacing:-.02em; margin:0 0 .75rem; }
+  h2 { font-family:var(--serif); font-size:1.25rem; font-weight:400; margin:3rem 0 .35rem; }
+  .sub { color:var(--muted); font-size:.92rem; line-height:1.6; margin:0 0 2rem; max-width:74ch; }
+  .cards { display:grid; grid-template-columns:1.15fr 1fr .85fr; gap:1rem; margin:2rem 0 0; }
+  @media (max-width:860px){ .cards{ grid-template-columns:1fr; } }
+  .card { background:#fff; border:1px solid rgba(22,59,42,.12); border-radius:6px; padding:1.25rem; }
+  .card h3 { font-size:.95rem; font-weight:600; margin:0 0 .6rem; display:flex; align-items:center; gap:.5rem; }
+  .dot { width:7px; height:7px; border-radius:50%; display:inline-block; flex:none; }
+  .dot-coral { background:var(--accent); } .dot-ink{ background:var(--ink); } .dot-soft{ background:var(--soft); }
+  .card ul { margin:0; padding-left:1.1rem; }
+  .card li { font-size:.85rem; color:var(--muted); line-height:1.65; }
+  .card li b { color:var(--ink); font-weight:600; }
+  figure { margin:2.5rem 0 0; }
+  figcaption { font-family:var(--mono); font-size:.68rem; letter-spacing:.12em; text-transform:uppercase; color:var(--soft); margin-top:.9rem; }
+  .framed { background:var(--paper2); border:1px solid rgba(22,59,42,.12); border-radius:8px; padding:1.5rem; overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; margin-top:.5rem; }
+  caption { text-align:left; font-family:var(--mono); font-size:.68rem; letter-spacing:.12em; text-transform:uppercase; color:var(--soft); padding-bottom:.6rem; }
+  th { font-family:var(--mono); font-size:.62rem; font-weight:500; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); text-align:right; padding:.55rem .5rem; border-bottom:1px solid rgba(22,59,42,.28); white-space:nowrap; }
+  th:first-child, td:first-child { text-align:left; }
+  td { font-size:.79rem; padding:.55rem .5rem; border-bottom:1px solid rgba(22,59,42,.09); text-align:right; color:var(--muted); vertical-align:top; }
+  td.name { color:var(--ink); font-weight:500; }
+  td.wrap, th.wrap { text-align:left; }
+  td code, p code, li code { font-family:var(--mono); font-size:.71rem; color:var(--ink); background:none; }
+  .neg { color:#8a5a5a; }
+  .lead { color:var(--ink); font-weight:600; }
+  .focal-row td { background:rgba(132,204,22,.07); }
+  .ok { font-family:var(--mono); font-size:.66rem; color:var(--muted); }
+  .tag { font-family:var(--mono); font-size:.62rem; letter-spacing:.1em; text-transform:uppercase; border:1px solid rgba(22,59,42,.20); border-radius:3px; padding:.08rem .34rem; color:var(--muted); white-space:nowrap; }
+  .tag-m { border-color:rgba(132,204,22,.55); color:#5c7a18; }
+  .tag-b { border-color:rgba(46,90,168,.45); color:#2e5aa8; }
+  .tag-u { border-color:rgba(138,90,90,.45); color:#8a5a5a; }
+  pre { font-family:var(--mono); font-size:.72rem; line-height:1.7; color:var(--ink); background:#fff;
+        border:1px solid rgba(22,59,42,.12); border-radius:6px; padding:1rem 1.15rem; overflow-x:auto; margin:1rem 0 0; }
+  ul.findings { padding-left:1.1rem; margin:.5rem 0 0; }
+  ul.findings li { font-size:.88rem; color:var(--muted); line-height:1.75; margin-bottom:.5rem; }
+  ul.findings li b { color:var(--ink); }
+  footer { margin-top:4rem; padding-top:1.25rem; border-top:1px solid rgba(22,59,42,.12); font-family:var(--mono); font-size:.68rem; letter-spacing:.06em; color:var(--soft); line-height:1.8; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p class="eyebrow">Proposal register · every conditional change in one table</p>
+  <h1>Ten proposals, each with the condition that gates it</h1>
+  <p class="sub">Everything the sizing analysis produced, collected in one place — formula, measured or
+  bounded effect, and the condition that has to hold before it ships. Three carry a measured gain (P1, P3,
+  and the bounded P4); one is a removal (P10); and P6 — the market scalar — <b>shipped on 2026-10-01</b>
+  (it existed all along; what it lacked was reach). Still gated: P2 (superseded by P3) and P5
+  (unmeasured). Spine era
+  (<strong>2026-09-30 → 10-01</strong>, 667 closes, 0.005 SOL base), all paper. The gain column is the
+  <em>marginal</em> delta over flat unless a row says otherwise — today's baseline is
+  <strong>+0.822 SOL at 64.7% ROI</strong> and flat alone is <strong>+2.353 SOL</strong>.</p>
+
+  <div class="cards">
+    <div class="card">
+      <h3><span class="dot dot-coral"></span>Measured, ship-ready</h3>
+      <ul>
+        <li><b>Delete the multiplier</b> → flat. Worth <b>+1.531 SOL</b> on its own, and it needs no new model.</li>
+        <li>Together with selection and the stop: <b>+2.638 SOL at 89.4% ROI</b>.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3><span class="dot dot-ink"></span>Bounded, not yet proven</h3>
+      <ul>
+        <li>The <b>stop sweep</b> is the biggest unclaimed lever (<b>+0.247 SOL</b>) and the only one needing a candle replay.</li>
+        <li>The <b>exit models</b> are already built and shadowed — impact unmeasured.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3><span class="dot dot-soft"></span>Deliberately not built</h3>
+      <ul>
+        <li><b>Level 2 tilt</b>: rejected — it <em>subtracts</em> 0.368 SOL.</li>
+        <li><b>Fail-soft guard</b>: redundant once the fold is done. Fully overlapping.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>The register</h2>
+  <table>
+    <caption>667 closes · gain = marginal delta over flat (+2.353) unless the row says vs today (+0.822)</caption>
+    <thead>
+      <tr>
+        <th class="wrap">ID</th><th class="wrap">Proposal</th><th class="wrap">Change / formula</th>
+        <th>Gain (SOL)</th><th class="wrap">Evidence</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr class="focal-row">
+        <td class="name">P1</td>
+        <td class="wrap"><b>Delete the multiplier; stake flat</b></td>
+        <td class="wrap"><code>stake = SIM_BASE_POSITION_SOL</code> — drop <code>cl_p</code> from the size path entirely</td>
+        <td class="lead">+1.531 <span class="ok">vs today</span></td>
+        <td class="wrap"><span class="tag tag-m">measured</span> flat 2.353 vs today 0.822; ROI 70.6% vs 64.7%</td>
+      </tr>
+      <tr>
+        <td class="name">P2</td>
+        <td class="wrap">Fail-soft guard → 0.25</td>
+        <td class="wrap"><code>mult = 0.25 if cl_p IS NULL or cl_p = 0.5 else 1.0</code></td>
+        <td>+0.062</td>
+        <td class="wrap"><span class="tag tag-m">measured</span> 2.415 SOL / 76.4% ROI — but see C-2: <b>redundant with P3</b></td>
+      </tr>
+      <tr>
+        <td class="name">P3</td>
+        <td class="wrap"><b>Fold the four losing families</b></td>
+        <td class="wrap">drop gmgn_sm_kol_combined · gmgn_kol_momentum · social_only_fomo_gt7 · att_rh</td>
+        <td>+0.144</td>
+        <td class="wrap"><span class="tag tag-m">measured</span> 2.497 SOL, ROI 70.6% → <b>84.6%</b> on 77 fewer trades</td>
+      </tr>
+      <tr>
+        <td class="name">P4</td>
+        <td class="wrap"><b>Sweep the stop, not the take-profit</b></td>
+        <td class="wrap"><code>stopLoss = −16</code> (from −31.7) → R 5.5 → 13.0</td>
+        <td>+0.247</td>
+        <td class="wrap"><span class="tag tag-b">bounded</span> 2.600 SOL / 78.0% ROI, +10.9% by clamping losses — <b>upper bound</b></td>
+      </tr>
+      <tr>
+        <td class="name">P5</td>
+        <td class="wrap">Promote the shadowed exit models</td>
+        <td class="wrap"><code>ml_exit_overlay</code> · <code>gmgn_exit_boost</code>: shadow → evaluate</td>
+        <td class="ok">—</td>
+        <td class="wrap"><span class="tag tag-u">unmeasured</span> built and inert today; the strategies are preflop-only</td>
+      </tr>
+      <tr>
+        <td class="name">P6</td>
+        <td class="wrap">Market scalar (Level 1)</td>
+        <td class="wrap"><code>clamp(1 − β·marketRisk, 0.25, 1)</code> applied to the whole book</td>
+        <td class="ok">—</td>
+        <td class="wrap"><span class="tag tag-m">shipped</span> it already existed as <code>brain_size_scale</code>; P6 was the <b>reach</b> gap. Now on every domain via <code>resolveSimOpenSize()</code> — gmgn, social and the RH trending sim had no wiring at all</td>
+      </tr>
+      <tr>
+        <td class="name">P7</td>
+        <td class="wrap">Cut the base stake</td>
+        <td class="wrap"><code>SIM_BASE_POSITION_SOL: 0.005 → ~0.0019</code> to hold peak exposure flat</td>
+        <td>+0.180 <span class="ok">vs today</span></td>
+        <td class="wrap"><span class="tag tag-b">arithmetic</span> at base 0.0019 the combination is 1.002 SOL / 89.4% ROI — still ahead of today's 0.822</td>
+      </tr>
+      <tr>
+        <td class="name">P8</td>
+        <td class="wrap">Count uncorrelated bets, not strategies</td>
+        <td class="wrap">report distinct mints and per-game overlap before claiming diversification</td>
+        <td class="ok">—</td>
+        <td class="wrap"><span class="tag tag-m">measured</span> 648 rows → <b>332 mints</b>; the TP trio is 433 rows → 238 mints, 66 shared</td>
+      </tr>
+      <tr>
+        <td class="name">P9</td>
+        <td class="wrap">Pre-register the threshold</td>
+        <td class="wrap">state the decision rule and sample floor before looking at the data</td>
+        <td class="ok">—</td>
+        <td class="wrap"><span class="tag tag-m">process</span> the +138% bucket was 4 trades; <code>READINESS_MIN_SAMPLE</code> already exists</td>
+      </tr>
+      <tr>
+        <td class="name">P10</td>
+        <td class="wrap"><b>Reject the Level 2 tilt</b> <span class="ok">(removal)</span></td>
+        <td class="wrap">do not build <code>mult = 0.5 + percentile_rank(cl_p)</code></td>
+        <td class="lead">+0.368 avoided</td>
+        <td class="wrap"><span class="tag tag-m">measured</span> tilt 1.985 vs flat 2.353; clustered t = −2.5 <span class="ok">(646-close snapshot)</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>What each one adds on top of flat</h2>
+  <p class="sub">Four entries move the needle, and the chart prices them against <em>flat</em> rather than
+  against today — because flat itself is the change worth having (+1.531 over today) and every other
+  proposal is a tweak layered on it. Three add; one subtracts. Note the combination is <em>less</em> than
+  the sum of its parts: P3 + P4 is a naive 0.391 against a measured 0.285, because folding and the stop
+  both remove the same losing trades.</p>
+
+  <figure>
+    <div class="framed">
+      <svg viewBox="0 0 1000 460" width="100%" role="img" aria-labelledby="gain-title gain-desc">
+        <title id="gain-title">Marginal gain in SOL each proposal adds on top of a flat stake</title>
+        <desc id="gain-desc">Diverging horizontal bar chart priced against a flat stake, which is the baseline at zero. The stop sweep adds the most at 0.247 SOL and is the focal bar; folding four losing families adds 0.144 and the fail-soft guard 0.062. The rejected Level 2 tilt is drawn to the left of zero because building it would subtract 0.368 SOL. Flat itself is worth a further 1.531 SOL against today and is not drawn, since every bar here is measured relative to it.</desc>
+        <rect width="100%" height="100%" fill="#f0efe9"/>
+
+        <line x1="340" y1="72" x2="340" y2="352" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="490" y1="72" x2="490" y2="352" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="790" y1="72" x2="790" y2="352" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="940" y1="72" x2="940" y2="352" stroke="rgba(22,59,42,.08)" stroke-width="0.8"/>
+        <line x1="640" y1="72" x2="640" y2="352" stroke="rgba(22,59,42,.25)" stroke-width="1"/>
+        <line x1="340" y1="352" x2="940" y2="352" stroke="rgba(22,59,42,.25)" stroke-width="1"/>
+        <text x="340" y="368" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">−0.4</text>
+        <text x="490" y="368" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">−0.2</text>
+        <text x="640" y="368" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">0</text>
+        <text x="790" y="368" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">+0.2</text>
+        <text x="940" y="368" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">+0.4</text>
+        <text x="640" y="388" fill="#8a968d" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.14em">MARGINAL SOL vs FLAT (+2.353) · FLAT ITSELF IS +1.531 vs TODAY</text>
+
+        <!-- P4 · stop — focal -->
+        <rect x="640" y="96" width="185" height="28" fill="#f0efe9"/>
+        <rect x="640" y="96" width="185" height="28" fill="rgba(132,204,22,.16)" stroke="#84cc16" stroke-width="1"/>
+        <text x="300" y="114" fill="#163b2a" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="end">P4 · stop to −16</text>
+        <text x="833" y="114" fill="#84cc16" font-size="8" font-family="'Geist Mono',monospace">+0.247</text>
+
+        <!-- P3 · fold -->
+        <rect x="640" y="168" width="108" height="28" fill="#f0efe9"/>
+        <rect x="640" y="168" width="108" height="28" fill="rgba(91,107,96,.15)" stroke="#5b6b60" stroke-width="1"/>
+        <text x="300" y="186" fill="#163b2a" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="end">P3 · fold four families</text>
+        <text x="756" y="186" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace">+0.144</text>
+
+        <!-- P2 · guard -->
+        <rect x="640" y="240" width="47" height="28" fill="#f0efe9"/>
+        <rect x="640" y="240" width="47" height="28" fill="rgba(91,107,96,.15)" stroke="#5b6b60" stroke-width="1"/>
+        <text x="300" y="258" fill="#163b2a" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="end">P2 · fail-soft guard</text>
+        <text x="695" y="258" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace">+0.062</text>
+
+        <!-- P10 · the tilt, drawn as what it would cost -->
+        <rect x="364" y="312" width="276" height="28" fill="#f0efe9"/>
+        <rect x="364" y="312" width="276" height="28" fill="rgba(138,90,90,.12)" stroke="#8a5a5a" stroke-width="1"/>
+        <text x="300" y="330" fill="#163b2a" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="end">P10 · tilt, if built</text>
+        <text x="356" y="330" fill="#8a5a5a" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end">−0.368</text>
+
+        <line x1="120" y1="412" x2="960" y2="412" stroke="rgba(22,59,42,.12)" stroke-width="0.8"/>
+        <text x="120" y="428" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.14em">LEGEND</text>
+        <rect x="216" y="420" width="12" height="10" fill="rgba(132,204,22,.16)" stroke="#84cc16" stroke-width="1"/>
+        <text x="236" y="429" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">THE BIGGEST UNSWEPT LEVER</text>
+        <rect x="440" y="420" width="12" height="10" fill="rgba(91,107,96,.15)" stroke="#5b6b60" stroke-width="1"/>
+        <text x="460" y="429" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">MEASURED AND POSITIVE</text>
+        <rect x="640" y="420" width="12" height="10" fill="rgba(138,90,90,.12)" stroke="#8a5a5a" stroke-width="1"/>
+        <text x="660" y="429" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">SUBTRACTS — REJECTED</text>
+      </svg>
+    </div>
+    <figcaption>Priced against flat, not today · P1 is the baseline itself · P5–P9 have no number to draw</figcaption>
+  </figure>
+
+  <h2>The conditions</h2>
+  <p class="sub">Every proposal is gated. This is the part that makes them proposals rather than a
+  to-do list — four of the ten have a condition that currently fails, which is why they read "not built"
+  rather than "pending".</p>
+  <table>
+    <caption>condition on the left, consequence of the condition failing on the right</caption>
+    <thead><tr><th class="wrap">ID</th><th class="wrap">Condition / trigger</th><th class="wrap">If the condition is not met</th><th class="wrap">State</th></tr></thead>
+    <tbody>
+      <tr><td class="name">C-1</td><td class="wrap">P1 — no per-trade card information exists, so no per-trade sizing is earned</td><td class="wrap">nothing; this is the premise, and it is measured twice (no rank power within or across strategies)</td><td class="wrap"><span class="tag tag-m">holds</span></td></tr>
+      <tr class="focal-row"><td class="name">C-2</td><td class="wrap">P2 — only worthwhile <b>if P3 is not done</b>. All 20 fail-soft rows sit inside the families P3 folds (measured: zero outside), so the two are the same trade list</td><td class="wrap">P2 becomes a no-op: P2 alone gives 2.415, P3 alone gives 2.497, and P2+P3 gives exactly 2.497 — the same trades at the same stake</td><td class="wrap"><span class="tag tag-u">superseded by P3</span></td></tr>
+      <tr><td class="name">C-3</td><td class="wrap">P3 — a strategy needs ≥ <code>READINESS_MIN_SAMPLE</code> closes <em>and</em> a non-negative net per trade</td><td class="wrap">keep running it and re-check; the floor exists so an underpowered sample reads <code>insufficient</code>, not <code>fold</code></td><td class="wrap"><span class="tag tag-m">holds on 7d and 2d</span></td></tr>
+      <tr><td class="name">C-4</td><td class="wrap">P4 — only after a candle replay confirms the clamped-loss bound survives path dependency</td><td class="wrap">keep the stop at −31.7. +0.247 is an upper bound, not a result; a trade that dipped to −18 and recovered to +300 would be wrongly counted</td><td class="wrap"><span class="tag tag-b">not yet tested</span></td></tr>
+      <tr><td class="name">C-5</td><td class="wrap">P5 — the shadow exit models must show lift on the min-sample floor</td><td class="wrap">they stay in shadow, as they are today</td><td class="wrap"><span class="tag tag-u">unmeasured</span></td></tr>
+      <tr><td class="name">C-6</td><td class="wrap">P6 — the scalar must reach every strategy, or a cross-family PnL/ROI comparison measures the wiring instead of the strategy</td><td class="wrap">an un-scaled family runs at full size while its neighbours are cut. Measured before the fix: gmgn and social carried <b>0</b> <code>brain_size_scale</code> rows and staked <b>~9×</b> the per-trade SOL of the scaled mcap family</td><td class="wrap"><span class="tag tag-m">met (d8fa199)</span></td></tr>
+      <tr><td class="name">C-7</td><td class="wrap">P7 — peak exposure (peak concurrency × base) exceeds <code>MAX_SOL_AT_RISK = 0.1</code></td><td class="wrap">no base change needed. Note P1 raises exposure 2.6× on its own, so C-7 fires <em>because of</em> C-1</td><td class="wrap"><span class="tag tag-u">fires with P1</span></td></tr>
+      <tr><td class="name">C-8</td><td class="wrap">P8 — always; report before claiming diversification</td><td class="wrap">a nine-strategy portfolio reads as nine independent bets when it is four</td><td class="wrap"><span class="tag tag-m">measurement only</span></td></tr>
+      <tr><td class="name">C-9</td><td class="wrap">P9 — always; state the rule and the floor before looking</td><td class="wrap">the +138% bucket happens again: four trades mistaken for a gradient</td><td class="wrap"><span class="tag tag-m">process</span></td></tr>
+      <tr><td class="name">C-10</td><td class="wrap">P10 — none. This is a negative proposal</td><td class="wrap">n/a</td><td class="wrap"><span class="tag tag-m">closed</span></td></tr>
+    </tbody>
+  </table>
+
+  <h2>How they compose</h2>
+  <p class="sub">P1, P3 and P4 are the three that survive; P2 folds into P3; P5 sits at a different decision
+  point (the exit, not the entry); P6 is orthogonal and now shipped. P7 is not a proposal at all — it is the
+  bill that arrives when P1 raises exposure, and it has to be decided with P1 rather than after it.</p>
+
+  <pre>Target composition, with each proposal slotted
+
+  stake = SIM_BASE_POSITION_SOL * marketScalar      # P1 flat base · P6 scalar (shipped, every domain)
+        * (strategySelectable ? 1 : 0)              # P3 fold — binary, never a weight
+        ; stopLoss = -16                            # P4 payoff ratio (bounded)
+        ; exit = ml_exit_overlay if promoted        # P5 later streets (shadow today)
+
+  Removed
+      mult = max(0.25, cl_p)                        # P1 — the read that reads nothing
+      mult = 0.25 if cl_p missing                   # P2 — subsumed by P3
+      mult = 0.5 + percentile_rank(cl_p)            # P10 — rejected on evidence
+
+Measured on 667 closes, 0.005 SOL base
+  today                      +0.822 SOL    64.7% ROI
+  P1                         +2.353 SOL    70.6% ROI
+  P1 + P3                    +2.497 SOL    84.6% ROI
+  P1 + P3 + P4               +2.638 SOL    89.4% ROI   (P4 is the bounded one)
+  P1 + P3 + P4 at base 0.0019 +1.002 SOL   89.4% ROI   (P7 risk parity)</pre>
+
+  <figure>
+    <div class="framed">
+      <svg viewBox="0 0 1000 520" width="100%" role="img" aria-labelledby="proposal-title proposal-desc">
+        <title id="proposal-title">The target composition with each proposal slotted into its band</title>
+        <desc id="proposal-desc">Layer diagram of the four bands that compose a position stake once the register is applied. The payoff ratio band carries the tightened stop and is focal, the never-swept lever. Selection carries the binary fold of four losing families. The base band carries the flat stake and is the largest measured gain. The market scalar band is drawn dashed because it is blocked with no signal to drive it. A formula line beneath reads stake equals base times bankroll scalar, stop minus 16, fold the losing games.</desc>
+        <rect width="100%" height="100%" fill="#f0efe9"/>
+
+        <line x1="68" y1="100" x2="68" y2="388" stroke="rgba(22,59,42,.14)" stroke-width="0.8"/>
+        <rect x="58" y="141" width="20" height="14" rx="2" fill="#f0efe9"/>
+        <text x="68" y="152" fill="#5b6b60" font-size="10" font-family="'Geist Mono',monospace" text-anchor="middle">×</text>
+        <rect x="58" y="237" width="20" height="14" rx="2" fill="#f0efe9"/>
+        <text x="68" y="248" fill="#5b6b60" font-size="10" font-family="'Geist Mono',monospace" text-anchor="middle">×</text>
+        <rect x="58" y="333" width="20" height="14" rx="2" fill="#f0efe9"/>
+        <text x="68" y="344" fill="#5b6b60" font-size="10" font-family="'Geist Mono',monospace" text-anchor="middle">×</text>
+
+        <!-- BAND 1 — focal: P4 -->
+        <rect x="120" y="64" width="800" height="72" rx="6" fill="#f0efe9"/>
+        <rect x="120" y="64" width="800" height="72" rx="6" fill="rgba(132,204,22,.10)" stroke="#84cc16" stroke-width="1.2"/>
+        <rect x="136" y="80" width="52" height="14" rx="2" fill="transparent" stroke="rgba(132,204,22,.60)" stroke-width="0.8"/>
+        <text x="162" y="91" fill="#84cc16" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">P4</text>
+        <text x="212" y="94" fill="#163b2a" font-size="16" font-weight="600" font-family="'DM Sans',sans-serif">Payoff ratio</text>
+        <text x="352" y="94" fill="#5b6b60" font-size="12" font-family="'DM Sans',sans-serif">stop −16</text>
+        <text x="904" y="92" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="end" letter-spacing="0.06em">+0.247 SOL · UPPER BOUND · NEEDS A CANDLE REPLAY</text>
+        <text x="904" y="112" fill="#8a968d" font-size="9" font-family="'Geist Mono',monospace" text-anchor="end" letter-spacing="0.06em">the axis never swept — take-profit was swept three times</text>
+
+        <!-- BAND 2 — P3 -->
+        <rect x="120" y="160" width="800" height="72" rx="6" fill="#fafaf7"/>
+        <rect x="120" y="160" width="800" height="72" rx="6" fill="none" stroke="rgba(22,59,42,.14)" stroke-width="1"/>
+        <rect x="136" y="176" width="52" height="14" rx="2" fill="transparent" stroke="rgba(22,59,42,.30)" stroke-width="0.8"/>
+        <text x="162" y="187" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">P3</text>
+        <text x="212" y="190" fill="#163b2a" font-size="16" font-weight="600" font-family="'DM Sans',sans-serif">Selection</text>
+        <text x="324" y="190" fill="#5b6b60" font-size="12" font-family="'DM Sans',sans-serif">fold 4 families</text>
+        <text x="904" y="188" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="end" letter-spacing="0.06em">+0.144 SOL AND +14.0PT ROI · BINARY, NOT A WEIGHT</text>
+        <text x="904" y="208" fill="#8a968d" font-size="9" font-family="'Geist Mono',monospace" text-anchor="end" letter-spacing="0.06em">gated on READINESS_MIN_SAMPLE and a non-negative net</text>
+
+        <!-- BAND 3 — P1 -->
+        <rect x="120" y="256" width="800" height="72" rx="6" fill="#fafaf7"/>
+        <rect x="120" y="256" width="800" height="72" rx="6" fill="none" stroke="rgba(22,59,42,.14)" stroke-width="1"/>
+        <rect x="136" y="272" width="52" height="14" rx="2" fill="transparent" stroke="rgba(22,59,42,.30)" stroke-width="0.8"/>
+        <text x="162" y="283" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">P1</text>
+        <text x="212" y="286" fill="#163b2a" font-size="16" font-weight="600" font-family="'DM Sans',sans-serif">Flat base</text>
+        <text x="312" y="286" fill="#5b6b60" font-size="12" font-family="'DM Sans',sans-serif">bankroll, not a bet</text>
+        <text x="904" y="284" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="end" letter-spacing="0.06em">+1.531 SOL VS TODAY · THE LARGEST MEASURED GAIN · ENV-TUNABLE</text>
+        <text x="904" y="304" fill="#8a968d" font-size="9" font-family="'Geist Mono',monospace" text-anchor="end" letter-spacing="0.06em">raises the average stake 2.6× — C-7 must be decided with it</text>
+
+        <!-- BAND 4 — P6, shipped -->
+        <rect x="120" y="352" width="800" height="72" rx="6" fill="#fafaf7"/>
+        <rect x="120" y="352" width="800" height="72" rx="6" fill="none" stroke="rgba(22,59,42,.14)" stroke-width="1"/>
+        <rect x="136" y="368" width="52" height="14" rx="2" fill="transparent" stroke="rgba(22,59,42,.30)" stroke-width="0.8"/>
+        <text x="162" y="379" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">P6</text>
+        <text x="212" y="382" fill="#8a968d" font-size="16" font-weight="600" font-family="'DM Sans',sans-serif">Market scalar</text>
+        <text x="356" y="382" fill="#5b6b60" font-size="12" font-family="'DM Sans',sans-serif">every domain</text>
+        <text x="904" y="380" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="end" letter-spacing="0.06em">SHIPPED · NOW ON EVERY DOMAIN VIA resolveSimOpenSize()</text>
+        <text x="904" y="400" fill="#8a968d" font-size="9" font-family="'Geist Mono',monospace" text-anchor="end" letter-spacing="0.06em">live · tiered (5 values) · cascadeVeto clamps to trim 0.25</text>
+
+        <line x1="120" y1="452" x2="920" y2="452" stroke="rgba(22,59,42,.12)" stroke-width="0.8"/>
+        <text x="120" y="468" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.14em">LEGEND</text>
+        <rect x="216" y="460" width="12" height="10" fill="rgba(132,204,22,.10)" stroke="#84cc16" stroke-width="1.2"/>
+        <text x="236" y="469" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">THE BIGGEST UNSWEPT LEVER</text>
+        <rect x="560" y="460" width="12" height="10" fill="#fafaf7" stroke="rgba(22,59,42,.14)" stroke-width="1"/>
+        <text x="580" y="469" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">SHIPPED 2026-10-01 — REACH, NOT A NEW SIGNAL</text>
+        <text x="120" y="496" fill="#163b2a" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.06em">STAKE = BASE × MARKET SCALAR · STOP −16 · FOLD THE LOSING GAMES</text>
+      </svg>
+    </div>
+    <figcaption>All four bands now earn their place · P2 is not drawn because it is subsumed by P3</figcaption>
+  </figure>
+
+  <h2>What this means</h2>
+  <ul class="findings">
+    <li><b>Only three proposals compose, and only two of them are measured.</b> P1 (flat), P3 (fold), P4
+    (stop), plus P6 which shipped. Everything else is either subsumed (P2) or a decision that rides along with
+    another (P7). Shipping all ten is not the plan; shipping three is.</li>
+    <li><b>The combination is worth less than the sum of its parts, and that is not a rounding error.</b>
+    Measured +0.285 over flat against a naive 0.391 — folding and the stop both remove the same losing
+    trades, so the overlap is real. Any estimate that adds proposal gains together overstates the result by
+    roughly a quarter.</li>
+    <li><b>Two of the ten are explicitly negative-proposals, and that is the majority of the intellectual
+    work here.</b> P10 rejects a knob that looked plausible and measurably subtracts; P2's condition C-2
+    shows the guard becomes a no-op the moment the fold ships. Deciding <em>not</em> to build is the
+    deliverable, not the consolation.</li>
+    <li><b>P7 is not a proposal, it is a bill.</b> Deleting the multiplier raises the average stake ~2.6× on
+    its own, so the base-stake question arrives automatically. Worth stating plainly: at a risk-parity base
+    of 0.0019 the combination still returns 1.002 SOL against today's 0.822, at 89.4% ROI against 64.7% — so
+    the cut is a scaling decision, not a reason to abandon P1. But peak exposure is a concurrency constraint
+    that ROI does not capture, and that check needs the open-position series.</li>
+    <li><b>The one number on this page that is not a result is +0.247.</b> It is a bound obtained by clamping
+    realised losses, which assumes no trade that fell past −16 would have recovered. A real sweep has to
+    replay candles. Everything else priced here is measured on the actual closes.</li>
+    <li><b>And the whole register rests on a two-day sample that grew while it was being written.</b> The
+    window is open, so the close count moved 646 → 651 → 667 across the three passes that produced these
+    pages. Every figure here is one consistent snapshot of 667 closes; the direction across ten proposals is
+    stable, the third significant figure is not. Enough to act on the measured three, not enough to size a
+    bankroll on.</li>
+  </ul>
+
+  <footer>
+    Source: <code>strategy_outcomes</code> on production (reloadsol_db) · spine era 2026-09-30 → 10-01 Asia/Bangkok by <code>exit_at</code> · 667 closes, base 0.005 SOL<br>
+    All figures from one consistent snapshot; the open window grew from 646 to 667 closes during the analysis, so row counts differ from <code>09-pnl-sizing.html</code> and <code>10-knob-poker.html</code><br>
+    Code referenced: <code>ml-soft-size.ts</code> · <code>target-machine-cl-size.ts</code> · <code>pnl-dashboard.ts</code> · <code>ledger-pnl.ts</code> · <code>READINESS_MIN_SAMPLE</code> · <code>MAX_SOL_AT_RISK</code><br>
+    Companion pages: <code>09-pnl-sizing.html</code> (what the multiplier is) · <code>10-knob-poker.html</code> (the two knobs and the poker derivation)<br>
+    Nothing was changed by this analysis. P1, P3, P9 and P10 are shippable without new code; P4 needs a replay, P5 a shadow result, P6 a signal
+  </footer>
+
+</div>
+</body>
+</html>

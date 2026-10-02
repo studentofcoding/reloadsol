@@ -176,7 +176,10 @@ export default function TradingHistory() {
   const [sortMode, setSortMode] = useState<TradeListSortMode>("date_desc");
   const [error, setError] = useState<string>("");
   const [isLocalStorageAvailable] = useState(() => checkLocalStorageAvailable());
-  const { data: solPriceUsd = 145 } = useSolPrice(300_000);
+  // Live price only. 0 means "unknown" — a hardcoded rate would silently convert at a
+  // rate that is not the market's (the legacy >10 SOL heuristic below simply skips then).
+  const { data: liveSolPrice } = useSolPrice(300_000);
+  const solPriceUsd = liveSolPrice && liveSolPrice > 0 ? liveSolPrice : 0;
 
   const { processedRecords, stats } = useMemo(
     () => processTradingRecords(walletAddress, rawRecords, solPriceUsd, network),

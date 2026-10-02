@@ -2,6 +2,15 @@ import { NextRequest, NextResponse, connection } from 'next/server'
 import { query } from '@/utils/db'
 import { getUsdPrices } from '@/utils/usd-prices'
 import { log } from '@/utils/unified-logger'
+import {
+  WATCH_RANGE_MAX,
+  WATCH_RANGE_MIN,
+  WATCH_SOCIAL_WINDOW_MIN,
+  intEnv,
+  loadWatchMints,
+  resolveDetectWindowMin,
+  resolveSamplerMaxMints,
+} from '@/strategies/token-metrics-watch'
 
 /**
  * 1-minute OHLC sampler (cron `ohlc_sampler`, default every 15s).
@@ -11,13 +20,15 @@ import { log } from '@/utils/unified-logger'
  * all miss. One statement per tick: the per-minute upsert folds each sample into the
  * current minute (open = first, high/low = extremes, close = latest, samples++).
  *
- * Volume stays NULL — no source in our stack exposes a genuine 1-minute volume.
+ * Volume stays NULL here: this sampler only has a Jupiter spot price in scope and makes no candle
+ * call. Upstream candle volume DOES exist (market-brain, Solana Tracker, both GMGN candle endpoints)
+ * and is persisted by the metrics series instead — `token_metrics_history.vol_min`, one row per
+ * (token, UTC hour) with 60 one-minute slots, written from real candles by `GET /api/metrics/copy`.
+ * Ceiling: `volume_death` in ohlc-rug-rules is therefore always skipped for THIS series (the cache
+ * path serves it). Upgrade path: give the sampler a candle call per watch mint.
  */
 
-const DEFAULT_MAX_MINTS = 300
 const DEFAULT_RETENTION_HOURS = 48
-const DEFAULT_RANGE_MIN = 30_000
-const DEFAULT_RANGE_MAX = 2_000_000
 
 function isServiceAuthorized(request: NextRequest): boolean {
   const { searchParams } = new URL(request.url)
@@ -27,44 +38,6 @@ function isServiceAuthorized(request: NextRequest): boolean {
   const auth = request.headers.get('authorization')
   return auth === `Bearer ${expected}`
 }
-
-function intEnv(name: string, fallback: number): number {
-  const raw = process.env[name]
-  if (!raw) return fallback
-  const n = Number(raw)
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback
-}
-
-/**
- * Watch set: mcap candidates in the tracking band + trending-tracker rows + mints
- * with a recent sim buy (a cheap proxy for "has an open position" — the full open
- * cycle reconstruction is too heavy for a 15s tick). Sol only: pricing is Jupiter.
- */
-const WATCH_SQL = `
-WITH watch AS (
-  SELECT token_address, last_updated_at AS seen_at
-    FROM token_mcap_tracking
-   WHERE COALESCE(chain, 'sol') = 'sol'
-     AND current_mcap >= $1 AND current_mcap <= $2
-  UNION ALL
-  SELECT token_address, COALESCE(updated_at, tracking_started_at) AS seen_at
-    FROM trending_token_tracker
-   WHERE status IN ('tracking', 'waiting')
-  UNION ALL
-  SELECT t->>'mintAddress' AS token_address, r.created_at AS seen_at
-    FROM trading_records r
-    CROSS JOIN LATERAL jsonb_array_elements(COALESCE(r.data->'tokens', '[]'::jsonb)) t
-   WHERE r.operation_type = 'buy'
-     AND COALESCE(r.chain, 'sol') = 'sol'
-     AND r.created_at > now() - interval '24 hours'
-     AND COALESCE(t->>'mintAddress', '') <> ''
-)
-SELECT token_address
-  FROM watch
- GROUP BY token_address
- ORDER BY max(seen_at) DESC NULLS LAST
- LIMIT $3
-`
 
 const UPSERT_SQL = `
 INSERT INTO token_ohlc_bars (
@@ -95,15 +68,21 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const maxMints = intEnv('OHLC_SAMPLE_MAX_MINTS', DEFAULT_MAX_MINTS)
+    const maxMints = resolveSamplerMaxMints()
+    const detectWindowMin = resolveDetectWindowMin()
     const retentionHours = intEnv('OHLC_BARS_RETENTION_HOURS', DEFAULT_RETENTION_HOURS)
+    const socialWindowMin = intEnv(
+      'OHLC_SAMPLE_SOCIAL_WINDOW_MIN',
+      WATCH_SOCIAL_WINDOW_MIN,
+    )
 
-    const { rows } = await query<{ token_address: string }>(WATCH_SQL, [
-      DEFAULT_RANGE_MIN,
-      DEFAULT_RANGE_MAX,
+    const mints = await loadWatchMints({
       maxMints,
-    ])
-    const mints = rows.map((r) => r.token_address).filter(Boolean)
+      rangeMin: WATCH_RANGE_MIN,
+      rangeMax: WATCH_RANGE_MAX,
+      socialWindowMin,
+      detectWindowMin,
+    })
 
     let priced: Array<[string, number]> = []
     if (mints.length > 0) {
@@ -128,6 +107,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       watch: mints.length,
+      max_mints: maxMints,
+      detect_window_min: detectWindowMin,
       priced: priced.length,
       pruned: rowCount ?? 0,
       retention_hours: retentionHours,

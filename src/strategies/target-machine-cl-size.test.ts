@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   applyClosedLoopExit,
   closedLoopExitMults,
@@ -6,6 +6,10 @@ import {
   sizeFromClosedLoop,
   stampTargetMachineCl,
 } from '@/strategies/target-machine-cl-size'
+
+afterEach(() => {
+  vi.unstubAllEnvs()
+})
 
 describe('resolveClosedLoopP', () => {
   it('defaults missing to 0.5', () => {
@@ -58,12 +62,22 @@ describe('applyClosedLoopExit', () => {
 })
 
 describe('sizeFromClosedLoop', () => {
-  it('uses pBad = 1 - p', () => {
+  it('reports p but does not size by it — flat since P1 (2026-10-01)', () => {
+    // `p` is still stamped (it is the closed-loop score, and the exit multipliers still use it), but the
+    // stake is the base: the score has no rank power, so it is out of the size path.
     const full = sizeFromClosedLoop(1, 1)
     expect(full.p).toBe(1)
     expect(full.mult).toBe(1)
     expect(full.sol).toBe(1)
 
+    const half = sizeFromClosedLoop(1, 0.5)
+    expect(half.p).toBe(0.5)
+    expect(half.mult).toBe(1)
+    expect(half.sol).toBe(1)
+  })
+
+  it('still scales behind SOL_ML_SIZE_ENABLED for a soak', () => {
+    vi.stubEnv('SOL_ML_SIZE_ENABLED', '1')
     const half = sizeFromClosedLoop(1, 0.5)
     expect(half.mult).toBe(0.5)
     expect(half.sol).toBe(0.5)

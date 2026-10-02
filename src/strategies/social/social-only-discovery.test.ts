@@ -1,8 +1,14 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+vi.mock('@/utils/db', () => ({ query: vi.fn() }))
+
+import { query } from '@/utils/db'
 import { PATTERN_TOP_SOURCE_GMGN_FOMO } from './pattern-features'
 import {
   filterSocialOnlyCandidates,
+  loadFomoBurstCandidates,
   passesSocialOnlyRollupGate,
+  socialBurstWindowMinutes,
 } from './social-only-discovery'
 import type { SocialTokenRollupRow } from './types'
 import { SOCIAL_STRATEGIES } from '@/strategies/registry'
@@ -133,5 +139,51 @@ describe('social-only-discovery', () => {
 
     expect(eligible.map((c) => c.tokenAddress)).toEqual([mintOk])
     expect(skipped.some((s) => s.includes('missing_required_source'))).toBe(true)
+  })
+})
+
+describe('loadFomoBurstCandidates', () => {
+  it('window defaults to 30 min and is env-tunable', () => {
+    expect(socialBurstWindowMinutes({})).toBe(30)
+    expect(socialBurstWindowMinutes({ SOCIAL_BURST_WINDOW_MIN: '45' })).toBe(45)
+    expect(socialBurstWindowMinutes({ SOCIAL_BURST_WINDOW_MIN: 'nope' })).toBe(30)
+  })
+
+  it('maps the event burst to rollup shape that passes the existing gate', async () => {
+    vi.mocked(query).mockResolvedValue({
+      rows: [
+        {
+          token_address: 'MintBurst111',
+          mention_count: 9,
+          first_seen_at: '2026-09-28T01:36:00.000Z',
+          last_event_at: '2026-09-28T01:55:00.000Z',
+          unique_channel_count_30m: 1,
+          mention_count_24h: 12,
+          fomo_buy_count_1h: 2,
+          fomo_edge_1h: 1.4,
+          mcap: 236_538,
+          first_mcap: 31_992,
+          mcap_growth_percent: 639,
+          organic_score: 46,
+          top_holders_pct: 21.5,
+        },
+      ],
+    } as never)
+
+    const rows = await loadFomoBurstCandidates(entry, { chain: 'sol' })
+    expect(rows).toHaveLength(1)
+    expect(rows[0].mention_count_30m).toBe(9)
+    expect(rows[0].top_source).toBe(PATTERN_TOP_SOURCE_GMGN_FOMO)
+    expect(rows[0].unique_channel_count_30m).toBe(1)
+    expect(rows[0].mention_count_24h).toBe(12)
+    expect(rows[0].mcap).toBe(236_538)
+    // A burst still inside the window is eligible even though the sampled
+    // rollup's own mention_count_30m had decayed to 0.
+    expect(passesSocialOnlyRollupGate(rows[0], entry)).toBeNull()
+  })
+
+  it('returns nothing when there are no events in the window', async () => {
+    vi.mocked(query).mockResolvedValue({ rows: [] } as never)
+    expect(await loadFomoBurstCandidates(entry, { chain: 'sol' })).toEqual([])
   })
 })

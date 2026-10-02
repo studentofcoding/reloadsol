@@ -11,11 +11,14 @@ import {
   resolveBuybulkSolFeeAccount,
 } from "@/utils/buybulk-fee";
 import { prepareJupiterLiteSwap } from "@/utils/jupiter-lite-swap";
+import { isVerifiedQuoteMint } from "@/utils/raptor-hops";
 import {
   executeJupiterSwap,
   executeJupiterSwapDirect,
+  JupiterSwapQuoteError,
   prepareJupiterSwapOrder,
 } from "@/utils/jupiter-swap-quote";
+import { withTransferFeeFloor } from "@/utils/token-transfer-fee";
 import {
   getSwapQuoteMaxImpactPct,
   impactToAbsPct,
@@ -50,6 +53,7 @@ import {
 import { beginTradeInFlight } from "@/utils/trade-inflight";
 import {
   priorityFeeCacheToken,
+  resolveSwapPriorityFee,
   type JupiterPrioritizationFeeLamports,
 } from "@/utils/priority-fee";
 import type { SwapQuote, SwapTransaction } from "@/types";
@@ -238,6 +242,10 @@ async function prepareDeskSwap(params: PrepareSwapParams): Promise<PreparedSwap>
     return await prepareJupiterSwapPrepared(params);
   } catch (error) {
     if (error instanceof SwapImpactGateError) throw error;
+    // A venue refusal is a decision, not a fault: `/order` answered 200 with no transaction and its own
+    // reason (e.g. "Insufficient funds"). Lite cannot simulate and would build a transaction that can
+    // never land, so falling back here would turn a clean refusal into a failed on-chain swap.
+    if (error instanceof JupiterSwapQuoteError && error.venueRefused) throw error;
     const message = error instanceof Error ? error.message : String(error);
     console.warn("[swap] Jupiter V2 /order failed, falling back to Lite:", message);
   }
@@ -291,11 +299,30 @@ async function prepareShyftStackSwap(
 export async function prepareSwapTransaction(
   params: PrepareSwapParams,
 ): Promise<PreparedSwap> {
+  // A Token-2022 transfer fee is invisible to impact-derived slippage (`resolveAutoSlippageBps` floors at
+  // 20 bps while DEW's fee alone is 100), and the router's own post-check then fails with 6001 on every
+  // build. Raise the budget here, once, so every lane below inherits it. No-op for classic SPL mints.
+  const { slippageBps } = await withTransferFeeFloor(
+    params.inputMint,
+    params.slippageBps,
+  );
+
+  // An omitted priority fee reached the builder as `0` — no tip — which is how a tx gets broadcast and
+  // never lands. Resolve it here, once, alongside the fee floor so every lane below inherits a real tip.
+  const priorityFeeLamports = resolveSwapPriorityFee(params.priorityFeeLamports);
+
+  const withFloor: PrepareSwapParams =
+    slippageBps === params.slippageBps &&
+    priorityFeeCacheToken(priorityFeeLamports) ===
+      priorityFeeCacheToken(params.priorityFeeLamports)
+      ? params
+      : { ...params, slippageBps, priorityFeeLamports };
+
   // Live arb passes maxHops and must keep Raptor hops, not the desk Jupiter path.
-  if (params.maxHops != null) {
-    return prepareArbSwap(params);
+  if (withFloor.maxHops != null) {
+    return prepareArbSwap(withFloor);
   }
-  return prepareDeskSwap(params);
+  return prepareDeskSwap(withFloor);
 }
 
 export async function prefetchSwapTransaction(
@@ -362,11 +389,11 @@ export async function buildPreparedSwap(
   return prepareSwapTransaction(params);
 }
 
-/** Build swap tx via the gated winning provider. */
+/** Build swap tx via the gated winning provider. An omitted fee resolves to auto (see `resolveSwapPriorityFee`). */
 export async function buildSwapTransaction(
   quote: SwapQuote,
   userPublicKey: string,
-  priorityFeeLamports: JupiterPrioritizationFeeLamports = 0,
+  priorityFeeLamports?: JupiterPrioritizationFeeLamports,
   options?: {
     direct?: boolean;
     feeAccount?: string;
@@ -530,10 +557,112 @@ async function rpcSendFallback(
   connection: Connection,
 ): Promise<string> {
   await waitForRpcRateLimit();
+  // Preflight ON: we broadcast this one, so the RPC re-simulates at the moment of send. The batch guard
+  // (`dropRevertingPreparedSwaps`) simulates every leg up front, but with legs 1-2 s apart the last leg
+  // is sent seconds after it was checked — a measured case landed as `6025` on chain and burned its fee.
+  // Rejecting here instead keeps the leg retryable and costs nothing: it would have failed anyway.
   return connection.sendTransaction(signedTx, {
-    skipPreflight: true,
+    skipPreflight: false,
     maxRetries: 2,
   });
+}
+
+/** Shyft's JSON-RPC. Used for the **batch** landing only — single swaps keep their existing lanes. */
+function shyftBatchRpcUrl(): string | null {
+  const url = process.env.SHYFT_RPC_URL?.trim();
+  return url && url.length > 0 ? url : null;
+}
+
+/** Serial spacing between batch sends. Parallel sends drew `RateLimitExceeded` at three (measured). */
+function batchSendMinIntervalMs(): number {
+  const parsed = Number(process.env.BATCH_SEND_MIN_INTERVAL_MS);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 1000;
+}
+
+/**
+ * Land a batch through Shyft's JSON-RPC, one `sendTransaction` at a time.
+ *
+ * Measured on a real 5-leg batch, 2026-10-02:
+ *   `send_many_txns` (REST)      → 417, 1 of 3 landed, confirm 61s
+ *   this RPC, sends in parallel  → 2 of 3 (one `RateLimitExceeded`)
+ *   this RPC, sends serialised   → 3 of 3 CONFIRMED, confirm 163ms
+ *
+ * A later 6-leg run at 400ms spacing drew `RateLimitExceeded` on 2 legs; both fell back to the Tracker RPC
+ * and **one never landed** — so a throttle here costs a trade, not just latency. Hence the 1000ms default
+ * and the retry below: a rate-limit is transient, so re-sending the *same* signed tx on the *same* lane is
+ * much safer than handing it to a lane that already dropped one. Re-sending is idempotent — same bytes,
+ * same signature.
+ *
+ * Returns `null` when the lane is not configured — the caller then keeps its previous behaviour. Otherwise
+ * it returns one row per input: a signature, or `null` meaning "this one needs the fallback". A leg that
+ * fails does **not** abort the rest; the remaining legs still get sent.
+ */
+export async function sendBatchViaShyftRpc(
+  encoded: string[],
+): Promise<({ signature: string } | null)[] | null> {
+  // `SHYFT_RPC_URL` is server-only and Next inlines only NEXT_PUBLIC_* into client code, so in the
+  // browser this gate always returned null — the batch submit runs client-side, so every browser batch
+  // silently fell through to Shyft's `send_many_txns` REST lane. That lane is the worst of the three:
+  // measured **417, 1 of 3 landed, 61 s** to confirm, against THIS lane's **3 of 3 in 163 ms**, and it
+  // failed before per-tx reporting, which is how it hid a partial batch. The browser now reaches the
+  // same lane through a same-origin proxy that owns the env; the request body is unchanged.
+  const isBrowser = typeof window !== "undefined";
+  const directUrl = shyftBatchRpcUrl();
+  if (!isBrowser && !directUrl) return null;
+  const url = isBrowser ? "/api/shyft/transaction/send_rpc" : directUrl!;
+
+  const gap = batchSendMinIntervalMs();
+  const rows: ({ signature: string } | null)[] = [];
+
+  const sendOne = async (payload: string, id: number): Promise<string | null> => {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        method: "sendTransaction",
+        params: [payload, { encoding: "base64", skipPreflight: false, maxRetries: 2 }],
+      }),
+    });
+    const body = (await response.json()) as { result?: unknown; error?: unknown };
+    if (typeof body?.result === "string") return body.result;
+    const reason = JSON.stringify(body?.error ?? body);
+    // A throttle is worth waiting out on this lane; anything else is the caller's fallback to handle.
+    if (/rate ?limit/i.test(reason)) throw new Error(reason);
+    // Preflight rejections land here. Say so plainly — a leg dropped for a stale quote is a different
+    // story from one that reached chain and failed, and the user should not have to guess which.
+    if (/preflight|simulation|would fail|insufficient/i.test(reason)) {
+      console.warn("[swap] shyft batch rpc preflight rejected (dropped before landing):", reason.slice(0, 140));
+      return null;
+    }
+    console.warn("[swap] shyft batch rpc send rejected:", reason.slice(0, 140));
+    return null;
+  };
+
+  for (let i = 0; i < encoded.length; i++) {
+    if (i > 0 && gap > 0) await new Promise((resolve) => setTimeout(resolve, gap));
+    try {
+      rows.push({ signature: (await sendOne(encoded[i], i + 1)) ?? "" });
+      if (!rows[rows.length - 1]!.signature) rows[rows.length - 1] = null;
+    } catch {
+      // rate limited — back off and try the same tx again before giving up on this lane
+      let signature: string | null = null;
+      for (let attempt = 1; attempt <= 2 && !signature; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, gap * attempt * 2));
+        try {
+          signature = await sendOne(encoded[i], i + 1);
+        } catch (error) {
+          console.warn(
+            `[swap] shyft batch rpc still throttled (attempt ${attempt}):`,
+            error instanceof Error ? error.message.slice(0, 80) : error,
+          );
+        }
+      }
+      rows.push(signature ? { signature } : null);
+    }
+  }
+  return rows;
 }
 
 async function submitShyftManyBatch(
@@ -577,6 +706,15 @@ async function submitShyftManyBatch(
   };
 
   try {
+    // The batch lane (Shyft JSON-RPC, paced). `null` means it is not configured, so we fall through to the
+    // previous REST behaviour unchanged. A leg it could not send resolves through the per-tx RPC fallback.
+    const viaRpc = await sendBatchViaShyftRpc(encoded);
+    if (viaRpc) {
+      return Promise.all(
+        items.map((item, i) => resolveItem(item, viaRpc[i] ?? undefined)),
+      );
+    }
+
     const manyResult = useDirect
       ? await sendShyftManyTransactionsDirect(encoded)
       : await sendShyftManyTransactions(encoded);
@@ -594,6 +732,66 @@ async function submitShyftManyBatch(
       items.map((item) => resolveItem(item, undefined, manyError)),
     );
   }
+}
+
+/** One prepared leg of a batch, as the caller identifies it (the mint address, in practice). */
+export type PreparedBatchItem<K> = {
+  key: K;
+  tx: VersionedTransaction;
+  meta: PreparedSwapMeta;
+};
+
+export type PreparedBatchSplit<K> = {
+  keep: PreparedBatchItem<K>[];
+  dropped: { key: K; reason: string }[];
+};
+
+/**
+ * Drop prepared swaps whose transaction **would revert** — before anything is signed.
+ *
+ * The batch path had no simulation at all. Jupiter's `/order` refuses a bad swap up front, but a Raptor
+ * build can return a transaction that reverts on chain (`Custom 6038` and `6006`, measured on prod
+ * 2026-10-02) — and a single such leg poisons a whole batch, because the landing lane reports one failure
+ * for all of them. Simulating first costs ~150 ms for five legs and turns a burned fee into a dropped leg.
+ *
+ * **Failing open is deliberate.** Only a simulation that *returns* an error drops a leg; a simulation that
+ * cannot run (transport failure, rate limit) keeps it. Dropping on an unreadable simulation would silently
+ * discard good trades, which is worse than the fee it saves.
+ */
+export async function dropRevertingPreparedSwaps<K>(
+  items: PreparedBatchItem<K>[],
+  connection: Connection,
+): Promise<PreparedBatchSplit<K>> {
+  const checked = await Promise.all(
+    items.map(async (item) => {
+      try {
+        const sim = await connection.simulateTransaction(item.tx, {
+          sigVerify: false,
+          replaceRecentBlockhash: true,
+        });
+        if (sim.value.err) {
+          return { item, revert: JSON.stringify(sim.value.err).slice(0, 120) };
+        }
+        return { item, revert: null };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[swap] simulation unavailable for a batch leg — keeping it: ${message}`);
+        return { item, revert: null };
+      }
+    }),
+  );
+
+  const keep: PreparedBatchItem<K>[] = [];
+  const dropped: { key: K; reason: string }[] = [];
+  for (const { item, revert } of checked) {
+    if (revert) {
+      console.warn(`[swap] dropped a batch leg that would revert: ${revert}`);
+      dropped.push({ key: item.key, reason: revert });
+    } else {
+      keep.push(item);
+    }
+  }
+  return { keep, dropped };
 }
 
 async function submitOneSignedSwap(
@@ -983,15 +1181,66 @@ export async function confirmSwapSignature(
 
 export type PreparedSwapMeta = PreparedSwap;
 
+/**
+ * Where a batch leg's transaction is built.
+ *
+ * `raptor` is the batch lane (`docs/specs/SPEC-batch-swap-lane-v1.md` §3). Raptor builds every leg in one
+ * parallel round, which is the entire reason to move the batch: at N=1 Jupiter is 3.3× faster (206 ms vs
+ * 688 ms), but N keyed calls serialise behind the 0.5 rps trade lane — ~10 s for five legs against Raptor's
+ * 832 ms round. Defaults to the keyed builder; a Raptor failure falls back to it rather than failing the leg.
+ */
+export type BulkPrepareLane = "raptor" | "venued";
+
+/**
+ * Which builder a bulk leg uses — resolved **per pair**, exactly like the hop ceiling.
+ *
+ * Raptor's token→token build is broken at the program level: it returns a tx whose hop amounts do not sum
+ * to the input, and **Raptor's own program rejects it** — `Custom 6006 TotalAmountsMustBeEqualToAmountIn`,
+ * `raptor-v1/common_swap.rs:897`, caught on two live token→token sells 2026-10-02. Jupiter builds the same
+ * pair clean (CU 159,976 against Raptor's reverting 58,445). The guard stops those trades burning fees, but
+ * dropping every leg is not a working batch — so the lane has to follow the pair.
+ *
+ * A leg touching a verified mint (SOL/USDC/USDT) is the case Raptor genuinely wins: one ungated parallel
+ * round instead of N calls serialised behind the 0.5 rps keyed lane.
+ */
+export function resolveBulkPrepareLane(
+  inputMint: string,
+  outputMint: string,
+): BulkPrepareLane {
+  return isVerifiedQuoteMint(inputMint) || isVerifiedQuoteMint(outputMint)
+    ? "raptor"
+    : "venued";
+}
+
 export async function prepareBulkSwapTransaction(
   params: PrepareSwapParams,
+  options?: { lane?: BulkPrepareLane | "auto" },
 ): Promise<{ tx: VersionedTransaction; meta: PreparedSwapMeta; outAmount?: string }> {
-  const prepared =
-    takeFreshPreparedSwap(params) ?? (await prepareSwapTransaction(params));
+  const lane =
+    !options?.lane || options.lane === "auto"
+      ? resolveBulkPrepareLane(params.inputMint, params.outputMint)
+      : options.lane;
+
+  let prepared: PreparedSwap | null = null;
+  if (lane === "raptor") {
+    try {
+      prepared = await prepareRaptorSwap(params);
+    } catch (error) {
+      console.warn(
+        "[swap] raptor bulk build failed, falling back to the keyed lane:",
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+
+  const swap =
+    prepared ??
+    takeFreshPreparedSwap(params) ??
+    (await prepareSwapTransaction(params));
   const tx = VersionedTransaction.deserialize(
-    Buffer.from(prepared.swapTransaction, "base64"),
+    Buffer.from(swap.swapTransaction, "base64"),
   );
-  return { tx, meta: prepared, outAmount: prepared.outAmount };
+  return { tx, meta: swap, outAmount: swap.outAmount };
 }
 
 export type SignOneTransaction = (

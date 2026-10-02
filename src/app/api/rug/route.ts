@@ -20,6 +20,7 @@ const VALID_SOURCES: TokenRugSource[] = [
   'dlmm-general',
   'gmgn-radar',
   'concentration',
+  'rug-signal-dev',
   'freeview',
 ];
 

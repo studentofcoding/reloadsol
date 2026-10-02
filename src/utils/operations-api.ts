@@ -4,6 +4,8 @@ interface TrackOperationRequest {
   walletAddress: string;
   operationType: 'buy' | 'sell' | 'close';
   successCount: number;
+  /** Idempotency key — the server applies the operation once and ignores repeats. */
+  operationKey?: string;
   failureCount?: number;
   solBalance?: number;
   metadata?: {
@@ -16,6 +18,9 @@ interface TrackOperationRequest {
 interface TrackOperationResponse {
   success: boolean;
   pointsEarned: number;
+  /** false when the server recognised the key as already applied. */
+  applied?: boolean;
+  duplicate?: boolean;
   operationType: string;
   successCount: number;
   dbOperationType: string;
@@ -34,7 +39,39 @@ interface WalletStatsResponse {
 }
 
 /**
- * Track a successful operation (buy, sell, or close) securely via server route
+ * Retry a request that failed for a reason a retry can fix.
+ *
+ * A deploy landing under an open tab changes chunk filenames, so the browser's lazy chunk load 404s and
+ * throws `ChunkLoadError` — the request may never have left the tab. This path used to have no handling
+ * at all (`operations-api.ts`), so the operation was simply lost: no row, no points, nothing to
+ * reconcile against. The same shape already exists in `jupiter.ts`.
+ *
+ * Only transport-shaped failures retry. A 4xx/5xx from the server is a real answer and is rethrown.
+ */
+const RETRYABLE_MESSAGE = /ChunkLoadError|Loading chunk|NetworkError|Failed to fetch|network/i;
+
+async function withTransportRetry<T>(fn: () => Promise<T>, maxRetries = 2): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      const retryable =
+        error instanceof Error && RETRYABLE_MESSAGE.test(error.message ?? '');
+      if (!retryable || attempt === maxRetries) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 250 * Math.pow(2, attempt)));
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * Track a successful operation (buy, sell, or close) securely via server route.
+ *
+ * Generates an idempotency key per call, so the retry above cannot double-count: the server applies the
+ * operation once and reports every repeat as a duplicate. The key must be created ONCE per logical
+ * operation, outside the retry — a key regenerated per attempt would defeat the whole mechanism.
  */
 export async function trackOperation(
   walletAddress: string,
@@ -49,10 +86,16 @@ export async function trackOperation(
   }
 ): Promise<TrackOperationResponse> {
   try {
+    const operationKey =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
     const requestData: TrackOperationRequest = {
       walletAddress,
       operationType,
       successCount,
+      operationKey,
       failureCount: options?.failureCount,
       solBalance: options?.solBalance,
       metadata: {
@@ -62,13 +105,15 @@ export async function trackOperation(
       }
     };
 
-    const response = await fetch('/api/operations/track', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(requestData),
-    });
+    const response = await withTransportRetry(() =>
+      fetch('/api/operations/track', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestData),
+      }),
+    );
 
     if (!response.ok) {
       const errorData = await response.json();

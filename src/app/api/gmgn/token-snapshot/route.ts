@@ -5,6 +5,8 @@ import { GmgnApiError } from '@/utils/gmgn-api'
 import { isGmgnTradeChain, isValidTradeTokenAddress } from '@/utils/gmgn-currencies'
 import { isValidMintAddress } from '@/utils/jupiter'
 import { getGmgnTokenSnapshotCached } from '@/utils/gmgn-snapshot-cache'
+import { readRiskChip } from '@/strategies/risk-store'
+import { usesGmgnWebTokenInfo } from '@/utils/gmgn-web-multi'
 
 export const maxDuration = 60
 
@@ -29,16 +31,17 @@ function errorStatus(error: unknown): number {
 export async function GET(request: NextRequest) {
   await connection()
   try {
-    if (!process.env.GMGN_API_KEY?.trim()) {
+    const { searchParams } = new URL(request.url)
+    const address = searchParams.get('address')?.trim() ?? ''
+    const chainRaw = searchParams.get('chain')?.trim() || 'sol'
+    const webSol = isGmgnTradeChain(chainRaw) && usesGmgnWebTokenInfo(chainRaw)
+    if (!webSol && !process.env.GMGN_API_KEY?.trim()) {
       return NextResponse.json(
         { success: false, error: 'GMGN_API_KEY is not set' },
         { status: 503 },
       )
     }
 
-    const { searchParams } = new URL(request.url)
-    const address = searchParams.get('address')?.trim() ?? ''
-    const chainRaw = searchParams.get('chain')?.trim() || 'sol'
     if (!isGmgnTradeChain(chainRaw)) {
       return NextResponse.json(
         { success: false, error: 'chain must be sol or robinhood' },
@@ -96,6 +99,9 @@ export async function GET(request: NextRequest) {
     // this read path (those live in the strategy/detection pipeline).
     const snapshot = buildGmgnTokenSnapshot(info, security)
     const concBan = evaluateConcentrationBan(snapshot)
+    // Stored shadow risk chip (RugCheck + dev reputation); null until the
+    // strategy pipeline has evaluated this token.
+    const riskChip = await readRiskChip(chain, address)
 
     return NextResponse.json({
       success: true,
@@ -107,6 +113,7 @@ export async function GET(request: NextRequest) {
       isHoneypot: isHoneypot(security),
       concentrationBanned: concBan.ban,
       concentrationReasons: concBan.reasons,
+      riskChip,
     })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)

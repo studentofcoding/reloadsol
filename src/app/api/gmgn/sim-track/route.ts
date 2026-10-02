@@ -11,8 +11,7 @@ import {
   openGmgnSimPosition,
 } from '@/strategies/gmgn-open-sim'
 import { computeOpenSimCycle } from '@/utils/simulation-trades'
-import { buildTradingRecord, insertTradingRecords } from '@/utils/trading-records-db'
-import type { TrackingRecord } from '@/utils/trading-tracker'
+import { buildTradingRecord } from '@/utils/trading-records-db'
 import { getOpenPositionPrices } from '@/utils/open-position-prices'
 import { getNativeUsd } from '@/utils/native-usd'
 import { log } from '@/utils/unified-logger'
@@ -75,113 +74,6 @@ function collectRecentMints(
   return recent
 }
 
-async function closeSimPosition(params: {
-  strategyId: string
-  chain: StrategyChain
-  mintAddress: string
-  symbol: string
-  entryAt: string | null
-  entryFeatures: Record<string, unknown>
-  closeReason: string
-  /** Wallet records already loaded by the cycle (avoids one fetch per close). */
-  records: TrackingRecord[]
-  /** Current price already batched by the cycle. */
-  currentPriceUsd: number | undefined
-  /** Close records are collected and bulk-inserted by the route. */
-  collect: (record: TrackingRecord) => void
-}): Promise<number> {
-  const simWallet = simWalletForChain(GMGN_SIM_WALLET, params.chain)
-  const cycle = computeOpenSimCycle(params.records, params.mintAddress)
-  if (!cycle) return 0
-
-  const sellPriceUsd = params.currentPriceUsd || cycle.weightedBuyPriceUsd
-  const solPrice = await getNativeUsd(params.chain)
-  const remaining = cycle.remainingTokenAmount
-  const solReceived =
-    sellPriceUsd && solPrice > 0
-      ? (remaining * sellPriceUsd) / solPrice
-      : cycle.totalSolBought
-
-  const pnlPct =
-    cycle.totalSolBought > 0
-      ? ((solReceived - cycle.totalSolBought) / cycle.totalSolBought) * 100
-      : 0
-
-  const record = buildTradingRecord({
-    walletAddress: simWallet,
-    chain: params.chain,
-    operationType: 'sell',
-    is_simulation: true,
-    simulation_type: 'strategy',
-    bot_strategy: params.strategyId,
-    close_position: true,
-    tokens: [
-      {
-        mintAddress: params.mintAddress,
-        symbol: params.symbol,
-        tokenAmount: remaining,
-        solAmount: solReceived,
-        priceUsd: sellPriceUsd,
-        solPrice,
-      },
-    ],
-    successCount: 1,
-    failureCount: 0,
-    totalTokens: 1,
-    solAmount: solReceived,
-    feesPaid: 0,
-    solPriceUsd: solPrice,
-    signatures: [`gmgn-sim-close-${Date.now()}`],
-    status: closeOutcomeStatusFromPnl(pnlPct),
-    trading_simulation: {
-      close_reason: params.closeReason,
-    },
-  })
-
-  params.collect(record)
-
-  const closeExtras = {
-    token_symbol: params.symbol,
-    exit_price_usd: sellPriceUsd,
-    close_reason: params.closeReason,
-    sol_spent: cycle.totalSolBought,
-    sol_received: solReceived,
-    initial_price_usd:
-      typeof params.entryFeatures.gmgn_price_usd === 'number'
-        ? params.entryFeatures.gmgn_price_usd
-        : cycle.weightedBuyPriceUsd,
-  }
-
-  const completeFeatures = await ensureCompleteBuyFeaturesForOutcome({
-    mintAddress: params.mintAddress,
-    buyFeatures: params.entryFeatures,
-    overrides: {
-      entryAt: params.entryAt,
-      tokenSymbol: params.symbol,
-      entryMcap: readFiniteNumber(params.entryFeatures.gmgn_market_cap_usd),
-      topHoldersPct: gmgnTopHoldersToPct(
-        readFiniteNumber(params.entryFeatures.gmgn_top_10_holder_rate),
-      ),
-    },
-    domain: 'gmgn',
-    extra: closeExtras,
-  })
-
-  await recordGmgnOutcome({
-    strategyId: params.strategyId,
-    chain: params.chain,
-    tokenAddress: params.mintAddress,
-    entryAt: params.entryAt,
-    exitAt: new Date().toISOString(),
-    pnlPct,
-    status: closeOutcomeStatusFromPnl(pnlPct),
-    isSimulated: true,
-    features: mergeEntryFeaturesForOutcome(completeFeatures ?? params.entryFeatures, closeExtras),
-  })
-
-  return pnlPct
-}
-
 async function openSimPosition(params: {
   strategy: GmgnStrategy
   mintAddress: string
@@ -198,7 +90,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
   }
   const { withJobLock } = await import('@/utils/bot-job-lock')
-  return withJobLock('gmgn_sim_track', 300, () => runSimTrack(request))
+  return withJobLock('gmgn_sim_track', 900, () => runSimTrack(request))
 }
 
 async function runSimTrack(request: NextRequest) {
@@ -217,6 +109,8 @@ async function runSimTrack(request: NextRequest) {
     const strategies = await getActiveGmgnForSim(chain)
     if (strategies.length === 0) continue
     const simWallet = simWalletForChain(GMGN_SIM_WALLET, chain)
+    // Unbounded on purpose — see the mcap-tracking route for the buffer measurement. The bound
+    // makes Postgres detoast every row's `data` server-side; this wallet is 836 rows.
     const records = await fetchTradingRecordsForWallet(simWallet)
 
     for (const strategy of strategies) {
@@ -227,13 +121,6 @@ async function runSimTrack(request: NextRequest) {
       const cooldownHours = strategy.config.discovery.cooldownHours ?? 24
       const recentMints = collectRecentMints(records, strategy.id, cooldownHours)
 
-      const mintsToPrice = openPositions.map((p) => p.mintAddress)
-      const prices =
-        mintsToPrice.length > 0
-          ? await getOpenPositionPrices(mintsToPrice, chain)
-          : ({} as Record<string, number>)
-
-      const pendingCloses: TrackingRecord[] = []
       for (const pos of openPositions) {
         await checkGmgnLiveBoostForOpenPosition({
           walletAddress: simWallet,
@@ -243,31 +130,11 @@ async function runSimTrack(request: NextRequest) {
           symbol: pos.symbol,
         })
 
-        const currentPrice = prices[pos.mintAddress] ?? pos.entryPriceUsd
-        const { close, reason } = shouldClosePosition({
-          entryPriceUsd: pos.entryPriceUsd,
-          currentPriceUsd: currentPrice,
-          entryAt: pos.entryAt,
-          exit: strategy.config.exit,
-        })
-        if (close) {
-          await closeSimPosition({
-            strategyId: strategy.id,
-            chain,
-            mintAddress: pos.mintAddress,
-            symbol: pos.symbol,
-            entryAt: pos.entryAt,
-            entryFeatures: pos.entryFeatures,
-            closeReason: reason,
-            records,
-            currentPriceUsd: prices[pos.mintAddress],
-            collect: (r) => pendingCloses.push(r),
-          })
-          closed++
-          openMintSet.delete(pos.mintAddress)
-        }
+        // The 60s SL/TP worker owns this position's exit (SPEC-strategy-exit-standard S9). This
+        // pass monitors (the live-boost check above) and opens; it no longer closes, so
+        // `shouldClosePriceSimPosition` has no caller here and this route cannot disagree with the
+        // worker about the same position.
       }
-      if (pendingCloses.length > 0) await insertTradingRecords(pendingCloses)
 
       const { discovered, eligible, skipped } = await discoverAndGateGmgnCandidates({
         strategy,

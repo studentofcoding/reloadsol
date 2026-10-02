@@ -15,11 +15,17 @@ import type {
   StrategyOutcomeRow,
 } from "@/strategies/types";
 import { formatAppDateTime } from "@/utils/datetime";
+import { diffSource } from "@/strategies/config-source";
+import { DEFAULT_FILTER_CONFIG } from "@/strategies/registry";
 import {
   Section,
   FieldGrid,
+  FamilyDefaultRow,
+  CardFieldReveal,
+  CardSection,
   NumberField,
   CheckboxField,
+  SourceTag,
   formatFilterSummary,
   parseOptionalFloat,
 } from "@/components/strategies/StrategyConfigFields";
@@ -35,7 +41,6 @@ import OutcomeReviewModal, {
 import CombinedScoreWeightsPanel from "@/components/strategies/CombinedScoreWeightsPanel";
 import EvalEnginePanel from "@/components/strategies/EvalEnginePanel";
 import SpinePanel from "@/components/strategies/SpinePanel";
-import EarlyEnterNoulShadowPanel from "@/components/strategies/EarlyEnterNoulShadowPanel";
 import Ml2ExitOverlayPanel from "@/components/strategies/Ml2ExitOverlayPanel";
 import StrategyReviewPanel from "@/components/strategies/StrategyReviewPanel";
 import ScrollableMenuRow from "@/components/ScrollableMenuRow";
@@ -51,7 +56,13 @@ import {
   readTrainingClass,
   readVolumeAtEntry,
 } from "@/strategies/outcome-features";
-import { DEFAULT_GMGN_RADAR } from "@/strategies/registry";
+import {
+  DEFAULT_GMGN_EXIT,
+  DEFAULT_GMGN_RADAR,
+  DEFAULT_GMGN_SECURITY,
+  DEFAULT_MCAP_TRACKER_EXIT,
+  DEFAULT_SIGNALS_SCORING,
+} from "@/strategies/registry";
 import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import { notifySyncForActive, readNotifyFlags } from "@/strategies/strategy-notify";
 import {
@@ -115,6 +126,12 @@ function StrategyNotifyBar({
   const flags = readNotifyFlags(notify)
   return (
     <div className="flex flex-wrap gap-3 items-center text-xs text-gray-300">
+      {/* T4 step 3: a switch, not configuration. These change what the running system *does* — whether
+          this strategy notifies at all — not what it trades on, and they read as tunable parameters
+          when they sit unlabelled beside the thresholds. */}
+      <span className="font-mono text-[10px] uppercase tracking-wide text-gray-500 mr-1">
+        Notify switches
+      </span>
       <label className="flex items-center gap-1.5 cursor-pointer">
         <input
           type="checkbox"
@@ -182,6 +199,15 @@ type StrategiesResponse = {
     active: string[];
   };
   dlmm?: { effective: DlmmStrategy };
+  /**
+   * T7: per-family field provenance carried by `GET /api/strategies` —
+   * `sources.trending_bot["att.take_profit_levels.tp1_percentage"] === "stored" | "defaults"`.
+   * Paths are `id.field` because `diffSource` walks both sides keyed by strategy id.
+   *
+   * Optional because it is transported, not computed here: a payload from an older build must render
+   * exactly as before, not throw.
+   */
+  sources?: Record<string, Record<string, "stored" | "defaults">>;
 };
 
 type OutcomeRow = StrategyOutcomeRow;
@@ -195,6 +221,97 @@ type ReportBreakdown = {
   avg_pnl_pct: number;
   last_exit_at?: string | null;
 };
+
+/** Tokens entered by more than one strategy — agreement, not a defect. */
+type OverlapRow = {
+  chain: string;
+  token_address: string;
+  /** Raw distinct strategies; includes grid clones, so it overstates agreement. */
+  strategy_count: number;
+  strategies: string[];
+  /** Independent bets (see resolveStrategyFamily). "5 rows, 2 bets". */
+  family_count: number;
+  families: string[];
+  trades: number;
+  wins: number;
+  losses: number;
+  median_pnl_pct: number | null;
+  first_entry: string | null;
+  last_exit: string | null;
+};
+
+/** Pairwise token-set overlap. same_family = the spawner produced a clone. */
+type PairOverlapRow = {
+  strategy_a: string;
+  strategy_b: string;
+  shared: number;
+  a_tokens: number;
+  b_tokens: number;
+  jaccard: number;
+  family_a: string;
+  family_b: string;
+  same_family: boolean;
+};
+
+type ConsensusBucket = {
+  family_count: number;
+  label: string;
+  tokens: number;
+  trades: number;
+  median_pnl_pct: number | null;
+  mean_pnl_pct: number | null;
+  win_rate: number | null;
+  median_ci: [number, number] | null;
+  win_rate_ci: [number, number] | null;
+};
+
+type ConsensusLift = {
+  vs: string;
+  delta_median_pct: number | null;
+  delta_ci: [number, number] | null;
+  significant: boolean;
+  inconclusive: boolean;
+  reason: string;
+};
+
+type ConsensusResult = {
+  buckets: ConsensusBucket[];
+  lifts: ConsensusLift[];
+  min_tokens_per_bucket: number;
+  samples: number;
+};
+
+/** Paper-trade capital + R:R. Amounts are in the chain's native unit (SOL vs ETH). */
+type PaperCapitalDay = {
+  day: string;
+  buys: number;
+  deployed: number;
+  peak_open: number;
+  peak_capital: number;
+  trades: number;
+  wins: number;
+  losses: number;
+  win_rate: number;
+  profit_factor: number | null;
+  expectancy_pct: number;
+  median_pct: number;
+  avg_win_pct: number | null;
+  avg_loss_pct: number | null;
+  rr_ratio: number | null;
+};
+
+type PaperCapitalSummary = {
+  chain: string;
+  currency: string;
+  days: PaperCapitalDay[];
+  window_days: number;
+  totals: PaperCapitalDay & { trades: number };
+  observed_clip: number;
+  timezone: string;
+};
+
+const fmtPct = (v: number | null | undefined): string =>
+  v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
 
 type CoverageRow = {
   strategy_id: string;
@@ -270,16 +387,22 @@ type StrategyAdminQueryData = {
   data: StrategiesResponse;
   outcomes: OutcomeRow[];
   outcomesTotal: number;
-  reports: {
-    breakdown: ReportBreakdown[];
-    coverage: CoverageRow[];
-    ab_pairs: AbPair[];
-    ranking: ReportBreakdown[];
-    ml_stats: MlLabelStats;
-    mcap_tracker_stats: McapTrackerReportStats | null;
-    best_trade_windows: BestTradeWindowRow[];
-    timezone: string;
-  } | null;
+};
+
+/** Loaded by its own query — a cold recompute is seconds, the table is ~40 ms. */
+type StrategyReportsData = {
+  breakdown: ReportBreakdown[];
+  coverage: CoverageRow[];
+  ab_pairs: AbPair[];
+  ranking: ReportBreakdown[];
+  ml_stats: MlLabelStats;
+  mcap_tracker_stats: McapTrackerReportStats | null;
+  best_trade_windows: BestTradeWindowRow[];
+  overlap: OverlapRow[];
+  pairs: PairOverlapRow[];
+  consensus: ConsensusResult | null;
+  capital: PaperCapitalSummary[];
+  timezone: string;
 };
 
 type WorkerRow = {
@@ -317,6 +440,36 @@ type AdminToast = {
 
 function formatError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * POST and read the body once, checking the status and content-type before parsing.
+ *
+ * The backfill can outlive the proxy budget, and both nginx and Cloudflare answer that with an HTML
+ * error page — parsing it as JSON is what surfaced as `Unexpected token '<', "<!DOCTYPE "...`,
+ * which hid the real status. Returns `json: null` plus the body snippet for a non-JSON answer.
+ */
+async function postJson<T>(
+  url: string,
+): Promise<{ ok: boolean; status: number; json: T | null; snippet: string }> {
+  const res = await fetch(url, { method: "POST", credentials: "include" });
+  const contentType = res.headers.get("content-type") ?? "";
+  const body = await res.text();
+  if (!contentType.includes("application/json")) {
+    return { ok: res.ok, status: res.status, json: null, snippet: body.slice(0, 120) };
+  }
+  try {
+    return { ok: res.ok, status: res.status, json: JSON.parse(body) as T, snippet: "" };
+  } catch {
+    return { ok: res.ok, status: res.status, json: null, snippet: body.slice(0, 120) };
+  }
+}
+
+/** A gateway cut (nginx 504 / Cloudflare 524) means "narrow the scope", not "the label logic broke". */
+function backfillHttpHint(status: number): string {
+  return status === 504 || status === 524
+    ? " — the request outlived the proxy; scope it to a domain or retry"
+    : "";
 }
 
 function formatRelativeTime(date: Date | null, nowMs: number): string {
@@ -451,6 +604,27 @@ function buildCsvHref(params: {
   return `/api/strategies/outcomes?${q.toString()}`;
 }
 
+/**
+ * Token-level PnL spreadsheet for the selected range: top 10 winners, top 10 losers, full list.
+ * Deliberately no chain filter — the panel is chain-scoped, but a PnL export that silently
+ * dropped the Robinhood twin (261 of 627 sim rows over three days) would misreport the range.
+ */
+function buildPnlExportHref(params: {
+  reportFrom: string;
+  reportTo: string;
+  reportTz: string;
+  reportSimulated: string;
+  positionSizeSol: string;
+}) {
+  const q = new URLSearchParams();
+  if (params.reportFrom) q.set("from", params.reportFrom);
+  if (params.reportTo) q.set("to", params.reportTo);
+  q.set("tz", params.reportTz);
+  if (params.reportSimulated) q.set("is_simulated", params.reportSimulated);
+  q.set("position_size", params.positionSizeSol || "0.005");
+  return `/api/strategies/pnl-export?${q.toString()}`;
+}
+
 export default function StrategyAdminHub({
   embedded,
 }: {
@@ -475,6 +649,7 @@ export default function StrategyAdminHub({
   const [reportDomain, setReportDomain] = useState("");
   const [reportStrategyId, setReportStrategyId] = useState("");
   const [reportSimulated, setReportSimulated] = useState("");
+  const [exportPositionSize, setExportPositionSize] = useState("0.005");
   const [reportMlLabel, setReportMlLabel] = useState("");
   const [reportMlCondition, setReportMlCondition] = useState("");
   const [reportStatus, setReportStatus] = useState("");
@@ -662,18 +837,11 @@ export default function StrategyAdminHub({
     staleTime: 60_000,
   });
 
+  // Core view data: strategies + outcomes. Both are fast (~40 ms), so the table
+  // can paint immediately.
   const strategiesQuery = useQuery({
-    queryKey: strategyAdminQueryKey,
+    queryKey: [...strategyAdminQueryKey, "core"],
     queryFn: async () => {
-      const reportParams = new URLSearchParams();
-      reportParams.set("chain", network);
-      if (reportFrom) reportParams.set("from", reportFrom);
-      if (reportTo) reportParams.set("to", reportTo);
-      if (reportDomain) reportParams.set("domain", reportDomain);
-      if (reportStrategyId) reportParams.set("strategy_id", reportStrategyId);
-      if (reportSimulated) reportParams.set("is_simulated", reportSimulated);
-      reportParams.set("tz", reportTz);
-
       const outcomesQuery = buildOutcomesQuery({
         reportFrom,
         reportTo,
@@ -689,39 +857,63 @@ export default function StrategyAdminHub({
         tokenAddress: tokenSearch,
       });
 
-      const [strRes, outRes, repRes] = await Promise.all([
+      const [strRes, outRes] = await Promise.all([
         fetch(`/api/strategies?chain=${network}`),
         fetch(`/api/strategies/outcomes?${outcomesQuery}&chain=${network}`),
-        fetch(`/api/strategies/reports?${reportParams.toString()}`),
       ]);
       const strJson = await strRes.json();
       const outJson = await outRes.json();
-      const repJson = await repRes.json();
       if (!strJson.success) throw new Error(strJson.error || "Failed to load");
       return {
         data: strJson as StrategiesResponse,
         outcomes: (outJson.outcomes ?? []) as OutcomeRow[],
         outcomesTotal: (outJson.total ?? 0) as number,
-        reports: repJson.success
-          ? {
-              breakdown: repJson.breakdown ?? [],
-              coverage: (repJson.coverage ?? []) as CoverageRow[],
-              ab_pairs: repJson.ab_pairs ?? [],
-              ranking: repJson.ranking ?? [],
-              ml_stats: (repJson.ml_stats ?? {
-                total: 0,
-                unlabeled: 0,
-                by_label: {},
-                by_condition: {},
-              }) as MlLabelStats,
-              mcap_tracker_stats: repJson.mcap_tracker_stats ?? null,
-              best_trade_windows: (repJson.best_trade_windows ??
-                []) as BestTradeWindowRow[],
-              timezone: (repJson.timezone as string) ?? reportTz,
-            }
-          : null,
       };
     },
+  });
+
+  /**
+   * Reports (breakdown + coverage + consensus bootstrap + capital) are a SEPARATE
+   * request on purpose: a cold recompute takes seconds, and folding it into the
+   * blocking query above made the whole closed view look like it never loaded.
+   */
+  const reportsQuery = useQuery<StrategyReportsData | null>({
+    queryKey: [...strategyAdminQueryKey, "reports"],
+    queryFn: async () => {
+      const reportParams = new URLSearchParams();
+      reportParams.set("chain", network);
+      if (reportFrom) reportParams.set("from", reportFrom);
+      if (reportTo) reportParams.set("to", reportTo);
+      if (reportDomain) reportParams.set("domain", reportDomain);
+      if (reportStrategyId) reportParams.set("strategy_id", reportStrategyId);
+      if (reportSimulated) reportParams.set("is_simulated", reportSimulated);
+      reportParams.set("tz", reportTz);
+
+      const repRes = await fetch(`/api/strategies/reports?${reportParams.toString()}`);
+      const repJson = await repRes.json();
+      if (!repJson.success) return null;
+      return {
+        breakdown: repJson.breakdown ?? [],
+        coverage: (repJson.coverage ?? []) as CoverageRow[],
+        ab_pairs: repJson.ab_pairs ?? [],
+        ranking: repJson.ranking ?? [],
+        ml_stats: (repJson.ml_stats ?? {
+          total: 0,
+          unlabeled: 0,
+          by_label: {},
+          by_condition: {},
+        }) as MlLabelStats,
+        mcap_tracker_stats: repJson.mcap_tracker_stats ?? null,
+        best_trade_windows: (repJson.best_trade_windows ??
+          []) as BestTradeWindowRow[],
+        overlap: (repJson.overlap ?? []) as OverlapRow[],
+        pairs: (repJson.pairs ?? []) as PairOverlapRow[],
+        consensus: (repJson.consensus ?? null) as ConsensusResult | null,
+        capital: (repJson.capital ?? []) as PaperCapitalSummary[],
+        timezone: (repJson.timezone as string) ?? reportTz,
+      };
+    },
+    enabled: showReports,
     refetchInterval:
       showReports && backfillPhase !== "running"
         ? REPORTS_POLL_INTERVAL_MS
@@ -749,7 +941,7 @@ export default function StrategyAdminHub({
   const outcomesTotal = strategiesQuery.data?.outcomesTotal ?? 0;
   const selectedOutcome =
     selectedOutcomeIndex != null ? outcomes[selectedOutcomeIndex] ?? null : null;
-  const reports = strategiesQuery.data?.reports ?? null;
+  const reports = reportsQuery.data ?? null;
   const coverage = reports?.coverage ?? [];
   const loading = strategiesQuery.isLoading;
   const loadError = strategiesQuery.error
@@ -815,19 +1007,22 @@ export default function StrategyAdminHub({
       if (reportDomain) params.set("domain", reportDomain);
       if (reportStrategyId) params.set("strategyId", reportStrategyId);
 
-      const previewRes = await fetch(
-        `/api/strategies/ml/backfill-labels?${params.toString()}`,
-        { method: "POST", credentials: "include" },
-      );
-      const previewJson = (await previewRes.json()) as {
+      const preview = await postJson<{
         success?: boolean;
         error?: string;
         preview?: Record<string, number>;
         skipped_manual?: number;
-      };
-      if (!previewRes.ok || !previewJson.success) {
-        throw new Error(previewJson.error || "Backfill preview failed");
+      }>(`/api/strategies/ml/backfill-labels?${params.toString()}`);
+      if (!preview.ok || !preview.json?.success) {
+        throw new Error(
+          preview.json?.error
+            ? `${preview.json.error}${backfillHttpHint(preview.status)}`
+            : `Backfill preview failed (HTTP ${preview.status})${backfillHttpHint(
+                preview.status,
+              )}${preview.snippet ? ` — ${preview.snippet}` : ""}`,
+        );
       }
+      const previewJson = preview.json;
 
       const p = previewJson.preview ?? {};
       const previewDetail = [
@@ -862,27 +1057,39 @@ export default function StrategyAdminHub({
 
       setBackfillPhase("running");
       params.delete("dry_run");
-      const runRes = await fetch(
-        `/api/strategies/ml/backfill-labels?${params.toString()}`,
-        { method: "POST", credentials: "include" },
-      );
-      const runJson = (await runRes.json()) as {
+      const run = await postJson<{
         success?: boolean;
         error?: string;
         updated?: number;
+        unchanged?: number;
         skipped_manual?: number;
-      };
-      if (!runRes.ok || !runJson.success) {
-        throw new Error(runJson.error || "Backfill failed");
+        truncated?: boolean;
+      }>(`/api/strategies/ml/backfill-labels?${params.toString()}`);
+      if (!run.ok || !run.json?.success) {
+        throw new Error(
+          run.json?.error
+            ? `${run.json.error}${backfillHttpHint(run.status)}`
+            : `Backfill failed (HTTP ${run.status})${backfillHttpHint(run.status)}${
+                run.snippet ? ` — ${run.snippet}` : ""
+              }`,
+        );
       }
+      const runJson = run.json;
 
       await strategiesQuery.refetch();
+      const runDetail = [
+        runJson.unchanged ? `${runJson.unchanged} already current` : null,
+        runJson.skipped_manual
+          ? `${runJson.skipped_manual} manual rows skipped`
+          : null,
+        runJson.truncated ? "scope capped — run again for the rest" : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
       showToast(
         "success",
         `Backfilled ${runJson.updated ?? 0} outcomes`,
-        runJson.skipped_manual
-          ? `${runJson.skipped_manual} manual rows skipped`
-          : undefined,
+        runDetail || undefined,
       );
     } catch (e) {
       showToast("error", "Backfill failed", formatError(e));
@@ -899,7 +1106,7 @@ export default function StrategyAdminHub({
   const updateOutcomeInCache = useCallback(
     (updated: StrategyOutcomeRow, rowIndex?: number) => {
       queryClient.setQueryData<StrategyAdminQueryData | undefined>(
-        strategyAdminQueryKey,
+        [...strategyAdminQueryKey, "core"],
         (old) => {
           if (!old) return old;
           const idx = rowIndex ?? old.outcomes.findIndex((r) => r.id === updated.id);
@@ -1109,6 +1316,7 @@ export default function StrategyAdminHub({
           effective={effective}
           active={active}
           allocation={data?.trending_bot?.allocation}
+          sources={data?.sources}
           signals={signals}
           mcapTracker={mcapTracker}
           gmgn={gmgn}
@@ -1356,6 +1564,30 @@ export default function StrategyAdminHub({
                 className="self-end px-3 py-1.5 bg-gray-700 rounded text-white text-xs"
               >
                 Export CSV
+              </a>
+              <label className="text-gray-400">
+                Position size (SOL)
+                <input
+                  type="number"
+                  min="0"
+                  step="0.001"
+                  className="block mt-1 w-24 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white"
+                  value={exportPositionSize}
+                  onChange={(e) => setExportPositionSize(e.target.value)}
+                />
+              </label>
+              <a
+                href={buildPnlExportHref({
+                  reportFrom,
+                  reportTo,
+                  reportTz,
+                  reportSimulated,
+                  positionSizeSol: exportPositionSize,
+                })}
+                className="self-end px-3 py-1.5 bg-emerald-800 hover:bg-emerald-700 rounded text-white text-xs"
+                title="Token-level PnL for the selected range: top 10 winners, top 10 losers and the full list"
+              >
+                Export token PnL spreadsheet
               </a>
             </div>
 
@@ -1689,6 +1921,306 @@ export default function StrategyAdminHub({
                 </li>
               ))}
             </ul>
+
+            <h3 className="text-lg font-semibold text-white mb-2">
+              Strategy overlap — tokens entered by &gt;1 strategy
+            </h3>
+            {(reports?.overlap ?? []).length > 0 ? (
+              <div className="overflow-x-auto mb-6">
+                <table className="w-full text-sm text-gray-300">
+                  <thead className="text-gray-400 text-xs uppercase">
+                    <tr>
+                      <th className="p-2 text-left">Token</th>
+                      <th className="p-2 text-center" title="independent bets / raw strategy rows">
+                        Bets
+                      </th>
+                      <th className="p-2 text-left">Strategies</th>
+                      <th className="p-2 text-center">Trades</th>
+                      <th className="p-2 text-center">W/L</th>
+                      <th className="p-2 text-center">Median PnL</th>
+                      <th className="p-2 text-center">Last exit</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(reports?.overlap ?? []).slice(0, 20).map((o: OverlapRow) => (
+                      <tr
+                        key={`${o.chain}-${o.token_address}`}
+                        className="border-t border-gray-700"
+                      >
+                        <td className="p-2 font-mono text-xs">
+                          {o.token_address.slice(0, 10)}…
+                        </td>
+                        <td
+                          className="p-2 text-center"
+                          title={`${o.family_count} independent bet(s) across ${o.strategy_count} strategy row(s)`}
+                        >
+                          <span
+                            className={
+                              o.family_count > 1 ? "text-cyan-300" : "text-gray-400"
+                            }
+                          >
+                            {o.family_count}
+                          </span>
+                          <span className="text-xs text-gray-500">
+                            /{o.strategy_count}
+                          </span>
+                        </td>
+                        <td className="p-2">
+                          {o.family_count > 1 && (
+                            <span className="text-xs text-cyan-300">
+                              {o.families.join(" + ")}
+                            </span>
+                          )}
+                          {o.family_count > 1 && " · "}
+                          <span className="text-xs text-gray-500">
+                            {o.strategies.join(", ")}
+                          </span>
+                        </td>
+                        <td className="p-2 text-center">{o.trades}</td>
+                        <td className="p-2 text-center">
+                          {o.wins}/{o.losses}
+                        </td>
+                        <td className="p-2 text-center">
+                          {o.median_pnl_pct == null
+                            ? "—"
+                            : `${o.median_pnl_pct.toFixed(2)}%`}
+                        </td>
+                        <td className="p-2 text-center text-xs text-gray-400">
+                          {o.last_exit
+                            ? o.last_exit.slice(0, 16).replace("T", " ")
+                            : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="text-xs text-gray-500 mt-1">
+                  Bets = independent families (see strategy-family.ts); the number after
+                  the slash is the raw strategy rows. The search spawner fills its slots
+                  with near-identical grid neighbours, so raw breadth overstates
+                  agreement: &quot;5 rows, 2 bets&quot;. Median, never a summed % — that
+                  would double-count one token&apos;s move.
+                </p>
+              </div>
+            ) : (
+              <p className="text-gray-500 text-sm mb-6">
+                No token entered by more than one strategy in this window.
+              </p>
+            )}
+
+            <h3 className="text-lg font-semibold text-white mb-2">
+              Pairwise overlap — clones vs real agreement
+            </h3>
+            {(reports?.pairs ?? []).length > 0 ? (
+              <div className="overflow-x-auto mb-6">
+                <table className="w-full text-sm text-gray-300">
+                  <thead className="text-gray-400 text-xs uppercase">
+                    <tr>
+                      <th className="p-2 text-left">Strategy pair</th>
+                      <th className="p-2 text-center">Shared</th>
+                      <th className="p-2 text-center">Jaccard</th>
+                      <th className="p-2 text-left">Verdict</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(reports?.pairs ?? []).slice(0, 15).map((p: PairOverlapRow) => (
+                      <tr
+                        key={`${p.strategy_a}-${p.strategy_b}`}
+                        className="border-t border-gray-700"
+                      >
+                        <td className="p-2 text-xs">
+                          {p.strategy_a} ↔ {p.strategy_b}
+                        </td>
+                        <td className="p-2 text-center">
+                          {p.shared}/{p.a_tokens}·{p.b_tokens}
+                        </td>
+                        <td className="p-2 text-center">{p.jaccard.toFixed(2)}</td>
+                        <td className="p-2 text-xs">
+                          {p.same_family ? (
+                            <span className="text-amber-300">
+                              redundant — same family ({p.family_a})
+                            </span>
+                          ) : (
+                            <span className="text-emerald-300">
+                              agreement across families
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-gray-500 text-sm mb-6">
+                No strategy pair shares 2+ tokens in this window.
+              </p>
+            )}
+
+            <h3 className="text-lg font-semibold text-white mb-2">
+              Does agreement predict the outcome?
+            </h3>
+            {(() => {
+              const c = reports?.consensus;
+              if (!c || c.buckets.length === 0) {
+                return (
+                  <p className="text-gray-500 text-sm mb-6">
+                    No closed outcomes in this window yet.
+                  </p>
+                );
+              }
+              return (
+                <div className="mb-6">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-gray-300">
+                      <thead className="text-gray-400 text-xs uppercase">
+                        <tr>
+                          <th className="p-2 text-left">Bets</th>
+                          <th className="p-2 text-center">Tokens</th>
+                          <th className="p-2 text-center">Trades</th>
+                          <th className="p-2 text-center">Median PnL</th>
+                          <th className="p-2 text-center">95% CI</th>
+                          <th className="p-2 text-center">Token win %</th>
+                          <th className="p-2 text-center">95% CI</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {c.buckets.map((b: ConsensusBucket) => (
+                          <tr key={b.label} className="border-t border-gray-700">
+                            <td className="p-2">{b.label}</td>
+                            <td className="p-2 text-center">{b.tokens}</td>
+                            <td className="p-2 text-center">{b.trades}</td>
+                            <td className="p-2 text-center">
+                              {fmtPct(b.median_pnl_pct)}
+                            </td>
+                            <td className="p-2 text-center text-xs text-gray-400">
+                              {b.median_ci
+                                ? `[${fmtPct(b.median_ci[0])}, ${fmtPct(b.median_ci[1])}]`
+                                : "—"}
+                            </td>
+                            <td className="p-2 text-center">
+                              {b.win_rate == null
+                                ? "—"
+                                : `${(b.win_rate * 100).toFixed(1)}%`}
+                            </td>
+                            <td className="p-2 text-center text-xs text-gray-400">
+                              {b.win_rate_ci
+                                ? `[${(b.win_rate_ci[0] * 100).toFixed(1)}%, ${(b.win_rate_ci[1] * 100).toFixed(1)}%]`
+                                : "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="mt-2 space-y-1">
+                    {c.lifts.map((l: ConsensusLift, i: number) => (
+                      <p
+                        key={`${l.vs}-${i}`}
+                        className={
+                          l.significant
+                            ? "text-xs text-emerald-300"
+                            : "text-xs text-amber-300"
+                        }
+                      >
+                        {l.vs} bet → more bets: {fmtPct(l.delta_median_pct)}
+                        {l.delta_ci
+                          ? ` (95% CI [${fmtPct(l.delta_ci[0])}, ${fmtPct(l.delta_ci[1])}])`
+                          : ""}{" "}
+                        —{" "}
+                        {l.significant
+                          ? "significant"
+                          : `inconclusive: ${l.reason}`}{" "}
+                        · floor {c.min_tokens_per_bucket} tokens/side
+                      </p>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Breadth counts independent families, not strategy rows. Median with
+                    a bootstrap CI because the outcome distribution is right-tailed — a
+                    mean would report the tail. Nothing here gates trading.
+                  </p>
+                </div>
+              );
+            })()}
+
+            <h3 className="text-lg font-semibold text-white mb-2">
+              Paper-trade capital &amp; R:R (last {reports?.capital?.[0]?.window_days ?? 3} days)
+            </h3>
+            {(reports?.capital ?? []).length === 0 ? (
+              <p className="text-gray-500 text-sm mb-6">
+                No simulated activity in this window.
+              </p>
+            ) : (
+              (reports?.capital ?? []).map((c: PaperCapitalSummary) => (
+                <div key={c.chain} className="mb-6">
+                  <p className="text-sm text-gray-300 mb-1">
+                    <span className="font-semibold text-white uppercase">{c.chain}</span>{" "}
+                    ({c.currency}) · needs{" "}
+                    <span className="text-cyan-300">
+                      {c.totals.peak_capital.toFixed(4)} {c.currency}
+                    </span>{" "}
+                    peak capital ({c.totals.peak_open} positions ×{" "}
+                    {c.observed_clip.toFixed(5)} {c.currency}/trade) · throughput{" "}
+                    {c.totals.deployed.toFixed(4)} {c.currency} · PF{" "}
+                    {c.totals.profit_factor == null
+                      ? "—"
+                      : c.totals.profit_factor.toFixed(2)}{" "}
+                    · R:R{" "}
+                    {c.totals.rr_ratio == null
+                      ? "—"
+                      : `${c.totals.rr_ratio.toFixed(1)}:1`}{" "}
+                    · win {(c.totals.win_rate * 100).toFixed(1)}%
+                  </p>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-gray-300">
+                      <thead className="text-gray-400 text-xs uppercase">
+                        <tr>
+                          <th className="p-2 text-left">Day</th>
+                          <th className="p-2 text-center">Buys</th>
+                          <th className="p-2 text-center">Deployed</th>
+                          <th className="p-2 text-center">Peak open</th>
+                          <th className="p-2 text-center">Capital</th>
+                          <th className="p-2 text-center">Trades</th>
+                          <th className="p-2 text-center">Win %</th>
+                          <th className="p-2 text-center">PF</th>
+                          <th className="p-2 text-center">R:R</th>
+                          <th className="p-2 text-center">Median</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {c.days.map((d: PaperCapitalDay) => (
+                          <tr key={d.day} className="border-t border-gray-700">
+                            <td className="p-2">{d.day}</td>
+                            <td className="p-2 text-center">{d.buys}</td>
+                            <td className="p-2 text-center">{d.deployed.toFixed(4)}</td>
+                            <td className="p-2 text-center">{d.peak_open}</td>
+                            <td className="p-2 text-center">{d.peak_capital.toFixed(4)}</td>
+                            <td className="p-2 text-center">{d.trades}</td>
+                            <td className="p-2 text-center">
+                              {(d.win_rate * 100).toFixed(1)}%
+                            </td>
+                            <td className="p-2 text-center">
+                              {d.profit_factor == null ? "—" : d.profit_factor.toFixed(2)}
+                            </td>
+                            <td className="p-2 text-center">
+                              {d.rr_ratio == null ? "—" : `${d.rr_ratio.toFixed(1)}:1`}
+                            </td>
+                            <td className="p-2 text-center">{fmtPct(d.median_pct)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))
+            )}
+            <p className="text-xs text-gray-500 mb-6">
+              The capital need is peak <em>simultaneous</em> exposure × the clip actually
+              used; the deployed total is throughput and recycles, so it is not the amount to
+              hold. Profit factor (Σ wins / |Σ losses|) is the robust headline — the mean is
+              right-tailed, so the median sits beside it. SOL and ETH are never summed.
+            </p>
 
             <h3 className="text-lg font-semibold text-white mb-2">
               Best trade windows ({reports?.timezone ?? reportTz})
@@ -2076,7 +2608,7 @@ function workerStatusBadge(status: string) {
   return styles[status] ?? "bg-gray-700 text-gray-400";
 }
 
-function WorkersTab({
+export function WorkersTab({
   data,
   loading,
   error,
@@ -2166,6 +2698,32 @@ function WorkersTab({
                     <span className={`text-xs px-2 py-0.5 rounded ${workerStatusBadge(w.status)}`}>
                       {w.status}
                     </span>
+                    {/* T5: `status` says whether the last run went well; it cannot say whether the
+                        worker still has a purpose. Hence a separate lifecycle word, derived from what
+                        this row already carries — a retired worker reddens like a broken one, and
+                        fomo_ws has been 301ing since 07/09 without anything saying it is finished. */}
+                    {w.disabled ? (
+                      <span
+                        className="ml-2 font-mono text-[10px] text-gray-400"
+                        title="disabled — retired, not failing"
+                      >
+                        retired
+                      </span>
+                    ) : w.last_success_at ? (
+                      <span
+                        className="ml-2 font-mono text-[10px] text-emerald-300/80"
+                        title="enabled, and has succeeded"
+                      >
+                        active
+                      </span>
+                    ) : (
+                      <span
+                        className="ml-2 font-mono text-[10px] text-amber-300/80"
+                        title="enabled, has never succeeded — still being proven"
+                      >
+                        trial
+                      </span>
+                    )}
                     {w.last_error_msg ? (
                       <div className="text-xs text-red-400 mt-1 max-w-xs truncate" title={w.last_error_msg}>
                         {w.last_error_msg}
@@ -2253,6 +2811,11 @@ function TrendingBotFilterFields({
   buildRef: React.MutableRefObject<() => TokenFilterConfig>;
 }) {
   const [filterEnabled, setFilterEnabled] = useState(initial.enabled ?? true);
+  // T7: the shared filters are the one family that is not a registry — but both sides are here, so the
+  // provenance is computed in place rather than threaded. `initial` is what is in force; the code's own
+  // declaration of the defaults is imported. A field equal to the default says `defaults`, which on
+  // this block is the interesting case: it means nobody has overridden it.
+  const sources = diffSource(initial, DEFAULT_FILTER_CONFIG);
   const [mcapMin, setMcapMin] = useState(
     initial.mcap?.min != null ? String(initial.mcap.min) : "",
   );
@@ -2313,8 +2876,14 @@ function TrendingBotFilterFields({
     checkManualTradingHistory: checkManualHistory,
   });
 
+  // T2's rule, applied where it matters most. `registry.ts:50-52` says it plainly: "nothing in the
+  // trending_bot chain reads `filtering` today — `passesConditions` reads `strategy.conditions` …
+  // turning a knob here currently changes nothing." So this block is **inert**: T7 tagged its fields
+  // with their provenance, and those tags are accurate, but no decision consumes the values. A control
+  // that does nothing must not look like one that does — the point of the taxonomy — and until now the
+  // only place this was written down was a comment in another file.
   return (
-    <Section title="Filtering">
+    <Section title="Filtering — INERT: nothing reads these today (the entry gate uses `conditions`)">
       <FieldGrid>
         <CheckboxField
           label="Filtering enabled"
@@ -2322,42 +2891,49 @@ function TrendingBotFilterFields({
           onChange={setFilterEnabled}
           colSpan={2}
         />
-        <NumberField label="MCap min" value={mcapMin} onChange={setMcapMin} />
-        <NumberField label="MCap max" value={mcapMax} onChange={setMcapMax} />
+        <NumberField label="MCap min" value={mcapMin} onChange={setMcapMin} source={sources?.["mcap.min"]} />
+        <NumberField label="MCap max" value={mcapMax} onChange={setMcapMax} source={sources?.["mcap.max"]} />
         <NumberField
           label="5m change min %"
           value={pc5mMin}
           onChange={setPc5mMin}
+          source={sources?.["priceChange5m.min"]}
         />
         <NumberField
           label="5m change max %"
           value={pc5mMax}
           onChange={setPc5mMax}
+          source={sources?.["priceChange5m.max"]}
         />
         <NumberField
           label="1h change min %"
           value={pc1hMin}
           onChange={setPc1hMin}
+          source={sources?.["priceChange1h.min"]}
         />
         <NumberField
           label="1h change max %"
           value={pc1hMax}
           onChange={setPc1hMax}
+          source={sources?.["priceChange1h.max"]}
         />
         <NumberField
           label="6h change min %"
           value={pc6hMin}
           onChange={setPc6hMin}
+          source={sources?.["priceChange6h.min"]}
         />
         <NumberField
           label="6h change max %"
           value={pc6hMax}
           onChange={setPc6hMax}
+          source={sources?.["priceChange6h.max"]}
         />
         <NumberField
           label="Organic score min"
           value={organicMin}
           onChange={setOrganicMin}
+          source={sources?.["organicScore.min"]}
         />
         <NumberField
           label="Top holders max %"
@@ -2389,6 +2965,7 @@ function TrendingBotCard({
   onSave,
   onPromote,
   promoteTargets,
+  sources,
 }: {
   strategy: TrendingBotStrategy;
   isRunning: boolean;
@@ -2397,8 +2974,21 @@ function TrendingBotCard({
   onSave: SaveStrategyFn;
   onPromote: (source: string, target: string, confirm: boolean) => void;
   promoteTargets: string[];
+  /** T7: this strategy's fields, `take_profit_levels.tp1_percentage -> stored | defaults`. */
+  sources?: Record<string, "stored" | "defaults">;
 }) {
   const f = strategy.filtering ?? { enabled: true };
+  // T4 step 2: a strategy that overrides nothing should look like it overrides nothing.
+  const overrides = Object.values(sources ?? {}).filter((v) => v === "stored").length;
+  // T4: at card scope, "equal to the code default" means *inherited* — this row never overrode the
+  // family default. Not in `SourceTag`: on the weights and shared-filter panels `defaults` is the
+  // correct word, so the vocabulary is mapped where the scope is.
+  const src = (path: string) =>
+    sources?.[path] === "stored"
+      ? ("stored" as const)
+      : sources?.[path]
+        ? ("inherited" as const)
+        : undefined;
   const [tp1, setTp1] = useState(String(strategy.take_profit_levels.tp1_percentage));
   const [sl, setSl] = useState(String(strategy.stop_loss_percentage));
   const [buySol, setBuySol] = useState(String(strategy.buy_amount_sol));
@@ -2424,18 +3014,54 @@ function TrendingBotCard({
           {isRunning ? "ACTIVE" : "inactive"}
         </span>
       </div>
+      {/* T4 step 2: the override count stated, not inferred from the absence of tags across the card. */}
+      <p className="text-[11px] mb-3">
+        {overrides === 0 ? (
+          <span className="text-gray-500">
+            no overrides — every field inherited from the family default
+          </span>
+        ) : (
+          <span className="text-amber-300/80">
+            {overrides} override{overrides === 1 ? "" : "s"} vs the family default
+          </span>
+        )}
+      </p>
       {allocation != null && (
         <p className="text-xs text-gray-500 mb-2">Allocation: {(allocation * 100).toFixed(0)}%</p>
       )}
+      {/* T4 step 3: a switch with its effect stated — it decides who executes, it does not tune the
+          sections below. Unlabelled it reads as one more parameter beside the thresholds. */}
       <label className="text-xs text-gray-400 block mb-2">
-        Execution mode
+        Execution mode{' '}
+        <span className="font-mono text-[10px] uppercase tracking-wide text-gray-500">
+          switch · who executes: sim / live / both
+        </span>
         <ExecutionModeSelect value={execMode} onChange={setExecMode} />
       </label>
       <Section title="Execution">
         <FieldGrid>
-          <NumberField label="TP1 %" value={tp1} onChange={setTp1} />
-          <NumberField label="SL %" value={sl} onChange={setSl} />
-          <NumberField label="Buy SOL" value={buySol} onChange={setBuySol} colSpan={2} step="0.001" />
+          {/* T7: paths are `id.<field>`, nested where the type nests, because `diffSource` walks the
+              registry keyed by strategy id on both sides. */}
+          <NumberField
+            label="TP1 %"
+            value={tp1}
+            onChange={setTp1}
+            source={src(`${strategy.id}.take_profit_levels.tp1_percentage`)}
+          />
+          <NumberField
+            label="SL %"
+            value={sl}
+            onChange={setSl}
+            source={src(`${strategy.id}.stop_loss_percentage`)}
+          />
+          <NumberField
+            label="Buy SOL"
+            value={buySol}
+            onChange={setBuySol}
+            colSpan={2}
+            step="0.001"
+            source={src(`${strategy.id}.buy_amount_sol`)}
+          />
         </FieldGrid>
       </Section>
       <TrendingBotFilterFields initial={f} buildRef={buildFilteringRef} />
@@ -2506,14 +3132,34 @@ function SignalsCard({
   strategy,
   saving,
   onSave,
+  sources,
 }: {
   strategy: SignalsStrategy;
   saving: boolean;
   onSave: (id: string, patch: Record<string, unknown>) => void;
+  /** T7: this strategy's fields, `config.query.limit -> stored | defaults`. */
+  sources?: Record<string, "stored" | "defaults">;
 }) {
   const q = strategy.config.query;
   const s = strategy.config.scoring;
   const e = strategy.config.execution;
+  // T4 step 2: a strategy that overrides nothing should look like it overrides nothing.
+  const overrides = Object.values(sources ?? {}).filter((v) => v === "stored").length;
+  // T4: at card scope, "equal to the code default" means *inherited* — this row never overrode the
+  // family default. Not in `SourceTag`: on the weights and shared-filter panels `defaults` is the
+  // correct word (a global value at stock), so the vocabulary is mapped where the scope is.
+  const src = (path: string) =>
+    sources?.[path] === "stored"
+      ? ("stored" as const)
+      : sources?.[path]
+        ? ("inherited" as const)
+        : undefined;
+  // T4 step 2: did this strategy override anything under `path`? Gates whether the section shows at all
+  // before the card's "show inherited" toggle is flipped.
+  const overrode = (path: string) =>
+    Object.entries(sources ?? {}).some(
+      ([k, v]) => k.startsWith(`${strategy.id}.${path}`) && v === "stored",
+    );
   const [minGrowth, setMinGrowth] = useState(String(q.minGrowth));
   const [recency, setRecency] = useState(String(q.recencyMinutes));
   const [limit, setLimit] = useState(String(q.limit));
@@ -2542,47 +3188,63 @@ function SignalsCard({
     <div className="border border-gray-700 rounded-lg p-4 bg-gray-800">
       <h3 className="font-semibold text-white">{strategy.name}</h3>
       <p className="text-xs text-gray-500 mb-3">{strategy.id} · template {strategy.config.template}</p>
+      {/* T4 step 2: the override count stated, not inferred from the absence of tags across the card. */}
+      <p className="text-[11px] mb-3">
+        {overrides === 0 ? (
+          <span className="text-gray-500">
+            no overrides — every field inherited from the family default
+          </span>
+        ) : (
+          <span className="text-amber-300/80">
+            {overrides} override{overrides === 1 ? "" : "s"} vs the family default
+          </span>
+        )}
+      </p>
       <label className="text-xs text-gray-400 block mb-2">
-        Execution mode
+        Execution mode{' '}
+        <span className="font-mono text-[10px] uppercase tracking-wide text-gray-500">switch</span>
         <ExecutionModeSelect value={execMode} onChange={setExecMode} />
       </label>
-      <Section title="Query">
+      <CardFieldReveal sources={sources}>
+      <CardSection title="Query" overridden={overrode("config.query")}>
         <FieldGrid>
-          <NumberField label="limit" value={limit} onChange={setLimit} step="1" />
-          <NumberField label="recency (min)" value={recency} onChange={setRecency} step="1" />
-          <NumberField label="minGrowth" value={minGrowth} onChange={setMinGrowth} />
-          <NumberField label="maxAge (min)" value={maxAge} onChange={setMaxAge} step="1" />
+          <NumberField label="limit" value={limit} onChange={setLimit} step="1" source={src(`${strategy.id}.config.query.limit`)} />
+          <NumberField label="recency (min)" value={recency} onChange={setRecency} step="1" source={src(`${strategy.id}.config.query.recencyMinutes`)} />
+          <NumberField label="minGrowth" value={minGrowth} onChange={setMinGrowth} source={src(`${strategy.id}.config.query.minGrowth`)} />
+          <NumberField label="maxAge (min)" value={maxAge} onChange={setMaxAge} step="1" source={src(`${strategy.id}.config.query.maxAgeMinutes`)} />
           <CheckboxField
             label="includeStuck"
             checked={includeStuck}
             onChange={setIncludeStuck}
             colSpan={2}
+            source={src(`${strategy.id}.config.query.includeStuck`)}
           />
         </FieldGrid>
-      </Section>
-      <Section title="Entry">
+      </CardSection>
+      <CardSection title="Entry" overridden={overrode("config.enterScoreFloor")}>
         <FieldGrid>
-          <NumberField label="enter score ≥" value={enterFloor} onChange={setEnterFloor} colSpan={2} />
+          <NumberField label="enter score ≥" value={enterFloor} onChange={setEnterFloor} colSpan={2} source={src(`${strategy.id}.config.enterScoreFloor`)} />
         </FieldGrid>
-      </Section>
-      <Section title="Execution">
+      </CardSection>
+      <CardSection title="Execution" overridden={overrode("config.execution")}>
         <FieldGrid>
-          <NumberField label="sim buy SOL" value={simBuy} onChange={setSimBuy} step="0.001" />
-          <NumberField label="max open positions" value={maxOpen} onChange={setMaxOpen} step="1" />
+          <NumberField label="sim buy SOL" value={simBuy} onChange={setSimBuy} step="0.001" source={src(`${strategy.id}.config.execution.simBuySol`)} />
+          <NumberField label="max open positions" value={maxOpen} onChange={setMaxOpen} step="1" source={src(`${strategy.id}.config.execution.maxOpenPositions`)} />
         </FieldGrid>
-      </Section>
-      <Section title="Scoring">
+      </CardSection>
+      <CardSection title="Scoring — family default (editing adds a per-strategy override)" overridden={overrode("config.scoring")}>
         <FieldGrid>
-          <NumberField label="milestone80" value={milestone80} onChange={setMilestone80} step="1" />
-          <NumberField label="milestone120" value={milestone120} onChange={setMilestone120} step="1" />
-          <NumberField label="milestone200" value={milestone200} onChange={setMilestone200} step="1" />
-          <NumberField label="stuckPenalty" value={stuckPenalty} onChange={setStuckPenalty} step="1" />
-          <NumberField label="stopLossPenalty" value={stopLossPenalty} onChange={setStopLossPenalty} step="1" />
+          <NumberField label="milestone80" value={milestone80} onChange={setMilestone80} step="1" source={src(`${strategy.id}.config.scoring.milestone80`)} />
+          <NumberField label="milestone120" value={milestone120} onChange={setMilestone120} step="1" source={src(`${strategy.id}.config.scoring.milestone120`)} />
+          <NumberField label="milestone200" value={milestone200} onChange={setMilestone200} step="1" source={src(`${strategy.id}.config.scoring.milestone200`)} />
+          <NumberField label="stuckPenalty" value={stuckPenalty} onChange={setStuckPenalty} step="1" source={src(`${strategy.id}.config.scoring.stuckPenalty`)} />
+          <NumberField label="stopLossPenalty" value={stopLossPenalty} onChange={setStopLossPenalty} step="1" source={src(`${strategy.id}.config.scoring.stopLossPenalty`)} />
           <NumberField
             label="sellOver100LatePenalty"
             value={sellOver100LatePenalty}
             onChange={setSellOver100LatePenalty}
             step="1"
+            source={src(`${strategy.id}.config.scoring.sellOver100LatePenalty`)}
           />
         </FieldGrid>
         <button
@@ -2599,24 +3261,28 @@ function SignalsCard({
               value={recencyBoostMax}
               onChange={setRecencyBoostMax}
               step="1"
+              source={src(`${strategy.id}.config.scoring.recencyBoostMax`)}
             />
-            <NumberField label="speedTo80Fast" value={speedFast} onChange={setSpeedFast} step="1" />
+            <NumberField label="speedTo80Fast" value={speedFast} onChange={setSpeedFast} step="1" source={src(`${strategy.id}.config.scoring.speedTo80Fast`)} />
             <NumberField
               label="speedTo80Medium"
               value={speedMedium}
               onChange={setSpeedMedium}
               step="1"
+              source={src(`${strategy.id}.config.scoring.speedTo80Medium`)}
             />
-            <NumberField label="speedTo80Slow" value={speedSlow} onChange={setSpeedSlow} step="1" />
+            <NumberField label="speedTo80Slow" value={speedSlow} onChange={setSpeedSlow} step="1" source={src(`${strategy.id}.config.scoring.speedTo80Slow`)} />
             <NumberField
               label="inTrackingRange"
               value={inTrackingRange}
               onChange={setInTrackingRange}
               step="1"
+              source={src(`${strategy.id}.config.scoring.inTrackingRange`)}
             />
           </FieldGrid>
         )}
-      </Section>
+      </CardSection>
+      </CardFieldReveal>
       <div className="flex gap-2">
         <button
           type="button"
@@ -2682,15 +3348,33 @@ function McapTrackerCard({
   strategy,
   saving,
   onSave,
+  sources,
 }: {
   strategy: McapTrackerStrategy;
   saving: boolean;
   onSave: (id: string, patch: Record<string, unknown>) => void;
+  /** T7: this strategy's fields, `config.exit.stopLossPct -> stored | defaults`. */
+  sources?: Record<string, "stored" | "defaults">;
 }) {
   const q = strategy.config.query;
   const e = strategy.config.execution;
   const x = strategy.config.exit;
   const en = strategy.config.entry;
+  // T4 step 2: a strategy that overrides nothing should look like it overrides nothing.
+  const overrides = Object.values(sources ?? {}).filter((v) => v === "stored").length;
+  // T4: at card scope, "equal to the code default" means *inherited* — this row never overrode the
+  // family default. Not in `SourceTag`: on the weights and shared-filter panels `defaults` is the
+  // correct word, so the vocabulary is mapped where the scope is.
+  const src = (path: string) =>
+    sources?.[path] === "stored"
+      ? ("stored" as const)
+      : sources?.[path]
+        ? ("inherited" as const)
+        : undefined;
+  const overrode = (path: string) =>
+    Object.entries(sources ?? {}).some(
+      ([k, v]) => k.startsWith(`${strategy.id}.${path}`) && v === "stored",
+    );
   const [entryTemplate, setEntryTemplate] = useState(strategy.config.entryTemplate);
   const [recency, setRecency] = useState(String(q.recencyMinutes));
   const [limit, setLimit] = useState(String(q.limit ?? 300));
@@ -2715,8 +3399,21 @@ function McapTrackerCard({
       <p className="text-xs text-gray-500 mb-3">
         {strategy.id} · {entryTemplate}
       </p>
+      {/* T4 step 2: the override count stated, not inferred from the absence of tags across the card. */}
+      <p className="text-[11px] mb-3">
+        {overrides === 0 ? (
+          <span className="text-gray-500">
+            no overrides — every field inherited from the family default
+          </span>
+        ) : (
+          <span className="text-amber-300/80">
+            {overrides} override{overrides === 1 ? "" : "s"} vs the family default
+          </span>
+        )}
+      </p>
       <label className="text-xs text-gray-400 block mb-2">
-        Execution mode
+        Execution mode{' '}
+        <span className="font-mono text-[10px] uppercase tracking-wide text-gray-500">switch</span>
         <ExecutionModeSelect value={execMode} onChange={setExecMode} />
       </label>
       <label className="text-xs text-gray-400 block mb-2">
@@ -2732,33 +3429,35 @@ function McapTrackerCard({
           <option value="milestone_80">milestone_80</option>
         </select>
       </label>
-      <Section title="Query">
+      <CardFieldReveal sources={sources}>
+      <CardSection title="Query" overridden={overrode("config.query")}>
         <FieldGrid>
-          <NumberField label="recency (min)" value={recency} onChange={setRecency} step="1" />
-          <NumberField label="limit" value={limit} onChange={setLimit} step="1" />
+          <NumberField label="recency (min)" value={recency} onChange={setRecency} step="1" source={src(`${strategy.id}.config.query.recencyMinutes`)} />
+          <NumberField label="limit" value={limit} onChange={setLimit} step="1" source={src(`${strategy.id}.config.query.limit`)} />
         </FieldGrid>
-      </Section>
-      <Section title="Execution">
+      </CardSection>
+      <CardSection title="Execution" overridden={overrode("config.execution")}>
         <FieldGrid>
-          <NumberField label="sim buy SOL" value={simBuy} onChange={setSimBuy} step="0.001" />
-          <NumberField label="max open" value={maxOpen} onChange={setMaxOpen} step="1" />
+          <NumberField label="sim buy SOL" value={simBuy} onChange={setSimBuy} step="0.001" source={src(`${strategy.id}.config.execution.simBuySol`)} />
+          <NumberField label="max open" value={maxOpen} onChange={setMaxOpen} step="1" source={src(`${strategy.id}.config.execution.maxOpenPositions`)} />
         </FieldGrid>
-      </Section>
-      <Section title="Exit">
+      </CardSection>
+      <CardSection title="Exit — family default (editing adds a per-strategy override)" overridden={overrode("config.exit")}>
         <FieldGrid>
-          <NumberField label="stop loss %" value={stopLoss} onChange={setStopLoss} step="1" />
-          <NumberField label="take profit %" value={takeProfit} onChange={setTakeProfit} step="1" />
-          <NumberField label="max hold (h)" value={maxHold} onChange={setMaxHold} step="1" />
+          <NumberField label="stop loss %" value={stopLoss} onChange={setStopLoss} step="1" source={src(`${strategy.id}.config.exit.stopLossPct`)} />
+          <NumberField label="take profit %" value={takeProfit} onChange={setTakeProfit} step="1" source={src(`${strategy.id}.config.exit.takeProfitPct`)} />
+          <NumberField label="max hold (h)" value={maxHold} onChange={setMaxHold} step="1" source={src(`${strategy.id}.config.exit.maxHoldHours`)} />
         </FieldGrid>
-      </Section>
-      <Section title="Entry filters">
+      </CardSection>
+      <CardSection title="Entry filters" overridden={overrode("config.entry")}>
         <FieldGrid>
-          <NumberField label="mcap min" value={mcapMin} onChange={setMcapMin} step="1000" />
-          <NumberField label="mcap max" value={mcapMax} onChange={setMcapMax} step="1000" />
-          <NumberField label="organic min" value={organicMin} onChange={setOrganicMin} step="1" />
-          <NumberField label="holders max %" value={holdersMax} onChange={setHoldersMax} step="1" />
+          <NumberField label="mcap min" value={mcapMin} onChange={setMcapMin} step="1000" source={src(`${strategy.id}.config.entry.mcapMin`)} />
+          <NumberField label="mcap max" value={mcapMax} onChange={setMcapMax} step="1000" source={src(`${strategy.id}.config.entry.mcapMax`)} />
+          <NumberField label="organic min" value={organicMin} onChange={setOrganicMin} step="1" source={src(`${strategy.id}.config.entry.organicScoreMin`)} />
+          <NumberField label="holders max %" value={holdersMax} onChange={setHoldersMax} step="1" source={src(`${strategy.id}.config.entry.topHoldersPctMax`)} />
         </FieldGrid>
-      </Section>
+      </CardSection>
+      </CardFieldReveal>
       <div className="flex gap-2 mt-2">
         <button
           type="button"
@@ -2819,12 +3518,32 @@ function GmgnCard({
   strategy,
   saving,
   onSave,
+  sources,
 }: {
   strategy: GmgnStrategy;
   saving: boolean;
   onSave: (id: string, patch: Record<string, unknown>) => void;
+  /** T7: this strategy's fields, `config.discovery.limit -> stored | defaults`. */
+  sources?: Record<string, "stored" | "defaults">;
 }) {
   const d = strategy.config.discovery;
+  // T4 step 2: the property that makes today's duplication visible as emptiness — a strategy that
+  // overrides nothing should look like it overrides nothing, not like a full page of numbers.
+  const overrides = Object.values(sources ?? {}).filter((v) => v === "stored").length;
+  // T4: on a strategy card, "equal to the code default" *is* "inherited" — this row never overrode the
+  // family default. Deliberately not inside `SourceTag`: on the weights and shared-filter panels
+  // `defaults` is the right word (a global value sitting at stock), and only on a per-strategy card does
+  // it mean inherited. The vocabulary differs by scope, so it is mapped at the scope.
+  const src = (path: string) =>
+    sources?.[path] === "stored"
+      ? ("stored" as const)
+      : sources?.[path]
+        ? ("inherited" as const)
+        : undefined;
+  const overrode = (path: string) =>
+    Object.entries(sources ?? {}).some(
+      ([k, v]) => k.startsWith(`${strategy.id}.${path}`) && v === "stored",
+    );
   const s = strategy.config.security;
   const e = strategy.config.execution;
   const x = strategy.config.exit;
@@ -2872,8 +3591,22 @@ function GmgnCard({
       <p className="text-xs text-gray-500 mb-3">
         {strategy.id} · {source}
       </p>
+      {/* T4 step 2: what the card actually says about this row, as one line instead of implied by the
+          absence of tags across forty fields. */}
+      <p className="text-[11px] mb-3">
+        {overrides === 0 ? (
+          <span className="text-gray-500">
+            no overrides — every field inherited from the family default
+          </span>
+        ) : (
+          <span className="text-amber-300/80">
+            {overrides} override{overrides === 1 ? "" : "s"} vs the family default
+          </span>
+        )}
+      </p>
       <label className="text-xs text-gray-400 block mb-2">
-        Execution mode
+        Execution mode{' '}
+        <span className="font-mono text-[10px] uppercase tracking-wide text-gray-500">switch</span>
         <ExecutionModeSelect value={execMode} onChange={setExecMode} />
       </label>
       <label className="text-xs text-gray-400 block mb-2">
@@ -2890,103 +3623,147 @@ function GmgnCard({
           <option value="both">both</option>
         </select>
       </label>
-      <Section title="Discovery">
+      <CardFieldReveal sources={sources}>
+      <CardSection title="Discovery" overridden={overrode("config.discovery")}>
         <FieldGrid>
-          <NumberField label="limit" value={limit} onChange={setLimit} step="1" />
-          <NumberField label="min trade USD" value={minUsd} onChange={setMinUsd} step="1" />
-          <NumberField label="max age (min)" value={maxAge} onChange={setMaxAge} step="1" />
-          <NumberField label="cluster min wallets" value={clusterMin} onChange={setClusterMin} step="1" />
+          {/* T7: `config.discovery.*` because the gmgn registry is keyed by id and the strategy nests
+              its knobs under `config`. */}
+          <NumberField
+            label="limit"
+            value={limit}
+            onChange={setLimit}
+            step="1"
+            source={src(`${strategy.id}.config.discovery.limit`)}
+          />
+          <NumberField
+            label="min trade USD"
+            value={minUsd}
+            onChange={setMinUsd}
+            step="1"
+            source={src(`${strategy.id}.config.discovery.minAmountUsd`)}
+          />
+          <NumberField
+            label="max age (min)"
+            value={maxAge}
+            onChange={setMaxAge}
+            step="1"
+            source={src(`${strategy.id}.config.discovery.maxTradeAgeMinutes`)}
+          />
+          <NumberField
+            label="cluster min wallets"
+            value={clusterMin}
+            onChange={setClusterMin}
+            step="1"
+            source={src(`${strategy.id}.config.discovery.clusterMinWallets`)}
+          />
         </FieldGrid>
-      </Section>
-      <Section title="Security gate">
+      </CardSection>
+      <CardSection title="Security gate — family default (editing adds a per-strategy override)" overridden={overrode("config.security")}>
         <FieldGrid>
-          <NumberField label="min smart wallets" value={minSmart} onChange={setMinSmart} step="1" />
-          <NumberField label="max top-10 rate" value={maxTop10} onChange={setMaxTop10} step="0.01" />
-          <NumberField label="min liquidity USD" value={minLiq} onChange={setMinLiq} step="1000" />
-          <NumberField label="max candidates/tick" value={maxCandidates} onChange={setMaxCandidates} step="1" />
+          <NumberField label="min smart wallets" value={minSmart} onChange={setMinSmart} step="1" source={src(`${strategy.id}.config.security.minSmartWallets`)} />
+          <NumberField label="max top-10 rate" value={maxTop10} onChange={setMaxTop10} step="0.01" source={src(`${strategy.id}.config.security.maxTop10HolderRate`)} />
+          <NumberField label="min liquidity USD" value={minLiq} onChange={setMinLiq} step="1000" source={src(`${strategy.id}.config.security.minLiquidityUsd`)} />
+          <NumberField label="max candidates/tick" value={maxCandidates} onChange={setMaxCandidates} step="1" source={src(`${strategy.id}.config.security.maxCandidatesPerTick`)} />
         </FieldGrid>
-      </Section>
-      <Section title="Execution">
+      </CardSection>
+      <CardSection title="Execution" overridden={overrode("config.execution")}>
         <FieldGrid>
-          <NumberField label="sim buy SOL" value={simBuy} onChange={setSimBuy} step="0.001" />
-          <NumberField label="max open" value={maxOpen} onChange={setMaxOpen} step="1" />
+          <NumberField label="sim buy SOL" value={simBuy} onChange={setSimBuy} step="0.001" source={src(`${strategy.id}.config.execution.simBuySol`)} />
+          <NumberField label="max open" value={maxOpen} onChange={setMaxOpen} step="1" source={src(`${strategy.id}.config.execution.maxOpenPositions`)} />
         </FieldGrid>
-      </Section>
-      <Section title="Exit">
+      </CardSection>
+      <CardSection title="Exit — family default (editing adds a per-strategy override)" overridden={overrode("config.exit")}>
         <FieldGrid>
-          <NumberField label="stop loss %" value={stopLoss} onChange={setStopLoss} step="1" />
-          <NumberField label="take profit %" value={takeProfit} onChange={setTakeProfit} step="1" />
-          <NumberField label="max hold (h)" value={maxHold} onChange={setMaxHold} step="1" />
+          <NumberField label="stop loss %" value={stopLoss} onChange={setStopLoss} step="1" source={src(`${strategy.id}.config.exit.stopLossPct`)} />
+          <NumberField label="take profit %" value={takeProfit} onChange={setTakeProfit} step="1" source={src(`${strategy.id}.config.exit.takeProfitPct`)} />
+          <NumberField label="max hold (h)" value={maxHold} onChange={setMaxHold} step="1" source={src(`${strategy.id}.config.exit.maxHoldHours`)} />
         </FieldGrid>
-      </Section>
-      <Section title="Radar">
+      </CardSection>
+      {/* T4 step 2, first structural fact made visible: radar is *family* level. `r` falls back to
+          `DEFAULT_GMGN_RADAR`, so every gmgn card without an override renders identical numbers here —
+          which is exactly the duplication the census counted (GmgnStrategyConfig 32 fields against
+          GmgnRadarConfig 8), and why this block is the first candidate for one shared family row.
+          Editing it still edits this strategy only; what you are looking at is the family default. */}
+      <CardSection title="Radar — family default (editing adds a per-strategy override)" overridden={overrode("config.radar")}>
         <FieldGrid>
           <NumberField
             label="sticky pump %"
             value={stickyPumpPct}
             onChange={setStickyPumpPct}
             step="1"
+            source={src(`${strategy.id}.config.radar.stickyPumpPct`)}
           />
-          <NumberField label="dump ban %" value={dumpBanPct} onChange={setDumpBanPct} step="1" />
+          <NumberField label="dump ban %" value={dumpBanPct} onChange={setDumpBanPct} step="1" source={src(`${strategy.id}.config.radar.dumpBanPct`)} />
           <NumberField
             label="sticky TTL (min)"
             value={stickyTtlMinutes}
             onChange={setStickyTtlMinutes}
             step="1"
+            source={src(`${strategy.id}.config.radar.stickyTtlMinutes`)}
           />
           <NumberField
             label="ENTER override score ≥"
             value={enterOverrideMinScore}
             onChange={setEnterOverrideMinScore}
             step="1"
+            source={src(`${strategy.id}.config.radar.enterOverrideMinScore`)}
           />
           <CheckboxField
             label="comeback enabled"
             checked={comebackEnabled}
             onChange={setComebackEnabled}
+            source={src(`${strategy.id}.config.radar.comeback.enabled`)}
           />
           <CheckboxField
             label="Telegram single thread"
             checked={singleThread}
             onChange={setSingleThread}
+            source={src(`${strategy.id}.config.radar.telegram.singleThread`)}
           />
           <NumberField
             label="Telegram min mcap $"
             value={minTelegramMcapUsd}
             onChange={setMinTelegramMcapUsd}
             step="1000"
+            source={src(`${strategy.id}.config.radar.telegram.minMcapUsd`)}
           />
-          <NumberField label="drawdown %" value={drawdownPct} onChange={setDrawdownPct} step="1" />
+          <NumberField label="drawdown %" value={drawdownPct} onChange={setDrawdownPct} step="1" source={src(`${strategy.id}.config.radar.comeback.drawdownPct`)} />
           <NumberField
             label="trough mcap max"
             value={troughMcapMax}
             onChange={setTroughMcapMax}
             step="1000"
+            source={src(`${strategy.id}.config.radar.comeback.troughMcapMax`)}
           />
           <NumberField
             label="recover multiple"
             value={recoverMultiple}
             onChange={setRecoverMultiple}
             step="0.1"
+            source={src(`${strategy.id}.config.radar.comeback.recoverMultiple`)}
           />
           <NumberField
             label="min radar score"
             value={minRadarScore}
             onChange={setMinRadarScore}
             step="1"
+            source={src(`${strategy.id}.config.radar.comeback.minRadarScore`)}
           />
           <CheckboxField
             label="unban on comeback"
             checked={unbanOnComeback}
             onChange={setUnbanOnComeback}
+            source={src(`${strategy.id}.config.radar.comeback.unbanOnComeback`)}
           />
           <CheckboxField
             label="sim reopen on comeback"
             checked={allowSimReopen}
             onChange={setAllowSimReopen}
+            source={src(`${strategy.id}.config.radar.comeback.allowSimReopen`)}
           />
         </FieldGrid>
-      </Section>
+      </CardSection>
+      </CardFieldReveal>
       <div className="flex gap-2 mt-2">
         <button
           type="button"
@@ -3068,12 +3845,26 @@ function SocialCard({
   strategy,
   saving,
   onSave,
+  sources,
 }: {
   strategy: SocialStrategy;
   saving: boolean;
   onSave: (id: string, patch: Record<string, unknown>) => void;
+  /** T7: this strategy's fields, `config.entry.minMentions30m -> stored | defaults`. */
+  sources?: Record<string, "stored" | "defaults">;
 }) {
   const entry = strategy.config.entry;
+  // T4 step 2: a strategy that overrides nothing should look like it overrides nothing.
+  const overrides = Object.values(sources ?? {}).filter((v) => v === "stored").length;
+  // T4: at card scope, "equal to the code default" means *inherited* — this row never overrode the
+  // family default. Not in `SourceTag`: on the weights and shared-filter panels `defaults` is the
+  // correct word, so the vocabulary is mapped where the scope is.
+  const src = (path: string) =>
+    sources?.[path] === "stored"
+      ? ("stored" as const)
+      : sources?.[path]
+        ? ("inherited" as const)
+        : undefined;
   const e = strategy.config.execution;
   const x = strategy.config.exit;
   const [minMentions, setMinMentions] = useState(String(entry.minMentions30m));
@@ -3097,13 +3888,27 @@ function SocialCard({
       <h3 className="font-semibold text-white">{strategy.name}</h3>
       <p className="text-xs text-gray-500 mb-3">{strategy.id}</p>
       <p className="text-xs text-gray-400 mb-3">{strategy.description}</p>
+      {/* T4 step 2: the override count stated, not inferred from the absence of tags across the card. */}
+      <p className="text-[11px] mb-3">
+        {overrides === 0 ? (
+          <span className="text-gray-500">
+            no overrides — every field inherited from the family default
+          </span>
+        ) : (
+          <span className="text-amber-300/80">
+            {overrides} override{overrides === 1 ? "" : "s"} vs the family default
+          </span>
+        )}
+      </p>
       <label className="text-xs text-gray-400 block mb-2">
-        Execution mode
+        Execution mode{' '}
+        <span className="font-mono text-[10px] uppercase tracking-wide text-gray-500">switch</span>
         <ExecutionModeSelect value={execMode} onChange={setExecMode} />
       </label>
       <div className="grid grid-cols-2 gap-2 text-xs">
         <label className="text-gray-400">
           Min mentions 30m
+          <SourceTag source={src(`${strategy.id}.config.entry.minMentions30m`)} />
           <input
             className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white"
             value={minMentions}
@@ -3112,6 +3917,7 @@ function SocialCard({
         </label>
         <label className="text-gray-400">
           Max candidates/tick
+          <SourceTag source={src(`${strategy.id}.config.entry.maxCandidatesPerTick`)} />
           <input
             className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white"
             value={maxCandidates}
@@ -3120,6 +3926,7 @@ function SocialCard({
         </label>
         <label className="text-gray-400 col-span-2">
           Top source
+          <SourceTag source={src(`${strategy.id}.config.entry.topSource`)} />
           <input
             className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white"
             value={topSource}
@@ -3128,6 +3935,7 @@ function SocialCard({
         </label>
         <label className="text-gray-400 col-span-2">
           Require mention sources (30m, comma-separated; empty = FOMO-only)
+          <SourceTag source={src(`${strategy.id}.config.entry.requireMentionSources`)} />
           <input
             className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white"
             value={requireMentionSources}
@@ -3150,6 +3958,7 @@ function SocialCard({
         </label>
         <label className="text-gray-400">
           Sim buy SOL
+          <SourceTag source={src(`${strategy.id}.config.execution.simBuySol`)} />
           <input
             className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white"
             value={simBuy}
@@ -3158,6 +3967,7 @@ function SocialCard({
         </label>
         <label className="text-gray-400">
           Max open
+          <SourceTag source={src(`${strategy.id}.config.execution.maxOpenPositions`)} />
           <input
             className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white"
             value={maxOpen}
@@ -3251,12 +4061,25 @@ function DlmmCard({
   strategy,
   saving,
   onSave,
+  sources,
 }: {
   strategy: DlmmStrategy;
   saving: boolean;
   onSave: (id: string, patch: Record<string, unknown>) => void;
+  sources?: Record<string, "stored" | "defaults">;
 }) {
   const c = strategy.config;
+  // T4 step 2: a strategy that overrides nothing should look like it overrides nothing.
+  const overrides = Object.values(sources ?? {}).filter((v) => v === "stored").length;
+  // T4: at card scope, "equal to the code default" means *inherited* — this row never overrode the
+  // family default. Not in `SourceTag`: on the weights and shared-filter panels `defaults` is the
+  // correct word, so the vocabulary is mapped where the scope is.
+  const src = (path: string) =>
+    sources?.[path] === "stored"
+      ? ("stored" as const)
+      : sources?.[path]
+        ? ("inherited" as const)
+        : undefined;
   const exec = c.execution ?? {
     simDeploySol: 0.05,
     maxOpenPositions: 3,
@@ -3280,23 +4103,36 @@ function DlmmCard({
   return (
     <div className="border border-gray-700 rounded-lg p-4 bg-gray-800 max-w-xl">
       <h3 className="font-semibold text-white mb-2">{strategy.name}</h3>
+      {/* T4 step 2: the override count stated, not inferred from the absence of tags across the card. */}
+      <p className="text-[11px] mb-3">
+        {overrides === 0 ? (
+          <span className="text-gray-500">
+            no overrides — every field inherited from the family default
+          </span>
+        ) : (
+          <span className="text-amber-300/80">
+            {overrides} override{overrides === 1 ? "" : "s"} vs the family default
+          </span>
+        )}
+      </p>
       <label className="text-xs text-gray-400 block mb-2">
-        Execution mode
+        Execution mode{' '}
+        <span className="font-mono text-[10px] uppercase tracking-wide text-gray-500">switch</span>
         <ExecutionModeSelect value={execMode} onChange={setExecMode} />
       </label>
       <Section title="Start conditions">
         <FieldGrid>
-          <NumberField label="min TVL" value={minTvl} onChange={setMinTvl} step="1" />
-          <NumberField label="min fee/TVL" value={minFeeTvl} onChange={setMinFeeTvl} />
-          <NumberField label="min organic score" value={minOrganic} onChange={setMinOrganic} step="1" />
-          <NumberField label="min holders" value={minHolders} onChange={setMinHolders} step="1" />
+          <NumberField label="min TVL" value={minTvl} onChange={setMinTvl} step="1" source={src(`${strategy.id}.config.min_tvl`)} />
+          <NumberField label="min fee/TVL" value={minFeeTvl} onChange={setMinFeeTvl} source={src(`${strategy.id}.config.min_fee_tvl`)} />
+          <NumberField label="min organic score" value={minOrganic} onChange={setMinOrganic} step="1" source={src(`${strategy.id}.config.min_organic_score`)} />
+          <NumberField label="min holders" value={minHolders} onChange={setMinHolders} step="1" source={src(`${strategy.id}.config.min_holders`)} />
         </FieldGrid>
       </Section>
       <Section title="End conditions">
         <FieldGrid>
-          <NumberField label="take profit %" value={tp} onChange={setTp} />
-          <NumberField label="stop loss %" value={sl} onChange={setSl} />
-          <NumberField label="OOR timeout (min)" value={oor} onChange={setOor} step="1" colSpan={2} />
+          <NumberField label="take profit %" value={tp} onChange={setTp} source={src(`${strategy.id}.config.take_profit_pct`)} />
+          <NumberField label="stop loss %" value={sl} onChange={setSl} source={src(`${strategy.id}.config.stop_loss_pct`)} />
+          <NumberField label="OOR timeout (min)" value={oor} onChange={setOor} step="1" colSpan={2} source={src(`${strategy.id}.config.oor_timeout_min`)} />
         </FieldGrid>
       </Section>
       <Section title="Execution">
@@ -3379,6 +4215,7 @@ function StrategyConfigTab({
   onPromote,
   onToast,
   focusDomain = "",
+  sources,
 }: {
   isRobinhood: boolean;
   effective: Record<string, TrendingBotStrategy>;
@@ -3394,6 +4231,8 @@ function StrategyConfigTab({
   onPromote: (source: string, target: string, confirm: boolean) => void;
   onToast: (kind: "success" | "error", title: string, detail?: string) => void;
   focusDomain?: string;
+  /** T7: `id.field -> stored | defaults`, straight from the strategies payload. */
+  sources?: StrategiesResponse["sources"];
 }) {
   useEffect(() => {
     if (!focusDomain) return;
@@ -3403,6 +4242,16 @@ function StrategyConfigTab({
   }, [focusDomain]);
 
   const show = (domain: string) => !focusDomain || focusDomain === domain;
+  // T4 step 2: `sources.<family>` is the whole family's diff, keyed `<id>.<path>`. A card's override
+  // count and its inherited/override split must be *this* strategy's keys, so slice before handing it
+  // over — otherwise every card in a family shows the family-wide total.
+  const own = (
+    all: Record<string, "stored" | "defaults"> | undefined,
+    id: string,
+  ): Record<string, "stored" | "defaults"> | undefined =>
+    all
+      ? Object.fromEntries(Object.entries(all).filter(([k]) => k.startsWith(`${id}.`)))
+      : undefined;
   const collapsed = (domain: string, summary: string, title: string) => (
     <section
       id={`algo-config-${domain}`}
@@ -3424,9 +4273,6 @@ function StrategyConfigTab({
       <EvalEnginePanel
         onNotify={(kind, title, detail) => onToast(kind, title, detail ?? "")}
       />
-      <EarlyEnterNoulShadowPanel
-        onNotify={(kind, title, detail) => onToast(kind, title, detail ?? "")}
-      />
       <Ml2ExitOverlayPanel
         onNotify={(kind, title, detail) => onToast(kind, title, detail ?? "")}
       />
@@ -3442,6 +4288,7 @@ function StrategyConfigTab({
             <TrendingBotCard
               key={`${s.id}-${s.is_active}-${s.buy_amount_sol}-${s.stop_loss_percentage}-${s.take_profit_levels.tp1_percentage}`}
               strategy={s}
+              sources={own(sources?.trending_bot, s.id)}
               isRunning={active.includes(s.id)}
               allocation={allocation?.[s.id]}
               saving={saving === s.id}
@@ -3461,11 +4308,22 @@ function StrategyConfigTab({
       {show("signals") ? (
       <section id="algo-config-signals" className="bg-gray-900 border border-gray-700 rounded-lg p-6">
         <h2 className="text-xl font-bold text-white mb-4">Signals strategies</h2>
+        {/* T4 step 2: the scoring block is family level — every signals strategy is seeded from
+            `DEFAULT_SIGNALS_SCORING`, the six values the SPEC measured as identical across the family.
+            Read-only, and the first provenance this block has had: the cards' Scoring sections are the
+            per-strategy override editors, and this row is the thing they override. */}
+        <FamilyDefaultRow label="scoring">
+          milestone 80/120/200 {DEFAULT_SIGNALS_SCORING.milestone80}/{DEFAULT_SIGNALS_SCORING.milestone120}/
+          {DEFAULT_SIGNALS_SCORING.milestone200} · stuck {DEFAULT_SIGNALS_SCORING.stuckPenalty} · stop loss{" "}
+          {DEFAULT_SIGNALS_SCORING.stopLossPenalty} · sell &gt;100{" "}
+          {DEFAULT_SIGNALS_SCORING.sellOver100LatePenalty}
+        </FamilyDefaultRow>
         <div className="grid gap-4 md:grid-cols-2">
           {signals.map((s) => (
             <SignalsCard
               key={s.id}
               strategy={s}
+              sources={own(sources?.signals, s.id)}
               saving={saving === s.id}
               onSave={onSave}
             />
@@ -3484,11 +4342,21 @@ function StrategyConfigTab({
       {show("mcap_tracker") ? (
       <section id="algo-config-mcap_tracker" className="bg-gray-900 border border-gray-700 rounded-lg p-6">
         <h2 className="text-xl font-bold text-white mb-4">MCap tracker strategies</h2>
+        {/* T4 step 2: the exit block is family level — every mcap strategy is seeded from
+            `DEFAULT_MCAP_TRACKER_EXIT`; the `search_mcap_*` variants the SPEC counted differ from it only
+            in take-profit, which is exactly what each card's override count now shows. Read-only. Entry
+            filters are deliberately not shown here: the Robinhood rows override mcap min/max, so a single
+            family row would misstate them. */}
+        <FamilyDefaultRow label="exit">
+          SL {DEFAULT_MCAP_TRACKER_EXIT.stopLossPct}% · TP {DEFAULT_MCAP_TRACKER_EXIT.takeProfitPct}% · hold{" "}
+          {DEFAULT_MCAP_TRACKER_EXIT.maxHoldHours}h
+        </FamilyDefaultRow>
         <div className="grid gap-4 md:grid-cols-2">
           {mcapTracker.map((s) => (
             <McapTrackerCard
               key={s.id}
               strategy={s}
+              sources={own(sources?.mcap_tracker, s.id)}
               saving={saving === s.id}
               onSave={onSave}
             />
@@ -3515,11 +4383,33 @@ function StrategyConfigTab({
           Smart money / KOL discovery via gmgn-cli. Paper sim wallet:{" "}
           <code className="text-xs">gmgn-sim</code>. Requires GMGN_API_KEY + gmgn-cli on server.
         </p>
+        {/* T4 step 2: the family rows. These three blocks are family-scoped — every card's `r` falls
+            back to `DEFAULT_GMGN_RADAR` and its security/exit blocks are seeded from the same exports —
+            so until these existed the same numbers rendered once per strategy, which is the duplication
+            the census measured (GmgnStrategyConfig 32 vs GmgnRadarConfig 8). Read-only and sourced from
+            the code default: the cards' sections stay the per-strategy override editors, and these rows
+            are the thing they override. */}
+        <FamilyDefaultRow label="radar">
+          sticky pump {DEFAULT_GMGN_RADAR.stickyPumpPct}% · dump ban{" "}
+          {DEFAULT_GMGN_RADAR.dumpBanPct}% · mcap ≥{" "}
+          {DEFAULT_GMGN_RADAR.telegram?.minMcapUsd ?? "—"}
+          {DEFAULT_GMGN_RADAR.telegram?.singleThread ? " · telegram single-thread" : ""}
+        </FamilyDefaultRow>
+        <FamilyDefaultRow label="security gate">
+          min smart wallets {DEFAULT_GMGN_SECURITY.minSmartWallets} · top-10 ≤{" "}
+          {DEFAULT_GMGN_SECURITY.maxTop10HolderRate} · min liquidity $
+          {DEFAULT_GMGN_SECURITY.minLiquidityUsd} · verdict ≥ {DEFAULT_GMGN_SECURITY.minVerdict}
+        </FamilyDefaultRow>
+        <FamilyDefaultRow label="exit">
+          SL {DEFAULT_GMGN_EXIT.stopLossPct}% · TP {DEFAULT_GMGN_EXIT.takeProfitPct}% · hold{" "}
+          {DEFAULT_GMGN_EXIT.maxHoldHours}h
+        </FamilyDefaultRow>
         <div className="grid gap-4 md:grid-cols-2">
           {gmgn.map((s) => (
             <GmgnCard
               key={`${s.id}-${s.is_active}-${s.execution_mode}-${s.config.radar?.stickyPumpPct}-${s.config.radar?.dumpBanPct}-${s.config.radar?.comeback?.allowSimReopen}-${s.config.radar?.telegram?.singleThread}-${s.config.radar?.telegram?.minMcapUsd}`}
               strategy={s}
+              sources={own(sources?.gmgn, s.id)}
               saving={saving === s.id}
               onSave={onSave}
             />
@@ -3560,6 +4450,7 @@ function StrategyConfigTab({
               <SocialCard
                 key={`${s.id}-${s.is_active}-${s.execution_mode}-${s.config.entry.minMentions30m}`}
                 strategy={s}
+                sources={own(sources?.social, s.id)}
                 saving={saving === s.id}
                 onSave={onSave}
               />
@@ -3590,6 +4481,7 @@ function StrategyConfigTab({
             {dlmm && (
               <DlmmCard
                 strategy={dlmm}
+                sources={sources?.dlmm}
                 saving={saving === dlmm.id}
                 onSave={onSave}
               />

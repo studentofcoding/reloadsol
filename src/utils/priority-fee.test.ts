@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
   AUTO_PRIORITY_FEE_MAX_LAMPORTS,
   autoPriorityFeeLamports,
@@ -6,6 +6,7 @@ import {
   jupiterLitePrioritizationFee,
   jupiterV2PriorityFeeQuery,
   priorityFeeFromSolInput,
+  resolveSwapPriorityFee,
   resolveTrackerPriorityFee,
 } from "@/utils/priority-fee";
 import {
@@ -16,6 +17,43 @@ import {
 const AUTO = autoPriorityFeeLamports({
   level: "high",
   maxLamports: 3_000_000,
+});
+
+describe("resolveSwapPriorityFee — the swap path's default for an omitted fee (T10)", () => {
+  beforeEach(() => {
+    delete process.env.SWAP_PRIORITY_FEE_LAMPORTS;
+  });
+
+  it("resolves an omitted fee to auto-high, never to zero", () => {
+    const resolved = resolveSwapPriorityFee(undefined);
+    expect(resolved).toEqual(AUTO);
+    // The bug this closes: an omitted fee reached the builder as 0 — no tip — which is how a tx gets
+    // broadcast and never lands.
+    expect(resolved).not.toBe(0);
+  });
+
+  it("treats an explicit 0 as omitted rather than as \"no tip\"", () => {
+    expect(resolveSwapPriorityFee(0)).toEqual(AUTO);
+  });
+
+  it("keeps a manual tip, clamped to the 0.003 SOL cap", () => {
+    expect(resolveSwapPriorityFee(150_000)).toBe(150_000);
+    expect(resolveSwapPriorityFee(9_000_000)).toBe(AUTO_PRIORITY_FEE_MAX_LAMPORTS);
+  });
+
+  it("honours SWAP_PRIORITY_FEE_LAMPORTS only when the caller passed no fee", () => {
+    process.env.SWAP_PRIORITY_FEE_LAMPORTS = "250000";
+    expect(resolveSwapPriorityFee(undefined)).toBe(250_000);
+    // An explicit fee always wins — the env var is a default, not an override of intent.
+    expect(resolveSwapPriorityFee(150_000)).toBe(150_000);
+  });
+
+  it("ignores a garbage or non-positive env override", () => {
+    process.env.SWAP_PRIORITY_FEE_LAMPORTS = "not-a-number";
+    expect(resolveSwapPriorityFee(undefined)).toEqual(AUTO);
+    process.env.SWAP_PRIORITY_FEE_LAMPORTS = "0";
+    expect(resolveSwapPriorityFee(undefined)).toEqual(AUTO);
+  });
 });
 
 describe("autoPriorityFeeLamports", () => {

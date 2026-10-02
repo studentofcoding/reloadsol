@@ -25,10 +25,23 @@ via the global `PostToolUse` hook; run `graphify update .` yourself if it did no
 ## Verify gate (exact)
 
 ```bash
-rm -rf .next/ && npm run lint && npm run verify:no-raw-useeffect && npm run build && npm run start
+rm -rf .next/ && npm run lint && npm run verify:no-raw-useeffect && npm run verify:no-hardcoded-sol-price && npm run build && npm run start
 ```
 
 Report each step verbosely (exit code + failures). Confirm `npm run start` boots, then stop it.
+
+### Builds serialise across agents — `npm run build` now queues
+
+`npm run build` runs through `scripts/with-build-lock.js`, which takes `/tmp/reloadsol-build.lock` and
+**waits** if another session is already building (up to `BUILD_LOCK_WAIT_SECS`, default 30 min; `=` is
+`exit 75`). Two concurrent `next build`s on one machine starve each other — a ~3-minute build blew past a
+10-minute timeout twice while another session was building, which reads as a hang.
+
+- **Use `npm run build`, not a raw `npx next build`/`next build`** — the raw form skips the lock and is what
+  causes the collision. Same for `npm run build:webpack`.
+- `node scripts/with-build-lock.js --status` reports who holds it. A lock whose owner died (or is older than
+  `BUILD_LOCK_STALE_SECS`) is stolen automatically, so a killed build cannot wedge the machine.
+- Separate from the deploy lock (`/tmp/reloadsol-deploy.lock`), which serialises `compose up` on the VPS.
 
 ## Deploy chain
 
@@ -36,9 +49,55 @@ Report each step verbosely (exit code + failures). Confirm `npm run start` boots
 2. `git pull` on `flowey-vps` — the post-merge hook rebuilds the docker stack.
 3. Smoke-test the exact endpoints with the real Host header (`Host: reloadsol.app`); bare-IP
    curls are dropped by nginx (`default_server` → 444).
+4. **Concurrent deploys are serialized** by `/tmp/reloadsol-deploy.lock`: both `docker-deploy.sh`
+   (post-merge hook) and `ship-standalone-to-vps.sh` take it, and the ship exits **75** when it is
+   held. If a recreate still leaves web `Dead` (nginx 502), use the recovery recipe in
+   `PRODUCTION_DEPLOYMENT.md` § "Concurrent deploys" — never leave the origin down.
+5. The VPS is <4Gi and refuses host `next build` — ship web builds with
+   `bash scripts/ship-standalone-to-vps.sh` from a machine with RAM. The shipped tree must be
+   stamped with the VPS `HEAD` (`.next/{standalone,static}/.deploy-git-sha`) or the next deploy is
+   forced to rebuild. **If `git status` shows uncommitted changes you did not make, do not ship
+   from that tree** — `npm run build` would bake another workstream's in-flight code into prod.
+   Build from an isolated worktree at the commit (recipe in `PRODUCTION_DEPLOYMENT.md`).
+6. Migrations: `bash scripts/init-local-db.sh` applies `db/init/*.sql` idempotently, keeps going
+   past a failing file, lists failures, and exits non-zero — so one bad file cannot silently skip
+   the rest. `npm run db:check-migrations` applies the suite twice against a throwaway Postgres.
+7. **Migrations are NOT part of the deploy chain — apply them yourself, BEFORE the code lands.**
+   The post-merge hook runs `scripts/docker-deploy.sh`, which does not touch `db/init/`; only
+   `scripts/deploy-tencent.sh` calls `init-local-db.sh`. So a commit whose code writes a new column
+   will go live against a schema that lacks it, and the write fails at runtime — for the exit path
+   that means a position that cannot be closed. Apply the migration as its own step first:
+
+   ```bash
+   ssh flowey-vps 'docker exec -i reloadsol-db psql -U reloadsol -d reloadsol_db -v ON_ERROR_STOP=1' \
+     < db/init/<NN>-<name>.sql
+   ```
+
+   This is safe out of band because the repo's convention is that every migration is additive and
+   idempotent (`ADD COLUMN IF NOT EXISTS`, CHECKs guarded by a `pg_constraint` existence check), so
+   applying one early is a no-op for the running code. Verify the column and constraint exist, then
+   ship. `58-sl-tp-close-reason.sql` was applied this way on 2026-10-02 and re-applied to prove it.
 
 ## Notes
 
 - Command Code reads `AGENTS.md` (not `CLAUDE.md`).
 - `.commandcode/` is gitignored here — local-only tooling; share process via this file.
 - Learned preferences live in `.commandcode/taste/`.
+
+## Several agents at once
+
+This tree can be shared by more than one Command Code instance. Coordination is global and
+automatic (the `agent-coordination` skill, hooks in `~/.commandcode/settings.json`); state lives
+in `~/.commandcode/agents/<repo-slug>/`, never in the repo.
+
+```bash
+agents status            # who else is live here, their task/claims, foreign WIP
+agents claim <path>…     # declare intent before a workstream; release when done
+```
+
+- **Never `git add -A` / `git commit -a` / `git stash` here** — commit explicit paths
+  (`git add <paths>`, `git commit -- <paths>`). Foreign WIP means another agent is mid-flight.
+- **Build/deploy from an isolated worktree at your own commit**, never from a tree carrying
+  someone else's uncommitted work (this repo has already shipped a concurrent workstream's
+  half-finished files once).
+

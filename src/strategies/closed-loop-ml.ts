@@ -7,6 +7,7 @@
  */
 import type { EnvLike } from './env-like'
 import { scoreClosedLoopLogistic } from './entry-pattern-scorer'
+import { CLOSED_LOOP_FEATURE_COLUMNS } from './feature-registry'
 import {
   computeEntryMcapBand,
   readEntryMcap,
@@ -23,21 +24,8 @@ export const CLOSED_LOOP_PRINCIPAL_IDS = [
   'mcap_enter_at_80_rh',
 ] as const
 
-export const CLOSED_LOOP_FEATURE_COLUMNS = [
-  'band_under50k',
-  'band_51-100k',
-  'band_101-200k',
-  'band_201-500k',
-  'band_501k-1M',
-  'band_over1M',
-  'adjuster_presence',
-  'jaccard',
-  'ohlc_pattern',
-  'combined',
-  'rug_trip',
-  'principal_score',
-  'entry_template_milestone_80',
-] as const
+// Declared once in the feature registry; re-exported here so importers are unchanged.
+export { CLOSED_LOOP_FEATURE_COLUMNS }
 
 export type ClosedLoopFeatureKey = (typeof CLOSED_LOOP_FEATURE_COLUMNS)[number]
 

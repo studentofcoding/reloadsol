@@ -240,4 +240,29 @@ describe('DLMM outcome sync timestamps', () => {
     await expect(syncMissingDlmmOutcomesFromPositions()).resolves.toBe(0)
     expect(fetchMeteoraPool).not.toHaveBeenCalled()
   })
+
+  /**
+   * Regression: the guard used to read only `features->>'position_id'`, which
+   * `toCanonicalEntryFeatures` silently dropped, so it never matched and every
+   * manage cycle re-inserted the same closed position (~34 rows per position).
+   */
+  it('does not re-insert a position that is already recorded', async () => {
+    const db = installDb({ positions: [closedRow()], exists: true })
+    await expect(syncMissingDlmmOutcomesFromPositions()).resolves.toBe(0)
+    expect(db.inserts).toHaveLength(0)
+    expect(fetchMeteoraPool).not.toHaveBeenCalled()
+  })
+
+  it('keys the already-recorded guard on the position identity, not position_id alone', async () => {
+    installDb({ positions: [closedRow()] })
+    await syncMissingDlmmOutcomesFromPositions()
+
+    const guard = vi
+      .mocked(queryOne)
+      .mock.calls.find((call) => String(call[0]).includes("features->>'position_id'"))
+    expect(guard).toBeDefined()
+    expect(String(guard?.[0])).toContain('entry_at = $2')
+    expect(String(guard?.[0])).toContain("features->>'pool_address' = $3")
+    expect(guard?.[1]).toEqual([POSITION_ID, '2026-09-01T03:00:00.456Z', 'Pool111'])
+  })
 })

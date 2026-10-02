@@ -1,0 +1,199 @@
+import { fetchTokenMetadataFromJupiter } from '@/utils/jupiter-metadata'
+
+export interface TokenRiskInfo {
+  numHolders: number
+  numBotUsers: number
+  top10HoldersPercent: number
+  devHoldsPercent: number
+  insidersHoldPercent: number
+  bundlersHoldPercent: number
+  snipersHoldPercent: number
+  dexPaid: boolean
+  totalPairFeesPaid: number
+}
+
+export interface RiskIndicators {
+  insiderRisk: 'LOW' | 'MEDIUM' | 'HIGH'
+  bundlerRisk: 'LOW' | 'MEDIUM' | 'HIGH'
+  sniperRisk: 'LOW' | 'MEDIUM' | 'HIGH'
+  concentrationRisk: 'LOW' | 'MEDIUM' | 'HIGH'
+  feeRisk: 'LOW' | 'MEDIUM' | 'HIGH'
+  overallRisk: 'LOW' | 'MEDIUM' | 'HIGH'
+}
+
+interface TokenRiskResponse {
+  success: boolean
+  data?: TokenRiskInfo
+  error?: string
+  requiresAuth?: boolean
+  pairNotFound?: boolean
+  /** Upstream is not answering right now (425 Too Early / 429 / 5xx). Not an error to report. */
+  unavailable?: boolean
+}
+
+// Cache for TokenRisk API responses. Failures are cached too (shorter TTL) so a mint
+// that cannot be resolved is not re-fetched on every poll.
+const riskCache = new Map<string, { response: TokenRiskResponse; timestamp: number }>()
+const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes cache
+const NEGATIVE_CACHE_DURATION = 2 * 60 * 1000 // 2 minutes for failures
+
+const UNAVAILABLE_STATUSES = new Set([425, 429, 502, 503, 504])
+
+const loggedFailures = new Map<string, number>()
+/** At most one line per mint per negative TTL — not one per poll. */
+function logFailureOnce(mintAddress: string, message: string): void {
+  const last = loggedFailures.get(mintAddress) ?? 0
+  if (Date.now() - last < NEGATIVE_CACHE_DURATION) return
+  loggedFailures.set(mintAddress, Date.now())
+  console.warn(`[token-risk] risk data unavailable for ${mintAddress}: ${message}`)
+}
+
+function getApiBaseUrl(): string {
+  if (typeof window !== 'undefined') return ''
+  return process.env.API_HOST || process.env.NEXT_PUBLIC_API_HOST || 'http://localhost:3000'
+}
+
+export async function fetchTokenRiskData(mintAddress: string): Promise<TokenRiskResponse> {
+  // Delegates to the GMGN token-snapshot route, the same source the Robinhood path already used.
+  // The direct client is gone on purpose: api.axiom.trade carried hardcoded auth cookies whose
+  // access token expired 2025-07-18, so every call 503'd for over a year. GMGN returns the same
+  // six holder-distribution fields plus honeypot, and its route is served from a 10s cache with
+  // in-flight de-duplication behind the GMGN priority lanes (docs/GMGN_RATE_BUDGET.md).
+  try {
+    const { fetchTokenRisk } = await import('./gmgn-risk-map')
+    const result = await fetchTokenRisk(mintAddress, 'sol')
+    if (!result.success || !result.data) {
+      return { success: false, error: result.error ?? 'risk data unavailable' }
+    }
+    return { success: true, data: result.data }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
+  }
+}
+
+// Helper function to calculate fee-to-market-cap ratio and assess organic trading
+export function calculateFeeToMarketCapRatio(feesPaid: number, marketCap: number): {
+  ratio: number
+  organicScore: number
+  feeRisk: 'LOW' | 'MEDIUM' | 'HIGH'
+  isOrganic: boolean
+} {
+  if (marketCap <= 0) {
+    return { ratio: 0, organicScore: 0, feeRisk: 'HIGH', isOrganic: false }
+  }
+
+  // Convert market cap to thousands for easier calculation
+  const mcapInK = marketCap / 1000
+  const feesInSol = feesPaid
+
+  // Calculate ratio: fees per 5K market cap
+  const ratio = (feesInSol / mcapInK) * 5
+
+  // Organic trading assessment based on your criteria:
+  // - For every 5K MC, should have at least 0.5 SOL in fees
+  // - At 20K MC, should have 1.5-2 SOL in fees
+  // - Under 4 SOL for graduated tokens is suspicious
+
+  let organicScore = 0
+  let feeRisk: 'LOW' | 'MEDIUM' | 'HIGH' = 'LOW'
+  let isOrganic = false
+
+  if (mcapInK <= 20) {
+    // Small cap tokens (≤ 20K MC)
+    const expectedFees = mcapInK * 0.1 // 0.1 SOL per 1K MC
+    if (feesInSol >= expectedFees * 1.5) {
+      organicScore = 100
+      feeRisk = 'LOW'
+      isOrganic = true
+    } else if (feesInSol >= expectedFees) {
+      organicScore = 70
+      feeRisk = 'MEDIUM'
+      isOrganic = true
+    } else if (feesInSol >= expectedFees * 0.5) {
+      organicScore = 40
+      feeRisk = 'MEDIUM'
+      isOrganic = false
+    } else {
+      organicScore = 10
+      feeRisk = 'HIGH'
+      isOrganic = false
+    }
+  } else {
+    // Larger cap tokens (> 20K MC)
+    const expectedFees = mcapInK * 0.075 // 0.075 SOL per 1K MC for larger caps
+    if (feesInSol >= expectedFees * 1.2) {
+      organicScore = 100
+      feeRisk = 'LOW'
+      isOrganic = true
+    } else if (feesInSol >= expectedFees) {
+      organicScore = 80
+      feeRisk = 'MEDIUM'
+      isOrganic = true
+    } else if (feesInSol >= expectedFees * 0.6) {
+      organicScore = 50
+      feeRisk = 'MEDIUM'
+      isOrganic = false
+    } else {
+      organicScore = 20
+      feeRisk = 'HIGH'
+      isOrganic = false
+    }
+  }
+
+  // Special case for graduated tokens (high market cap)
+  if (marketCap > 1000000) { // > 1M MC
+    if (feesInSol < 4) {
+      organicScore = Math.min(organicScore, 30)
+      feeRisk = 'HIGH'
+      isOrganic = false
+    }
+  }
+
+  return { ratio, organicScore, feeRisk, isOrganic }
+}
+
+// Helper function to get risk indicators based on TokenRisk data
+export function getRiskIndicators(data: TokenRiskInfo, marketCap?: number): RiskIndicators {
+  const indicators = {
+    insiderRisk: (data.insidersHoldPercent > 10 ? 'HIGH' : data.insidersHoldPercent > 5 ? 'MEDIUM' : 'LOW') as 'LOW' | 'MEDIUM' | 'HIGH',
+    bundlerRisk: (data.bundlersHoldPercent > 5 ? 'HIGH' : data.bundlersHoldPercent > 2 ? 'MEDIUM' : 'LOW') as 'LOW' | 'MEDIUM' | 'HIGH',
+    sniperRisk: (data.snipersHoldPercent > 15 ? 'HIGH' : data.snipersHoldPercent > 8 ? 'MEDIUM' : 'LOW') as 'LOW' | 'MEDIUM' | 'HIGH',
+    concentrationRisk: (data.top10HoldersPercent > 50 ? 'HIGH' : data.top10HoldersPercent > 30 ? 'MEDIUM' : 'LOW') as 'LOW' | 'MEDIUM' | 'HIGH'
+  }
+
+  // Calculate fee risk if market cap is provided
+  let feeRisk: 'LOW' | 'MEDIUM' | 'HIGH' = 'LOW'
+  if (marketCap) {
+    const feeAnalysis = calculateFeeToMarketCapRatio(data.totalPairFeesPaid, marketCap)
+    feeRisk = feeAnalysis.feeRisk
+  }
+
+  // Overall risk assessment (now includes fee risk)
+  const highRiskCount = Object.values(indicators).filter(risk => risk === 'HIGH').length + (feeRisk === 'HIGH' ? 1 : 0)
+  const mediumRiskCount = Object.values(indicators).filter(risk => risk === 'MEDIUM').length + (feeRisk === 'MEDIUM' ? 1 : 0)
+
+  let overallRisk: 'LOW' | 'MEDIUM' | 'HIGH' = 'LOW'
+  if (highRiskCount >= 2 || (highRiskCount >= 1 && mediumRiskCount >= 2)) {
+    overallRisk = 'HIGH'
+  } else if (highRiskCount >= 1 || mediumRiskCount >= 2) {
+    overallRisk = 'MEDIUM'
+  }
+
+  return {
+    ...indicators,
+    feeRisk,
+    overallRisk
+  }
+}
+
+// Helper function to format risk display
+export function formatRiskDisplay(risk: 'LOW' | 'MEDIUM' | 'HIGH') {
+  switch (risk) {
+    case 'LOW':
+      return { text: 'Low', color: 'text-green-400', bg: 'bg-green-900/20', border: 'border-green-500/30' }
+    case 'MEDIUM':
+      return { text: 'Medium', color: 'text-yellow-400', bg: 'bg-yellow-900/20', border: 'border-yellow-500/30' }
+    case 'HIGH':
+      return { text: 'High', color: 'text-red-400', bg: 'bg-red-900/20', border: 'border-red-500/30' }
+  }
+}

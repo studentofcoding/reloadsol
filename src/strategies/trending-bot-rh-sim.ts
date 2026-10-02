@@ -5,8 +5,15 @@
  * none of that exists on robinhood, so RH runs on trading_records alone.
  */
 
+import {
+  createBrainRiskSession,
+  resolveSimOpenSize,
+  stampBrainRisk,
+  type BrainRiskSession,
+} from '@/utils/brain-regime-risk'
 import { fetchTradingRecordsForWallet } from './db'
 import { decideRhTrendingExit } from './exit-ladder'
+import { registerSimExitContract, retireSimExitContract } from './sim-exit-contract'
 import { getActiveStrategiesWithState } from './load-strategy'
 import { loadClosedTrendingOutcomes, recordTrendingBotOutcome } from './outcomes'
 import { RH_MAX_OPEN_POSITIONS_DEFAULT } from './registry'
@@ -62,21 +69,26 @@ export type RhTrendingSimResult = {
  * discovery, first buy record, tp1-marker sells), then compute all open sim
  * cycles in one sorted walk instead of re-scanning records per position.
  */
-function openPositionsFor(records: Records, strategyId: string): OpenPosition[] {
+export function openPositionsFor(records: Records, strategyId: string): OpenPosition[] {
   const candidateMints = new Set<string>()
   const candidateOrder: string[] = []
   const candidateToken = new Map<string, { symbol?: string }>()
-  const buyByMint = new Map<string, Records[number]>()
+  const buysByMint = new Map<string, TrackingRecord[]>()
+  const lastCloseTsByMint = new Map<string, number>()
   const tp1Mints = new Set<string>()
 
   for (const r of records) {
     const isCandidate = r.is_simulation === true && r.bot_strategy === strategyId
     const isBuy = r.operationType === 'buy' && r.bot_strategy === strategyId
+    const isFullClose =
+      r.operationType === 'sell' &&
+      r.bot_strategy === strategyId &&
+      r.close_position === true
     const isTp1Sell =
       r.operationType === 'sell' &&
       r.bot_strategy === strategyId &&
       !r.close_position
-    if (!isCandidate && !isBuy && !isTp1Sell) continue
+    if (!isCandidate && !isBuy && !isFullClose && !isTp1Sell) continue
 
     for (const t of r.tokens ?? []) {
       const mint = t.mintAddress
@@ -85,9 +97,36 @@ function openPositionsFor(records: Records, strategyId: string): OpenPosition[] 
         candidateOrder.push(mint)
         candidateToken.set(mint, t)
       }
-      if (isBuy && !buyByMint.has(mint)) buyByMint.set(mint, r)
+      if (isBuy) {
+        const buys = buysByMint.get(mint)
+        if (buys) buys.push(r)
+        else buysByMint.set(mint, [r])
+      }
+      if (isFullClose) {
+        lastCloseTsByMint.set(
+          mint,
+          Math.max(lastCloseTsByMint.get(mint) ?? 0, r.timestamp),
+        )
+      }
       if (isTp1Sell) tp1Mints.add(mint)
     }
+  }
+
+  /**
+   * Entry metadata belongs to the buy that opened the mint's *current* cycle:
+   * the earliest buy at/after the most recent full close. Taking the first-ever
+   * buy instead stamps every later re-entry with the same `entry_at`, so
+   * `(strategy, mint, entry_at)` stops identifying a trade and the read-side
+   * dedupe silently collapses all of a mint's trades into one (att_rh: 77,319
+   * distinct trades sharing 1,331 entry stamps). Records arrive ascending
+   * (`fetchTradingRecordsForWallet` orders by timestamp ASC).
+   */
+  const entryBuyFor = (mint: string): TrackingRecord | undefined => {
+    const buys = buysByMint.get(mint)
+    if (!buys || buys.length === 0) return undefined
+    const lastCloseTs = lastCloseTsByMint.get(mint)
+    if (lastCloseTs == null) return buys[0]
+    return buys.find((b) => b.timestamp >= lastCloseTs) ?? buys[buys.length - 1]
   }
 
   const cycles = computeOpenSimCycles(records, candidateMints)
@@ -97,7 +136,7 @@ function openPositionsFor(records: Records, strategyId: string): OpenPosition[] 
     const cycle = cycles.get(mint)
     if (!cycle || cycle.simulationType !== 'strategy') continue
 
-    const buy = buyByMint.get(mint)
+    const buy = entryBuyFor(mint)
     const sim = (buy?.trading_simulation ?? {}) as Record<string, unknown>
     const t = candidateToken.get(mint)
 
@@ -222,6 +261,8 @@ async function buySim(params: {
   strategy: TrendingBotStrategy
   /** REL-20: records are collected and bulk-inserted by the cycle caller. */
   collect: (record: TrackingRecord) => void
+  /** Created once per cycle so the recipe/params fetch is shared across tokens. */
+  brainRiskSession?: BrainRiskSession
   token: {
     token_address: string
     token_symbol: string
@@ -233,7 +274,48 @@ async function buySim(params: {
   }
 }): Promise<void> {
   const { strategy, token } = params
-  const nativeAmount = strategy.buy_amount_native ?? strategy.buy_amount_sol
+  // Level 1 market scalar, on the same path as mcap/signals/social/gmgn. This RH sim had no brain
+  // wiring at all, so att_rh ran at full configured size while every other family was cut — which is
+  // why its rows carried no `brain_size_scale` and a flat 0.0015 stake.
+  const session = params.brainRiskSession ?? createBrainRiskSession()
+  const sized = await resolveSimOpenSize({
+    session,
+    strategyId: strategy.id,
+    baseSol: strategy.buy_amount_native ?? strategy.buy_amount_sol,
+  })
+  if (sized.skip) {
+    // LOUD, because this was the one path with no trace. `buySim` used to return here without a log
+    // and without a `skipped` entry, so a strategy whose every open the brain refuses looked exactly
+    // like one whose candidates were all filtered — and the two need opposite fixes. Found by
+    // elimination on 2026-10-02: 28 in-band candidates against a guard that could block at most 11,
+    // and `tracking: 0`.
+    log.warn('deviation_alert', 'RH sim open SKIPPED by the brain risk layer', {
+      strategyId: strategy.id,
+      chain: CHAIN,
+      tokenSymbol: token.token_symbol,
+      // WHICH of the two `resolveSimOpenSize` skips fired, and the values behind it.
+      //
+      // `standDown` and `scaleOpenSize` actually agree, and I first read this as an inconsistency —
+      // worth stating so nobody re-derives it: `applyRisk` hardcodes `applied: true`, so a cell that
+      // exists is applied, and `sizeScale <= 0` is then a genuine stand-down in both places
+      // (`brain-regime-risk.ts:147` and `:187`). A zero scale is not ambiguous.
+      //
+      // What the log still has to separate: a real cell saying stand-down (`recipeId`/`reason` set,
+      // `sizeScale: 0`) versus a cell that carried NO `sizeScale`, where the `: 0` fallback at `:143`
+      // coerces it — the second would be a malformed cell read as a policy decision.
+      standDown: sized.risk.standDown,
+      applied: sized.risk.applied,
+      source: sized.risk.source,
+      climateState: sized.risk.state,
+      sizeScale: sized.risk.sizeScale,
+      recipeId: sized.risk.recipeId ?? null,
+      reason: sized.risk.reason ?? null,
+      baseSol: strategy.buy_amount_native ?? strategy.buy_amount_sol,
+      resolvedSol: sized.sol,
+    })
+    return
+  }
+  const nativeAmount = sized.sol
   const nativeUsd = await getNativeUsd(CHAIN)
   const priceUsd = token.price > 0 ? token.price : 0.000001
   const tokenAmount = nativeUsd > 0 ? (nativeAmount * nativeUsd) / priceUsd : 0
@@ -282,10 +364,49 @@ async function buySim(params: {
       trading_simulation: {
         entry_at: entryAt,
         entry_price_usd: priceUsd,
-        entry_features: entryFeatures,
+        entry_features: stampBrainRisk(entryFeatures, sized.risk, { sizedSol: nativeAmount }),
       },
     }),
   )
+
+  // Put this position on the exit standard, in SHADOW.
+  //
+  // `att_rh` has no entry in `simCloseDomainForStrategy`, so the worker will evaluate its triggers on
+  // every pass, report them, and then refuse to close because no closer owns the family. That is the
+  // point: it is the only way to compare this strategy's own `decideRhTrendingExit` ladder against
+  // `evaluateExit` on real positions without changing how the most active strategy exits.
+  //
+  // The two ladders DO differ, and exactly one case matters. TP3 is disabled here and both agree on
+  // the stop, the max-hold and TP1. But a position that gaps straight past TP2 (100%) before TP1 has
+  // fired closes 100% under `decideRhTrendingExit` (it checks TP2 before TP1) while `evaluateExit`
+  // would sell TP1's 90% and leave 10% open. So `tp1SellPct` carries the real 90 — registering 100
+  // would shadow a different strategy from the one running, which is the one thing a shadow must not
+  // do.
+  //
+  // Enforcing is a later step: it means giving `att_rh` a closer domain, and it waits until this
+  // comparison agrees.
+  // A re-entered mint must not leave the previous cycle's mirror active beside the new one.
+  await retireSimExitContract({
+    walletAddress: SIM_WALLET,
+    strategyId: strategy.id,
+    mintAddress: token.token_address,
+    chain: CHAIN,
+  })
+  await registerSimExitContract({
+    chain: CHAIN,
+    walletAddress: SIM_WALLET,
+    strategyId: strategy.id,
+    mintAddress: token.token_address,
+    symbol: token.token_symbol,
+    positionSize: nativeAmount,
+    entryPriceUsd: priceUsd,
+    thresholds: {
+      takeProfitPct: strategy.take_profit_levels.tp1_percentage,
+      stopLossPct: Math.abs(strategy.stop_loss_percentage),
+      maxHoldHours: strategy.max_hold_hours,
+      tp1SellPct: strategy.take_profit_levels.tp1_sell_percentage,
+    },
+  })
 }
 
 export async function runTrendingBotRhSimCycle(): Promise<RhTrendingSimResult[]> {
@@ -293,7 +414,16 @@ export async function runTrendingBotRhSimCycle(): Promise<RhTrendingSimResult[]>
   if (strategies.length === 0) return []
 
   const { tokens } = await getFilteredGmgnTrending(CHAIN)
-  const records = await fetchTradingRecordsForWallet(SIM_WALLET)
+  // Only the rows the reconstruction needs: from each mint's last full close onward. The
+  // full wallet is 154,930 rows / 151 MB and hydrating it measured 19-78 s inside the shared
+  // Node process — long enough to starve the mcap sim past its 30 s cron deadline. A cycle
+  // that ended before the last close cannot be open, so the tail is sufficient; validated on
+  // prod (2026-09-29): 6 open positions from the full history and 6 from the tail, 0 lost,
+  // 1,340 rows / 1.1 MB instead of 154,930 / 151 MB.
+  const records = await fetchTradingRecordsForWallet(SIM_WALLET, {
+    strategies,
+    sinceLastClose: true,
+  })
   // Durable re-entry guard: never reopen a (strategy, mint) already closed
   // inside the cooldown, or past its lifetime open cap.
   const blocked = trendingBlockedKeys(
@@ -358,6 +488,14 @@ export async function runTrendingBotRhSimCycle(): Promise<RhTrendingSimResult[]>
 
       if (decision.action === 'close') {
         closed++
+        // att_rh closes on its own ladder; retire the shadow mirror so the worker stops
+        // re-evaluating a position that no longer exists.
+        await retireSimExitContract({
+          walletAddress: SIM_WALLET,
+          strategyId,
+          mintAddress: pos.mintAddress,
+          chain: CHAIN,
+        })
         openMints.delete(pos.mintAddress)
         // `blocked` was built from outcomes that existed BEFORE this close, so without
         // this the mint is reopened by the candidate loop below within the same cycle —
@@ -369,6 +507,34 @@ export async function runTrendingBotRhSimCycle(): Promise<RhTrendingSimResult[]>
     const candidates = tokens.filter((t) => passesConditions(strategy, t))
     const maxOpenPositions =
       strategy.max_open_positions ?? RH_MAX_OPEN_POSITIONS_DEFAULT
+
+    // The funnel, logged before anything is skipped. Without this the only visible number was
+    // `current_stats.skipped`, which is CUMULATIVE — so "451 skipped" reads like 451 mints blocked
+    // when it is 451 decisions across every cycle since boot. This says which gate is actually
+    // binding, per cycle, with the values it compared.
+    const blockedCandidates = candidates.filter((t) =>
+      blocked.has(trendingReentryKey(strategyId, t.token_address)),
+    )
+    // NOTE on the level: this is `warn`, not `info`, because `unified-logger` writes `info` through
+    // `console.log` and production's `removeConsole` strips it (`unified-logger.ts:77`) — so an
+    // `info` funnel would be a log that looks correct in dev and is silently absent where it matters.
+    // This path has been burned by exactly that before ("most of this path's instrumentation is
+    // console.log, which production's removeConsole strips, so the cycle looked silent" — CHANGELOG),
+    // and I repeated it; the first version of this line was `info`.
+    log.warn('deviation_alert', 'RH sim candidate funnel', {
+      strategyId,
+      chain: CHAIN,
+      feed_tokens: tokens.length,
+      after_conditions: candidates.length,
+      already_open: candidates.filter((t) => openMints.has(t.token_address)).length,
+      blocked_by_guard: blockedCandidates.length,
+      blocked_sample: blockedCandidates.slice(0, 5).map((t) => t.token_symbol),
+      open_now: openMints.size,
+      max_open_positions: maxOpenPositions,
+      mcap_min: strategy.conditions?.min_market_cap,
+      mcap_max: strategy.conditions?.max_market_cap,
+    })
+
     for (const token of candidates) {
       if (openMints.has(token.token_address)) continue
       if (blocked.has(trendingReentryKey(strategyId, token.token_address))) {

@@ -2561,7 +2561,6 @@ export default function AlgoDashboardTab() {
             // Transaction result props
             operation={unifiedModalState.transactionData?.operation}
             result={unifiedModalState.transactionData?.result}
-            solToUsd={(sol) => sol * 145}
           />
         )}
 

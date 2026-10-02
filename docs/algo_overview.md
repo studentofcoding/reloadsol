@@ -163,6 +163,94 @@ Written **only when a position fully closes** (not on open/hold):
 
 Columns: `strategy_id`, `domain`, `token_address`, `entry_at`, `exit_at`, `pnl_pct`, `status`, `is_simulated`, `features`.
 
+**Trade identity is `(chain, strategy_id, token_address, entry_at)` and is enforced** by the
+partial unique index `idx_strategy_outcomes_identity` (`db/init/45-strategy-outcomes-identity.sql`).
+`insertStrategyOutcome` is idempotent (update-else-insert), so a re-close or re-mark **updates**
+the existing row instead of appending another. The same token under one strategy is therefore a
+defect; the same token under **different** strategies is agreement — see
+`token_strategy_overlap` (`db/init/46-token-strategy-overlap-view.sql`) and the Reports
+"Strategy overlap" table.
+
+**Agreement is counted in FAMILIES, not strategy rows.** `resolveStrategyFamily`
+(`src/strategies/strategy-family.ts`) collapses `_rh` twins onto their sol sibling and search
+variants onto their canonical slot by entry template — because the search spawner
+(`MAX_CONCURRENT_SEARCH = 3`, `strategy-search-bandit.ts`) fills its slots with grid neighbours
+that share the entry filter and differ only in take-profit. Measured Jaccard between
+`search_mcap_first_seen_sl_30_tp150/tp200/tp300_h48` is **0.37–0.66**; every cross-family pair is
+**0.01–0.05**. So raw `count(DISTINCT strategy_id)` (what view 46 reports) overstates agreement —
+measured 2026-09-29: 8 strategy rows → 5 families, 138 tokens clone-inflated / 199 phantom
+strategies, e.g. `HGN8K3x5…` reads 5 strategy rows but **3** independent bets. The Reports overlap
+table shows `families / strategies` side by side, and `loadStrategyPairOverlap` labels each pair
+redundant (same family) or genuine agreement.
+
+**The consensus signal is NOT established and does not gate anything.** The first measurement
+looked like median PnL rising with breadth (+25.6 % at 1 → +210.8 % at 5 raw strategies), but by
+independent family it is **+120 % at 1 family (n=238), +255 % at 2 (n=18), +157 % at 3 (n=3)** —
+up then down, on 18 and 3 tokens. `loadConsensusTest` (`src/strategies/consensus-test.ts`) buckets
+by family count and reports a seeded bootstrap 95 % CI on the median (right-tailed outcomes: att_rh
+mean +83 % vs median −39 % on first entries) plus a Wilson CI on the token win rate, and prints
+`inconclusive` below 30 tokens per side. Read it as "no result yet", not "no effect". A gate would
+only follow a significant lift, shadow-first, mirroring the wallet-digger concurrence shape
+(`alpha_concurrence_signals`).
+
+**Cost note (walked down 2026-09-30, 32.7 s → 2.45 s cold; the full trail is in `CHANGELOG.md`).**
+Four separate causes, each found by measuring rather than reading:
+
+1. **The bootstrap sorted every resample** (`median([...v].sort())` → O(samples · n log n) plus one array
+   per sample). Measured in the production container at n=4,521: **16.4 s for ONE median CI**, and the
+   endpoint runs a median CI per bucket plus a diff CI (both sides) per bucket → **32.7 s cold**, which
+   is what made `?tab=closed` look like it never loaded (the DB part is only 721 ms). Now an **in-place
+   nth-element selection** with `DEFAULT_SAMPLES` 10,000 → **2,000** (`CONSENSUS_BOOTSTRAP_SAMPLES`):
+   16.4 s → 288 ms.
+2. **A quadratic reconstruction called 14× per request.** A report over a **1-hour** window still took
+   6.65 s while single-query endpoints answered in 6-63 ms, which pinned ~6.6 s to filter-independent
+   work: `getOpenMcapPositions` ran `records.find(...)` per token over the whole sim history
+   (O(records × mints)), and it was invoked once per mcap definition for coverage counts *and* again per
+   definition for the open-positions list. The lookup is now a Map, and it runs **once per request**:
+   floor 6.65 s → 0.46 s.
+3. **The sim read is now bounded, per (strategy, mint).** Keying the last full close on the **mint**
+   alone looked free and was wrong — it changes the reconstructed open set for **4 of the 7** mcap
+   strategies, because each strategy holds its own cycle on a mint. Keying per **(strategy, mint)** is
+   exact (0 of 7 differ, 2,095 records instead of 5,283) and is a superset of the per-mint bound.
+4. **`consensus` + `capital` are precomputed** (`strategy_report_precompute`, worker `report_precompute`,
+   6 h) since neither depends on the report's row filters. The endpoint reads the stored row whenever
+   there is no `from`/`to`/`strategy_id`, reports its age as `precompute.computed_at`, and computes both
+   live for a custom range. `getTrackingHealthStats` no longer reads all 31,316 `token_mcap_tracking`
+   rows (one SQL aggregate row, 509 ms → ~20 ms), `computeBestTradeWindows` no longer builds a
+   `Intl.DateTimeFormat` per row, and the route is now **stale-while-revalidate** (`X-Report-Cache`).
+
+Measured end state: **cold 2.45 s** (the UI's no-range request), narrow range 0.47 s, **warm 11 ms**,
+filter-independent floor 0.46 s. What remains is the outcome read plus DB round-trip waits — a
+`node --cpu-prof` of the cold path attributes ~0 CPU to the request, so the JS side is not the cost and
+pushing those aggregates into SQL was deliberately **not** done (it would only add round trips).
+
+
+**That gate now exists in its gated form** (`src/strategies/consensus-gate.ts`,
+`db/init/47-strategy-consensus-shadow.sql`). It decides whether a would-be open has enough
+independent families behind it, but `decideConsensusGate` returns `no_evidence` whenever the test
+is not significant — so an unproven lift can never suppress a trade. Default
+`CONSENSUS_GATE_MODE=shadow` (record only, in `strategy_consensus_shadow`, readable via
+`GET /api/strategies/consensus-shadow`); `enforce` is opt-in; `CONSENSUS_GATE_KILL_SWITCH` forces
+shadow; `CONSENSUS_GATE_MIN_FAMILIES` (default 2). The hook sits on the mcap sim open boundary and
+is fail-soft — it can never break an open. `would_gate` rows mean "we would have skipped this one"
+and are only meaningful once `evidence_significant` is true, which today it is not.
+
+**Spawn diversity guard, also shadow** (`src/strategies/candidate-diversity.ts`): each candidate's
+token-set Jaccard against the active variants is measured and returned in the search cycle result
+(`diversity`, `diversity_enforced`); redundant candidates are dropped only when
+`SEARCH_DIVERSITY_ENFORCE=1`. This is the root cause of the clone redundancy above.
+
+Two historical defects this closed (both fixed in the writers; history repaired by
+`scripts/backfill-strategy-outcome-entry-at-standalone.mjs`):
+
+- `entry_at` was taken from the mint's **first-ever** buy in the Robinhood trending sim, so every
+  later trade of a mint shared one entry stamp (att_rh: 77,319 trades → 1,331 keys) and the
+  read-side dedupe silently dropped the rest.
+- DLMM re-inserted the same closed position every manage cycle (~34 rows/position) because
+  `toCanonicalEntryFeatures` dropped `position_id`, so the dedupe guard never matched.
+
+`dedupeStrategyOutcomeRows` (read-side) is now a safety net rather than load-bearing.
+
 **Sim-outcome ML labeling (Reports → Outcomes):** click a row to open the review modal. Labels persist in `features`:
 
 - `ml_label`: `skip` | `interesting` | `anomaly`
@@ -176,6 +264,45 @@ API: `PATCH /api/strategies/outcomes/[id]`. List filters: `GET /api/strategies/o
 ### `trading_records`
 
 Sim wallet for signals: `SIGNALS_SIM_WALLET_ADDRESS` (default `signals-strategy-sim`). MCap sim: `mcap-tracker-sim`.
+
+**Bounded reads.** `fetchTradingRecordsForWallet(walletAddress, opts?)` is unbounded by default
+(historical behaviour) but takes `{ strategies, sinceDays }`. Use them: the Robinhood trending sim
+wallet holds ~155k rows / 151 MB and hydrating all of it measured **19–78 s** inside the shared
+Node process — long enough to starve the mcap sim past its 30 s cron deadline. `sinceDays` is a
+*cycle* bound: a position whose opening buy falls outside the window can no longer be reconstructed
+and reads as closed, so the window must exceed the oldest **open** position (the check is documented
+on the function; on 2026-09-29 the oldest open att_rh position was 10 days, so 7 d was unsafe and
+14 d was not). Env: `RH_SIM_RECORD_WINDOW_DAYS` (default 14).
+
+**Cron outcome reporting.** A tick that loses the job lock gets `409 {"skipped":true}`;
+`makeRequest` returns that body with a nil error, so callers must distinguish it — `isSkippedBody`
++ `workers.Skipped` (which touches neither `lastSuccessAt` nor `lastErrorAt`). Treating a skip as a
+success is what made the ops view report the mcap sim healthy while it was almost never running.
+
+**Pool.** `DATABASE_POOL_MAX` (10) and `DATABASE_POOL_CONN_TIMEOUT_MS` (5 s). Without the
+acquisition timeout a query that cannot get a client queues indefinitely, so pool contention
+surfaces as the caller's HTTP deadline expiring rather than as a specific error. Do **not** add
+`statement_timeout` to the Pool: pg sends it as a *startup parameter* and PgBouncer rejects it
+(`unsupported startup parameter: statement_timeout`), which breaks every query in the app
+(`connectionTimeoutMillis` is client-side only, so it is safe).
+
+### Paper-trade capital
+
+`loadPaperCapital` (`GET /api/strategies/reports` → `capital[]`, "Paper-trade capital & R:R" panel)
+reports, per chain: deployed notional per day (**throughput** — it recycles, so it is not the amount
+to hold), **peak simultaneous exposure × the observed clip** (the binding capital number), and
+profit factor / R:R / expectancy mean + median. Profit factor is the headline because the expectancy
+mean is right-tail driven; the median is shown beside it. Amounts are in the chain's native unit
+(SOL vs ETH — the RH twin sizes in ETH) and are never summed across chains. The observed clip sits
+below the configured one because `resolveSimOpenSize(…, brainRisk)` scales it down (2026-09-29: 0.00097
+SOL/trade against a 0.01 config). Since 2026-10-01 that scalar reaches **every** sim domain through one
+path, so the observed clip is now comparable across families — before the fix gmgn and social opened at
+full configured size (no scalar, no stamp) and staked ~9× the per-trade SOL of the scaled mcap family.
+
+Peak open is an **interval-overlap sweep over `strategy_outcomes`' own `[entry_at, exit_at)`
+intervals** (open positions counted to `now()`). Do not compute it from buy/sell records: a position
+whose close record never landed then never decrements and the running count grows without bound
+(that version reported 1674 "open" positions on a day with ~330 buys, vs 83 real).
 
 ---
 
@@ -227,6 +354,8 @@ Process: [`main.go`](../main.go) — container `reloadsol-cron`, port **8080** (
 
 **Docker deploy:** frontend-only changes should use `npm run docker:deploy:web` — cron container is not rebuilt or restarted.
 
+**Cron intervals are tuned by env, and the service says so.** The intended cadence of every interval job lives in one table, `intervalSpecs` in [`cron_intervals.go`](../cron_intervals.go), pinned by `cron_intervals_test.go`. At startup the cron logs `cron intervals (effective / default)` with each deviation flagged and sends a Discord warning; an unusable value (`abc`, `-5`, or `0` on a job that cannot be disabled) is logged as an `ERROR … IGNORED` and the default is used — it is never swallowed silently. `SLTP_MONITOR_INTERVAL` above 300 s is logged as an error (the sole position closer). The only intentional 900 s default is `METRICS_COPY_INTERVAL`; any other 900 you see in the Workers table is an env override, not a code default.
+
 ### Env vars (common)
 
 | Variable | Default | Worker |
@@ -235,14 +364,19 @@ Process: [`main.go`](../main.go) — container `reloadsol-cron`, port **8080** (
 | `TRENDING_TRACKER_SECRET` | — | Auth for trending/signals/mcap sim |
 | `SIGNALS_SIM_INTERVAL` | 120 | signals sim-track |
 | `SIGNAL_REFRESH_INTERVAL` | 60 | signals refresh |
-| `MCAP_TRACKER_SIM_OPEN_INTERVAL` | 15 | mcap tracker sim open (`phase=open`) |
-| `MCAP_TRACKER_SIM_INTERVAL` | 120 | mcap tracker sim manage (`phase=manage`) |
+| `MCAP_TRACKER_SIM_OPEN_INTERVAL` | 15 | **schedules nothing** — the open phase runs inside the `phase=all` job at `MCAP_TRACKER_SIM_INTERVAL` |
+| `MCAP_TRACKER_SIM_INTERVAL` | 120 | mcap tracker sim (`phase=all`: open + manage) |
 | `SOCIAL_ROLLUP_INTERVAL` | 300 | social rollup + 24h patterns |
+| `SOCIAL_SIM_INTERVAL` | 900 (prod) | social sim-track (FOMO burst open) |
+| `SOCIAL_BURST_WINDOW_MIN` | 30 | FOMO burst window read from `social_token_events` |
+| `SOCIAL_MOONBAG_ARM_PCT` / `_TRAIL_PCT` / `_MAX_HOLD_H` | 60 / 35 / 72 | social peak-trailing moonbag exit |
+| `SOCIAL_FOMO_NOUL_MODE` | `shadow` | Jev Noul beside the social open (`enforce` to suppress; `SOCIAL_FOMO_NOUL_KILL_SWITCH` forces shadow) |
 | `DLMM_SCREEN_INTERVAL` | 300 | dlmm screen |
 | `DLMM_SIM_TRACK_INTERVAL` | 300 | dlmm sim-track |
 | `DLMM_MANAGE_INTERVAL` | 60 | dlmm manage |
 | `RH_CLMM_MANAGE_INTERVAL` | 300 | rh_clmm_manage (alert-only RH CLMM cycle) |
 | `STRATEGY_REPORT_INTERVAL` | 86400 (0=off) | report digest |
+| `REPORT_PRECOMPUTE_INTERVAL` | 21600 (0=off) | refresh of the stored consensus + capital sections (`strategy_report_precompute`) |
 | `CRON_SERVICE_URL` | `http://cron:8080` in Docker compose | Next.js proxy to cron |
 | `TELEGRAM_BOT_TOKEN` | — | Sim open copy-trade alerts (with `TELEGRAM_ALERT_CHAT_ID`) |
 | `TELEGRAM_ALERT_CHAT_ID` | — | Telegram destination for strategy/sim alerts |
@@ -290,9 +424,10 @@ Legacy `/dev/strategies` redirects here (tab mapping in `proxy.ts`).
 ### API routes
 
 - `GET /api/strategies` — merged registry
-- `GET /api/strategies/reports` — breakdown + `coverage[]` + `best_trade_windows` (default tz `Asia/Bangkok`, `?tz=`), ranking by avg PnL, top/worst 8 trades
+- `GET /api/strategies/reports` — breakdown + `coverage[]` + `best_trade_windows` (default tz `Asia/Bangkok`, `?tz=`), ranking by avg PnL, top/worst 8 trades. Redis-cached **600 s** per-filter key, served **stale-while-revalidate** (`X-Report-Cache: fresh|stale|miss`). `consensus` and `capital` come from the `strategy_report_precompute` table (refreshed every `REPORT_PRECOMPUTE_INTERVAL`, 6 h) whenever the request has no `from`/`to`/`strategy_id`; the response carries `precompute.computed_at`, and a custom range computes both live.
 - `GET /api/strategies/outcomes` — paginated outcomes
 - `PATCH /api/strategies/outcomes/[id]` — ML label merge
+- `GET /api/strategies/pnl-export` — token-level PnL spreadsheet for an inclusive day range (`?from=&to=&tz=`, `position_size` default `0.005`, `chain` optional and **omitted means all chains** because `parseStrategyChain` coerces to `sol` and would drop the Robinhood twin). CSV: `#` metadata block (range, timezone, chains, trades, won/lost, avg/median `pnl_pct`, gross win/loss, profit factor, `pnl_sol`, peak concurrent, peak capital, top-10 concentration) then one table with a `section` column — rank 1-10 winners, rank 1-10 losers, then every token. `format=json` for the same payload. Notional counts only per-position percentages, so it is never a portfolio return; when the range spans chains the CSV flags that the notional column mixes native units.
 - `GET /api/mcap-patterns/stats` — 24h cohort counts + pattern model readiness
 - `GET /api/workers/status` — cron + DB heartbeat
 - `POST /api/workers/trigger` — run worker now (dev only)

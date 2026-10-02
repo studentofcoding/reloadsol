@@ -148,7 +148,7 @@ export async function sendBuyNotificationDiscord(params: {
           ? '🟡'
           : '🔴'
     lines.push(`${riskEmoji} Risk: ${riskAssessment.riskLevel}`)
-    if (riskAssessment.axiomData || riskAssessment.jupiterDetails) {
+    if (riskAssessment.riskData || riskAssessment.jupiterDetails) {
       lines.push(
         `📈 Metrics: ${formatDetailedRiskForDiscord(
           {

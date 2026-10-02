@@ -1,32 +1,61 @@
 import type { TokenFilterConfig, TrendingBotStrategy } from './types'
 
 /**
- * Robinhood mcap band. Live /v1/market/rank for chain=robinhood puts ~3/4 of the
- * volume-ranked rows between these bounds; below 300k the book is too thin to fill.
+ * Env-tunable number with a code default.
+ *
+ * The default is the canonical value — a knob is only worth turning when there is a reason, and
+ * changing one back to its default should mean deleting the env var. Reads happen at module load, so
+ * a change needs a container restart, which is the same for every other knob here.
+ *
+ * Server-only module: nothing under `src/components` imports `registry`, so these are real process
+ * vars and not inlined `undefined` in a browser bundle.
  */
-export const RH_MCAP_MIN = 300_000
-export const RH_MCAP_MAX = 2_000_000
+export function envNumber(name: string, fallback: number): number {
+  const raw = process.env[name]
+  if (raw == null || raw.trim() === '') return fallback
+  const n = Number(raw)
+  return Number.isFinite(n) ? n : fallback
+}
+
+/**
+ * Robinhood mcap band.
+ *
+ * `RH_MCAP_MIN` was 300_000 chosen when live `/v1/market/rank` for chain=robinhood put "~3/4 of the
+ * volume-ranked rows between these bounds". That is no longer true: reading the live feed on
+ * 2026-10-02 showed the volume-ranked rows mostly BELOW it (36k, 66k, 70k against a 564k and a 347k),
+ * so the floor was rejecting most of the book. Both bounds are env-tunable now, because the band
+ * tracks a market that moves and the value that is right today will not be right in a month.
+ *
+ * The original reasoning still holds below the floor — a very thin book is hard to fill — so the
+ * default is kept rather than lowered here. Lowering it is a tuning decision, and this makes it one.
+ */
+export const RH_MCAP_MIN = envNumber('RH_MCAP_MIN', 300_000)
+export const RH_MCAP_MAX = envNumber('RH_MCAP_MAX', 2_000_000)
 
 /** ETH-denominated sim sizes (~$5 entry, ~$3 paper size at 2-4k ETH). */
-export const RH_BUY_AMOUNT_ETH = 0.0015
-export const RH_SIM_BUY_ETH = 0.001
+export const RH_BUY_AMOUNT_ETH = envNumber('RH_BUY_AMOUNT_ETH', 0.0015)
+export const RH_SIM_BUY_ETH = envNumber('RH_SIM_BUY_ETH', 0.001)
 
 /**
  * Fallback cap on concurrent RH sim positions when a strategy row does not
  * set max_open_positions in strategy_definitions.config. RH has no live
  * balance check, so the cap lives in per-strategy config (tunable via
- * /dev/strategies without a redeploy).
+ * /dev/strategies without a redeploy) — this is only the fallback, and it is
+ * env-tunable too so the fallback does not need a deploy either.
  */
-export const RH_MAX_OPEN_POSITIONS_DEFAULT = 10
+export const RH_MAX_OPEN_POSITIONS_DEFAULT = envNumber('RH_MAX_OPEN_POSITIONS_DEFAULT', 10)
 
 export const DEFAULT_FILTER_CONFIG: TokenFilterConfig = {
   enabled: true,
-  mcap: { min: 350_000, max: 3_000_000 },
-  priceChange5m: { max: -40.0 },
-  priceChange1h: { max: 100.0 },
-  priceChange6h: { max: 60.0 },
-  organicScore: { min: 70 },
-  topHoldersPercentage: { max: 25 },
+  // NOTE: nothing in the trending_bot chain reads `filtering` today — `passesConditions` reads
+  // `strategy.conditions`, which is the RH mcap band above. These are env-tunable so that wiring it
+  // up does not also mean editing constants, but turning a knob here currently changes nothing.
+  mcap: { min: envNumber('RH_FILTER_MCAP_MIN', 350_000), max: envNumber('RH_FILTER_MCAP_MAX', 3_000_000) },
+  priceChange5m: { max: envNumber('RH_FILTER_PRICE_CHANGE_5M_MAX', -40.0) },
+  priceChange1h: { max: envNumber('RH_FILTER_PRICE_CHANGE_1H_MAX', 100.0) },
+  priceChange6h: { max: envNumber('RH_FILTER_PRICE_CHANGE_6H_MAX', 60.0) },
+  organicScore: { min: envNumber('RH_FILTER_ORGANIC_SCORE_MIN', 70) },
+  topHoldersPercentage: { max: envNumber('RH_FILTER_TOP_HOLDERS_MAX', 25) },
   requireCompleteData: true,
   checkManualTradingHistory: true,
 }

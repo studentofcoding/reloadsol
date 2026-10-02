@@ -411,6 +411,138 @@ export async function resolvePredictionsForClosedOutcome(params: {
   }
 }
 
+export type ClosedOutcomeResolution = {
+  outcomeId: string
+  mint: string
+  strategyId: string
+  features?: Record<string, unknown> | null
+  pnlPct?: number | null
+  status?: string | null
+}
+
+/**
+ * Batched twin of `resolvePredictionsForClosedOutcome`. One SELECT for the whole chunk, one
+ * set-based UPDATE for the resolutions and one for the outcome stamps, then a rollup per distinct
+ * run — instead of 2-6 round trips per outcome, which is what made the label backfill outlive the
+ * proxy timeout.
+ *
+ * Stamps are merged per outcome before writing, so two predictions on one outcome still land as a
+ * single merged `features` patch exactly like the sequential version did.
+ */
+export async function resolvePredictionsForClosedOutcomes(
+  items: readonly ClosedOutcomeResolution[],
+): Promise<number> {
+  const usable = items.filter((i) => i.mint && i.strategyId && i.outcomeId)
+  if (usable.length === 0) return 0
+
+  const byStrategyMint = new Map<string, ClosedOutcomeResolution>()
+  for (const item of usable) byStrategyMint.set(`${item.strategyId}|${item.mint}`, item)
+
+  try {
+    await ensureEvalTables()
+    const strategyIds = [...new Set(usable.map((i) => i.strategyId))]
+    const mints = [...new Set(usable.map((i) => i.mint))]
+    const { rows } = await query<{
+      id: string
+      strategy_id: string
+      mint: string | null
+      token_address: string | null
+      predicted_ml_win: boolean | null
+      predicted_label: string | null
+      predicted_score: number | null
+      model_version: string | null
+      run_id: string
+    }>(
+      `SELECT id, strategy_id, mint, token_address, predicted_ml_win,
+              predicted_label, predicted_score, model_version, run_id
+         FROM strategy_ml_predictions
+        WHERE strategy_id = ANY($1::text[])
+          AND (mint = ANY($2::text[]) OR token_address = ANY($2::text[]))
+          AND (actual_ml_win IS NULL OR outcome_id IS NULL)`,
+      [strategyIds, mints, mints],
+    )
+    if (rows.length === 0) return 0
+
+    const predIds: string[] = []
+    const predOutcomeIds: string[] = []
+    const predLabels: (string | null)[] = []
+    const predWins: (boolean | null)[] = []
+    const predCorrect: (boolean | null)[] = []
+    const stampPatches = new Map<string, Record<string, unknown>>()
+    const runIds = new Set<string>()
+
+    for (const row of rows) {
+      const outcome =
+        byStrategyMint.get(`${row.strategy_id}|${row.mint ?? ''}`) ??
+        byStrategyMint.get(`${row.strategy_id}|${row.token_address ?? ''}`)
+      if (!outcome) continue
+
+      const actualMlWin = actualWinFromOutcome(outcome.features, outcome.pnlPct, outcome.status)
+      const applied = applyActualToPrediction(row.predicted_ml_win === true, actualMlWin)
+
+      predIds.push(row.id)
+      predOutcomeIds.push(outcome.outcomeId)
+      predLabels.push(applied.actualLabel)
+      predWins.push(applied.actualMlWin)
+      predCorrect.push(applied.correct)
+      runIds.add(row.run_id)
+
+      if (applied.correct != null) {
+        const patch = stampPatches.get(outcome.outcomeId) ?? {}
+        Object.assign(patch, {
+          ml_predicted_label: row.predicted_label,
+          ml_predicted_score: row.predicted_score,
+          ml_predicted_ml_win: row.predicted_ml_win,
+          ml_predicted_model_version: row.model_version,
+          ml_predicted_run_id: row.run_id,
+        })
+        stampPatches.set(outcome.outcomeId, patch)
+      }
+    }
+
+    if (predIds.length === 0) return 0
+
+    await query(
+      `UPDATE strategy_ml_predictions p
+          SET outcome_id = v.outcome_id::uuid,
+              actual_label = v.actual_label,
+              actual_ml_win = v.actual_ml_win,
+              correct = v.correct
+         FROM (SELECT unnest($1::uuid[]) AS id,
+                      unnest($2::uuid[]) AS outcome_id,
+                      unnest($3::text[]) AS actual_label,
+                      unnest($4::boolean[]) AS actual_ml_win,
+                      unnest($5::boolean[]) AS correct) v
+        WHERE p.id = v.id`,
+      [predIds, predOutcomeIds, predLabels, predWins, predCorrect],
+    )
+
+    if (stampPatches.size > 0) {
+      const ids = [...stampPatches.keys()]
+      const patches = ids.map((id) => JSON.stringify(stampPatches.get(id)))
+      await query(
+        `UPDATE strategy_outcomes o
+            SET features = COALESCE(o.features, '{}'::jsonb) || v.patch::jsonb
+           FROM (SELECT unnest($1::uuid[]) AS id, unnest($2::jsonb[]) AS patch) v
+          WHERE o.id = v.id`,
+        [ids, patches],
+      ).catch(() => undefined)
+    }
+
+    for (const runId of runIds) {
+      await rollupEvalRunAccuracy(runId)
+    }
+    return predIds.length
+  } catch (error) {
+    if (isMissingSchemaError(error)) return 0
+    console.warn(
+      '[eval-engine] resolve predictions batch failed:',
+      error instanceof Error ? error.message : String(error),
+    )
+    return 0
+  }
+}
+
 export async function rollupEvalRunAccuracy(runId: string): Promise<EvalRunAccuracy | null> {
   try {
     await ensureEvalTables()

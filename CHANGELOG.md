@@ -8,6 +8,1304 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — the Config tab now says what each value is, who owns it, and what a save reaches
+
+`SPEC-config-taxonomy-v1`, T1–T4 and T6. The config surface rendered three substrates (config, deploy-time
+runtime switches, read-only evidence) and four scopes (global, family, per-strategy, switches) as one flat
+column, so a global weight, a family default, a per-strategy override and an env switch all read as the same
+editable field.
+
+- **Global policy** up top; each **family default rendered once** as a read-only row; each strategy card shows
+  **only the fields it overrode**, the rest behind a *"show inherited (N)"* toggle — inherited greyed,
+  overrides bold — and a never-overridden section collapses instead of leaving an empty shell.
+- **A rate no input can reach renders `vacuous`, not a green ✓.** The Noul flip-readiness meter was green at
+  100% (2622/2622) while its keep band was **0**; the token funnel now states `spec_would_pass is false on all
+  N rows`.
+- **Five read-only surfaces moved out of the editor** (Noul funnel, peak/token lists, token funnel, cron
+  table, domain heartbeat) into a new **Health** tab.
+- **Half-done: T5.** The lifecycle word (`retired / active / trial`) ships for cron workers; the
+  strategy-level `trial | active | retired` and retiring the six `search_*` variants are not built.
+
+Presentation only — no value, gate or enforcement changed, and the T1 census (141 fields, NO_READER 0,
+UI_ONLY 0) is identical before and after. **Fixed along the way:** a card's "N overrides" counted the whole
+family, not the card — `sources.<family>` is keyed `<id>.<path>` and is now sliced per strategy.
+
+### Added — T7: every config value says whether it is stored or the fallback (`73b451d` → `ab4c869`, 2026-10-02)
+
+`stored` and `defaults` rendered identically on the config page and mean opposite things — the system
+using your value versus falling back to stock. That cannot be derived in the UI (the defaults are not in
+scope at the call sites), so it is computed where both sides exist.
+
+- **`diffSource(effective, defaults)`** (`95c9203`) returns `parent.child → stored | defaults`, with the
+  default as the shape authority. Its test run shaped it: `diffSource(null, {a:1})` first returned `{}` —
+  silence reading as a result — so a null side is now an empty object, not a leaf.
+- **`NumberField` / `CheckboxField` take an optional `source`** (`73b451d`), rendered by `SourceTag`
+  (`stored` / `defaults` / `inherited`), so the rule lands once rather than at 141 call sites.
+- **`GET /api/strategies` returns `sources`** for trending_bot (`4ec494c`), then all six families
+  (`80e9e08`); the hub types it (`e29c1a6`).
+- **Surfaces tagged:** trending TP1/SL/Buy SOL (`ef46df1`), GMGN discovery (`0241c05`), DLMM (`e7c1c24`),
+  signals (`eed05d6`), mcap tracker (`efd5b10`), the shared filters, computed in place (`5cd259a`),
+  social (`32baea3`, `2f7c096`), and the weights page (`ab4c869`).
+- **T5 (`b0a9d9d`):** each Workers row now carries a lifecycle word — `retired` / `active` / `trial` — derived
+  from fields it already had, so a retired worker (`fomo_ws`, 301ing since 07/09) no longer renders the same
+  red as a broken one.
+- **Known limit:** provenance is decided by comparing values, so a stored value that equals the default
+  reads `defaults`. Open fix: tag by key presence in the raw stored config (PR #116).
+
+### Added — the Health tab, and the cron table moves onto it (`ba64d2d` → `60ca335`, 2026-10-03)
+
+T3 of the config taxonomy. `health` joins `ALGO_TESTER_TABS`; because the label map is a
+`Record<AlgoTesterTab, string>`, the tab cannot ship half-added. It hosts the Noul shadow panel (`ba64d2d`)
+and the Workers/cron table (`b6c11cb`, exported from `StrategyAdminHub` and mounted — one copy, not two,
+on its own `/api/workers/status` query). The Noul panel's old unguarded mount in Config is removed
+(`60ca335`), and Health stops rendering a simulated-toggle that filtered nothing (`6947147`); the strip
+filters now narrow to `open` / `closed`. **Not carried over:** the Config mount passed `onNotify`; Health
+passes none, so that panel's toasts are silent there until Health gets a toast host.
+
+### Added — `att_rh` joins the exit standard in SHADOW (`b201d77`, 2026-10-02)
+
+`att_rh` is the most active strategy (417 outcomes / 7 d) and had **zero** `sl_tp_positions` rows, so the
+worker never saw it — it exited entirely through its own `decideRhTrendingExit` ladder, the second
+evaluator. It is shadow *by construction*: `simCloseDomainForStrategy('att_rh')` returns null, so the worker
+evaluates and reports its triggers each pass but refuses to close because no closer owns the family.
+Registering the row turns the shadow on; giving it a domain later is the enforce step.
+
+The two ladders were compared first. Stop-loss, max-hold and TP1 are identical; TP3 is opposite in sense
+(profit target vs trailing) but moot, `tp3_enabled` being false; and **one case diverges** — a position that
+gaps past +100 % before TP1 fires closes 100 % at tp2 today but would sell TP1's 90 % and leave 10 % open
+under the worker. `SimExitThresholds` gained `tp1SellPct` (registered as the real 90) and the pass summary
+reports `shadowCount` plus a SHADOW line per fired trigger.
+
+Same-window exit hardening: a trade that already closed can no longer close twice (`a40738e`); 160 active
+positions that could never time out got their backstop stamped (`fa21168`); the backstop could never fire
+because `maxHoldHours` was typed, resolved and dropped (`448657f`); the backstop share is now a health metric
+with a threshold (`3b997a2`); the close reason is persisted and the sole closer stops running twice
+(`2e96be7` — and the lock heartbeat it added was dropped in `55e259e` after it starved the queue).
+
+### Added — a watchdog for the sole closer, and a copier watchdog that can actually speak (`61789cb`, `53829fa`, `7a3a1e6`, 2026-10-02)
+
+With the per-family closers deleted, `sltp_monitor` is the only thing that closes a position; if it stops,
+nothing exits and the only symptom is a stale badge. The watchdog (host crontab `*/5`, advisory) **reads
+Postgres directly and never calls the web app** — the thing it watches *is* the web app, so a watchdog behind
+an API route would go silent in exactly the incident it exists for. Cooldown is a DB row
+(`db/init/60-watchdog-alert-state.sql`): an hour-long outage sends one message, and a *failed* send does not
+record the cooldown so the next tick retries. It found a live incident on its first run (24 min without a
+successful pass).
+
+Two defects found in the existing copier watchdog: it read `TELEGRAM_CHAT_ID` / `TELEGRAM_CHAT_ID_ALERTS`,
+neither of which exists (the stack uses `TELEGRAM_ALERT_CHAT_ID`), so it logged and never sent
+(`53829fa`); and its age expression was a bare aggregate with no `FROM`, with stderr discarded, so a failing
+query read as an empty one — a **false negative**, the one failure a watchdog must not have (`7a3a1e6`).
+
+### Fixed — the DLMM screen returned nothing for 35 days, and the page showed the stale row as current (`f4d0ddb`, `bdadb0f`, `f54e9db`, 2026-10-03)
+
+`dlmm_candidates` held 2 rows, newest 35 days old. `/dev/dlmm` tested **presence** (`candidates.length > 0`)
+not **freshness**, so a dead screener silently degraded to one August row; `candidatesAreFresh` replaces it
+and fails closed (empty, unparseable or future `screened_at` all return false). The cause recorded in
+`f4d0ddb` — "no cron entry" — was wrong and is corrected in `f54e9db`: the screener ran every 15 min
+(`DLMM_SCREEN_INTERVAL=900`) and found nothing, because `fetchMeteoraPools` sorted by
+`fee_tvl_ratio_24h:desc`, a fees ÷ TVL ratio that descends into dust pools (TVL ≈ 0: 0 of 10 clear `min_tvl`;
+`tvl:desc`: 10 of 10). The API also ignores `limit` (always page_size 10), so a one-page window made the sort
+decisive; the fetch now walks pages. An empty screen used to be reported as `"meteora fetch error"` over a 200
+response; it now says `screen returned no qualifying pools`. Also `62-sol-balance-null-not-zero.sql`:
+`increment_operation_counts` wrote an unmeasured balance as `0`; NULL stays NULL (and the column's NOT NULL
+was dropped, which the verification showed would otherwise have failed every call without a balance).
+
+### Changed — every RH lever is env-tunable, and the candidate funnel is visible (`2ea630a`, 2026-10-03)
+
+`RH_MCAP_MIN` / `RH_MCAP_MAX` (300 000 / 2 000 000), `RH_MAX_OPEN_POSITIONS_DEFAULT` (10),
+`RH_BUY_AMOUNT_ETH` / `RH_SIM_BUY_ETH` (0.0015 / 0.001), the seven `RH_FILTER_*` keys and
+`GMGN_TRENDING_LIMIT` (100) are read through `envNumber`, which is deliberately not `Number(x) || fallback`
+— `0` is a real value for limiter-style knobs and `||` would silently re-enable what you just turned off.
+`RH sim candidate funnel` is now logged per strategy per cycle (`feed_tokens`, `after_conditions`,
+`already_open`, `blocked_by_guard`, bounds compared); the previously visible `current_stats.skipped` is
+**cumulative**, which is how "451 skipped" was misread as 451 blocked mints. Nothing was tuned. `RH_FILTER_*`
+is currently inert: `passesConditions` reads `strategy.conditions`, not `filtering`.
+
+### Added — write-once Token Info detect ledger (#96, spec #91; 2026-09-27/28)
+
+`token_info_detect` freezes the Freeview nine tiles once per `(chain, token_address)` at the first Sol
+detect (`542298d`); soft readers prefer that row, and the live >65 % concentration ban stays on the snapshot
+already in hand. Bundler and sniper rates are read from the live web payload keys (`d5e01d1`) and the web
+cooldown is scoped per endpoint with window misses made soft (`3d290f1`). Known gaps, fixed in open PRs:
+`insiders_hold_pct` is always NULL and a partial panel is frozen (#111), and the capture sits on the entry
+path (#103).
+
+### Added — public GMGN web multi-token client, behind a Cloudflare Worker proxy (#93; 2026-09-27 → 2026-10-02)
+
+`GMGN_TOKEN_INFO_SOURCE=web` shadows Token Info / Freeview with the public gmgn.ai multi-token endpoint
+(max 8 mints, `GMGN_WEB_MAX_POST_PER_SEC` default 0.4); default stays OpenAPI (`00935fe`). Datacenter egress
+gets a Cloudflare 403 on gmgn.ai, so production routes through `workers/gmgn-web-proxy` with a `wnam`
+Durable Object so upstream fetches exit LAX/PDX; the client sends `X-Gmgn-Proxy-Secret` when
+`GMGN_WEB_PROXY_SECRET` is set (`53bec79`, Worker source restored in `6421c4f`). The 403/429s were a Cloudflare
+**managed challenge**, not a rate limit: parking is now **per endpoint** and a challenge is transient
+(`c5c297e`) — before, one challenged endpoint discarded a whole 15-minute copier sweep (`fetched 0`).
+Open hardening: proxy secret only to the proxy host (#105).
+
+### Fixed — Freeview rug panel showed OHLC 0/10m for mints that had own-1m rows (#95, 2026-09-27)
+
+The panel read only the canonical 24 h cache; it now fills the empty 10-minute window from own-1m, and the
+chart wall clock is `Asia/Jakarta` instead of a hardcoded `Asia/Bangkok` (`0eb9017`). The Cloudflare worker
+is excluded from the root tsconfig so `next build` stops type-checking `cloudflare:workers`.
+
+### Also in this window
+
+#92 renames the tracking tag `potential` → `rising`; #97–#99 harden `init-local-db.sh` / the migration runner
+(targetless `ON CONFLICT`, `social` in the domain checks, idempotency proven); #100 documents never shipping
+the standalone from a dirty tree; #101 tunes host swap policy and Postgres buffers (`vm.swappiness=10`,
+`shared_buffers` 256 MB, web `--max-old-space-size=512`).
+
+### Fixed — the Axiom risk panel had 503'd for 441 days (`8710fa1`, `33764f1`)
+
+The console flood was our own `[axiom] risk data unavailable …: upstream 503` plus the browser's
+`GET /api/axiom/token-info?… 503`, from seven call sites. Axiom's route carried **hardcoded auth
+cookies whose access token expired 2025-07-18** — 441 days — so every call went out on a dead
+session.
+
+Axiom cannot be repaired and GMGN already had field-for-field parity (`holders`, `top10HoldPct`,
+`devHoldPct`, `insidersHoldPct`, `bundlersHoldPct`, `snipersHoldPct`) plus a honeypot flag, and the
+Robinhood path was already on it. Rather than migrate seven callers at once — which is what broke
+the first attempt — `fetchAxiomTokenInfo` now **delegates to the GMGN snapshot route** behind its
+existing `{ success, data }` shape, so no call site changed. Verified live: HTTP 200, cold 1950 ms,
+cache hit 11 ms/7 ms, and every field `RiskAnalysis` renders is finite (GMGN returns
+`insidersHoldPct: null`, which the mapper's `pct()` coerces).
+
+**`/api/axiom/token-info` now has no callers.**
+
+### Changed — Axiom removed outright, once the delegation proved it was unused (`00713ad`)
+
+The delegation above left Axiom present but unreachable. This deletes it. Removed the
+`/api/axiom/token-info` route, `hooks/useAxiomRisk.ts`, the `'/api/axiom'` allow-list entry, and
+three one-off scripts that only ever exercised that route (`test-axiom.js`,
+`test-axiom-error-handling.js`, `test-graduated-pool-flow.js`). `utils/axiom.ts` became
+`utils/token-risk.ts` and now holds pure logic only — the fetcher had already been delegating.
+
+The two remaining callers moved to `useTokenRisk`, which **already existed for exactly this**. This
+was checked as a substitution rather than assumed: `mapGmgnSnapshotToRisk` computes
+`risk = getRiskIndicators(axiomData, marketCap)`, which is what the old hook did, and `axiomData`
+is byte-identical. The one real delta is that the surviving hook *also* applies the honeypot
+override (`isHoneypot` → `overallRisk`/`feeRisk` `HIGH`), so the chart panel gains honeypot
+detection.
+
+**A trap worth remembering: the two hooks' parameter orders differed.** The old hook's third
+argument was `enabled`; `useTokenRisk`'s third is `chain` and fourth is `enabled`. Passing the old
+call unchanged would have put a boolean where a chain string belongs. Both call sites now carry a
+comment saying so. `ChartBuyModal` also passes its real chain (`isRhToken ? 'robinhood' : 'sol'`)
+instead of implicitly Sol.
+
+Renamed throughout: `AxiomTokenInfo` → `TokenRiskInfo`, `mapGmgnSnapshotToAxiomData` →
+`mapGmgnSnapshotToRiskData`, `axiomData` → `riskData` (each value together with its setter), and
+the `'axiom'` member of the `assessmentMethod` union → `'token_risk'` (no stored record used the
+old string, so no migration). `RiskAnalysis`'s two props — the token data and the indicators
+— had been distinct; a blanket rename collapsed both onto `riskData`, which `tsc` caught as a
+duplicate identifier and a duplicate JSX attribute at two call sites. The indicators are now
+`riskIndicators`. The stale user-visible label "Risk analysis by Axiom" reads GMGN.
+
+`grep -ri axiom src/` now returns only explanatory comments. tsc clean, lint 0 errors, build,
+10 tests pass; shipped and smoke-checked on prod.
+
+### Fixed — React #418 hydration mismatch from `localStorage` read during render (`c0ca7a5`, `9b70ba5`)
+
+`PnLTracker` held five preferences as lazy `useState(() => localStorage.getItem(...))` initialisers.
+A lazy initialiser also runs during the client's **hydration** render, so the server rendered the
+defaults while the first client paint rendered the stored values — server HTML ≠ client HTML, i.e.
+React #418. Reachable on every trade page (`<PnLTracker />` is in `trade-shell-client.tsx`).
+
+They are now **derived** from `useLocalStorageValue`, built on `useSyncExternalStore` (the project's
+own idiom — see `useIsClient`): server snapshot = fallback, client snapshot = stored value, so React
+reconciles them and no restoring effect is needed.
+
+**Bug found on the way:** the closed-positions hint read `closedPositionsHintDismissed` while its
+dismiss handler wrote `pnl-closed-positions-hint-dismissed` — two keys, so dismissing never
+persisted and the hint returned on every load. One key now, and its setter writes it.
+
+### Changed — one source of truth for open positions (`19f59a1`, `4e1fa8d`, `07dbca6`, `9cf9a78`)
+
+Open positions were derived twice, sharing no code: the watchlist bar (`useGlobalOpenPositionsBar`)
+and `PnLTracker`'s inline derivation and inline percentage. `useGlobalOpenPositionsBar.ts:23` said
+*"Match PnL open marks"* — agreement maintained by a comment rather than by shared code. Three
+duplications were closed:
+
+- **The percentage.** `PnLTracker` computed `((current - buy) / buy) * 100` inline while the bar
+  called `pctFromBaseline`. Now shared. Equivalent by construction: the guards above the call site
+  already establish the positivity that is `pctFromBaseline`'s only null branch. It had no test
+  while both surfaces depended on it, so it has one now.
+- **The holdings.** `PnLTracker` called `fetchSolWalletHoldings` imperatively inside its PnL
+  recompute while everything else read the same data through `useWalletTokens`. The hook's
+  `fetchWalletTokens` calls that same function, so this was never a source divergence — one source
+  behind two doors, one of them uncached. The panel now reads the shared entry: **one cache, one
+  fewer round trip per recompute**, and a post-trade `refetchFresh()` reaches it for the first time.
+- **The price transport.** Two pollers against `/api/prices/open/refresh` and two `EventSource`s.
+  `open-price-stream.ts` now holds **one** connection, re-opened with the **union** of subscribers'
+  mints — the bar's set and `PnLTracker`'s superset genuinely differ, so one subscriber's set serves
+  neither. The bar moves from a 15 s poll to near-realtime.
+
+`useOpenPositions` was extracted from `useGlobalOpenPositionsBar` **verbatim, comments included** —
+those comments record two bugs already paid for (the `useWalletTokens` cache-key trap behind "new
+buys never show up in Open positions", and the clone-vs-real rule).
+
+**What was deliberately not changed:** the populations. `PnLTracker` remains the superset (it *adds*
+sim, bot and external wallet holdings on top of tracked cycles); the bar stays the filtered view of
+real, priced, held positions. Flattening that is a functional regression, and two earlier drafts of
+the plan would have done exactly that — see `docs/specs/SPEC-open-positions-single-source-v1.md`,
+which records the four attempts and what evidence overturned each.
+
+
+### Added — one verdict per token, on a fixed 10-minute block (rug signal)
+
+`rug_verdicts`: a token is judged **once**, at its own clock, on a 10-minute 1m block, features
+snapshotted and the label read forward. The detector previously re-judged the same token every sweep
+over a moving window, so 4,104 shadow rows were ~2,350 mints and the validation harness needed a
+per-mint dedupe to stop the rates from lying. One verdict per token makes the honest statistic the
+native one, and it is enforced by the primary key (`ON CONFLICT DO NOTHING`) rather than a guard
+someone could forget. `SPEC-rug-verdict-block-v1.md` holds the design; T1/T2/T3/T5 are shipped, T4 is
+shipped and awaiting its first completed sweep to execute.
+
+- **The clock is the mint's first *held* minute**, not `first_seen_at`. Measured: `first_seen_at` is
+  100% populated inside `token_mcap_tracking`, but that table covers only ~17% of the scored corpus
+  (1,943 of 2,353 mints absent), 49 mints read as a *negative* age against it, and the median lag from
+  first-seen to our first candle is **−18 min** (the 501-bar backfill precedes it). An age gate on it
+  was proposed and **withdrawn on this evidence**.
+- **The 1m basis is load-bearing, and measured.** Ten 1m bars is two 5m bars, so under the shipped 5m
+  basis a fresh token is `no_bars` — an unknown, never a low score. Fresh-token slice: **0 of 199
+  judged under 5m, 143 under the block**, paired per mint on identical bars. Scope stated honestly in
+  the SPEC: that slice is a bar-bearing sample (~8% of the 2,459 window mints) and the population
+  figure is **26%** (642/2,459 hold ten real minutes).
+- **The label** reuses the validator's forward rule (≥60% mcap drop within 30 min) through the same
+  `labelForward`, so corpus and validator cannot drift into two definitions. Never fabricated (NULL
+  when the forward window is missing, counted as *underivable*), written once (`WHERE label IS NULL`),
+  fail-open throughout.
+- Reader at `GET /api/rug-signal/verdicts` plus a panel section, and the rug page is in the nav now
+  (`/dev/rug-signal` was missing from `DEV_ROUTES`, so no chip could ever have rendered — which also
+  fixed `/dev/social`, silently absent for the same reason).
+
+### Fixed — the copier's lease, and its failures being invisible
+
+- **The job lock is a lease** (`renewJobLock` + heartbeat; TTL 600 → 180 s). `sweepOrphanedLocks` can
+  only reclaim a *same-host* owner and a container recreate gets a new hostname, so a deploy-killed
+  sweep left a lock the next process could not recognise and every tick waited the full TTL — one
+  death skipped a second 15-minute run.
+- **`copier_runs`** records every sweep: a `running` row at the start, a terminal row at the end. A
+  sweep killed mid-flight is a row that never finished; one the trigger never reached is an absent row.
+  Before this, failures existed only in the cron's stdout and the recorder that would have written them
+  to the DB went *through* the web app — the component that was down — which is why a 7-hour hole in
+  the 1m series was invisible.
+- **`scripts/check-copier-freshness.sh`** on the host crontab reads Postgres directly through the db
+  container, deliberately not through web, and reports rather than fixes.
+- Also: the symbol writer (`symbol: null` was hardcoded — 3,296 rows), a backfill for the history
+  (1,529 filled, the rest left NULL rather than guessed), and per-endpoint parking so a challenge on one
+  endpoint no longer discards a whole candle sweep.
+
+### Changed
+
+- `METRICS_COPY_RPS` 1 → **2**, the code's own default: the sweep's duration is rate-bound (~5 min of
+  pacing alone for 300 mints), so the floor halves. Added `RUG_SIG_WINDOW_1M` / `RUG_SIG_MIN_BARS_1M`
+  (10 / 6) for the block basis, keeping the 5m path byte-identical (pinned by test).
+
+### Findings recorded, not fixed
+
+- **The web process drops upstream connections** — nginx logged **134 `upstream prematurely closed
+  connection` in 4 hours**, ~90% with no deploy anywhere near, `oom=false` and socket dropped rather
+  than reaped. It cuts sweeps off mid-flight: 6 of 12 runs never closed, the rest a steady 356–363 s.
+  Belongs with the heap work above, whose "stable since" claim these numbers contradict.
+- **A cut sweep costs far more than a sweep.** After the 18:16 EOF the copier's cron entry stopped
+  firing for **85 minutes** while every other job ran normally. Mechanism narrowed in code, not
+  assumed: not a panic (`cron.New` installs no `Recover` chain, and the process demonstrably stayed
+  alive) and not configuration (`INTERVAL=900`, `KILL_SWITCH=0`, `TIMEOUT=480` verified in place). The
+  surviving candidate is the custom stagger parser's next-time computation, whose own comment warns
+  about leaving robfig with a `Next` that is never ahead of now. A restart re-bound it — a recovery,
+  not a fix.
+
+### Corrected during the day
+
+Recorded rather than quietly dropped, because each one was a conclusion drawn from a convenient
+measurement instead of the source of truth:
+
+- **`SUM(array_length(c_min,1))` counts NULL slots.** It reported 3,829 mints with 60+ minutes; the
+  truth is **355**, and 914 mints hold a complete 10-minute block rather than 2,266. `NULL` in those
+  arrays means *not observed*, never a minute — the rule the scorer documents, broken in my own
+  measurement.
+- **"0 verdicts have forward minutes"** came from comparing `hour_bucket > verdict_at` — an hour start
+  against a timestamp. At minute granularity: 94 verdicts, 66 past the window, **29 labellable**.
+- **"The deployed tree does not contain T4"** was read from a *stale* sweep summary; `git merge-base`
+  showed the commit was an ancestor of `origin/main` all along.
+- **"Sweeps take >10 minutes"** was a polling artifact. `copier_runs` — the table built for exactly
+  this — shows a steady 356–363 s.
+- **"The deploys destabilised the web process"** is only partly true: they explain ~8 of 134 premature
+  closes. They are the trigger for the worst consequence, not the cause.
+- **My watchdog fix made it worse** and was reverted: its SQL had a bare aggregate with no
+  `FROM copier_runs`, and `q()` pipes stderr to `/dev/null`, so a failing query looked identical to an
+  empty one — a **false negative**, which is the one failure mode a watchdog must never have.
+
+### Fixed — the web process was dying every 90 seconds, and it presented as a database fault
+
+`FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory`, every ~90s.
+`defaultIsOpen` answered *"is this one mint already open?"* by hydrating the **entire** mcap sim
+wallet — 6,302 records / 11 MB of JSONB — for **every candidate** it was asked about. Instrumented
+on prod: 15 calls in 8 minutes at ~7.8s each, and the repeated multi-MB allocations blew the 512 MB
+heap.
+
+Everything that looked like a database problem was downstream of that death: `timeout exceeded when
+trying to connect` (a pool growing from scratch — `waiting=0` while `total` climbed, i.e. connection
+*establishment*, not exhaustion), EOFs on the SL/TP monitor, `Database circuit open`, an unhealthy
+container, and `/api/strategies/outcomes` returning 502. It is also why raising `DATABASE_POOL_MAX`
+from 10 to 25 changed nothing.
+
+The open set is now hydrated once per (wallet, strategy), bounded, and reused; a successful open
+invalidates it. Memory 418 MiB → 137 MiB, `restarts=0`, no heap OOM since.
+
+### Fixed — the SL/TP pass priced 161 positions one HTTP request at a time (`2ea8448`)
+
+`getCurrentTokenPrices` walked every open position through GMGN **one mint per request** at
+`GMGN_CONCURRENCY=4`. Measured against the pass's other phases: **pricing 81,142 ms**, reconcile
+0.75s, summary 0.04s. That alone outran the 60s interval, so the job lock stayed held, every other
+fire logged `skipped (job lock held)`, and the monitor effectively ran every 2–4 minutes — which is
+why exits posted 1–2 minutes late even after the notification path was made immediate.
+
+Jupiter's price v3 takes 50 ids per request (4 requests instead of ~160) and was already wired as
+the fallback; it now runs first, with GMGN handling only the remainder. Pricing **81,142 ms →
+7,628 ms**. `getUsdPrices` gained an opt-in `fresh` flag, because its default serves a stale entry
+(up to 120s) while refreshing — for an exit trigger that would only relocate the lag from detection
+into the price.
+
+### Fixed — the exit worker wrote one UPDATE per position, ~160 concurrent queries a pass (`508322c`)
+
+`UPDATE sl_tp_positions SET current_price … WHERE id = $1`, issued inside the trigger map. Against a
+25-client pool: `total=25 idle=0 waiting=4…9`, 273 acquire failures in five minutes, and unrelated
+requests — `/api/strategies/outcomes` among them — failing at the 5s timeout because they queued
+behind. One batched `unnest` statement replaces all of them, and it no longer scales with position
+count.
+
+### Fixed — the `sinceLastClose` read was a 120-second nested loop (`6c8f64f`)
+
+Joining the `last_close` CTE onto `trading_records` on JSONB **expressions** makes the key
+unhashable, so the planner estimated the CTE at `rows=1` and re-read the 1,350-row materialized
+subquery once per trading row:
+
+```
+Nested Loop Left Join   actual time=2282ms..120,096ms   rows=1360
+  Rows Removed by Join Filter: 110,031,740
+  -> Materialize  rows=711  loops=155,022
+  -> Sort: external merge  Disk: 64MB + 46MB + 46MB
+```
+
+Extracting `(strategy, mint, operationType, close_position)` once into `scoped` makes the key plain
+text, so it hash-joins. **120,096 ms → 861 ms**, sort now a 1.2 MB quicksort. Differential-checked
+on one prod snapshot before shipping: identical id sets on both wallets (1369/1369, 2609/2609, 0
+rows differing either way). The `(strategy, mint)` key and the `coalesce(lc.ts, to_timestamp(0))`
+epoch fallback are unchanged — an INNER JOIN would drop never-closed keys and make still-open
+positions read as closed.
+
+### Changed — the pool instrumentation is permanent, and the bound is not free
+
+`[db-slow-query]` (over `DB_SLOW_QUERY_MS`, default 5000) and `[db-pool]` (pool counters at the
+moment a client cannot be acquired) are kept deliberately. Neither incident above ever *errored* —
+both simply held clients until unrelated requests failed at their own call sites, which is why they
+went unseen. This is what found them.
+
+An earlier attempt to bound 14 call sites to `sinceLastClose` was **reverted on measurement**. The
+bound is the only reason the query extracts JSONB paths, and extracting them forces Postgres to
+detoast every row's `data` server-side; `SELECT data` defers that to the client. On
+`mcap-tracker-sim`: **2,307 buffers / 12 ms unbounded vs 44,968 buffers / 416 ms bounded** (~351 MB
+of buffer reads for an 11 MB wallet). The assumption it rested on — that the unbounded read cost
+~11s — was the 155k-row trending wallet, not the wallets it touched. The bounds that predate this
+work stay, because those wallets *are* the huge ones. A covering index was also tried and dropped:
+the planner ignored it and the query stayed at 10,279 ms under load.
+
+Likewise a projected read was dropped: measured, `tokens[]` + `trading_simulation` are **91%** of
+the payload and both are required, so only 8.9% is droppable — and building a projected JSONB
+measures *larger* (34 MB), because the computed value does not inherit the stored column's TOAST.
+
+### Removed — the mcap sim-track route's second full wallet read
+
+It re-fetched "because the manage phase has since closed positions". The manage phase is gone (exit
+standard S9) and the route's only `flushPending` is the open-phase one *after* the gate, so nothing
+wrote between the two reads — it recomputed an identical value from unmodified records. One full
+wallet hydration per strategy per pass, gone. The signals route's equivalent re-read is **kept**: its
+close phase really does flush first.
+
+### Changed — one exit evaluator, one exit worker, and one entry price
+
+The exit path had four per-family closers, each with its own evaluator, running on the 900s entry
+scan. `sltp_monitor` ran a *second* opinion on the same positions at 60s. The two could disagree
+about one position, and did — because they read the same thresholds as different units.
+
+**The take-profit had never fired: `Finished: 211 (SL: 211, TP1: 0, TP2: 0, TP3: 0)`.**
+
+Not the basis, as first assumed. `checkSLTPTriggers` sent `position_type === 'bot'` rows down a path
+reading **only** `tp1/2/3_percentage`, while `take_profit_percentage` was read **only** by the
+`manual` branch — and the sim registered `bot` with **no ladder**. The target was a field the worker
+never evaluated.
+
+- **`evaluateExit`** (`src/utils/exit-evaluator.ts`) is now the only evaluator, extracted from
+  `checkSLTPTriggers`, which becomes a thin row→decision adapter. Pure: no I/O, no clock, no cache.
+  It reads the basis **off the row** and reports `basisUsed`, so a result can no longer be read in
+  the wrong unit. A stale input closes nothing and says `stale` rather than holding.
+- **The 60s worker owns every exit.** The manage phases in the mcap, gmgn, signals and social
+  routes are **deleted** — with their `shouldClose*` evaluators and ~600 lines of route-local
+  closers — so no family keeps a second opinion. The loops stay: they write the monitor snapshots
+  the peak-gain logic reads.
+- **Every open stamps its exit contract** (`registerSimExitContract`): the reference value, the
+  basis, and the **effective** thresholds — the cl/brain-adjusted ones the trade was actually
+  opened under, not the strategy's base. A `bot` row with no ladder now falls back to
+  `take_profit_percentage`, so the target is reachable.
+- **One entry price.** `prepareTargetMachinePaperOpen` returns the **impact-included** fill as
+  `priceUsd`; `impactedPriceUsd` is gone. The record, the entry features and the contract all read
+  one number — previously the record valued the position at the market quote while the exit measured
+  from the fill, so recorded PnL and the trigger disagreed by exactly the impact.
+- **Three families now honour the brain's TP/SL.** `applyBrainRiskToExit` was called by signals and
+  trending only; mcap, gmgn and social stamped `brain_stop_loss_pct` on ~92% of rows while opening
+  against the raw strategy exit — a risk control recorded as though it were in effect.
+- **Coverage: 3 of 9 → 8 of 9.** `mcap_enter_at_80` — the most robust strategy on the book — had no
+  stop at all. `att_rh` remains a deliberate gap.
+- **The cron's "SL/TP monitor API returned error:" with a blank message** was a **held job lock**
+  (409, `skipped:true, reason`) logged as a failure with an empty reason, because Go read `message`
+  and the route sends `reason`. It marked a healthy worker FAILED every ~2 minutes. Now
+  `isSkippedBody` → `workers.Skipped`, matching `trending_tracker` and `dlmm_manage`.
+
+**The register, re-derived on price-validated PnL** (`docs/specs/SPEC-strategy-exit-standard-v1.md`).
+The record overstated by half, and the strongest strategy was the one it penalised:
+
+| strategy | rec avg | **real avg** | real win | real median | win/loss |
+|---|---|---|---|---|---|
+| `search_mcap…tp300` | +106.7 | **+29.9** | 27.7% | −70.0 | +305 / −75 |
+| `search_mcap…tp200` | +83.3 | **+23.5** | 28.6% | −59.2 | +260 / −71 |
+| **`mcap_enter_at_80`** | +7.8 | **+18.7** | **32.3%** | **−12.9** | +149 / −43 |
+| `search_mcap…tp150` | +90.5 | **+9.9** | 27.0% | −67.4 | +232 / −72 |
+| `gmgn_kol_momentum` | −32.5 | **+0.8** | 26.3% | −19.1 | +134 / −47 |
+
+The mcap family is a **lottery ticket**: ~27% wins, median trade loses ~70%, mean carried entirely by
+a ~4:1 payoff. `mcap_enter_at_80` leads on three independent measures — best median, best win rate,
+shallowest average loss — and the register called it *marginal* because its **recorded** average was
+the family's lowest. `tp150` is overstated by **80 pp**.
+
+**Verified live:** `TP1` is no longer 0 — `search_mcap…tp150` closed at **+299.36%** with
+`close_reason: take_profit`, the first take-profit close this system has produced. Producer and
+consumer both migrated: `db/init/57-sl-tp-exit-contract.sql` applied to prod (510 rows backfilled),
+web shipped, cron rebuilt.
+
+**Still open:** `att_rh` ownership (its own RH ladder still closes it) · the mcap→price conversion
+assumes constant supply — **unverified**, and the direct measurement is owed · `scalper` never opened.
+
+### Fixed — a fifth of SOL→token quotes failed on the hop ceiling
+
+The per-pair hop ceiling was chosen from an assumption: *a route touching SOL/USDC/USDT has a direct pool*,
+so those pairs get `maxHops=1`. Measured on the **buy** direction — 40 real mints, SOL→token — that
+assumption is **direction-dependent**: **8 mints had no direct SOL pool** and answered
+`500 "No direct route found and maxHops=1"`, while all 8 quoted fine at 2. It holds for token→SOL, where it
+was originally validated; nobody had tested the reverse.
+
+Each failure escalated to the **keyed Jupiter picker**, spending the 0.5 rps execution budget on a *display*
+quote — the same cascade the token→token hop fix removed, sitting on the direction that was never measured.
+
+A no-route answer now triggers **one wider retry on Raptor's free lane** (`escalateRaptorHops`, applied at
+both fetch sites — `/quote` and `/quote-and-swap`). No larger constant would have been right, because the
+pair alone cannot tell you which direction has a direct pool.
+
+### Fixed — a swap built with no priority fee, and a venue refusal the browser could not see
+
+Two live defects, both found by auditing rather than by a report.
+
+**A build with no tip.** An omitted `priorityFeeLamports` reached the builder as `0` — no priority fee at
+all — which is exactly how the first live swap of this workstream broadcast and never landed. Every other
+surface in the repo already resolved an omitted fee to auto-high; the swap boundary did not.
+`resolveSwapPriorityFee` now runs at the single prepare point, beside the transfer-fee floor, so `/order`,
+the Lite fallback and the Raptor path all inherit a real fee. Omitted or `0` → auto-high (a 0.003 SOL *cap*,
+not a flat charge — the builder pays the venue's estimate). An explicit fee wins, and
+`SWAP_PRIORITY_FEE_LAMPORTS` sets an exact tip for callers that pass none.
+
+**A venue refusal the browser could never see.** `/order` reports "your wallet cannot pay" as HTTP **200**
+with an empty `transaction` plus a reason — the one simulation we have. The direct fetcher learned to abort
+on that; the **proxied** fetcher the browser actually uses did not, so a refusal read as a generic failure
+and the caller fell back to Lite, which cannot simulate and happily built a transaction that could never
+land. Both paths now flag it identically.
+
+### Changed — a 429 reads as a rate limit, not a missing route
+
+Provider failures were swallowed identically, so a throttled lane was indistinguishable from a dead pair
+and the UI answered "no route for this pair right now". Failures are now classified, and when *every* lane
+was throttled the engine says so: `429 · "Quote providers are rate limited right now"`.
+
+### Removed — the dead Ultra swap integration
+
+`src/utils/jupiter-ultra.ts` and its two routes are gone. They referenced only each other, nothing imported
+them, and `fetchUltraOrderDirect` POSTed to a GET-only endpoint. Auditing them surfaced something worth
+knowing: `JUPITER_ULTRA_API_BASE` is **not** dead — `jupiter-reclaim.ts` uses it as the base for
+`POST /reclaim/craft`, so the close-empty-ATAs path still rides the Ultra host that is being deprecated
+(tracked as T16).
+
+### Changed — the swap warm fires on intent, not on every edit
+
+Both bulk forms warmed their prepared swaps 400 ms after every settled edit. That warm is a **taker-scoped
+prepare on the Jupiter trade lane** — the same 0.5 rps budget a real execution needs — so an amount someone
+was still deciding on was already spending it, one prepare per mint per keystroke burst.
+
+They now warm through `useWarmOnIntent`: **1.5 s of idle** on the form, or immediately when the pointer or
+keyboard reaches the action button, and once per distinct set of inputs. Reaching for the button is the
+moment the warm actually pays, and it is now the moment it starts. A missed trigger costs latency only —
+the click path builds on a cold cache either way.
+
+### Changed — every quote surface now reads the shared quote engine
+
+The buyer's displayed estimate was `warmed.outAmount` — a **taker-scoped prepare on the Jupiter trade
+lane** — so the 0.5 rps budget an actual execution needs was being spent to render a number somebody is
+only looking at, once per mint per settled edit. It now comes from `useQuotes(…, 'estimate')`, which asks
+Raptor (ungated) and never touches that lane. The 400 ms warm still runs, because it is what makes the
+click instant — it just no longer *is* the display.
+
+The same policy now covers the signals tab's buy/sell hovers and the PnL tracker's sell estimate without
+touching any of their call sites: `getSwapQuote` — the one function they all go through — routes into the
+engine and adapts back with `solanaQuoteToSwapQuote`. Those three components previously fetched the same
+sell estimate independently, each on the Jupiter background lane; they now share one keyed entry.
+
+### Fixed — the buyer's estimate badge rendered a raw smallest-unit integer
+
+It read `~33661682691` beside the token symbol: `outAmount` printed with no formatter. The engine now
+attaches the output mint's **`outDecimals`**, so a surface can render an amount with `formatTokenAmount`.
+The decimals come from the same cached mint-account read that already answers the transfer-fee question,
+so this adds no lookup. When the mint cannot be read the badge shows **nothing** rather than guessing an
+exponent — a wrong scale is worse than a missing number.
+
+### Fixed — the copier's rate budget came from the wrong endpoint
+
+The 1m volume copier's first production sweep tripped a **429 across the whole `gmgn-web-proxy` path** — the
+same tunnel the chart candles and risk chips use. Owning the cause: the "≥ 60 rps clean, budget 48" figure was
+measured on `token_stat` (~600 B) and then applied to **candles** (~18 KB, ~90× the payload). A real sweep at
+8 rps (~240 calls in ~30 s) was well past what the candle lane tolerates, and the limit looks **tunnel-wide**,
+not per-endpoint. Removing the load cleared the 429s within ~2 minutes — no lasting block.
+
+Re-measured on the candle endpoint the sweep actually uses: **96 requests / 2.6 MB clean at ~1.1 rps
+sustained** (p50 ~450 ms). The code default is now **2 rps**, re-enabled with a smaller sweep, on its own lane
+so it cannot pace the live chart/risk path.
+
+Two smaller defects the same sweep exposed, both fixed:
+- the cron's 30 s client timeout sits below a cold sweep, so it logged a *successful* sweep as
+  `❌ Metrics copier failed: context deadline exceeded` — now `METRICS_COPY_TIMEOUT_SEC` (default 240).
+- 1,449 rows landed with timestamps outside any window (205 stamped 2024): GMGN returns the last 501
+  *traded* minutes, which for a barely-traded token reaches back years. Each lane now clips to its own reach
+  before writing; the pre-fix rows self-clear under the 30-day prune.
+
+### Fixed — token→token swaps failed on a one-hop ceiling (`d5d214a`)
+
+At `RAPTOR_MAX_HOPS=1` a token→token quote did not quote badly, it **failed**:
+
+```
+500 {"error":"Failed to get quote: No direct route found and maxHops=1"}
+```
+
+Measured live: `maxHops=2` and `3` return `200` for the same pair, and a route through SOL / USDC / USDT
+returns `200` at `1`. **No UI surface passed `maxHops`** (`grep maxHops src/components src/hooks` → 0
+matches), so every quote silently took the 1-hop default — which is exactly why SOL↔token worked and
+token↔token did not.
+
+It was not a cosmetic error. Raptor `500` → the surface escalated to the Jupiter picker → those
+escalations spent the **0.5 rps** keyed budget → the *prepare* was rate limited too → it fell back to a
+Lite lane that is per-IP banned on this host. One wrong hop count, a 429 cascade.
+
+One global value cannot serve both route kinds, so `src/utils/raptor-hops.ts` resolves it **per pair**:
+`RAPTOR_MAX_HOPS` (`1`) when either side is SOL / USDC / USDT, `RAPTOR_TOKEN_TOKEN_HOPS` (`3`) when
+neither is. All three Raptor call sites — the direct quote, the proxied quote and the swap build — go
+through it, so a caller that omits `maxHops` can no longer pick wrong. Setting
+`RAPTOR_TOKEN_TOKEN_HOPS=1` restores the old behaviour exactly. Verified on prod: DEW→BPX `500 → 200`,
+DEW→SOL unchanged at `200`.
+
+### Added — one Solana quote engine, and the sell surface derives from it (`ff09c16`)
+
+Every trade surface rolled its own quote fetch, cache and timer: no shared hook existed
+(`useQuote`/`QuoteProvider`: 0 matches), the same sell estimate was fetched by three components, and six
+refresh policies covered one concept. Worse, a *display* number drew the scarce Jupiter trade lane —
+`BulkTokenBuyer`'s prefetch is a taker-scoped prepare on the **0.5 rps** bucket, and its `outAmount` is
+what the UI shows.
+
+`src/utils/quote-engine.ts` makes **`purpose`** first-class. `estimate` asks Raptor first (ungated) and
+escalates to the picker only when Raptor errs or its impact fails the gate — the guardrail the sell
+surface already documented, lifted so buy, signals and PnL inherit it. `execute` is `/order?taker=` and
+is **never cached**. Built on the installed react-query rather than a fourth cache beside the 4 s quote
+cache and the 8 s prepared cache; freshness gates the fetch, so a re-edit inside the TTL costs zero
+requests. `BulkTokenSeller` adopts it (its local Raptor client is gone). Buyer, signals and PnL are
+specced (`SPEC-quote-engine-v1.md`) but open — the buyer renders a raw, unformatted `outAmount`.
+
+### Added — the 1m volume backbone actually fills now (`metrics_copier`)
+
+`token_ohlc_bars.volume` is NULL on **875,535/875,535** rows, which left the rug scorer's 30-point volume
+band inert and capped a ramp at 40 + 20 = 60 < 80 — it could never trip. `token_metrics_history` (one row per
+(token, UTC hour) carrying `float8[60]` one-minute slots) held the shape but nothing filled it.
+
+`metrics_copier` (`POST /api/metrics/copy`, every 15 min) fills it, cheapest lane first: the 24h 1m candle
+cache for free (it already carries per-candle volume), then **one paced GMGN-web call per remaining mint**.
+Volume arrives one call per token — `batch_handler` is `403 Endpoint not allowed` for candles — so the budget
+is a rate question, and the rate was **measured before it was used**: a concurrency ramp through our own
+Worker held **≥ 60 rps with zero 403/429** (the earlier "≥ 2.3 rps" figure was a sequential-probe artefact —
+at ~290 ms/call a one-at-a-time loop cannot exceed ~3.4 rps). Budget is 80 % of the highest rate measured
+clean = **48 rps**, on its **own rate lane** (`METRICS_COPY_RPS`) so a bulk sweep can never speed up or slow
+down the live chart/risk path; a 403/429 still parks both.
+
+One 501-bar call backfills **~8.35 h of minutes**, so coverage comes from the series, not the cadence —
+cadence is for snapshot freshness. The reverse is the one config that destroys data silently (a cadence longer
+than the fetched window loses every minute in the gap and the vendor never re-serves them), so it is guarded
+in code and pinned by a test.
+
+Verified end to end on prod, read-only: the real watch set (300 at cap) → real candles via the Worker (501/501
+bars carrying volume) → the writer's **verbatim SQL** → 243 rows / 1,507 slots across 5 mints, read back
+through the real column, then `ROLLBACK` (table gone afterwards, zero state change). **Density caveat,
+measured:** the endpoint returns only minutes that *traded*, so for the hottest mints the series is ~1 bar/min
+with 5–7 of the last 8 hours complete, while quiet tokens leave most minutes absent. An absent minute stays
+`NULL = not observed` — a deliberate open choice, not an oversight.
+
+**Found by the first production sweep, then fixed:** the same trade-driven series taken to its extreme means a
+barely-traded token's last 501 traded minutes can reach back **years** — 1,438 rows landed outside the window,
+205 stamped 2024. Bounded noise (idempotent, invisible to range-bounded reads, self-clearing under retention)
+but it skews the series' reported span, so each lane now clips to its own reach: the copy lane to
+`limit × resolution`, the cache lane to its 24 h TTL. Four tests pin it, including the years-old bar.
+
+**Not wired here:** the rug scorer's volume band still reads its own path; pointing it at this series is the
+consumer step.
+
+### Added — every strategy on one market scalar, and a fold toggle on the paper desk
+
+**The scalar had a reach gap, not a signal gap.** `brain_size_scale` (market brain → `scaleOpenSize`) was
+resolved by mcap, signals and the Solana trending cycle only. gmgn, social and the Robinhood trending twin
+(`att_rh`) opened at their full configured stake with no scalar and no stamp at all. Measured on prod before
+the fix: `brain_size_scale` present on **597/597** mcap/search rows and **0** of gmgn (40), social (14) and
+att_rh (26). The consequence was an inverted book — the two losing families staked **~9×** the per-trade SOL
+of the winning one (`0.0078` / `0.0085` against `0.00088`) while the 0.25 haircut landed only on the winner.
+
+- New `resolveSimOpenSize()` in `brain-regime-risk.ts` — one path for every domain: resolve, skip on
+  stand-down, else `scaleOpenSize()`. A stand-down **skips the open** rather than passing a 0 stake into the
+  spine, which would record a zero-size position.
+- Wired in `gmgn-open-sim.ts`, the social `sim-track` candidate loop (one session per cycle) and
+  `trending-bot-rh-sim.ts` `buySim` — that last one had no brain wiring whatsoever, which is the source of
+  att_rh's flat `0.0015` and its missing stamp. mcap/signals already used the same semantics and are
+  unchanged.
+- Three new tests pin the semantics: it scales by the scalar, it is the **identity when the brain is
+  unavailable** (so an unset `MARKET_BRAIN_TOKEN` can never silently zero a desk), and it **skips on
+  stand-down**.
+
+**The scalar is tiered, not a curve — which is why it reads a constant 0.25.** Verified live 2026-10-01: the
+brain answers `ok: true`, `stale: false`, `h = 0.5758`, `cascadeVeto: true`, headline "BTC is dumping — beware".
+`climateGate.ts` maps `scale = SIZE_SCALE[sizeKind]` over five values (`stand-down 0 · trim 0.25 · reduced ·
+neutral · full`) and a cascade veto clamps to `trim`, so a sustained dump regime *should* hold 0.25. Worth
+knowing: the type comment describes `scale` as a continuous `Cash=0 … Hype=1` hint while the assignment is a
+tier lookup, so it emits five discrete values.
+
+**Fold toggle on `/dev/paper-trade`.** A `fold` flag removes the four families the register measured as losing
+at every stake (`gmgn_sm_kol_combined`, `gmgn_kol_momentum`, `social_only_fomo_gt7`, `att_rh`), resolved
+server-side so the aggregate, the per-day drill-down, the ledger and the open-position list cannot disagree.
+Measured on prod: folding moves 675 → 595 closes and **raises** the PnL total 47,433 → 50,394
+percentage-points, because the folded families are net-negative. Env-overridable via `SIM_FOLDED_STRATEGIES`
+(an explicit empty value folds nothing, which is how the toggle's off state is spelled server-side).
+
+The fold and the scalar are separate layers on purpose: the scalar standardises *how much* is staked, the
+fold decides *whether* a strategy trades at all — so a family re-tuned later is already measured on the same
+risk footing as its neighbours.
+
+### Changed — the ML size multiplier is out of the size path (P1)
+
+`ml_size_mult` **was** the closed-loop score `cl_p` used directly as the stake fraction. It was measured
+twice to have no rank power — within a strategy the two mass tiers are **+87.0% (n=73)** against **+96.6%
+(n=88)**, t ≈ 0.25 — and across strategies the level *inverts* (`gmgn_sm_kol_combined` at `cl_p` 0.389 wins
+**13.2%** while the mcap family at 0.389 wins **55.0%**). Applied as a multiplier it cost **1.531 SOL** over
+two days on the dashboard's own rows, and the normalised tilt it inspired was worse still (clustered
+**t = −2.52**).
+
+`softMlSize` is now flat: it returns the base stake and `mult: 1`. One seam covers both call sites
+(`sizeFromClosedLoop`, and the mcap legacy branch), so every sim domain stakes the base × the Level 1 market
+scalar and nothing else. **`SOL_ML_SIZE_ENABLED=1` restores the old behaviour** for a soak — but the gate
+that would earn a non-flat multiplier back is `docs/specs/SPEC-sizing-level-2-probabilistic-v1.md` §4 (rank
+power with a confidence interval, a per-bin sample floor, comparability, and lift over flat clustered by
+token), not a retune.
+
+Two consequences worth recording:
+
+- **The fail-soft inversion dies with it** (P2 in the register). A missing model used to fall soft to
+  `cl_p = 0.5` — the *largest* multiplier in the working band, on the rows that won 16.2% — and that whole
+  defect class is gone, not guarded.
+- **The dashboard's `sized` column now equals its `flat` column**, which is the correct representation: with
+  no sizing there is nothing to distinguish them.
+
+**C-7, decided and measured.** Flattening raises the average stake, so the base had to be settled with it.
+Measured per family (config base → predicted flat × the 0.25 scalar, against what the ledger shows today):
+
+| family | config base | staked now | flat × scalar | change |
+|---|---|---|---|---|
+| mcap / search (4) | 0.010 | ~0.00090 | **0.00250** | **2.8× up** |
+| gmgn (2) | 0.020 | ~0.0079 | **0.00500** | **0.63× down** |
+
+**No base cut.** The increase lands only on the profitable family; gmgn, social and att_rh all *shrink*
+(the newly-applied 0.25 scalar more than offsets losing their multiplier). Peak paper exposure moves
+~0.079 → ~0.22 SOL, inside the paper desk's own `SIM_DAILY_BUDGET_SOL=0.5`, and `MAX_SOL_AT_RISK=0.1` is the
+*live* cap this desk does not trade against. Cutting the base to chase it would undo part of P1's measured
+gain. Revisit if `peak concurrent × effective stake` approaches the budget — the concurrency series is in
+`/api/pnl/daily` (`peaks`).
+
+### Fixed — the ML label backfill no longer outlives the proxy, plus user rugs counted per dev
+
+**Backfill.** `POST /api/strategies/ml/backfill-labels` failed with `Unexpected token '<', "<!DOCTYPE "...`.
+Measured first: the labelling itself is fine — an `mcap_tracker`-scoped run labelled **4,707 rows in
+12.3 s** — but the request is **unbounded**: `SELECT *` over every matching outcome (82,577 rows
+across domains; `trending_bot` alone is 77,426) and then **one `UPDATE` plus one prediction resolution
+per row** (2–6 round trips each), with no "did it change?" check. Extrapolated, the unscoped run needs
+~3.5 minutes, and nginx's `location /api/` inherits the **60 s** default `proxy_read_timeout` — so it
+returned an HTML gateway page. The UI called `res.json()` *before* checking `res.ok`, which is how that
+became a JSON parse error.
+
+- `backfillOutcomeLabels` is one pass now: read once, compute in memory, **skip rows whose labels
+  already match**, then write in chunks of 500 with a single set-based `UPDATE … FROM (SELECT
+  unnest(…))` per chunk, plus one **batched** prediction resolution per chunk
+  (`resolvePredictionsForClosedOutcomes` — new: one SELECT, one set-based resolution update, one merged
+  stamp update, a rollup per distinct run) instead of 2–6 round trips per row. Predictions on the same
+  outcome have their stamp patches merged in JS so the result matches the sequential writer.
+- The route declares `maxDuration = 300` (its siblings already did) and reports `unchanged` next to
+  `updated`/`skipped_manual`.
+- The UI checks status and `content-type` **before** parsing, so a gateway page reads as
+  `Backfill failed (HTTP 504) — the request outlived the proxy; scope it to a domain or retry`, and the
+  success toast says how many rows were already current.
+- `nginx/conf.d/reloadsol.conf`: `proxy_read_timeout`/`proxy_send_timeout 120s` on `location /api/` as a
+  safety net — the efficiency work is the fix; this stops one slow-but-working request being misread as
+  a client bug.
+
+**User-labelled rugs, counted per dev (display only).** Labelling a token RUG from `/dev/signals`, the
+Live-tab button, the Tracker/Board dropdowns, Freeview, `/api/rug` or DLMM now also counts against that
+token's **developer**, beside the automated GMGN aggregates.
+
+- `db/init/53-dev-user-rugs.sql` (mirrored in `risk-store.ts`'s runtime `ENSURE_SQL`) adds
+  `user_rug_count` + `user_rug_tokens` to `dev_reputation`, keyed like every other dev aggregate on
+  `(chain, creator_address)`.
+- `recordUserRug` / `clearUserRug` dedupe **inside the statement** by token address and derive the count
+  from the stored array, so re-marking cannot double count and unmarking removes exactly one entry.
+- Attribution hangs off the single write path (`markTokenRug` / `unmarkTokenRug`), so every surface is
+  covered with no client change. Automated writers (`concentration`, `gmgn-radar`) are excluded, and a
+  token whose creator cannot be resolved is skipped rather than guessed.
+- Surfaced in `/dev/dev-reputation` (a `N user rugs` chip, with the tokens in the expanded row) and in
+  `GET /api/dev/reputation`. **The verdict is deliberately unchanged** — `scoreDevReputation` does not
+  read the count until the data justifies enforcement behind `DEV_REPUTATION_MODE`.
+
+### Changed — the mcap sim loads the entry OHLC gate once per mint per run
+
+A full `phase=all` run measured 186 s (manage 29.8 s, open 126.5 s). The interval is **900 s
+(15 min)**, not the 120 s the docs claimed, so the job is not back-to-back — but per-strategy timing of
+a live run showed the open phase is dominated by `attachOhlcRugShadow`: 22 calls / 23.5 s and 24 calls /
+3.9 s on the two strategies that evaluate candidates. The seven mcap strategies evaluate the **same**
+candidate mints, so each mint's bars were fetched and evaluated once per strategy.
+
+- The expensive, entry-feature-independent half (fetch bars + evaluate rules) is now
+  `loadOhlcRugShadowBase`, and a run passes one memo Map so it happens **once per mint** — measured
+  46 → 15 calls across the strategies. The memo is created per request on purpose: it gates an entry,
+  so it must not go stale across requests the way a TTL cache would.
+- The per-caller merge, the reject/skip decision and the counterfactual log are unchanged, and
+  `attachOhlcRugShadow` keeps its signature (the memo is optional).
+- **What this does not fix:** the remaining calls still cost up to the OHLC budget (observed ~12 s per
+  call, vs 0.7 s for the rate gate), i.e. they are waiting out `TOKEN_MAP_CHART_OHLC_BUDGET_MS` when
+  brain/ST/GMGN have no bars. That is a separate problem in the OHLC path — a circuit breaker or a
+  negative cache for a failing upstream — and wants its own measurement.
+
+Also fixed the temporary instrumentation's scope error before it could matter: `dbgManageStart` /
+`dbgOpenStart` were declared inside the phase branches, so the log line would have thrown at runtime.
+`SKIP_BUILD_CHECKS` (which the ship sets) meant only `tsc` caught it — worth remembering that a green
+ship does not imply a type-checked build.
+
+### Changed — the mcap tracker list no longer rebuilds every statistic per request
+
+`GET /api/mcap-tracking?action=list` is a page render (TrackerTab / BoardTab on load and on every
+filter change) and measured **2.5–3.2 s every call**, with no cache anywhere on the route. Same
+classes of problem as the reports latency work, found by the same measurement:
+
+- `getAppLocalParts` built a new `Intl.DateTimeFormat` on **every** call (`src/utils/datetime.ts`),
+  and the list called it once per row per threshold — the identical bug to `hourInTimeZone`. The
+  formatter is hoisted.
+- The two time-window analyses ran **14 filter-and-recompute passes** over every tracked token
+  (7 thresholds × sell/entry, each row doing 2 `new Date()` plus a bucket). The per-token facts
+  (growth, sell hour, entry hour, time-to-target) are now computed once and the passes filter those.
+- The 30-day breakdown re-filtered the whole set **30 times**, parsing a `Date` per row per day; it is
+  now one pass with a binary search over the 30 precomputed day windows. The 30-day recent-total and
+  average ride along in the same pass.
+- The summary statistics were six filters plus three reduces; one pass now.
+- The response is cached per query string — 60 s fresh, kept 24 h and served **stale** while a
+  detached single-flight refresh recomputes it (`X-Mcap-Cache: fresh|stale|miss|refresh`), so a caller
+  never waits on the recompute.
+
+Verified: tsc clean, lint 0 errors, 305 files / 2,058 tests pass.
+
+### Changed — the report's two whole-analysis sections are precomputed
+
+`consensus` (a seeded bootstrap over the report window) and `capital` (a 3-day paper-capital sweep) do
+not depend on the report's row-level filters, yet they were recomputed on every cold request — the
+majority of what was left of `/api/strategies/reports` after the quadratic reconstruction was fixed.
+
+- New `strategy_report_precompute` table (`db/init/52-…sql`): `key` = `chain:domain:sim:tz`, with the
+  `payload` JSONB and `computed_at`.
+- `POST /api/report-precompute/refresh` recomputes every filter shape (2 chains × 7 domains × 2
+  timezones = 28, bounded) and upserts. Per-target failures are collected, never fatal, so one bad
+  shape cannot stop the sweep and a stale row always beats no row.
+- Scheduled as the `report_precompute` worker (`REPORT_PRECOMPUTE_INTERVAL`, default 6 h, `0` disables)
+  with `WorkerMeta` + `/trigger/report-precompute`, mirroring the existing worker checklist.
+- The endpoint reads the stored row when the request carries no `from`/`to`/`strategy_id` and reports
+  its age as `precompute.computed_at`; a custom range still computes both live. `aggregateStrategyReports`
+  takes a `precomputed` argument, so the values are produced by the same loaders with the same filters.
+
+Verified: tsc clean, go build + go test pass, new unit tests for the key/target set/refresh failure path.
+
+### Fixed — bulk buy/sell waited on a per-token Jupiter fan-out
+
+Measured with the production wallet, 3 and 5 tokens back to back (read-only: quotes and unsigned
+prepares, nothing signed or sent):
+
+| fan-out | n=3 | n=5 |
+| --- | --- | --- |
+| estimate (no taker, background lane) | **29.03s** wall (3.02 / 7.04 / 29.03) | **14.87s** wall (0.01 → 14.87) |
+| prepare (taker, trade lane) | 2.44s wall | 6.00s wall (0.23 / 0.39 / 2.17 / 4.23 / 6.00) |
+| Raptor (ungated) | 0.66s wall | 0.65s wall |
+
+The estimate fanned out one **background-lane** quote per selected token; that lane is capped at
+`capacity - reserve` and starved by in-process callers (the sims and price lookups run inside the app,
+so they never appear in the nginx logs), and a single token's quote waited up to 29s. The trade lane's
+prepares then paid one 2s refill each past the reserve of 2. Raptor — the *display* source for this path,
+not the executor; the desk build is Jupiter — answered all five in 0.65s.
+
+- The seller's estimate now asks **Raptor first** (ungated), escalating to the Jupiter picker **only when
+  Raptor is unavailable or its own impact fails the gate** — the guardrail that keeps a 38%-impact
+  single-hop route out of the estimate. *Updated 2026-10-01:* that fetch now goes through
+  `src/utils/quote-engine.ts` with `purpose: 'estimate'`, and Raptor's hops are resolved per pair.
+- `JUPITER_BURST` default 4 → **8**, the measured tolerance ("~6 rps sequential — 8 ok, then 429"), so a
+  bulk batch of prepares fits one burst instead of dribbling out at 2s per call.
+- The token→token sell is covered and unchanged: `sellOutputMint` resolves the custom output with its
+  own symbol/decimals, and `swapPrepareCacheKey` includes `outputMint`, so a native-output swap can
+  never be reused for a token-output quote.
+
+
+### Changed — cost model calibrated to real quotes; Jupiter demand cut
+
+**The model charged 11.5x the real cost.** Measured on a live pair (STONK: buying 0.005 SOL implied
+0.00223860 SOL/token, selling 100 tokens implied 0.00223276) — a **~26 bps round trip**, i.e. ~12 bps
+per side, which is the AMM fee at these sizes. The model charged `SIM_FEE_BPS=100` + `SIM_SPREAD_BPS=50`
+**per side** = 300 bps, and on an AMM route a spread term is not a separate cost at all. Defaults are
+now `feeBps: 12`, `spreadBps: 0`, with the measurement and the single-pair caveat in the comment. It is
+exposed as `summary.costModel` and rendered as a "Cost model" card on `/dev/paper-trade`, so the desk's
+realism is visible rather than implied.
+
+**The scarce resource is the Jupiter quota (0.5 rps measured-clean), so the cheapest speed-up is asking
+less often:**
+
+- **Coalescing + a short cache** on `/order` (`withJupiterOrderQuote`, `JUPITER_QUOTE_CACHE_MS`, default
+  4s). Identical in-flight requests share one upstream call; a plain quote may reuse a result inside the
+  window; **a taker-scoped request is never cached or coalesced**, so the execution's prepare is always
+  live. Keyed on every input — mints, amount, slippage, taker, fees. 4 tests.
+- **The sim charged the gate twice** per fill: `sim-fill.ts` gated, then called a function that gates
+  again. Removed — that halved the sim's cost of the shared quota.
+- **The sell estimate re-quoted every 5s** on an unchanged selection. Now 25s (inside the 30s quote
+  validity, so the estimate never blanks between refreshes) and paused while the tab is hidden.
+- **The climate chip polled every 30s from every page** for a daily value — measured ~18 requests/min
+  across open tabs. Now 120s.
+
+
+### Fixed — the closed tab took ~33 s because one bootstrap sorted every resample
+
+`/api/strategies/reports` was the entire cost of `/dev/algo-tester?tab=closed` (the tab is gated on one
+`Promise.all` of three fetches): measured on prod at **32.7 s cold / 0.009 s warm**. It was not the
+database — `SELECT *` over the 4,521-row mcap_tracker slice is **721 ms** — it was `bootstrapMedianCI`,
+which took each of its 10,000 resample medians with `median([...v].sort())`: it copied and sorted the
+whole sample 10,000 times, i.e. **O(samples · n log n)**. Measured in the production container at
+n=4,521: **16,350 ms for ONE CI**, and `runConsensusTest` runs a median CI *per bucket* plus a diff CI
+(which resamples both sides) *per bucket* → ~33 s, matching the observed latency. The 30 s cache meant
+it went cold constantly, and the view renders "Loading strategies…" until it resolves.
+
+- The bootstrap now uses an **in-place nth-element selection** (no copy, no full sort) and is
+  byte-identical for the same seed (asserted by the existing determinism test). One CI at n=4,521:
+  **15,571 ms → 1,456 ms**.
+- `DEFAULT_SAMPLES` 10,000 → **2,000** (env-tunable via `CONSENSUS_BOOTSTRAP_SAMPLES`), within ~1 % of
+  the 10k interval: **→ 288 ms** — **~54×** end to end.
+- Reports cache TTL **30 s → 600 s**; it is a 30-day analysis, not per-filter UI data, and the cache key
+  already makes each filter its own entry.
+- The closed view loads reports in a **separate query**, so the outcome table paints in ~40 ms instead
+  of being blocked by the aggregate (`StrategyAdminHub`).
+- The report read **projects the 12 columns** `mapStrategyOutcomeRow` actually reads instead of
+  `SELECT *` (the unfiltered case pulled 82k rows, `features` JSONB included).
+
+**Follow-up found on the server after deploying the above.** A CPU profile (`node --cpu-prof` on a
+second instance inside the container, no code change) attributed **0.68 s of CPU to a 10.5 s request**
+— it is waiting, not computing. The decisive probe was a report over a **1-hour window** (almost no
+outcome rows) against single-query endpoints: `/api/health` 0.006 s, `/api/strategies` 0.038 s,
+`/api/strategies/outcomes?limit=1` 0.040 s, **reports 6.65 s**. So ~6.6 s of the 8.5 s was
+**filter-independent** — not the outcome rows, and not the aggregates.
+
+- **The real cost was a quadratic sim reconstruction called 14× per request.**
+  `getOpenMcapPositions` ran `records.find(...)` **per token over the whole history**
+  (O(records × mints) — seconds on the sim's ~5k records), and `aggregateStrategyReports` invoked it
+  once **per mcap definition** for the coverage counts *and* again per definition for the
+  open-positions list. The per-mint buy lookup is now hoisted into a Map built in the same order (the
+  same record wins), and the reconstruction runs **once per request**, with coverage counts derived
+  from that same list. Measured: **cold 8.5 s → 4.0-5.1 s**, the filter-independent floor
+  **6.65 s → 2.10 s**. The shared helper also speeds up the sim cycle that uses it.
+- `getTrackingHealthStats` read **all 31,316** `token_mcap_tracking` rows and counted them in Node; it
+  is now a single SQL aggregate row — **509 ms of SQL plus a JS pass over every row → 17-22 ms**,
+  measured inside the deployed request. The timeline-inconsistency rule is mirrored as
+  `count(*) FILTER (...)`, and the output was verified against the live endpoint (0 inconsistent,
+  31,316 tracked — both matched). Callers: the reports endpoint and `GET /api/mcap-tracking`.
+- **The sim-wallet read is now bounded — and the first attempt at it was wrong for a subtle reason.**
+  Keying the last full close **per mint** (27.5 MB → 1.0 MB) looked like a free win and was reverted:
+  it changes the reconstructed open set for **4 of the 7 active mcap strategies** (measured by running
+  the real `getOpenMcapSimPositions` over both record sets pulled from prod). The cause is that each
+  strategy holds **its own cycle on a mint**, so a close by one strategy was truncating another
+  strategy's still-open cycle. Keying per **(strategy, mint)** is exact — **0 of 7 strategies differ**,
+  2,095 records instead of 5,283 — and it is a superset of the per-mint bound, so the callers that were
+  already exact with the wider key stay exact. Pinned by a unit test that the query keeps the strategy
+  key.
+- `computeBestTradeWindows` built a `Intl.DateTimeFormat` **per row** (~0.45 s over 4.5k rows); one
+  formatter per timezone now. The strategy family map was queried three times per report; memoized 60 s.
+  `coverage`/`abPairs` look rows up by key instead of scanning `breakdown` per definition.
+- The route is **stale-while-revalidate**: when the 600 s fresh entry has expired it returns the last
+  body and refreshes in the background (single-flight), so a user never pays the cold cost twice.
+  Responses carry `X-Report-Cache: fresh|stale|miss`.
+
+
+### Fixed — trades waited 5-6s on a Jupiter queue shared with background work
+
+The gate that keeps us inside Jupiter's quota was a single 2-second line
+(`MIN_INTERVAL_MS = 1000 / JUPITER_MAX_RPS` = 1000/0.5) shared by the trade path and everything else.
+Measured before the change: one idle quote 0.210s, but three concurrent callers took **2.01s / 4.00s /
+5.98s**, and a single `/order?taker=` prepare took **1.76s** because it queued behind background price
+lookups. A trade needs a prepare plus `/execute`, so it was paying the ~5-6s a user reported.
+
+- The gate is now a **token bucket** (`JUPITER_BURST`, default 4) refilled at `JUPITER_MAX_RPS` — which
+  matches the measured shape: the quota tolerates a short burst ("~6 rps sequential: 8 ok, then 429")
+  but rejects sustained concurrency, so the sustained rate is unchanged and only the burst is new.
+- **Priority lanes.** `trade` (a taker-scoped prepare, `/execute`, a Lite `/swap` build) may spend the
+  whole bucket; `background` (price lookups, sim sampling, UI quotes) yields whenever trade work is
+  waiting and must leave `JUPITER_TRADE_RESERVE` tokens untouched.
+- 10 unit tests pin the policy, including that background cannot spend the reserve — a bug the first
+  implementation had (`capacity - reserve` rather than `tokens - 1 >= reserve`) and the test caught.
+
+
+### Documented — regime context on closes is a close-time stamp, not a column
+
+`market_regime_tags` is one row per day, and `insertStrategyOutcome` already stamps the value resolved
+by the exit date, so a `regime_tag_at_exit` column would add nothing. Recorded in
+`docs/02-architecture-and-data.md`, with the two facts that matter when reading it: the daily row is
+written by the mcap sim worker (a market-wide value owned by one strategy's worker — worth a
+strategy-agnostic writer), and history is not backfillable, so older closes stay honestly untagged.
+
+
+### Changed — GMGN rate budget calibrated to measurement, plus priority lanes
+
+- **We were not rate limited — we were ~7× under the quota.** Measured live (bounded ramp, stop at the
+  first 429): the openapi key tolerated **5 sequential calls then 429'd on #6 (≈3.6 rps)**, and
+  concurrency-4 429'd instantly; the worker path held **6/6 at 2.28 rps** without a 429. The old
+  constants (0.5 / 0.4 rps) were guesses. Now `GMGN_MAX_REQ_PER_SEC=1.4` and
+  `GMGN_WEB_MAX_POST_PER_SEC=0.9` — ~40 % of the measured ceilings, env-tunable, with the measurements
+  recorded in code. Inter-call spacing drops 2 s → ~0.7 s.
+- **Priority lanes.** The single serial gate is now `high` (trade quote/swap/order) > `normal` (gate +
+  candidates) > `low` (charts, shadow dev lookups), and the pump waits *then* picks — so a request
+  arriving during the interval is ordered by lane, not arrival. This is the failure we saw:
+  `gmgn_sim_track` returned `GMGN rate limit exceeded` while `radar_digest` kept succeeding.
+- **Cache first.** Web positive TTL 20 s → **90 s** (its clamp had capped at 30 s; now up to 15 min),
+  and the **openapi** snapshot path gained single-flight, so concurrent callers share one upstream load.
+- Deferred, only if needed: weight-aware budget, an edge token bucket in the Durable Object,
+  and gate-wait/RATE_LIMIT counters. Measurements + the re-measure recipe:
+  [docs/GMGN_RATE_BUDGET.md](docs/GMGN_RATE_BUDGET.md). IP/key rotation is explicitly rejected.
+
+### Fixed — a concurrent deploy could leave the origin down
+
+An artifact ship and a pull-triggered deploy reached `docker compose up` together, the recreate lost
+to a container-name conflict, and `reloadsol-web` was left **Dead** with nginx answering **502**.
+`ship-standalone-to-vps.sh` did not take the lock that `docker-deploy.sh` already holds, and its smoke
+test only warned.
+
+- The ship now takes the same `/tmp/reloadsol-deploy.lock` (override `DEPLOY_LOCK`) around
+  `build web && up -d --no-deps web` and exits **75** when another deploy holds it, instead of racing.
+- Its smoke is a **gate**: one `--force-recreate --no-build web` retry, then a non-zero exit — a ship
+  can no longer report success while `/api/health` fails.
+- Recovery recipe + the rule documented in `PRODUCTION_DEPLOYMENT.md`, with a pointer in `AGENTS.md`.
+
+### Changed — three follow-ups from the watchlist work
+
+- The sell failure banner no longer says *"Failed to get quotes from Raptor"* — the desk path quotes
+  Jupiter Swap V2 (Lite only if V2 fails) and Raptor is arbitrage-only, so the message misattributed
+  every failure. It now reads "Failed to get swap quotes."
+- The sell estimate prefers the **warmed prepared swap** — the exact object `prepareSwapTransaction`
+  signs, built with the same `taker` — over a separately-parameterised quote, so the estimate and the
+  executed route are the same artifact. The parallel picker remains the fallback when nothing is warm.
+- A price that misses one poll no longer makes a real position flap out of the open bar: a position
+  stays visible while the price from the *previous* response still holds it (one poll of grace,
+  counted in polls rather than milliseconds). Display still uses the live price only, so a held-over
+  position shows `—` rather than a stale percentage.
+- The cached list is read in an effect, not during render. Next aborts the prerender pass on a clock
+  read in render (`blocking-prerender-current-time-client`) because the cache validates its age —
+  that broke the production build on `/swap` and the artifact ship with it. Counting polls keeps
+  every clock read out of render; the first cached paint lands one commit after hydration, still far
+  ahead of the holdings fetch it replaces.
+
+
+### Fixed — the open-positions chips showed the symbol twice
+
+`ChipFace` passed `alt={symbol}` to a logo rendered immediately before a `<span>{symbol}</span>`, so
+whenever the image had not painted the browser drew the alt text: `STONK STONK —`. It hit exactly the
+tokens whose logo sits behind an Arweave/Irys gateway — measured `302` for STONK/CLOUD/MASK against
+`200 image/png` for a working one — which is why a structural-looking duplication only affected some
+tokens. The logo is decorative (the symbol is already the adjacent label), so it now carries `alt=""`,
+which cannot render in any loading state.
+
+### Added — the bar paints from a cached list before the network answers
+
+- `useGlobalOpenPositionsBar` seeds from the last observed list for the wallet **and chain**
+  (`src/utils/open-positions-cache.ts`, 10-minute expiry), so chips appear on the first client paint
+  instead of waiting on the Shyft holdings fetch — the actual reload delay.
+- Stale-while-revalidate, not a second source of truth: the cache is dropped the moment live inputs
+  exist (a wallet with genuinely no positions does not keep stale chips), it is never written from
+  itself, percentages stay `—` until live prices land, and writes happen only when the list changes
+  (the bar polls every 15s, so an unconditional write would churn storage).
+- `useIsClient` (`useSyncExternalStore`) keeps the server and hydration renders identical, so the
+  seed cannot cause a hydration mismatch.
+- 7 unit tests: round-trip, wallet isolation, **chain isolation** (a Solana entry must never answer a
+  Robinhood read), expiry, malformed storage, and a throwing `localStorage`.
+
+
+### Fixed — RugCheck LP-lock was always null (0/417); added GMGN internal-web sources
+
+- **The LP-lock axis was silently dead.** `rugcheck_lp_locked_pct` was populated **0 of 417** rows:
+  the full `/v1/tokens/{id}/report` carries **no top-level `lpLockedPct`** (and no top-level `lp`),
+  so the reader looked in places the API never fills. The value is **per market** at
+  `markets[].lp.lpLockedPct` (verified live: `0` for a DLMM, **97.06** for the same token's
+  raydium_cpmm). Now read as the max across markets, and `lockers[].usdcLocked` is summed into a new
+  `rugcheck_lp_locked_usd` (migration 50).
+- **GMGN internal web API: reverse-engineered, and three endpoints adopted.** gmgn.ai 403s every path
+  to a non-browser client (curl, both machines) — it is **not public**; only our `gmgn-web-proxy`
+  Worker reaches it. A real-Chrome capture of the token page recorded **31 API calls**; through the
+  Worker (no browser) these verify 200: `token_mcap_candles` (**OHLCV**), `meme_quote_info` (batch
+  `is_honeypot`/`is_safe`/`liquidity`), `token_stat` (rat/bundler/entrapment/bot-degen %). The
+  internal multiplexer `batch_handler` answers `403 Endpoint not allowed` for us. Inventory:
+  [docs/GMGN_INTERNAL_API.md](docs/GMGN_INTERNAL_API.md).
+- **Adopted, fail-soft and shadow-only.** `src/utils/gmgn-web-extra.ts` shares the existing web gate;
+  the candles are a **free OHLC fallback** in the chart ladder (`source: 'gmgn-web'`, valuable because
+  SolanaTracker is out of credits), and batch safety + token_stat land in `token_risk_features`
+  (migration 51) and the `(shadow)` chip (`safe` / `honeypot` / `bundler N%`). Nothing gates.
+
+### Changed — the open-positions bar shows positions, not wallet holds
+
+A wallet hold with no live buy record used to be rendered as "untracked" (at most one, appended at
+the end). That is how two airdropped clones sharing a real ticker turned into a confusing duplicate:
+the wallet holds two different mints both named **STONK** — one real (priced $0.2731, 7 live buys)
+and one 9→6-decimal clone with no price and no records — and the bar drew both as "STONK".
+
+- `listLiveOpenBarPositions` now returns **live positions only**: a hold with no net-open live buy
+  cycle is not a position and is not returned. The `untracked` field and the first-seen baseline it
+  relied on are gone (`open-bar-positions.ts`).
+- The bar additionally hides **unpriced** positions once the price feed answers — an unpriced hold is
+  the signature of a clone, and a live position is priced — while failing open when the feed returns
+  nothing at all, so a pricing outage cannot empty the bar (`useGlobalOpenPositionsBar.ts`).
+- Verified against production: the real STONK mint has 7 live buys and stays; the clone has zero
+  records and no price, so both rules drop it.
+- Trade-off worth knowing: a real position whose price momentarily fails now drops out of the bar
+  until the next poll (15s) rather than staying put — the alternative was keeping the clone.
+
+
+### Added — buy value estimate + exact amounts on trade outcomes
+
+- **The buy CTA states the value.** `BulkTokenBuyer`'s button now appends `(≈ $X)`: the input amount
+  at the live native price (SOL), or as the dollar unit for USDC — the same convention the buy
+  tracker uses (spend × native price) rather than a per-token price of our own. An unknown price
+  produces no figure at all, never a substituted rate (`estimateBuyUsdValue`).
+- **The outcome modal states both sides.** `TradeOutcomeModal` now shows the exact quantity and the
+  native amount — buy: `Received: N SYMBOL` / `Spent: X SOL`; sell: `Sold: N SYMBOL` /
+  `Received: X SOL`. The buy's native figure is what was actually routed (`buyResult.totalSpent`,
+  fees excluded; USDC keeps the requested amount because `totalSpent` is lamport-denominated); the
+  sell's quantity comes from the executed base amount and the mint's decimals. Multi-token batches
+  show the native side only, since one symbol cannot describe the mix. Both are rendered through
+  `formatTradeAmount` so a small fill never reads as `0.00`.
+- **The outcome names the tokens, all of them.** The modal reported "You've successfully bought
+  Token" (the symbol was never resolved — `executeBulkBuy` does not populate `successfulPurchases[].symbol`)
+  and "3 tokens" for a batch. It now lists the real symbols — `BONK`, `BONK and WIF`,
+  `BONK, WIF and POPCAT` — resolved from the merged search+metadata list on the buy side and the
+  selected tokens on the sell side, via `symbolsLabel`, which drops unresolved names and returns
+  `null` so the caller falls back to the mint rather than printing a blank.
+- Unit tests cover the fail-closed estimate (missing/zero price → `null`, so no number is shown),
+  the amount formatting, and the name joining. Helpers live in `src/utils/trade-display.ts`.
+
+### Fixed — sell estimate quoted a route the executor would refuse
+
+The sell page's SOL estimate came from Raptor alone (`fetchQuoteForToken` tried Raptor and fell back
+to Jupiter only when Raptor *failed*), so for a token whose best route needs two pools it priced the
+whole position off a single-hop, 38%-impact route. Measured for 681.397224200 BP:
+
+| quote | output | impact |
+| --- | --- | --- |
+| Raptor via the seller's old path (`RAPTOR_MAX_HOPS=1`) | **3.9750 SOL** | 38.34% |
+| Raptor at maxHops 2 / 3 / 5 | 6.4296 / 6.4301 / 6.4301 SOL | 0.08% |
+| Jupiter | 6.4337 SOL | 0.07% |
+
+So the estimate was 2.46 SOL (38%) low *and* unexecutable — `SWAP_QUOTE_MAX_IMPACT_PCT` (default
+15%) would have refused that route, meaning the button advertised a sale that could not happen.
+
+- The seller now quotes through `pickParallelSwapQuote` — the same impact-gated picker
+  `prepareSwapTransaction` uses for the executed swap — so the estimate is the route that would
+  actually run and the two can no longer disagree. Correction to this entry as first written: that
+  picker is **Jupiter-only** on the desk path (Swap V2 `/order`, Lite only when V2 fails; Raptor is
+  arbitrage-only), not the three-provider race the docs described. The docs are corrected in the
+  same commit. Quoting still
+  respects the shared `JUPITER_MAX_RPS` gate.
+- Fixed the impact normalisation this exposed: the seller stored `priceImpact * 100` for a provider
+  that already reports percent, inflating "Avg Price Impact" 100x and making any gate check
+  unreliable. Normalised once through `impactToAbsPct` instead.
+- Deleted the bypassed provider helpers (~72 lines) and the now-dead `quotesRef`.
+- `RAPTOR_MAX_HOPS` stays at `1` for a route touching SOL / USDC / USDT. **Corrected 2026-10-01:** the
+  claim originally written here — "the fix belongs in route selection, not the hop ceiling" — was wrong
+  for token→token. At `1` such a pair does not route single-pool, it returns
+  `500 "No direct route found and maxHops=1"`, and that failure spent the Jupiter budget. Hops are now
+  resolved per pair (`src/utils/raptor-hops.ts` — see the entry at the top of this section).
+
+### Fixed — no hardcoded SOL price anywhere (live price only)
+
+- **The sell page showed an estimate up to 61% off.** `BulkTokenSeller` held its SOL price in
+  `useState<number>(145)` whose setter was **never called** (`setSolPriceUsd` appeared exactly
+  once, in its own declaration — the "handled by `useSolPrice`" comment next to it was not true).
+  Every USD→SOL figure there was converted at $145 while the market was ~$118.79, understating
+  the "You have ~ X SOL to reload" header by ~18%. `TradingHistory`, `PnLTracker`,
+  `TransactionResultModal` and `AlgoDashboardTab` carried the same literal in defaults, so
+  `TransactionResultModal`'s "≈ $" line was converted at $145 for every caller that didn't
+  override it.
+- **The server could fabricate a price too.** `sol-price-core.ts` seeded its cache with
+  `DEFAULT_SOL_PRICE_USD = 145` and returned it (`source: 'default'`) when Bybit, CoinGecko and
+  Jupiter all failed; `/api/solprice` answered `price: 145, source: 'emergency_default'`; and
+  `getSolPriceUSD()` returned `145` on error. The cache logic even used `price !== 145` as its
+  "is this a real price?" test. A fabricated price is worse than none — the sim writers check
+  `solPrice > 0` and cannot tell it from a real quote, so a failed lookup was recorded as fact.
+- **Now:** one live source, read every time. The server reports `price: 0` /
+  `source: 'unavailable'` (route: HTTP 503) when nothing has ever been observed and treats `> 0`
+  as "real"; every client surface reads `useSolPrice()` and shows an explicit `—` or omits the
+  figure when the price is unknown instead of assuming one. Dead `estimatedSOL` scaffolding in the
+  seller (only fed an unrendered value) and the unused `UnifiedTokenModal.solToUsd` prop are gone.
+- **Guarded:** `npm run verify:no-hardcoded-sol-price` (new, wired into the verify gate) fails if a
+  literal ever feeds a price expression again — verified failing on a probe violation and passing
+  clean. Rule documented in `docs/02-architecture-and-data.md`.
+
+### Added — dev ban / profitable-dev lists + RugCheck risk features (shadow)
+
+- **Two shadow-first signals, nothing enforced.** A token's creator is scored from GMGN
+  `created_tokens` (graduation rate + per-coin ATH) into `dev_reputation`, and RugCheck's free
+  keyless report (`score_normalised`, named risks, insider graph, LP lock, creator balance) into
+  `token_risk_features`. One `RiskLabel` renders as a chip on **every surface** we already have —
+  Freeview tiles, OHLC/rug panel, tracker + signals rows (new bulk `GET /api/gmgn/risk-chips`),
+  sim-open toasts, radar reasons, `entryFeatures` — each suffixed `(shadow)` so nothing reads as
+  enforced. Spec: [docs/specs/SPEC-dev-reputation-rugcheck-v1.md](docs/specs/SPEC-dev-reputation-rugcheck-v1.md).
+- **New `/dev/dev-reputation`** — Profitable devs vs the Ban list, per-dev stats (created,
+  graduated %, ATH, reasons) and **top-10 tokens by ATH** (inline top-5 + expand), linking to GMGN.
+  `scripts/backfill-dev-tokens.mjs` fills the token list on rows that predate the column
+  (dry-run default, `--apply`; ran 48 devs / 0 failures on prod).
+- **Made to actually run under pressure.** Creator resolution now prefers **RugCheck's `creator`**
+  (free, already fetched) over Jupiter, which is rate-limited; the capture seam enqueues **before**
+  the GMGN panel lookup so RugCheck keeps writing while GMGN is throttled; dev lookups cache
+  24 h/creator with a 60 s GMGN backoff; RugCheck is capped at **3 rps** (~30 % of the measured
+  ~10 rps clean ceiling).
+- **Fixed while shipping:** `gmgn-api` stamped the request timestamp/signature **before** the serial
+  rate gate, so queued calls aged past GMGN's ~20 s window (`AUTH_TIMESTAMP_EXPIRED`, verified:
+  10 s accepted / 30 s rejected) and the whole GMGN pipeline failed — the gate now runs first. Also
+  found and cleared a silently-held mcap job lock that was starving every capture.
+- **Provider check (live):** Axiom cannot replace GMGN — concentration/risk only and the route is
+  dead (`425 Too Early` on stale hardcoded cookies); SolanaTracker is out of credits
+  (`Insufficient credits`); SolSniffer is key-gated and deferred. GMGN stays the only creator-history source.
+- **Correlation says no evidence yet** (`scripts/rugcheck-correlation.mjs`, n=16 — every bucket
+  `inconclusive`) → **enforcement stays off**; `ban → markTokenRug` and `good →` scoring are not wired.
+
+### Added — realistic execution model + standardized PnL (spec + pure model)
+
+- **The problem, measured:** the sims fill at spot on both sides — `computeMcapSimPnlPct` is
+  `(exit − entry)/entry × 100`, and the Robinhood sim fills at `nativeAmount × nativeUsd / priceUsd`
+  with `gainPct = (price − entryPriceUsd)/entryPriceUsd`. So a position that round-trips at an
+  unchanged price reports **0%**: no spread, no pool impact, no DEX fee, no priority fee. That
+  flatters short-hold, high-turnover strategies hardest, and leaves each writer with its own idea of
+  what a fill is.
+- **`src/strategies/execution-model.ts`** — one pure model: AMM impact (`coeff × (notional/depth)^exp`,
+  where coeff=exp=1 is the exact constant-product average-price impact `notional/depth`), a spread
+  allowance, a per-side DEX fee, and a per-side fixed priority/tip cost. Buys and sells both pay it,
+  so a round trip at an unchanged price is a **loss** — the property the old formula could not
+  express — and breaking even requires a real move. One standardized PnL:
+  `pnlQuote = proceeds − cost`, `pnlPct = pnlQuote/cost × 100`, recomputable from the fills stored in
+  `features.exec` (`model: exec-v1`). All knobs are env-tunable with defaults, and zeroing them
+  reproduces the legacy spot-fill number exactly (pinned by a test).
+- **Depth is the honest blocker, and it is already in flight data:** the model prefers measured pool
+  liquidity, then a labelled volume proxy, then an assumed floor — and every stored fill carries
+  `depthSource` so an assumed depth can never pass for a measured one. Checked on prod: outcomes
+  carry no liquidity at all (0 of 516 in 2 days) and `token_mcap_tracking` has no liquidity column
+  (only `volume_5m`), **but `gmgn-api.ts` already receives `pool_liquidity` and
+  `dexscreener-volume.ts` already reads `liquidity.usd`** and picks pairs by it — the sim path simply
+  never reads either. So v1 lands as **computation, not enforcement**: record the modelled fill
+  beside the legacy `pnl_pct`, measure the drag per strategy, and flip `SIM_EXECUTION_MODEL` once
+  depth is carried through from the payloads already being fetched.
+- Spec: `docs/specs/SPEC-sim-execution-model-v1.md`. 18 tests, including the CPMM identity, the
+  round-trip-is-a-loss property, the legacy-equivalence case, and degenerate input (no NaN/Infinity).
+
+### Fixed — the trending cycle ran for minutes and starved the whole process
+
+- **Measured profile of `/api/trending/track`** (temporary `console.warn` marks — 91% of this path's instrumentation is `console.log`, which production's `removeConsole` strips, so the cycle looked silent): `diagnoseTradingWallet` **1.8 s**, then the cycle sat in `runTrendingBotRhSimCycle()` — one run held the lock **4 m 12 s** and was still going. With the Solana phases instrumented separately: `feed pools=42` 144 ms, `filters` **8,695 ms** (≈1.7 s per candidate), candidate loop 87 ms.
+- **Deleted `diagnoseTradingWallet()` from the route** (its only caller, function removed too): ~1.8 s per tick, every tick, whose entire output was `console.log` — cost with no reader in production.
+- **The Robinhood sim no longer runs inline.** Detached behind its own guard (in-process flag + a `trending_rh_sim` DB lock, because the Solana cycle's `trending_track` lock is released when the request returns). Its duration is logged via `console.warn` and measures **69.2 s** — that was blocking the Solana phase outright, and starving every other request in the shared Node process. Effect on the neighbours: filtered/unfiltered trending went from 30 s `context deadline exceeded` failures to 2–3 s successes, and the mcap sim's 30 s timeouts had the same cause. Cycle total is now **8.9 s** and the cron logs `✅ Trending tracker completed` instead of failures.
+- The `trending_track` TTL stays at 600 s: raising it (as first proposed) rested on the cycle taking minutes, which the detach removes — and a short TTL is what bounds recovery when a deploy kills a cycle mid-run (measured: the ship restart left a stale row that blocked every tick until its TTL expired).
+- **Still open:** the candidate filter's ~1.7 s per candidate is now the dominant cost of the cycle.
+
+### Added — range-selectable token PnL spreadsheet
+
+- **`GET /api/strategies/pnl-export`** takes an inclusive day range (`from`/`to` in `tz`, default
+  the last 3 days), a `position_size` (default `0.005`) and an optional `chain`, and returns a CSV
+  with a `#` metadata block (range, timezone, chains, trades, won/lost, avg/median `pnl_pct`,
+  gross win/loss, profit factor, `pnl_sol`, peak concurrent positions, peak capital, top-10
+  concentration) followed by one table with a `section` column: **rank 1-10 winners, rank 1-10
+  losers, then every token in the range**. `format=json` returns the same payload, plus the
+  winners/losers arrays. Surfaced in the Reports tab as “Export token PnL spreadsheet” beside the
+  existing outcomes CSV, reusing the range picker already there.
+- `exports/build_token_pnl_workbook.py` assembles that CSV into a 5-sheet workbook
+  (`README`, `summary`, `winners_top10`, `losers_top10`, `all_tokens`), mirroring
+  `exports/build_workbook.py`.
+- Two traps the export had to route around, both found while verifying against prod:
+  **`chain` must be optional** (`parseStrategyChain` coerces anything unrecognised to `sol`, which
+  silently drops the Robinhood twin — 261 of the 627 sim rows over 2026-09-27..29), and
+  **symbols do not live in outcome features** (the only symbol-ish key there is `pool_name`; the
+  `strategy_outcomes.token_symbol` column the repo reads first does not exist, behind a
+  `.catch(() => [])`). Symbols now resolve from `token_mcap_tracking` — 289 of 311 tokens over the
+  three-day window, address-prefix fallback for the rest.
+
+### Fixed — the mcap sim was mostly not running, and the cron called that success
+
+- **A lock-held tick was logged as `✅ completed` and marked the worker healthy.** `withJobLock` answers an overlapping tick with `409 {"success":false,"skipped":true,…}`, and `makeRequest` returned that body with a **nil** error — so every caller treated it as a run. Measured over 6 h: **16/16 `open` and 9/11 `manage` "completions" were exactly 84 bytes** (the skip body) while the only two real payloads were 834 bytes. The real runs were failing instead, always at exactly **30.0 s** — the cron's default client deadline, which the three mcap calls never overrode (the GMGN sim passes 180 s). Cron callers now detect a skip (`isSkippedBody`), log `⏭️ … skipped (job lock held)` and call a new `workers.Skipped` that touches neither `lastSuccessAt` nor `lastErrorAt`; the mcap calls get a realistic 120 s deadline. Applied to the mcap (×3), signals, gmgn, social and trending-track jobs.
+- **Root cause of the 30 s stalls: hydrating 151 MB in the shared process.** `fetchTradingRecordsForWallet` is an unbounded `SELECT data … WHERE wallet_address = $1`, and the Robinhood sim wallet holds **154,930 rows / 151 MB** — its cycle measured **19–78 s** (median 20 s) in the same Node process that serves every other cron job, starving the mcap run past its deadline. It now takes optional `{ strategies, sinceDays }` and the RH sim passes its own strategy plus `RH_SIM_RECORD_WINDOW_DAYS` (default **14**), which cuts the fetch to ~37k rows. The window is a *cycle* bound, not a convenience: a position whose opening buy falls outside it can no longer be reconstructed, so the required check is documented on the function — **on 2026-09-29 the oldest open att_rh position was 10 days old, so 7 d would have been unsafe and 14 d was not.**
+- **Pool starvation now fails fast instead of hanging to the deadline.** `new Pool({ connectionString, max: 10, prepare: false })` had **no `connectionTimeoutMillis`**, so a query that could not get a client queued indefinitely and the only thing that ended it was the caller's HTTP timeout. Added `DATABASE_POOL_CONN_TIMEOUT_MS` (5 s, env-tunable). Deliberately **not** `statement_timeout`: pg sends that as a *startup parameter* and PgBouncer rejects it (`unsupported startup parameter: statement_timeout`), which broke every query in the app — caught in live verification and reverted before it stood. `connectionTimeoutMillis` is client-side only, so it is safe.
+
+### Added — paper-trade capital + R:R, per chain
+
+- `loadPaperCapital` (`GET /api/strategies/reports` → `capital[]`, with a "Paper-trade capital & R:R" panel in the Strategies hub) answers "how much do we need, and what does it return": **deployed notional per day** (throughput), **peak simultaneous exposure × the clip actually used** (the binding capital number), and **profit factor / R:R / expectancy mean + median**. Kept honest by design: capital need is peak-open × clip rather than the daily total (capital recycles), profit factor is the headline because the expectancy mean is right-tailed (median shown beside it), amounts carry their native unit, and SOL and ETH are never summed. Peak open is an **interval-overlap sweep over the outcome rows' own `[entry_at, exit_at)` intervals** — counting buy/sell records instead counts a position whose close record never landed as still open forever (that version reported 1674 "open" positions on a day with ~330 buys). Verified baseline it reproduces: **2026-09-29 SOL — 330 buys / 0.3895 SOL throughput, 83 positions at peak (~0.08 SOL held), PF 12.05, median +4.83%** at an observed clip of 0.00097 SOL/trade (the configured 0.01 scaled down by `scaleOpenSize(…, brainRisk)`); 3 days SOL: 0.923 SOL throughput, PF 7.85, R:R 6.1:1, 493 trades, win 50.5%. Robinhood (ETH) is reported separately: 0.444 ETH throughput over 3 days, peak 9.
+
+### Added — Phase 5, in its gated form: a consensus gate that cannot fire on unproven evidence
+
+- **The consensus gate is built but inert, on purpose.** [`consensus-gate.ts`](src/strategies/consensus-gate.ts) decides whether a would-be open has enough *independent families* behind it, but `decideConsensusGate` returns `no_evidence` whenever the consensus test is not significant — so an unproven lift can never suppress a trade, whatever the mode. Default `CONSENSUS_GATE_MODE=shadow` (record, change nothing); `enforce` is opt-in and still refuses to act without significant evidence; `CONSENSUS_GATE_KILL_SWITCH` forces shadow. Threshold `CONSENSUS_GATE_MIN_FAMILIES` (default 2). The decision hook sits on the mcap sim open boundary ([`sim-track/route.ts`](src/app/api/mcap-tracking/sim-track/route.ts)) and is fail-soft — an error there cannot block an open. Evidence is memoized in-process for 10 min because the bootstrap is far too heavy to run per open.
+- **The sink has a reader**, so it is not another dead store: `GET /api/strategies/consensus-shadow` returns recent decisions, the 7-day counts and the active mode. `would_gate` rows mean "if this were enforced, we would have skipped this open" and are only meaningful once `evidence_significant` is true — which today it is not.
+- **Spawn diversity guard, also shadow.** [`candidate-diversity.ts`](src/strategies/candidate-diversity.ts) measures each candidate's token-set Jaccard against the already-active variants (the three `search_mcap_*` clones sit at 0.66) and the search cycle now returns `diversity` + `diversity_enforced` in its result. Redundant candidates are only dropped when `SEARCH_DIVERSITY_ENFORCE=1` (threshold `SEARCH_DIVERSITY_MAX_JACCARD`, default 0.5). This is the root cause of the clone redundancy that inflated the consensus signal; it is separable because families already neutralise clones for measurement.
+
+### Added — strategy families + pairwise overlap: the "consensus" signal was three clones
+
+- **The overlap number everyone would have gated on was inflated by the search spawner.** `search_mcap_first_seen_sl_30_tp200_h48` and `..._tp300_h48` share **66 %** of their tokens (`tp150 ↔ tp200` 44 %, `tp150 ↔ tp300` 37 %), because `buildDefaultMcapSearchGrid` varies only exit params over a constant entry filter and `MAX_CONCURRENT_SEARCH = 3` fills all three slots with grid neighbours. Every genuine cross-family pair is **1–5 %**. New [`strategy-family.ts`](src/strategies/strategy-family.ts) resolves the family (independent bet) from the definition — `_rh` twins stripped, search variants collapsed to their canonical slot by entry template — and its test pins it against the live `canonicalSimId`, so the two cannot drift. Nothing else in the repo had a family/lineage concept.
+- **Family breadth next to raw breadth.** [`loadTokenStrategyOverlap`](src/strategies/db.ts) now returns `family_count` / `families` alongside `strategy_count` / `strategies`, so the Reports table shows both instead of hiding the inflation. Measured on the day it landed: 8 raw strategy rows → **5 families** for the day; **138 tokens are clone-inflated**, for **199 phantom strategies** total; e.g. `HGN8K3x5…` reads 5 strategy rows but only **3** independent bets (`mcap_enter_first_seen` + `mcap_enter_at_80` + `gmgn_kol_momentum`). View [`46-token-strategy-overlap-view.sql`](db/init/46-token-strategy-overlap-view.sql) stays a raw ad-hoc read and says so.
+- **New pairwise surface** — `loadStrategyPairOverlap` returns token-set Jaccard per strategy pair and labels each `same_family` (redundant clone, a spawner defect) or genuine agreement across families, rendered as a "clones vs real agreement" table.
+- **New consensus test that is allowed to say "no".** `loadConsensusTest` + [`consensus-test.ts`](src/strategies/consensus-test.ts) bucket tokens by independent-family count and report a seeded bootstrap 95 % CI on the **median** (the outcome distribution is right-tailed: att_rh mean +83 % vs median −39 % on first entries) plus a Wilson CI on the token win rate, with an explicit `inconclusive` below 30 tokens per side. Correcting my own earlier claim: the raw-strategy curve (+25.6 % → +210.8 %) becomes **+120 % at 1 family (n=238), +255 % at 2 (n=18), +157 % at 3 (n=3)** — up then down, on 18 and 3 tokens. **It gates nothing**; a gate and a spawn diversity guard are gated follow-ons.
+
+### Fixed — `strategy_outcomes` trade identity is now enforced (the "att_rh duplicates" were mis-keyed trades)
+
+- **The Robinhood trending sim stamped every later trade of a mint with that mint's *first-ever* buy.** [`openPositionsFor`](src/strategies/trending-bot-rh-sim.ts) kept the first buy it saw per mint and [`fetchTradingRecordsForWallet`](src/strategies/db.ts) is `ORDER BY timestamp ASC`, so `sellSim` wrote `entry_at` from it and `(chain, strategy_id, token_address, entry_at)` stopped identifying a trade. Measured on prod: `att_rh` holds **77,319 rows that are 77,319 distinct trades** (`(mint, exit_at)` all unique) sharing just **1,331** entry keys — 1,331 mints → exactly 1,331 keys. Nothing was duplicated; `dedupeStrategyOutcomeRows` silently collapsed ~99 % of att_rh at read time, which is why its trades and hold times looked wrong in every report. Entry metadata now comes from the buy that opened the **current** cycle (earliest buy at/after the most recent full close); regression-pinned in [`trending-bot-rh-sim-entry.test.ts`](src/strategies/trending-bot-rh-sim-entry.test.ts).
+- **DLMM re-inserted the same closed position on every manage cycle (~34 rows/position).** [`dlmmOutcomeExistsForPosition`](src/strategies/outcomes.ts) keyed on `features->>'position_id'`, but `toCanonicalEntryFeatures` listed `position_id` in `CORE_KEYS` (so it skipped the `domain_features` fallback) and **never emitted it** — the key was always NULL, so the guard never matched and the sync re-inserted (and re-notified) forever. `pool_name`, `amount_sol`, `pool_volume`, `fee_tvl_ratio_24h` were dropped the same way. All five are now emitted, and the guard additionally keys on the identity (`entry_at` + `pool_address`) so rows written before the fix still match.
+- **The writer is now idempotent.** [`insertStrategyOutcome`](src/strategies/db.ts) is update-else-insert, so a re-close or re-mark **updates** the row instead of appending; the close side effects (`scheduleEpisodeFinalize`, `resolvePredictionsForClosedOutcome`) only run on a genuine insert. Deliberately not `ON CONFLICT`: it must be idempotent *before* the unique index exists, so deploy order cannot turn writes into errors. The mcap-only exists-check it replaces is gone.
+- **Enforced + repaired:** `db/init/45-strategy-outcomes-identity.sql` collapses true duplicates (keeping the newest `exit_at`, the same rule the read-side dedupe used, so report output is unchanged) and adds the partial unique index `idx_strategy_outcomes_identity`; the superseded non-unique `idx_strategy_outcomes_dedupe` is dropped. History was repaired with [`backfill-strategy-outcome-entry-at-standalone.mjs`](scripts/backfill-strategy-outcome-entry-at-standalone.mjs): **76,099 rows re-derived** (pairing verified: 77,498 of 77,688 matched their close within 1 s, 22 within a minute; 168 derived from the buy because the close record never landed), 14 un-derivable rows nulled, leaving `att_rh` at 167 duplicate rows from phantom closes. Backup of every touched `entry_at` taken first.
+- **New: cross-strategy overlap is a first-class read.** The same token under *one* strategy is the defect above; the same token under *different* strategies is agreement. `token_strategy_overlap` (`db/init/46-token-strategy-overlap-view.sql`) plus `loadTokenStrategyOverlap` expose it, and the Reports tab renders a "Strategy overlap" table (breadth, trades, W/L, **median** PnL — never a summed %, which would double-count one token's move). Baseline the day the fix landed: 100 tokens in 1 strategy, 76 in 2, 65 in 3+, one mint in 5.
+
+### Added — moonbag FOMO catch: events-derived burst, Jev shadow gate, peak-trailing exit
+
+- **The social FOMO strategy was reading a decaying sample, not the burst.** `social_only_fomo_gt7` gated on `social_token_rollups.mention_count_30m > 7` **and** `top_source = 'GMGN_Smart_Money_FOMO'`, but both are recomputed every 300 s over the *last 30 min only* — a 2–19 min burst decays to `0` and `top_source` blanks to `''` between samples, while the sim tick runs every 900 s on prod. Measured: `Cgi54…iHfX` (BARSTOOL) had 9 FOMO mentions in a 19-min burst, its rollup read `mention_count_30m 0` / `top_source ''`, and `social-sim` held **0 trading records ever**. Candidate selection now comes from [`loadFomoBurstCandidates`](src/strategies/social/social-only-discovery.ts) — one aggregate over `social_token_events` (the source of truth) inside `SOCIAL_BURST_WINDOW_MIN` (default **30**), so any tick in the window sees the burst. Replayed on prod: the new query returns BARSTOOL with **9** mentions at a 01:56 tick; VAULT (6) correctly stays out of the `>7` gate.
+- **Jev (TypeSafe) Noul now sits beside the open — shadow-only.** New [`social-fomo-noul-shadow.ts`](src/strategies/social/social-fomo-noul-shadow.ts) records what Jev would decide (`social_fomo_noul_shadow`, [`db/init/43-social-fomo-noul-shadow.sql`](db/init/43-social-fomo-noul-shadow.sql)) without changing behavior until `SOCIAL_FOMO_NOUL_MODE=enforce`; `SOCIAL_FOMO_NOUL_KILL_SWITCH` forces shadow, and missing creds / timeout / http / parse fall back to the burst gate (Noul has no confidence field, so a mid band also follows the code path). `callTypeSafeNoulQuestion` generalizes the existing Early-Enter client (that path is unchanged). Live check: HTTP 200, `noul 0.47` → mid → code path.
+- **Moonbag exit: peak-trailing instead of a fixed +50 %.** [`decideMoonbagTrailingExit`](src/strategies/open-strategy-sim-positions.ts) arms at `SOCIAL_MOONBAG_ARM_PCT` (60) and closes on a `SOCIAL_MOONBAG_TRAIL_PCT` (35) retrace from the position's own `monitor_snapshots` peak (no new storage). While armed the fixed TP is bypassed so a runner is not cut at +50 %; SL stays −25 % and hold extends to `SOCIAL_MOONBAG_MAX_HOLD_H` (72). Deliberate trade-off: a pre-arm runner that stalls can now give back to the SL instead of taking +50 %.
+- **Signals-tab list now carries the social bursts.** `social_only_fomo_gt7` joins the Signals picker universe (`src/utils/signals-strategy-id.ts`, `src/strategies/signals-strategy-list.ts`); selecting it lists the live events-derived burst set ([`social-burst-list.ts`](src/strategies/social/social-burst-list.ts)) — every new entry burst appears as a row with the 30m mention count as its score — instead of reading `trading_signals`. Burst rows match only the social entry (never signals/mcap), and Robinhood has no social twin.
+- **Not this change (still open):** the mcap path stays blocked by its saturated `maxOpenPositions` + market-brain `/union` paper gating, and the social strategy's own 5-position cap will eventually stop it catching.
+
+### Fixed — Axiom risk panel 425 flood + one chart per token on the buy page
+
+- **`/api/axiom/token-info` answered 425 for every pair and the client re-requested each mint on every poll**, flooding the console (`Failed to fetch Axiom token info for …: Axiom API error: 425`) and hammering a dead upstream. 425 (Too Early) is now treated like 429/5xx: the route backs off, negative-caches the pair for 120 s and answers a soft `503 { unavailable: true, retryAfter }`; the client caches *failures* for 2 min, maps `unavailable` to a non-error result, and logs at most one line per mint per TTL (`[axiom] risk data unavailable for …`). The per-poll `console.log` noise in both files is gone.
+- **The buy page showed one chart for the "active" token.** With more than one parsed mint, [`BulkTokenBuyer.tsx`](src/components/BulkTokenBuyer.tsx) now opens every mint's GMGN chart in a grid — 3 across, the rest on the second row (5 max, 240 px each); a single token keeps the full-height 400 px chart.
+
 ### Changed — mcap / signals kanban tag `potential` is now `rising`
 
 - The gold chip on `/dev/signals` is a tracking tag (auto when peak growth > 0), not a buy path. Stored label is `rising` on `token_mcap_tracking`, synced `trading_signals`, and OHLC cards keyed by that tag (`db/init/41-rename-tracking-label-rising.sql`). Reads still accept legacy `potential` for one release.

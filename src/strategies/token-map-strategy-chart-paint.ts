@@ -26,7 +26,8 @@ export const GRAY_WICK = '#4b5563'
 /** Frozen detect-snapshot overlay on Strategy correlation. */
 export const DETECT_CANDLE = '#f59e0b'
 export const DETECT_WICK = '#d97706'
-export const CHART_TZ = 'Asia/Bangkok'
+/** Chart wall clock. Product default is WIB (Asia/Jakarta). */
+export const CHART_TZ = 'Asia/Jakarta'
 
 export type DomainWindow = {
   domain: TokenMapDomain

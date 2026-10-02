@@ -21,11 +21,20 @@ type Props = {
   onNotify?: (kind: 'success' | 'error', title: string, detail?: string) => void
 }
 
+/**
+ * The weights that compose the **freeview combined score**.
+ *
+ * T6 of SPEC-config-taxonomy, because this list is where the rug confusion starts: `ohlcPattern` is a
+ * *component weight* of this score, not the detector's threshold. Two different mechanisms answer to
+ * "rug" in this codebase — the entry-gate `ohlc_rug_*` features (snapshotted at score time, attached to
+ * entry records) and the detector behind `rug_verdicts` (one verdict per token on a 10-minute block).
+ * The knobs that actually drive rug decisions are not here; they are `RUG_SIG_*` on `/dev/rug-signal`.
+ */
 const FIELDS: { key: keyof CombinedScoreWeights; label: string; optional?: boolean }[] = [
   { key: 'principal', label: 'Principal (mcap first_seen / at_80)' },
   { key: 'adjusterPresence', label: 'Adjuster presence' },
   { key: 'jaccard', label: 'Jaccard overlap' },
-  { key: 'ohlcPattern', label: 'OHLC rug patterns' },
+  { key: 'ohlcPattern', label: 'OHLC rug patterns (freeview combined score only)' },
   { key: 'ml', label: 'ML closed-loop (optional)', optional: true },
 ]
 
@@ -160,6 +169,15 @@ export default function CombinedScoreWeightsPanel({ onNotify }: Props) {
           renormalizes when set. Each weight must be ≥ 0; save renormalizes so they sum to 1.
         </p>
         <p className="text-xs text-gray-500 mt-1">
+          {/* T6: the blast radius, where the number is. Two mechanisms answer to "rug" here and this
+              list is where they get conflated — this weight scores the freeview combined score only;
+              it is not the detector's threshold. */}
+          <span className="font-mono text-gray-300">OHLC rug patterns</span> weights{' '}
+          <span className="text-gray-400">this score only</span> — not the rug detector. Its knobs are{' '}
+          <span className="font-mono text-gray-300">RUG_SIG_*</span> on the rug page (
+          <span className="font-mono text-gray-300">/dev/rug-signal</span>).
+        </p>
+        <p className="text-xs text-gray-500 mt-1">
           Source:{' '}
           <span className="font-mono text-gray-300">{data.source ?? 'defaults'}</span>
           {draftSum != null ? (
@@ -185,6 +203,15 @@ export default function CombinedScoreWeightsPanel({ onNotify }: Props) {
             }
             value={draft[field.key]}
             step="0.01"
+            // T7: this panel is the one place both sides are already in scope, so the tag goes live
+            // here first. It compares the *stored* weights (`data.weights`) against the defaults, not
+            // the draft — the question is what the system is running, not what is typed in the box.
+            source={
+              (data.source ?? 'defaults') === 'defaults' ||
+              data.weights[field.key] === data.defaults[field.key]
+                ? 'defaults'
+                : 'stored'
+            }
             onChange={(v) =>
               setDraft((prev) => (prev ? { ...prev, [field.key]: v } : prev))
             }

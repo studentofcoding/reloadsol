@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getActiveSocialForSim } from '@/strategies/load-social'
+import { registerSimExitContract } from '@/strategies/sim-exit-contract'
 import { mergeEntryFeaturesForOutcome } from '@/strategies/entry-feature-snapshot'
+import {
+  applyBrainRiskToExit,
+  createBrainRiskSession,
+  resolveSimOpenSize,
+  stampBrainRisk,
+} from '@/utils/brain-regime-risk'
 import {
   buildFullEntryFeatureSnapshot,
   ensureCompleteBuyFeaturesForOutcome,
@@ -9,16 +16,15 @@ import { recordSocialOutcome } from '@/strategies/outcomes'
 import { closeOutcomeStatusFromPnl } from '@/strategies/close-outcome-status'
 import { fetchTradingRecordsForWallet } from '@/strategies/db'
 import { computeOpenSimCycle } from '@/utils/simulation-trades'
-import { buildTradingRecord, insertTradingRecord, insertTradingRecords } from '@/utils/trading-records-db'
-import type { TrackingRecord } from '@/utils/trading-tracker'
+import { buildTradingRecord, insertTradingRecord } from '@/utils/trading-records-db'
 import { fetchTokenPricesForTracking } from '@/utils/trading-tracker'
 import { getOpenPositionPrices } from '@/utils/open-position-prices'
 import { getSolPriceUSD } from '@/utils/solana'
 import { log } from '@/utils/unified-logger'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
 import {
-  fetchFomoRollupCandidates,
   filterSocialOnlyCandidates,
+  loadFomoBurstCandidates,
   loadMintsPresentElsewhere,
   loadMintsWithRequiredMentionSources,
   loadSocialClosedMints,
@@ -27,10 +33,17 @@ import {
 import type { SocialStrategy } from '@/strategies/types'
 import {
   getOpenStrategySimPositions as getOpenPositionsForStrategy,
-  shouldCloseSignalsClExit,
   type StrategySimOpenPosition as OpenPosition,
 } from '@/strategies/open-strategy-sim-positions'
 import { appendSimPositionMonitorSnapshot } from '@/strategies/sim-monitor-snapshots'
+import { captureTokenInfoDetectBatch } from '@/strategies/token-info-detect'
+import { attachOhlcRugShadow } from '@/strategies/ohlc-rug-shadow'
+import { insertDetectSnapshot } from '@/strategies/detect-snapshots'
+import {
+  evaluateSocialFomoNoul,
+  recordSocialFomoNoulShadowRow,
+  socialFomoNoulSuppresses,
+} from '@/strategies/social/social-fomo-noul-shadow'
 
 export const maxDuration = 120
 
@@ -59,113 +72,14 @@ function readFiniteNumber(value: unknown): number | null {
   return null
 }
 
-async function closeSimPosition(params: {
-  strategyId: string
-  mintAddress: string
-  symbol: string
-  entryAt: string | null
-  entryFeatures: Record<string, unknown>
-  closeReason: string
-  /** Wallet records already loaded by the cycle (avoids one fetch per close). */
-  records: TrackingRecord[]
-  /** Current price already batched by the cycle. */
-  currentPriceUsd: number | undefined
-  /** Close records are collected and bulk-inserted by the route. */
-  collect: (record: TrackingRecord) => void
-}): Promise<number> {
-  const cycle = computeOpenSimCycle(params.records, params.mintAddress)
-  if (!cycle) return 0
-
-  const sellPriceUsd = params.currentPriceUsd || cycle.weightedBuyPriceUsd
-  const solPrice = await getSolPriceUSD()
-  const remaining = cycle.remainingTokenAmount
-  const solReceived =
-    sellPriceUsd && solPrice > 0
-      ? (remaining * sellPriceUsd) / solPrice
-      : cycle.totalSolBought
-
-  const pnlPct =
-    cycle.totalSolBought > 0
-      ? ((solReceived - cycle.totalSolBought) / cycle.totalSolBought) * 100
-      : 0
-
-  const record = buildTradingRecord({
-    walletAddress: SOCIAL_SIM_WALLET,
-    operationType: 'sell',
-    is_simulation: true,
-    simulation_type: 'strategy',
-    bot_strategy: params.strategyId,
-    close_position: true,
-    tokens: [
-      {
-        mintAddress: params.mintAddress,
-        symbol: params.symbol,
-        tokenAmount: remaining,
-        solAmount: solReceived,
-        priceUsd: sellPriceUsd,
-        solPrice,
-      },
-    ],
-    successCount: 1,
-    failureCount: 0,
-    totalTokens: 1,
-    solAmount: solReceived,
-    feesPaid: 0,
-    solPriceUsd: solPrice,
-    signatures: [`social-sim-close-${Date.now()}`],
-    status: closeOutcomeStatusFromPnl(pnlPct),
-    trading_simulation: {
-      close_reason: params.closeReason,
-    },
-  })
-
-  params.collect(record)
-
-  const closeExtras = {
-    token_symbol: params.symbol,
-    exit_price_usd: sellPriceUsd,
-    close_reason: params.closeReason,
-    sol_spent: cycle.totalSolBought,
-    sol_received: solReceived,
-    initial_price_usd:
-      readFiniteNumber(params.entryFeatures.initial_price_usd) ??
-      cycle.weightedBuyPriceUsd,
-  }
-
-  const completeFeatures = await ensureCompleteBuyFeaturesForOutcome({
-    mintAddress: params.mintAddress,
-    buyFeatures: params.entryFeatures,
-    overrides: {
-      entryAt: params.entryAt,
-      tokenSymbol: params.symbol,
-    },
-    domain: 'social',
-    extra: closeExtras,
-  })
-
-  await recordSocialOutcome({
-    strategyId: params.strategyId,
-    tokenAddress: params.mintAddress,
-    entryAt: params.entryAt,
-    exitAt: new Date().toISOString(),
-    pnlPct,
-    status: closeOutcomeStatusFromPnl(pnlPct),
-    isSimulated: true,
-    features: mergeEntryFeaturesForOutcome(
-      completeFeatures ?? params.entryFeatures,
-      closeExtras,
-    ),
-  })
-
-  return pnlPct
-}
-
 async function openSimPosition(params: {
   strategy: SocialStrategy
   mintAddress: string
   symbol: string
   entryFeatures: Record<string, unknown>
   entryPriceUsd: number
+  /** The price actually paid (S10) — the impact-included fill. Falls back to `entryPriceUsd`. */
+  entryPriceImpactedUsd?: number
   solAmount: number
   effectiveExit: {
     takeProfitPct: number
@@ -220,6 +134,19 @@ async function openSimPosition(params: {
 
   await insertTradingRecord(record)
 
+  // The exit contract (S8/S10): the worker now owns this position's exit too.
+  await registerSimExitContract({
+    chain: 'sol',
+    walletAddress: SOCIAL_SIM_WALLET,
+    strategyId: params.strategy.id,
+    mintAddress: params.mintAddress,
+    symbol: params.symbol,
+    positionSize: solAmount,
+    entryPriceUsd: params.entryPriceImpactedUsd ?? priceUsd,
+    basis: 'price',
+    thresholds: params.effectiveExit,
+  })
+
   const { notifyStrategyOpen } = await import('@/strategies/strategy-telegram-notify')
   notifyStrategyOpen({
     domain: 'social',
@@ -237,7 +164,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
   }
   const { withJobLock } = await import('@/utils/bot-job-lock')
-  return withJobLock('social_sim_track', 300, () => runSimTrack(request))
+  return withJobLock('social_sim_track', 900, () => runSimTrack(request))
 }
 
 async function runSimTrack(request: NextRequest) {
@@ -253,6 +180,10 @@ async function runSimTrack(request: NextRequest) {
       skipped: string[]
     }> = []
 
+    // Level 1 market scalar for every strategy — one session per cycle so the recipe/params fetch
+    // is shared across candidates, and one code path with mcap/signals/gmgn/trending.
+    const brainRiskSession = createBrainRiskSession()
+
     for (const strategy of strategies) {
       let opened = 0
       let closed = 0
@@ -260,50 +191,23 @@ async function runSimTrack(request: NextRequest) {
       const openMintSet = new Set(openPositions.map((p) => p.mintAddress))
       const closedMints = new Set<string>()
 
-      const mintsToPrice = openPositions.map((p) => p.mintAddress)
-      const prices =
-        mintsToPrice.length > 0
-          ? await getOpenPositionPrices(mintsToPrice, SOCIAL_CHAIN)
-          : ({} as Record<string, number>)
-
-      const pendingCloses: TrackingRecord[] = []
       for (const pos of openPositions) {
         await appendSimPositionMonitorSnapshot({
           records,
           strategyId: strategy.id,
           mintAddress: pos.mintAddress,
         })
-        const currentPrice = prices[pos.mintAddress] ?? null
-        const exit = pos.effectiveExit ?? strategy.config.exit
-        const entryMcap = readFiniteNumber(pos.entryFeatures.entry_mcap)
-        const { close, reason } = shouldCloseSignalsClExit({
-          exit,
-          entryAt: pos.entryAt,
-          entryMcap,
-          currentMcap: null,
-          entryPriceUsd: pos.entryPriceUsd,
-          currentPriceUsd: currentPrice,
-        })
-        if (close) {
-          await closeSimPosition({
-            strategyId: strategy.id,
-            mintAddress: pos.mintAddress,
-            symbol: pos.symbol,
-            entryAt: pos.entryAt,
-            entryFeatures: pos.entryFeatures,
-            closeReason: reason,
-            records,
-            currentPriceUsd: prices[pos.mintAddress],
-            collect: (r) => pendingCloses.push(r),
-          })
-          closed++
-          openMintSet.delete(pos.mintAddress)
-          closedMints.add(pos.mintAddress)
-        }
+        // The 60s SL/TP worker owns this position's exit (SPEC-strategy-exit-standard S9). The
+        // moonbag trailing decision used to run here — the last per-family closer. The snapshots
+        // above are KEPT: the peak-gain logic reads them, so deleting the loop would have removed
+        // monitoring along with closing. Nothing closes on this pass any more.
       }
-      if (pendingCloses.length > 0) await insertTradingRecords(pendingCloses)
 
-      const rollups = await fetchFomoRollupCandidates(strategy.config.entry, 100)
+      const rollups = await loadFomoBurstCandidates(strategy.config.entry, {
+        chain: SOCIAL_CHAIN,
+        limit: 100,
+      })
+      const burstByMint = new Map(rollups.map((r) => [r.token_address, r]))
       const candidateMints = rollups.map((r) => r.token_address)
       const requireSources = requiredMentionSources(strategy.config.entry)
       const [presentElsewhere, priorClosed, requiredMentionMints] = await Promise.all([
@@ -321,6 +225,15 @@ async function runSimTrack(request: NextRequest) {
         closedMints,
         requiredMentionMints,
       })
+
+      void captureTokenInfoDetectBatch(
+        eligible.map((candidate) => ({
+          chain: SOCIAL_CHAIN,
+          tokenAddress: candidate.tokenAddress,
+          detectingStrategy: strategy.id,
+          source: 'social' as const,
+        })),
+      )
 
       const refreshedRecords = await fetchTradingRecordsForWallet(SOCIAL_SIM_WALLET)
       const currentOpen = getOpenPositionsForStrategy(refreshedRecords, strategy.id).length
@@ -343,6 +256,7 @@ async function runSimTrack(request: NextRequest) {
           typeof rawPrice === 'number' && rawPrice > 0 ? rawPrice : null
         const symbol = candidate.tokenAddress.slice(0, 8)
         const entryAt = new Date().toISOString()
+
         const fullFeatures = await buildFullEntryFeatureSnapshot(
           candidate.tokenAddress,
           { entryAt, tokenSymbol: symbol },
@@ -354,6 +268,70 @@ async function runSimTrack(request: NextRequest) {
             social_entry: 'social_only_fomo',
           },
         )
+
+        // Resolve the OHLC rug shadow once: it feeds the Noul candle arm, the
+        // spine, and its bars are persisted for the close chart.
+        const ohlc = await attachOhlcRugShadow(
+          candidate.tokenAddress,
+          fullFeatures,
+          { enforce: true, fallbackOwn1m: true },
+        )
+        const ohlcFeatures = ohlc.evalResult?.features ?? null
+
+        const burst = burstByMint.get(candidate.tokenAddress)
+        const noul = await evaluateSocialFomoNoul({
+          chain: SOCIAL_CHAIN,
+          mentions30m: candidate.mentionCount30m,
+          mentions24h: burst?.mention_count_24h ?? candidate.mentionCount30m,
+          uniqueChannels30m: burst?.unique_channel_count_30m ?? 0,
+          minutesSinceFirstMention: null,
+          fomoBuyCount1h: burst?.fomo_buy_count_1h ?? 0,
+          fomoEdge1h: burst?.fomo_edge_1h ?? null,
+          mcap: burst?.mcap ?? null,
+          firstMcap: burst?.first_mcap ?? null,
+          mcapGrowthPct: burst?.mcap_growth_percent ?? null,
+          holdersPct: burst?.top_holders_pct ?? null,
+          organicScore: burst?.organic_score ?? null,
+          ohlcN: ohlcFeatures?.n ?? 0,
+          ohlcSource: ohlc.source,
+          ohlcDumpPct: ohlcFeatures?.dumpPct ?? null,
+          ohlcAvgUpperWick: ohlcFeatures?.avgUpperWick ?? null,
+          ohlcUpOnlyCount: ohlcFeatures?.upOnlyCount ?? null,
+          ohlcVolDeathRatio: ohlcFeatures?.volDeathRatio ?? null,
+          ohlcRugTrip: ohlc.evalResult ? ohlc.evalResult.trip : null,
+        })
+        await recordSocialFomoNoulShadowRow({
+          tokenAddress: candidate.tokenAddress,
+          symbol,
+          chain: SOCIAL_CHAIN,
+          strategyKey: strategy.id,
+          mentions30m: candidate.mentionCount30m,
+          mentions24h: burst?.mention_count_24h ?? candidate.mentionCount30m,
+          uniqueChannels30m: burst?.unique_channel_count_30m ?? 0,
+          fomoBuyCount1h: burst?.fomo_buy_count_1h ?? 0,
+          fomoEdge1h: burst?.fomo_edge_1h ?? null,
+          mcap: burst?.mcap ?? null,
+          mcapGrowthPct: burst?.mcap_growth_percent ?? null,
+          holdersPct: burst?.top_holders_pct ?? null,
+          organicScore: burst?.organic_score ?? null,
+          specWouldPass: true,
+          noulCalled: noul.called,
+          noul: noul.noul,
+          band: noul.band,
+          decisionShadow: noul.decision,
+          mode: noul.mode,
+          organicNoul: noul.organic,
+          candlesNoul: noul.candles,
+          organicBand: noul.organicBand,
+          candlesBand: noul.candlesBand,
+          ohlcN: ohlcFeatures?.n ?? 0,
+          ohlcSource: ohlc.source,
+        })
+        if (socialFomoNoulSuppresses(noul)) {
+          skipped.push(`${symbol}: noul_suppress`)
+          continue
+        }
+
         const { prepareTargetMachinePaperOpen } = await import(
           '@/strategies/prepare-target-machine-paper-open'
         )
@@ -362,13 +340,27 @@ async function runSimTrack(request: NextRequest) {
           spinePassDecision,
           spineSkipDecision,
         } = await import('@/strategies/spine-tick-log')
+        const sized = await resolveSimOpenSize({
+          session: brainRiskSession,
+          strategyId: strategy.id,
+          baseSol: strategy.config.execution.simBuySol,
+        })
+        if (sized.skip) {
+          skipped.push(
+            `${symbol}: ${sized.risk.standDown ? 'brain_risk_stand_down' : 'brain_risk_zero_size'}`,
+          )
+          continue
+        }
+
         const spine = await prepareTargetMachinePaperOpen({
           mint: candidate.tokenAddress,
           chain: SOCIAL_CHAIN,
           features: fullFeatures,
           priceUsd: entryPriceUsd,
-          baseSol: strategy.config.execution.simBuySol,
-          baseExit: strategy.config.exit,
+          baseSol: sized.sol,
+          // The brain's TP/SL/hold override, as signals and trending already do.
+          baseExit: applyBrainRiskToExit(strategy.config.exit, sized.risk),
+          precomputedOhlc: ohlc,
         })
         if (!spine.ok) {
           skipped.push(`${symbol}: ${spine.reason}`)
@@ -384,12 +376,24 @@ async function runSimTrack(request: NextRequest) {
           continue
         }
 
+        if (ohlc.bars.length > 0 && ohlc.evalResult) {
+          await insertDetectSnapshot({
+            tokenAddress: candidate.tokenAddress,
+            source: 'social',
+            bars: ohlc.bars,
+            evalResult: ohlc.evalResult,
+          })
+        }
+
         await openSimPosition({
           strategy,
           mintAddress: candidate.tokenAddress,
           symbol,
-          entryFeatures: spine.features,
+          // Stamp the applied scalar so the row is auditable on its own, and so a later re-tune can
+          // tell whether the risk layer was in the path at all.
+          entryFeatures: stampBrainRisk(spine.features, sized.risk, { sizedSol: spine.solAmount }),
           entryPriceUsd: spine.priceUsd,
+          entryPriceImpactedUsd: spine.priceUsd,
           solAmount: spine.solAmount,
           effectiveExit: spine.effectiveExit,
         })

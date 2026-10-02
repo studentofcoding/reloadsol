@@ -33,7 +33,10 @@ export async function POST(request: NextRequest) {
     success: true,
     reloaded_at: reloadedAt,
     runtime_loaded: runtime.runtime_loaded,
+    pattern_ready: runtime.pattern_ready,
     model_version: runtime.model_version,
+    schema_ok: runtime.schema_ok,
+    ...(runtime.schema_error ? { schema_error: runtime.schema_error } : {}),
     ...(runtime.error ? { error: runtime.error } : {}),
   })
 }

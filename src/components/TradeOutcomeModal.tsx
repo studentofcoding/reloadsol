@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useState } from "react";
+import { formatTradeAmount, symbolsLabel } from "@/utils/trade-display";
 
 export type TradeOutcomeOperation = 'buy' | 'sell' | 'close';
 
@@ -9,7 +10,12 @@ export type CloseableAccount = {
   symbol?: string;
 };
 
-export type TradeAmountUnit = 'SOL' | 'ETH' | 'USDC' | 'USDG' | 'WETH';
+/**
+ * The unit the native-side amount is denominated in. Not a closed union: a sell can output any
+ * token (token→token), and forcing the caller into `'SOL'` made the confirmation claim SOL for a
+ * position that received something else entirely.
+ */
+export type TradeAmountUnit = string;
 
 export type TradeOutcomeState = {
   isOpen: boolean;
@@ -17,8 +23,21 @@ export type TradeOutcomeState = {
   operation: TradeOutcomeOperation;
   isSimulation?: boolean;
   tokenSymbol?: string;
+  /**
+   * Every traded token's symbol. Preferred over `tokenSymbol`: a batch reports all the names rather
+   * than "3 tokens", and a single trade reports the real symbol instead of a placeholder. Entries
+   * may be missing (metadata not resolved) — `symbolsLabel` drops them and the caller falls back.
+   */
+  tokenSymbols?: readonly (string | null | undefined)[];
   mintAddress?: string;
   solAmount?: number;
+  /**
+   * Exact token quantity traded, for the single-token case. Paired with `tokenSymbol` this is the
+   * figure a user actually checks against the chain ("sold 681.397224 BP"), so it is shown verbatim
+   * rather than rounded to a headline. Absent for multi-token batches, where one symbol cannot
+   * describe the mix — the modal then states the native side only.
+   */
+  tokenAmount?: number;
   /** Unit for solAmount display (default SOL). */
   amountUnit?: TradeAmountUnit;
   error?: string;
@@ -89,8 +108,10 @@ export default function TradeOutcomeModal({
   operation,
   isSimulation = false,
   tokenSymbol,
+  tokenSymbols,
   mintAddress,
   solAmount,
+  tokenAmount,
   amountUnit = 'SOL',
   error,
   closeableAccounts,
@@ -101,6 +122,7 @@ export default function TradeOutcomeModal({
 
   const modeLabel = isSimulation ? 'Simulation' : 'Live';
   const tokenLabel =
+    symbolsLabel(tokenSymbols) ||
     tokenSymbol ||
     (mintAddress
       ? `${mintAddress.slice(0, 4)}…${mintAddress.slice(-4)}`
@@ -157,11 +179,19 @@ export default function TradeOutcomeModal({
           {success && operation !== 'buy' ? (
             <p className="text-gray-300 text-sm mb-1">{tokenLabel}</p>
           ) : null}
-          {success && operation === 'sell' && typeof solAmount === 'number' ? (
+          {success && typeof tokenAmount === 'number' && Number.isFinite(tokenAmount) ? (
             <p className="text-gray-400 text-sm">
-              Received:{' '}
+              {operation === 'buy' ? 'Received:' : 'Sold:'}{' '}
               <span className="text-white font-mono">
-                {solAmount.toFixed(4)} {amountUnit}
+                {formatTradeAmount(tokenAmount)} {tokenLabel}
+              </span>
+            </p>
+          ) : null}
+          {success && typeof solAmount === 'number' ? (
+            <p className="text-gray-400 text-sm">
+              {operation === 'buy' ? 'Spent:' : 'Received:'}{' '}
+              <span className="text-white font-mono">
+                {formatTradeAmount(solAmount)} {amountUnit}
               </span>
             </p>
           ) : null}

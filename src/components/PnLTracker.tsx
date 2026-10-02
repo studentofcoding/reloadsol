@@ -2,6 +2,10 @@
 
 import { OptimizedImage } from "@/components/OptimizedImage";
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { useLocalStorageValue } from "@/hooks/useLocalStorageValue";
+import { useWalletTokens } from "@/hooks/useWalletTokens";
+import { pctFromBaseline } from "@/utils/watchlist/pct";
+import { subscribeOpenPrices } from "@/utils/open-price-stream";
 import {
   TrackingRecord,
   fetchTokenPricesForTracking,
@@ -174,6 +178,23 @@ export default function PnLTracker() {
   const { records, trackOperation, isLoadingRecords, recordsError } =
     useTradingData();
   const rhWalletTokens = useRhWalletTokens();
+
+  // The SHARED Sol holdings entry — the same TanStack cache the watchlist bar, the buy flows and
+  // /sell already read.
+  //
+  // This replaces a second, uncached `fetchSolWalletHoldings` call inside the PnL recompute (see
+  // the Sol branch below). It was the same function over the same upstream — Shyft `all_tokens`
+  // with a Jupiter fallback — so the data was identical, but with no cache: every recompute
+  // re-fetched what the bar was already holding, and a post-trade `refetchFresh()` reached the bar
+  // and not this panel. Reading the shared entry instead costs nothing, because the request has
+  // already been made for the whole app.
+  const solHoldings = useWalletTokens({
+    connection,
+    publicKey,
+    walletAddress,
+    enabled: !isRobinhood,
+  });
+  const solHoldingTokens = solHoldings.allTokens;
   const [pnlRecords, setPnlRecords] = useState<PnLRecord[]>([]);
   const [openPositions, setOpenPositions] = useState<OpenPosition[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -186,8 +207,8 @@ export default function PnLTracker() {
     staleTime: 60_000,
   });
   const nativePriceUsd = isRobinhood
-    ? (ethPriceQuery.data ?? 3000)
-    : (solPriceQuery.data ?? 145);
+    ? (ethPriceQuery.data ?? 0)
+    : (solPriceQuery.data ?? 0);
   const solPriceUsd = nativePriceUsd;
 
   // Chain-aware native amount helpers — SOL fields are solana-only, ETH
@@ -255,23 +276,32 @@ export default function PnLTracker() {
   const [selectedToken, setSelectedToken] = useState<string>("");
 
   // ✅ NEW: Notification state
-  const [notificationsEnabled, setNotificationsEnabled] = useState<boolean>(
-    () => {
-      if (typeof window !== "undefined") {
-        return localStorage.getItem("pnl-notifications-enabled") === "true";
-      }
-      return false;
-    },
+  //
+  // HYDRATION: these are DERIVED from a `localStorage` store rather than initialised into state.
+  // A lazy `useState(() => localStorage.getItem(...))` initialiser also runs during the client's
+  // HYDRATION render, so the server rendered the fallback while the first client paint rendered the
+  // stored value — server HTML != client HTML, i.e. React #418 (`args[]=HTML` in the console).
+  // `useLocalStorageValue` is built on `useSyncExternalStore`, so the server snapshot is the
+  // fallback and the client snapshot is the stored value, and React reconciles them properly. That
+  // is also why there is no restoring effect any more: nothing needs to be applied after hydration
+  // when the value is read correctly in the first place.
+  const [notificationsEnabledRaw, setNotificationsEnabledRaw] =
+    useLocalStorageValue('pnl-notifications-enabled', 'false');
+  const notificationsEnabled = notificationsEnabledRaw === 'true';
+  const setNotificationsEnabled = useCallback(
+    (next: boolean) => setNotificationsEnabledRaw(next ? 'true' : 'false'),
+    [setNotificationsEnabledRaw],
   );
   const notificationPermission = useNotificationPermission();
-  const [notificationThreshold, setNotificationThreshold] = useState<number>(
-    () => {
-      if (typeof window !== "undefined") {
-        const saved = localStorage.getItem("pnl-notification-threshold");
-        return saved ? parseFloat(saved) : 50;
-      }
-      return 50;
-    },
+  const [notificationThresholdRaw, setNotificationThresholdRaw] =
+    useLocalStorageValue('pnl-notification-threshold', '50');
+  const notificationThreshold = useMemo(() => {
+    const parsed = parseFloat(notificationThresholdRaw);
+    return Number.isFinite(parsed) ? parsed : 50;
+  }, [notificationThresholdRaw]);
+  const setNotificationThreshold = useCallback(
+    (next: number) => setNotificationThresholdRaw(String(next)),
+    [setNotificationThresholdRaw],
   );
   const [notifiedTokens, setNotifiedTokens] = useState<Set<string>>(new Set());
 
@@ -292,15 +322,18 @@ export default function PnLTracker() {
   const [isClosingAccounts, setIsClosingAccounts] = useState(false);
   const [sortMode, setSortMode] = useState<TradeListSortMode>("date_desc");
 
-  // Hint message state
-  const [showClosedPositionsHint, setShowClosedPositionsHint] =
-    useState<boolean>(() => {
-      if (typeof window !== "undefined") {
-        const dismissed = localStorage.getItem("closedPositionsHintDismissed");
-        return dismissed !== "true";
-      }
-      return true;
-    });
+  // Hint message state. The stored key is the DISMISSED flag, so the derived value is inverted.
+  //
+  // This read `closedPositionsHintDismissed` while the dismiss handler wrote
+  // `pnl-closed-positions-hint-dismissed` — two different keys, so dismissing never persisted and
+  // the hint returned on every load. One key now, and its setter is what writes it.
+  const [closedHintDismissedRaw, setClosedHintDismissedRaw] =
+    useLocalStorageValue('closedPositionsHintDismissed', 'false');
+  const showClosedPositionsHint = closedHintDismissedRaw !== 'true';
+  const setShowClosedPositionsHint = useCallback(
+    (next: boolean) => setClosedHintDismissedRaw(next ? 'false' : 'true'),
+    [setClosedHintDismissedRaw],
+  );
 
   // Sell quote state
   const [sellQuotes, setSellQuotes] = useState<Map<string, SwapQuote>>(
@@ -316,21 +349,52 @@ export default function PnLTracker() {
   const [isBotSyncActive, setIsBotSyncActive] = useState<boolean>(false);
 
   // ✅ NEW: P&L amount visibility state
-  const [hiddenPnLAmounts, setHiddenPnLAmounts] = useState<Set<string>>(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("hidden-pnl-amounts");
-      return saved ? new Set(JSON.parse(saved)) : new Set();
+  const [hiddenPnLAmountsRaw, setHiddenPnLAmountsRaw] = useLocalStorageValue(
+    'hidden-pnl-amounts',
+    '[]',
+  );
+  const hiddenPnLAmounts = useMemo(() => {
+    try {
+      return new Set<string>(JSON.parse(hiddenPnLAmountsRaw) as string[]);
+    } catch {
+      // A malformed stored value means "nothing hidden" — it must not take the panel down.
+      return new Set<string>();
     }
-    return new Set();
-  });
+  }, [hiddenPnLAmountsRaw]);
+  // Keeps the call sites' functional-update form (`setHiddenPnLAmounts(prev => …)`) working while
+  // the store, not the call site, owns the write.
+  const setHiddenPnLAmounts = useCallback(
+    (next: Set<string> | ((prev: Set<string>) => Set<string>)) => {
+      setHiddenPnLAmountsRaw((prevRaw) => {
+        let prev: Set<string>;
+        try {
+          prev = new Set<string>(JSON.parse(prevRaw) as string[]);
+        } catch {
+          prev = new Set<string>();
+        }
+        const value = typeof next === 'function' ? next(prev) : next;
+        return JSON.stringify(Array.from(value));
+      });
+    },
+    [setHiddenPnLAmountsRaw],
+  );
 
   // ✅ NEW: Global P&L visibility state
-  const [globalPnLHidden, setGlobalPnLHidden] = useState<boolean>(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("global-pnl-hidden") === "true";
-    }
-    return false;
-  });
+  const [globalPnLHiddenRaw, setGlobalPnLHiddenRaw] = useLocalStorageValue(
+    'global-pnl-hidden',
+    'false',
+  );
+  const globalPnLHidden = globalPnLHiddenRaw === 'true';
+  const setGlobalPnLHidden = useCallback(
+    (next: boolean | ((prev: boolean) => boolean)) => {
+      setGlobalPnLHiddenRaw((prevRaw) => {
+        const prev = prevRaw === 'true';
+        const value = typeof next === 'function' ? next(prev) : next;
+        return value ? 'true' : 'false';
+      });
+    },
+    [setGlobalPnLHiddenRaw],
+  );
 
   // ✅ NEW: Multi-select and drag functionality state
   const [selectedTokens, setSelectedTokens] = useState<Set<string>>(new Set());
@@ -423,7 +487,6 @@ export default function PnLTracker() {
   // Handler to dismiss the hint message
   const handleDismissHint = useCallback(() => {
     setShowClosedPositionsHint(false);
-    localStorage.setItem("pnl-closed-positions-hint-dismissed", "true");
   }, []);
 
   // Add this function for opening charts
@@ -468,7 +531,6 @@ export default function PnLTracker() {
 
       if (hasPermission) {
         setNotificationsEnabled(true);
-        localStorage.setItem("pnl-notifications-enabled", "true");
         console.log("✅ PnL notifications enabled successfully");
 
         // Test notification
@@ -496,7 +558,6 @@ export default function PnLTracker() {
     } else {
       // Disabling notifications
       setNotificationsEnabled(false);
-      localStorage.setItem("pnl-notifications-enabled", "false");
       setNotifiedTokens(new Set()); // Clear notified tokens when disabling
       console.log("🔕 PnL notifications disabled");
     }
@@ -577,11 +638,6 @@ export default function PnLTracker() {
         } else {
           newSet.add(tokenId);
         }
-        // Save to localStorage
-        localStorage.setItem(
-          "hidden-pnl-amounts",
-          JSON.stringify(Array.from(newSet)),
-        );
         return newSet;
       });
     },
@@ -591,9 +647,7 @@ export default function PnLTracker() {
   // ✅ NEW: Toggle global P&L visibility
   const toggleGlobalPnLVisibility = useCallback(() => {
     setGlobalPnLHidden((prev) => {
-      const newValue = !prev;
-      localStorage.setItem("global-pnl-hidden", newValue.toString());
-      return newValue;
+      return !prev;
     });
   }, []);
 
@@ -723,7 +777,7 @@ export default function PnLTracker() {
         const closedCycles: PnLRecord[] = [];
 
         const solPriceCache = solPriceUsd; // capture once
-        const ethPriceCache = ethPriceQuery.data ?? 3000;
+        const ethPriceCache = ethPriceQuery.data ?? 0;
 
         // Chain-aware native price for cycles that lack trade-time USD values.
         // Uses the cycle's own chain price (never the currently-viewed network's
@@ -1014,8 +1068,13 @@ export default function PnLTracker() {
                 rhWalletTokens.tokens.length > 0
                   ? rhWalletTokens.tokens
                   : (await rhWalletTokens.refetch()).data?.tokens ?? [];
+            } else if (solHoldingTokens.length > 0) {
+              // The shared cached entry (see `solHoldings` above). Same list the bar renders, so
+              // the panel and the bar cannot disagree about what is held.
+              walletTokens = solHoldingTokens;
             } else {
-              // Prefer cached Shyft all_tokens (same as /sell); Jupiter then RPC.
+              // Cache cold: the first recompute before the hook has resolved, or an error path.
+              // The direct fetch (Shyft → Jupiter) and its RPC fallback are unchanged.
               try {
                 const holdings = await fetchSolWalletHoldings(
                   publicKey!.toString(),
@@ -1125,7 +1184,7 @@ export default function PnLTracker() {
     } finally {
       setIsLoading(false);
     }
-  }, [walletAddress, records, solPriceUsd, connection, publicKey, isRobinhood, nativeUnit, rhWalletTokens]);
+  }, [walletAddress, records, solPriceUsd, connection, publicKey, isRobinhood, nativeUnit, rhWalletTokens, solHoldingTokens]);
 
   const recordsKey = useMemo(
     () => records.map((r) => `${r.id}:${r.timestamp}`).join("|"),
@@ -1811,10 +1870,13 @@ export default function PnLTracker() {
           }
 
           if (position.buyPriceUsd && position.buyPriceUsd > 0) {
+            // The same function the watchlist bar uses. This was an inline
+            // `((current - buy) / buy) * 100`, i.e. the same arithmetic written twice — the exact
+            // place where a rounding or null-handling change lands in one surface and not the other.
+            // Equivalent here by construction: the guards above already establish both inputs are
+            // positive, which is `pctFromBaseline`'s only null branch.
             const pnlPercentage =
-              ((currentTokenPriceUsd - position.buyPriceUsd) /
-                position.buyPriceUsd) *
-              100;
+              pctFromBaseline(position.buyPriceUsd, currentTokenPriceUsd) ?? 0;
             const initialUsdValue =
               nativeBoughtOf(position) * usdPerUnitOf(position);
             const priceMultiplier =
@@ -1921,57 +1983,28 @@ export default function PnLTracker() {
     }
   }, [openMintsKey, applyOpenPrices, network]);
 
-  // Redis pub/sub → SSE for near-realtime open-card prices
+  // Live open-card prices now ride the app-wide stream (utils/open-price-stream.ts) instead of a
+  // private EventSource, so this panel's mints and the watchlist bar's mints share ONE connection
+  // covering the union. The old per-component `startPollFallback` (5s) is gone with it: the
+  // react-query safety net below already re-polls at 15s unconditionally, so the SSE-dead case is
+  // still covered — at 15s rather than 5s — without a second timer.
+  //
+  // The handler goes through a ref on purpose. `applyOpenPrices` is a useCallback, and depending on
+  // it directly would tear down and re-open the subscription whenever its identity changed.
+  const applyOpenPricesRef = React.useRef(applyOpenPrices);
+  useEffect(() => {
+    applyOpenPricesRef.current = applyOpenPrices;
+  }, [applyOpenPrices]);
+
+  // Keyed on the mint SET, not the array: `openPositions` is replaced on every price tick, so an
+  // array dependency would resubscribe continuously.
   useEffect(() => {
     if (!openMintsKey) return;
-
-    let es: EventSource | null = null;
-    let pollId: ReturnType<typeof setInterval> | null = null;
-    let closed = false;
-
-    const startPollFallback = () => {
-      if (pollId || closed) return;
-      pollId = setInterval(() => {
-        void refreshOpenPositionPrices();
-      }, 5_000);
-    };
-
-    try {
-      es = new EventSource(
-        `/api/prices/open/stream?mints=${encodeURIComponent(openMintsKey)}`,
-      );
-      es.onmessage = (ev) => {
-        try {
-          const payload = JSON.parse(ev.data) as {
-            mint?: string;
-            price?: number;
-          };
-          if (
-            typeof payload.mint === "string" &&
-            typeof payload.price === "number" &&
-            payload.price > 0
-          ) {
-            applyOpenPrices({ [payload.mint]: payload.price }, false);
-          }
-        } catch {
-          // ignore bad events
-        }
-      };
-      es.onerror = () => {
-        es?.close();
-        es = null;
-        startPollFallback();
-      };
-    } catch {
-      startPollFallback();
-    }
-
-    return () => {
-      closed = true;
-      es?.close();
-      if (pollId) clearInterval(pollId);
-    };
-  }, [openMintsKey, applyOpenPrices, refreshOpenPositionPrices]);
+    const mints = openMintsKey.split(",").filter(Boolean);
+    return subscribeOpenPrices(mints, (mint, price) => {
+      applyOpenPricesRef.current({ [mint]: price }, false);
+    });
+  }, [openMintsKey]);
 
   useQuery({
     queryKey: ["pnl-open-prices", openMintsKey, solPriceUsd],

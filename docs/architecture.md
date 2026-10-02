@@ -89,7 +89,7 @@ flowchart LR
     Infra[sltp daily_summary pnl]
   end
 
-  manual --> Raptor[Raptor / Jupiter Lite]
+  manual --> Raptor[Jupiter V2 desk / Raptor arb]
   dev --> API[Next.js /api/*]
   auto --> API
   API --> Postgres[(reloadsol_db)]
@@ -97,14 +97,14 @@ flowchart LR
 
 ### 2.1 Manual trading (wallet-signed)
 
-User connects wallet; swaps execute client-side or via Raptor proxies.
+User connects wallet; desk swaps execute client-side against Jupiter V2 (`/api/jupiter/quote`), with Raptor proxies used for arbitrage.
 
 | Route | Stack | Doc |
 |-------|-------|-----|
-| `/buy`, `/sell` | Solana Tracker Raptor bulk | [whole_process.md](./whole_process.md) |
-| `/dev/signals` Live/Board tabs | Jupiter Lite + Raptor mix | same |
-| `/chart/[mint]` | Raptor single buy + GMGN chart | same |
-| `/pnl` Fast Sell | Raptor + Jupiter reclaim close | same |
+| `/buy`, `/sell` | Jupiter Swap V2 bulk (Raptor = arb only) | [whole_process.md](./whole_process.md) |
+| `/dev/signals` Live/Board tabs | Jupiter V2 (Lite fallback) | same |
+| `/chart/[mint]` | Jupiter V2 single buy + GMGN chart | same |
+| `/pnl` Fast Sell | Jupiter V2 sell + Jupiter reclaim close | same |
 | `/swap` | Jupiter Terminal widget | same |
 
 ### 2.2 Algo automation (server cron)
@@ -144,10 +144,12 @@ Registered in [`worker_tracker.go`](../worker_tracker.go), scheduled in [`main.g
 | `dlmm_screen` | every 300s | `POST /api/dlmm/screen` | algo |
 | `dlmm_manage` | every 60s | `POST /api/dlmm/manage` | algo |
 | `strategy_report` | daily (0=off) | `POST /api/strategies/report-digest` | algo |
+| `report_precompute` | every 6h (0=off) | `POST /api/report-precompute/refresh` | algo |
 | `sltp_monitor` | every 60s | `GET /api/sl-tp-monitor` | infra |
 | `daily_summary` | 00:00 UTC | `POST /api/trending/summary` | infra |
 | `pnl_update` | 02:00 UTC | `POST /api/pnl/update` | infra |
 | `ohlc_sampler` | every 15s (env, 0=off) | `POST /api/ohlc/sample` | algo |
+| `metrics_copier` | every 15min (env, 0=off) | `POST /api/metrics/copy` | algo |
 
 **Removed (2026-06):** `ohlc_update`, `price_monitor` — charts use GMGN embed only; inter-cycle price alerts dropped in favor of trending track + SL/TP monitor. **Re-added (2026-09)** as `ohlc_sampler` (our own 1m series, see [SPEC-ohlc-own-1m-v1.md](./specs/SPEC-ohlc-own-1m-v1.md)).
 
@@ -199,7 +201,7 @@ Enforced in [`src/utils/api-auth.ts`](../src/utils/api-auth.ts) + [`src/config/a
 |------|-----|----------|
 | **public** | Anyone | `/api/health`, `/api/rpc`, `/api/solprice` |
 | **wallet** | Signed wallet session | `/api/buy`, `/api/operations`, `/api/trading/records` |
-| **dev** | Whitelisted dev wallets | `/api/signals`, `/api/potential`, `/api/rug`, `/api/trending`, `/api/workers`, `/api/strategies` |
+| **dev** | Whitelisted dev wallets | `/api/signals`, `/api/potential`, `/api/rug`, `/api/trending`, `/api/workers`, `/api/strategies`, `/api/dev/reputation`, `/api/gmgn/risk-chips` |
 | **service** | Cron secrets / bearer / UA | `/api/trending/track`, `/api/signals/sim-track`, `/api/pnl/update` |
 
 Wallet session: `WALLET_SESSION_SECRET` cookie after SIWS-style sign-in.
@@ -269,14 +271,16 @@ Live candles come from **Solana Tracker** (`fetchTokenOhlc` / `GET /api/gmgn/tok
 
 | Table | Purpose |
 |-------|---------|
-| `token_detect_snapshots` | Freeview / concentration last-10×1m bars + OHLC rug-rule eval |
+| `token_detect_snapshots` | Freeview / concentration last-10×1m OHLC bars + rug-rule eval. Not Token Info tiles — that ledger is specified in [SPEC-token-info-universal-ledger-v1.md](./specs/SPEC-token-info-universal-ledger-v1.md) and is not built yet |
 | `signal_ohlc_labels` | Rising / Rug snapshots for the kanban tag (gallery `/dev/ohlc-labels`). Store key `rising` (legacy `potential` migrated). Not ML `v2-potential`. |
+| `token_risk_features`, `dev_reputation` | Shadow risk (migrations 48/49/53): per-token RugCheck features (score / named risks / insider graph / LP lock / creator balance) + per-creator dev verdict with top-10 tokens by ATH and the count of tokens a **user** labelled rug. Display-only — `mode` stays `shadow` until the correlation is significant; see [SPEC-dev-reputation-rugcheck-v1.md](./specs/SPEC-dev-reputation-rugcheck-v1.md) |
 
 ### Legacy / optional
 
 | Table | Notes |
 |-------|-------|
-| `token_ohlc_bars` | **Our own 1m OHLC series** — written by the 15s `ohlc_sampler` worker (`POST /api/ohlc/sample`), read by the Freeview chart as the dependency-free source behind brain → SolanaTracker → GMGN. `volume` is NULL by design (no 1-minute volume exists in our stack); `samples` = price samples folded into the bar. Retention: `OHLC_BARS_RETENTION_HOURS` (default 48). |
+| `token_ohlc_bars` | **Our own 1m OHLC series** — written by the 15s `ohlc_sampler` worker (`POST /api/ohlc/sample`), read by the Freeview chart as the dependency-free source behind brain → SolanaTracker → GMGN. `volume` is NULL **because the sampler only has a Jupiter spot price in scope** — NOT because no 1-minute volume exists (per-candle volume is fetched by four paths and had simply never been persisted). `samples` = price samples folded into the bar. Retention: `OHLC_BARS_RETENTION_HOURS` (default 48). |
+| `token_metrics_history` | **The durable per-token 1m series + mcap snapshot** — one row per (token, chain, UTC hour) holding five `float8[60]` arrays: `vol_min` (USD volume) and `o_min`/`h_min`/`l_min`/`c_min`, which are **market-cap** candle values in USD from GMGN's `token_mcap_candles` — **not token prices** (verified live; the chart cache holds prices, ~10⁹ apart, so only the mcap lane may write them). Slot i = minute i−1; `NULL = not observed`, never 0. Written by the `metrics_copier` worker (`POST /api/metrics/copy`), plus an hourly `mcap_close` / `liquidity_close` / `price_close` snapshot. Read per-minute with `load1mOhlcv`, or derive 5m volume with `load5mVolumeSeries`. Retention: `TOKEN_METRICS_RETENTION_DAYS` (default 30). See [SPEC-rug-pattern-data-v1.md](./specs/SPEC-rug-pattern-data-v1.md). |
 
 ---
 
@@ -298,17 +302,34 @@ Default `npm run docker:deploy` uses `--auto` from git diff.
 
 | Service | Used for |
 |---------|----------|
-| **Solana Tracker Raptor** | Bulk buy/sell, chart buy, PnL fast sell |
-| **Jupiter Lite** | Single buy/sell in signals, SL/TP monitor |
+| **Solana Tracker Raptor** | Arbitrage swaps (`maxHops` set) + the shared quote engine's `estimate` lane, and status polling for Raptor-built txs. Hops are per pair (`src/utils/raptor-hops.ts`) |
+| **Jupiter Swap V2 / Jupiter Lite** | Desk (directional) quote + prepare everywhere; Lite only when V2 fails |
 | **Shyft all_tokens** | Wallet token list (cached; Jupiter Portfolio fallback) |
-| **Shyft send_many_txns** | Batch broadcast of already-signed Solana txs |
+| **Shyft RPC `sendTransaction`** | Batch broadcast of already-signed Solana txs, **serialised** behind `BATCH_SEND_MIN_INTERVAL_MS`; the browser reaches it via `POST /api/shyft/transaction/send_rpc` (the env is server-only). `send_many_txns` is the fallback — measured 417 / 1-of-3 / 61 s against this lane's 3-of-3 / 163 ms |
 | **Jupiter Ultra Reclaim** | Close empty ATAs after sell |
 | **Jupiter trending API** | `datapi.jup.ag` + `api.jup.ag` fallback |
 | **Shyft RPC** | On-chain reads/writes via `/api/rpc` |
-| **GMGN iframe** | Charts on `/chart`, modals (no swap) |
+| **GMGN kline iframe — one component** | **`GmgnKlineChart`** renders every chart on the site: signals tabs, token-locate, strategies, ChartBuyModal, `/chart/[mint]`, and all four DLMM surfaces (`DlmmGeneralPoolsTable`, `LpTerminalPoolsTable`, `RhClmmLpSheet`, `HunterCandidateTabs`). The DLMM tables were the last hold-outs on `GmgnChartEmbed`, a near-identical wrapper — unified 2026-10-02. Host note: the embed is **`https://www.gmgn.cc/kline/<chain>/<mint>`** and `gmgn.cc` is the **only** host serving `/kline` — `gmgn.ai/kline/…` and `www.gmgn.ai/kline/…` both **404**, so don't "fix" the host by pointing it at the domain the token links use. |
 | **Solana Tracker Data API** | OHLCV for Freeview, strategy charts, Radar Telegram photos |
 | **Discord** | Bot alerts, cron operational logs |
 | **Telegram** | Radar ENTER lifecycle (photo + caption), optional DLMM alerts |
+
+### Locked swap architecture (2026-10-01)
+
+- **Execution — one lane:** keyed Jupiter `/order?taker=` → simulate → sign → `/execute` → verify. No
+  fan-out, no best-of: fanning the paying candidates out measured **+5.0 bps mean / 0 median** for **2.59×**
+  the wall time, so the ranker is handed one candidate by design.
+- **Estimate:** the shared quote engine at `purpose: 'estimate'` — **Raptor first** (ungated, a batch in
+  under a second), escalating to the Jupiter picker only on Raptor error or a failed impact gate. A
+  displayed number never draws the execution lane.
+- **Raptor is kept:** the estimate lane, the arb/`maxHops` path, **and** its send path
+  (`sendRaptorTransaction` + `/api/solanatracker/send`) stay in the tree. Kept ≠ trusted — `/send-transaction`
+  returned `200` *plus a signature* for transactions that never landed, so wiring it means verifying
+  on-chain, never reading the response.
+- **Lite is display-only**, never execution: a Lite tx has no `requestId`, so `/execute` cannot finish it,
+  and its limit is a **per-IP ban**, not a throttle an API key can raise.
+
+Full reasoning and every measurement: [SPEC-swap-provider-routing-v1.md](./specs/SPEC-swap-provider-routing-v1.md) §3.
 
 Env: see [`.env.docker.example`](../.env.docker.example) and README environment table.
 

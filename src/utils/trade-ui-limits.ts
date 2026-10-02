@@ -4,7 +4,7 @@ export const MAX_TRADE_TOKENS_RH = 5
 export const MAX_TRADE_TOKENS_SOL = 5
 /** Backward-compatible default for callers that do not yet carry chain context. */
 export const MAX_TRADE_TOKENS = MAX_TRADE_TOKENS_RH
-export const MIN_BUY_USD_PER_TOKEN = 5
+export const MIN_BUY_USD_PER_TOKEN = 0.5
 
 export function maxTradeTokens(chain: 'sol' | 'robinhood'): number {
   return chain === 'robinhood' ? MAX_TRADE_TOKENS_RH : MAX_TRADE_TOKENS_SOL
@@ -14,7 +14,7 @@ export function capTradeTokens<T>(items: T[], max = MAX_TRADE_TOKENS): T[] {
   return items.length <= max ? items : items.slice(0, max)
 }
 
-/** True when total spend split across `tokenCount` is at least $5 per token. */
+/** True when total spend split across `tokenCount` is at least $0.50 per token. */
 export function buyMeetsMinUsdPerToken(
   totalHuman: number,
   tokenCount: number,
@@ -38,7 +38,7 @@ export function buyMeetsMinUsdPerTokenOrPending(
   return buyMeetsMinUsdPerToken(totalHuman, tokenCount, usdPerUnit)
 }
 
-/** Spend units needed for $5 × tokens (at least one token). */
+/** Spend units needed for $0.50 × tokens (at least one token). */
 export function minBuyHumanAmount(
   tokenCount: number,
   usdPerUnit: number,
@@ -47,7 +47,7 @@ export function minBuyHumanAmount(
   return (MIN_BUY_USD_PER_TOKEN * Math.max(1, tokenCount)) / usdPerUnit
 }
 
-/** Range-slider floor so 1% steps never go below the $5/token minimum. */
+/** Range-slider floor so 1% steps never go below the $0.50/token minimum. */
 export function minBuySliderPercent(
   balance: number,
   tokenCount: number,

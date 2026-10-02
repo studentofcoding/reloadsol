@@ -9,7 +9,7 @@ export const PUBLIC_API_PREFIXES = [
   '/api/providers',
   '/api/trade/health',
   '/api/trade/pools-test',
-  '/api/axiom',
+  '/api/gmgn/token-snapshot',
   '/api/logs',
 ] as const;
 
@@ -49,10 +49,12 @@ export const DEV_API_PREFIXES = [
   '/api/strategies',
   '/api/gmgn/token-snapshot',
   '/api/gmgn/detect-snapshot',
+  '/api/gmgn/risk-chips',
   '/api/gmgn/token-ohlc',
   '/api/workers',
   '/api/fomo',
   '/api/social',
+  '/api/dev/reputation',
 ] as const;
 
 /** Cron / webhook / bearer routes that bypass wallet sessions. */

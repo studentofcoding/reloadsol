@@ -209,6 +209,41 @@ export function jupiterLitePrioritizationFee(
   return undefined;
 }
 
+/**
+ * Swap-path default for an **omitted** fee.
+ *
+ * An omitted `priorityFeeLamports` used to reach the builder as `0` — no tip at all — which is exactly how
+ * a transaction gets broadcast and never lands (observed live: the first attempt landed nothing; the same
+ * swap with 150 000 lamports landed). Every other surface in this repo already resolves an omitted fee to
+ * auto-high, so this makes the swap boundary do the same: the default becomes explicit rather than implicit.
+ *
+ * `SWAP_PRIORITY_FEE_LAMPORTS` set to a positive number replaces auto with an **exact** tip, clamped by the
+ * same 0.003 SOL cap. Unset (the default) keeps auto, which is a *cap* rather than a flat charge — the
+ * builder pays the venue's estimate, never more.
+ */
+export function resolveSwapPriorityFee(
+  fee: JupiterPrioritizationFeeLamports | undefined,
+): JupiterPrioritizationFeeLamports {
+  if (typeof fee === "number" && fee > 0) {
+    return clampManualPriorityFeeLamports(fee);
+  }
+  if (isAutoPriorityFee(fee)) {
+    return autoPriorityFeeLamports({
+      level: fee.priorityLevelWithMaxLamports.priorityLevel,
+      maxLamports: fee.priorityLevelWithMaxLamports.maxLamports,
+      global: fee.priorityLevelWithMaxLamports.global === true,
+    });
+  }
+  const override = Number(process.env.SWAP_PRIORITY_FEE_LAMPORTS);
+  if (Number.isFinite(override) && override > 0) {
+    return clampManualPriorityFeeLamports(override);
+  }
+  return autoPriorityFeeLamports({
+    level: "high",
+    maxLamports: AUTO_PRIORITY_FEE_MAX_LAMPORTS,
+  });
+}
+
 /** Accept a proxy body fee (number or Jupiter object) and drop anything else. */
 export function coercePrioritizationFee(
   fee: unknown,

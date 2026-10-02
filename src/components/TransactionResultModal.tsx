@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useEffect, useState } from 'react'
+import { useSolPrice } from '@/hooks/useSolPrice'
 import { BulkBuyResult } from '@/types'
 import { BulkSellResult } from '@/utils/jupiter'
 import { isWalletUserRejection } from '@/utils/wallet-rejection'
@@ -24,6 +25,10 @@ type TransactionResultModalProps = {
   pointsEarned?: number | undefined
 }
 
+/** An unknown price renders as a placeholder, never as a number we made up. */
+const formatUsd = (value: number | null): string =>
+  value == null ? '—' : `$${value.toFixed(2)}`
+
 export default function TransactionResultModal({
   isOpen,
   onClose,
@@ -31,10 +36,16 @@ export default function TransactionResultModal({
   result,
   balanceBefore,
   balanceAfter,
-  solToUsd = (sol) => sol * 145, // Default fallback
+  solToUsd,
   onSelectToken,
   pointsEarned
 }: TransactionResultModalProps) {
+  // Live price only — a hardcoded rate would convert at a rate that is not the market's.
+  const solPriceQuery = useSolPrice()
+  const liveSolPriceUsd =
+    solPriceQuery.data && solPriceQuery.data > 0 ? solPriceQuery.data : 0
+  const toUsd = (sol: number): number | null =>
+    solToUsd ? solToUsd(sol) : liveSolPriceUsd > 0 ? sol * liveSolPriceUsd : null
   // Local cache for token metadata (symbol/name) to avoid redundant requests
   const [tokenNames, setTokenNames] = useState<Record<string, string>>({})
 
@@ -275,7 +286,7 @@ export default function TransactionResultModal({
               <p className="text-green-100 font-mono text-xl font-bold">
                 +{(balanceAfter - balanceBefore).toFixed(4)} SOL
               </p>
-              <p className="text-green-300 text-sm">≈ ${solToUsd(balanceAfter - balanceBefore).toFixed(2)}</p>
+              <p className="text-green-300 text-sm">≈ {formatUsd(toUsd(balanceAfter - balanceBefore))}</p>
             </div>
           )}
 
@@ -333,7 +344,7 @@ export default function TransactionResultModal({
           <div className={closeResult.successful.length > 0 ? 'text-yellow-300' : 'text-red-300'}>
             <span className="block font-medium">Rent Recovered</span>
             <span className="text-xl font-bold">~{(closeResult.successful.length * 0.00203928).toFixed(6)} SOL</span>
-            <span className="block text-sm text-yellow-400">≈ ${solToUsd(closeResult.successful.length * 0.00203928).toFixed(2)}</span>
+            <span className="block text-sm text-yellow-400">≈ {formatUsd(toUsd(closeResult.successful.length * 0.00203928))}</span>
           </div>
         </div>
       </div>

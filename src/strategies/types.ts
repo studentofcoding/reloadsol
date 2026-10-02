@@ -105,7 +105,6 @@ export interface SignalsScoringWeights {
   socialMentionTier3?: number
   socialUniqueChannelBonus?: number
   socialSmartWalletBuyBonus?: number
-  socialTier1WalletBonus?: number
 }
 
 export interface SignalsStrategyConfig {
@@ -549,6 +548,100 @@ export interface StrategyAbPair {
   domain: StrategyDomain
   sim: StrategyReportBreakdown | null
   live: StrategyReportBreakdown | null
+}
+
+/**
+ * A token entered by more than one strategy. Same token under ONE strategy is a
+ * defect (enforced by db/init/45-strategy-outcomes-identity.sql); the same token
+ * under different strategies is agreement/overlap and is the signal here.
+ */
+export interface StrategyOverlapRow {
+  chain: string
+  token_address: string
+  /** Raw distinct strategies — includes grid clones, so it overstates agreement. */
+  strategy_count: number
+  strategies: string[]
+  /** Independent bets (see resolveStrategyFamily). "5 rows, 2 bets". */
+  family_count: number
+  families: string[]
+  trades: number
+  wins: number
+  losses: number
+  /** Median, not mean: the mean is dominated by the right tail. */
+  median_pnl_pct: number | null
+  first_entry: string | null
+  last_exit: string | null
+}
+
+/**
+ * Pairwise token-set overlap between two strategies. A high Jaccard means one of two
+ * very different things: `same_family` → the spawner produced a clone (redundancy,
+ * a defect); different families → the strategies genuinely agree on the token.
+ */
+export interface StrategyPairOverlapRow {
+  strategy_a: string
+  strategy_b: string
+  shared: number
+  a_tokens: number
+  b_tokens: number
+  jaccard: number
+  family_a: string
+  family_b: string
+  same_family: boolean
+}
+
+/**
+ * What the paper (sim) system needs to keep running, and what it returned.
+ *
+ * Amounts are in the CHAIN'S NATIVE unit — SOL for `sol`, ETH for `robinhood` (the RH
+ * trending twin sizes in ETH) — so the two must never be summed together.
+ */
+export interface PaperCapitalDay {
+  /** YYYY-MM-DD in the report timezone. */
+  day: string
+  buys: number
+  /** Sum of buy notional — throughput, not capital need (capital recycles). */
+  deployed: number
+  /** Peak simultaneous open positions across all sim wallets of the chain. */
+  peak_open: number
+  /** peak_open × observed_clip — the binding number for "how much we must hold". */
+  peak_capital: number
+  trades: number
+  wins: number
+  losses: number
+  win_rate: number
+  /** Σ wins / |Σ losses| — the robust headline (a mean is tail-driven here). */
+  profit_factor: number | null
+  expectancy_pct: number
+  median_pct: number
+  avg_win_pct: number | null
+  avg_loss_pct: number | null
+  /** avg win / |avg loss|. */
+  rr_ratio: number | null
+}
+
+export interface PaperCapitalSummary {
+  chain: string
+  /** Native unit of every amount in this block. */
+  currency: string
+  days: PaperCapitalDay[]
+  window_days: number
+  totals: {
+    trades: number
+    deployed: number
+    peak_open: number
+    peak_capital: number
+    win_rate: number
+    profit_factor: number | null
+    expectancy_pct: number
+    median_pct: number
+    avg_win_pct: number | null
+    avg_loss_pct: number | null
+    rr_ratio: number | null
+  }
+  /** Median buy notional actually used (brain-risk scaling shrinks the configured size). */
+  observed_clip: number
+  timezone: string
 }
 
 export interface StrategyHourBucket {

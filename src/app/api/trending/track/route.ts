@@ -17,7 +17,6 @@ import {
   parseCustomFilterConfig,
 } from '@/strategies/trending-track/filtering'
 import { setTradingMode } from '@/strategies/trending-track/trading-mode'
-import { diagnoseTradingWallet } from '@/strategies/trending-track/wallet'
 import { internalTrackPost } from '@/strategies/trending-track/cycle'
 
 // ====================================================================================================
@@ -358,9 +357,8 @@ export const POST = withUnifiedLogging(async (request: NextRequest, logger) => {
   try {
     logger.info('api_request', 'Starting trending token tracking...')
 
-    // Run wallet diagnostics to help troubleshoot balance issues
-    await diagnoseTradingWallet()
-
+    // No wallet diagnostics here: it spent ~1.8s per tick on RPC round-trips whose only output
+    // was console.log, which production's removeConsole strips — cost with no reader.
     return await internalTrackPost(request, logger)
   } catch (error) {
     logger.critical('api_request', 'Error in POST handler', error as Error)

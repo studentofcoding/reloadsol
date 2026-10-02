@@ -10,6 +10,8 @@ import {
   type OhlcRugThresholds,
 } from '@/strategies/ohlc-rug-rules'
 import type { DetectRugLabel } from '@/strategies/detect-snapshots'
+import RiskChip from '@/components/risk/RiskChip'
+import type { RiskChipData } from '@/types/risk-chip'
 
 const THRESHOLDS_KEY = 'ohlc-rug-thresholds-v1'
 
@@ -51,11 +53,14 @@ type SnapshotResponse = {
   error?: string
   bars: OhlcRugBar[]
   barCount: number
+  ohlc_source?: string
+  empty_reason?: string | null
   rug_label: DetectRugLabel
   snapshot_id: string | null
   trip: boolean
   rule_hits: ReturnType<typeof evaluateOhlcRugRules>['hits']
   features: ReturnType<typeof evaluateOhlcRugRules>['features']
+  riskChip?: RiskChipData | null
 }
 
 function fmtPct(ratio: number | null | undefined): string {
@@ -169,6 +174,9 @@ export default function OhlcRugPanel({
       <div className="flex items-center justify-between gap-1">
         <p className="text-[11px] font-semibold text-gray-300">
           OHLC {n}/10m
+          {query.data.ohlc_source && query.data.ohlc_source !== 'none'
+            ? ` · ${query.data.ohlc_source}`
+            : ''}
         </p>
         <span
           className={`rounded px-1 text-[11px] font-semibold uppercase ${
@@ -180,6 +188,16 @@ export default function OhlcRugPanel({
           {live.trip ? 'trip' : 'ok'}
         </span>
       </div>
+      {query.data.riskChip ? (
+        <div className="flex">
+          <RiskChip chip={query.data.riskChip} />
+        </div>
+      ) : null}
+      {n === 0 && query.data.empty_reason ? (
+        <p className="text-[11px] leading-tight text-amber-200/70">
+          {query.data.empty_reason}
+        </p>
+      ) : null}
 
       <MiniOhlcCandles bars={query.data.bars} trip={live.trip} />
 

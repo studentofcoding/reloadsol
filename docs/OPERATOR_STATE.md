@@ -4,6 +4,107 @@ Living notes for regime awareness and rule changes. Production DB: Docker Postgr
 
 Update after significant sim batches or when disabling a strategy.
 
+## Rug label — live numbers (2026-10-03)
+
+Supersedes the "Live right now" figures in the 2026-10-01 section below (2,639 shadow rows, 0 trips, max score
+65 / 80). Read-only against prod, 2026-10-03 ~02:30 +07; design in
+[SPEC-rug-verdict-block-v1.md](./specs/SPEC-rug-verdict-block-v1.md).
+
+| Measure | Value |
+|---|---|
+| `rug_signal_shadow` rows | **12,039** (≈11.5k at analysis time): 6,925 `no_bars`, 5,100 `pass`, **14 `would_rug`** |
+| `rug_verdicts` (one row per mint) | **1,100** — populated since 2026-10-02 17:26 +07 |
+| Labelled verdicts | **206** — 56 `rug` / 150 `safe` (base rate **27 %**) |
+| As-of OHLC coverage at verdict time | **39 %** vs the **60 %** gate |
+| Ranking quality | **AUC ≈ 0.66** |
+
+Precision / recall on the 206 labelled verdicts (flagged = score ≥ threshold):
+
+| Threshold | Flagged | Precision | Recall |
+|---|---|---|---|
+| **80 (shipped)** | **0** | n/a | 0 % |
+| 50 | 8 | 25 % | 4 % |
+| **40** | 31 | **55 %** | **30 %** |
+| **30** | 77 | **43 %** | **59 %** |
+| 20 | 142 | 32 % | 82 % |
+| 0 | 206 | 27 % | 100 % |
+
+**Reading it.** The scorer ranks above chance (AUC 0.66) but is **blind at its shipped threshold**: nothing in
+the labelled set reaches 80. 30–40 is where it carries information (precision 43–55 % against a 27 % base),
+but 206 labels span about nine hours — **one day**, so the "days must agree" acceptance rule cannot yet be
+tested. **Do not enforce**; `RUG_SIGNAL_MODE` stays `shadow`.
+
+**Binding constraint is input coverage (39 % vs 60 % gate), not the threshold.** Open fixes, none deployed:
+stale bars treated as current (#108), the scorer falling back to own-1m only at zero bars not below `minBars`
+(#109), and the OHLC sampler's 300-mint cap rotating past detected mints (#110). The next re-measure should
+follow those, with threshold 30–40 evaluated as a *shadow* flag first.
+
+## Rug label — state of play (2026-10-01)
+
+The goal: **make the staircase / up-only ramp actually get labelled `rug`.** What is built now is the material
+for that verdict, the plumbing that makes the material trustworthy, and the measurement that decides whether the
+verdict may act. Browsable version: [`diagrams/17-rug-progress.html`](./diagrams/17-rug-progress.html).
+
+**Shipped and verified**
+
+| Layer | What landed | Evidence |
+|---|---|---|
+| Data | `token_metrics_history` — one row per (token, UTC hour) holding 1m **USD volume** and 1m **market-cap candles** (`o_min`/`h_min`/`l_min`/`c_min`), written by `metrics_copier` (`POST /api/metrics/copy`, every 15 min) | migrations `54`/`55`/`56`; sweeps `blocks: 0` at 2 rps; 4.5k rows / 43k mcap slots / 86k volume slots |
+| Rate | the copier's budget was **measured on the wrong endpoint** and corrected (≥60 rps on `token_stat` was applied to `candles`, 90× the payload — a 240-call burst at 8 rps tripped a tunnel-wide 429) | candle endpoint re-measured: 96 requests / 2.6 MB clean at ~1.1 rps; default now **2**, own lane |
+| Units | the endpoint is `token_mcap_candles` — **market cap, not price**; the chart cache holds prices (~10⁹ apart) and was writing them into the same column | `56` re-comments the columns; the cache lane now contributes **volume only**; verified `ohlc_filled = 0` on cache rows |
+| Scorer input | the detector reads the series first (`load1mOhlcv`), so the 30-point volume band is no longer structurally inert (a ramp used to cap at 60 < the 80 threshold) | 268/268 5m bars carrying volume on a real series, vs 0 before; pinned by test |
+| Liquidity | `liquidity_close` had **no writer at all** — now filled by a batched `meme_quote_info` pass | 0 → **150** rows |
+| Measurement | `RUG_SIGNAL_MODE` **defaults to `shadow`** (arming ≠ enforcing); every evaluation — trips *and* non-trips — lands in `rug_signal_shadow`, readable at `GET /api/rug-signal/shadow` | reviewer blocking note B-1 resolved; one sweep wrote **150** rows, 150 `pass` |
+| Control cohort | the metrics sweep scores the **whole watch set**, which is the only path that records non-collapsing tokens | `scored: 150 / shadow_rows: 150` in the sweep summary |
+| Harness | `scripts/rug-signal-validate.mjs` + runner: base rate, precision/recall at 80 with Wilson intervals, per-day agreement, and an explicit **`inconclusive`** below the sample floor | ran on prod, read-only, and correctly printed `inconclusive` with the reason |
+
+**Live right now:** armed in **shadow** in prod (`RUG_SIGNAL_ENABLED=1`, `RUG_SIGNAL_MODE=shadow`). The sweep
+covers the **full 300-mint** watch set at **1 rps** — 351 s, `blocks: 0`, 300/300 fetched — after the liquidity
+pass pushed 2 rps into parking (3 of 13 sweeps parked, avg 114/150 fetched). **2,639 shadow rows / 1,041 judged /
+0 trips**, max score **65 / 80**, band firing on **294 of 1,041** judged rows.
+
+> **Coupling to remember:** sweep size and the cron timeout move together. At 1 rps, 300 mints take ~351 s, so
+> `METRICS_COPY_TIMEOUT_SEC` must stay above that (480 now). A sweep longer than the timeout is recorded as a
+> failure *while succeeding* — the exact false negative fixed on 2026-10-01.
+
+**What's next**
+
+1. **Let the soak produce the first verdict.** Rows become labellable 30 minutes after they are written, so the
+   floor (30 labelled / 5 collapses) is reached within a day. The harness then states a lift or no lift — and the
+   acceptance rule is *days must agree*, so the honest answer is a multi-day one.
+2. **~~Explain `series_fed: 21/150`~~ — answered, and it exposed a bug in the instrumentation.** Split by how
+   many bars the scorer actually received:
+
+   | 1m bars the scorer got | rows | band fed | avg score |
+   |---|---|---|---|
+   | **< 15** (cannot form 3 × 5m — unjudgeable) | **126** | 4 | **1** |
+   | 15–59 | 25 | 8 | 24 |
+   | **≥ 60** (judgeable) | **151** | **32 (21 %)** | 13 |
+
+   So the band is **not** blind: of the mints it could judge, it fired on **21 %** — its designed shape (price
+   rising with flat volume). The larger finding is the **watch set's composition**: 42 % of the swept mints have
+   almost no candle history at all, because "most recently seen" includes tokens whose only activity was a single
+   mention or buy.
+
+   **Then confirmed by experiment, not just by the split.** Raising the sweep from 150 to 300 mints changes the
+   judged share by **nothing — 39 % before, 40 % after** — so the unjudgeable share is composition, not a coverage
+   cap. The one lever left there is a **deliberate semantic choice**: an absent minute *inside* a fetched window
+   could read as "0 traded", which would make thin-but-active tokens judgeable, instead of `NULL = unobserved`. That
+   is a change to the locked invariant, not a bug fix, and it stays open until decided.
+
+   **That mattered for the validation, and is fixed.** Those rows were being recorded as `pass`, but a score of 0
+   from four bars is not a measured negative — it is the absence of a measurement, and counting it as a negative
+   would inflate the control cohort and make precision look *better* than it is. `RugSignalEval` now reports
+   `barsScored` and `judged`; a row below `minBars` is logged as `no_bars` (`insufficient bars (n × 5m)`), the
+   sweep summary reports `not_judged`, and the harness excludes them from its denominators **and prints how many
+   it excluded**.
+3. **P5 — enforce, then feed the ML shadow lane.** Gated: only if the harness clears its floor with a lift over
+   base rate. `RUG_SIGNAL_MODE=enforce` is the explicit keystroke; `RUG_SIGNAL_KILL_SWITCH` stays as the stop.
+
+**Honest caveats.** Zero trips so far, so precision is undefined — the soak may find that on this population the
+signal does not fire at all, which is itself a finding. Pre-`56` rows keep their mixed units (the writer never
+overwrites a slot); they age out under the 30-day prune.
+
 ## Docker rebuilds — what survives
 
 | State | Survives `docker compose up --build` / `down` + `up`? |
@@ -75,7 +176,7 @@ New domain — **sim_only by default**. See [GMGN_STRATEGY.md](./GMGN_STRATEGY.m
 
 | Step | Action |
 |------|--------|
-| Env | `GMGN_API_KEY=...` in web `.env` (HTTP default; CLI optional via `GMGN_TRANSPORT=cli`). Default process gate is **0.5 rps** (`GMGN_MAX_REQ_PER_SEC`); do not set `5` on AI-tier keys or Freeview 429s. See [SPEC-ohlc-rug-spine-v1.md](./SPEC-ohlc-rug-spine-v1.md). |
+| Env | `GMGN_API_KEY=...` in web `.env` (HTTP default; CLI optional via `GMGN_TRANSPORT=cli`). Default process gate is **0.5 rps** (`GMGN_MAX_REQ_PER_SEC`); do not set `5` on AI-tier keys or Freeview 429s. See [SPEC-ohlc-rug-spine-v1.md](./SPEC-ohlc-rug-spine-v1.md). Token Info / Freeview can shadow the public web batch client with `GMGN_TOKEN_INFO_SOURCE=web` (default **openapi**; web gate `GMGN_WEB_MAX_POST_PER_SEC` default 0.4, max 8 mints). Production VPS sets `GMGN_WEB_HOST` + `GMGN_WEB_PROXY_SECRET` to `workers/gmgn-web-proxy` (direct VPS→gmgn.ai is CF 403). See [SPEC-gmgn-web-multi-token-info-v1.md](./specs/SPEC-gmgn-web-multi-token-info-v1.md). |
 | DB | `psql -f db/init/10-gmgn-strategy-domain.sql` + `11-gmgn-sm-kol-combined.sql` + **`13-radar-alert-threads.sql`** on existing volume |
 | Deploy | Rebuild web + cron; workers `gmgn_sim_track` (120s) + `gmgn_activity_poll` (180s) + `gmgn_radar_digest` (86400s) |
 | Enable | `/dev/strategies` → activate `gmgn_sm_kol_combined` or `gmgn_smartmoney_default` (Radar Telegram follows: all GMGN off ⇒ no Radar cards) |
@@ -152,10 +253,14 @@ Shared:
 - **Position OPEN/CLOSE Telegram:** unified template (`OPEN` / `OPEN · copy trade` / `EARLY · copy trade` / `CLOSE`) via `buildStrategyAlertText`. Sends when `config.notify.telegram` is on (defaults on when unset).
 - **`/dev/strategies` notify toggles:** each card has **Telegram** + **UI toasts**. **Activate** sets both on; **Deactivate** sets both off; either can be flipped manually afterward (including TG/UI on while strategy off).
 - **UI:** `McapSimOpenToastHost` in root layout; polls `GET /api/mcap-tracking/sim-open-alerts` every 15s; toast **top-right** (`z-index: 9999`) with **Buy**.
-- **Telegram env:** `TELEGRAM_BOT_TOKEN` + `TELEGRAM_ALERT_CHAT_ID`; `STRATEGY_TRACK_TELEGRAM_ENABLED` must not be `false` (global kill switch).- **Workers:** `signals_refresh` (~60s) helps Stage 1; **`mcap_tracker_sim_open` (~15s, `phase=open`)** for Stage 2 opens; **`mcap_tracker_sim_track` (~120s, `phase=manage`)** for exits/snapshots. Manual track trigger runs `phase=all`. Skip-if-running on both.
+- **Telegram env:** `TELEGRAM_BOT_TOKEN` + `TELEGRAM_ALERT_CHAT_ID`; `STRATEGY_TRACK_TELEGRAM_ENABLED` must not be `false` (global kill switch).
+- **Workers:** `signals_refresh` (~60s) helps Stage 1; the mcap sim runs as **one `phase=all` job** (`mcap_tracker_sim_track`, prod interval **120s**) covering **opens only** — its manage phase and its mcap-growth closer were removed, so the 60s `sltp_monitor` worker is the sole owner of every exit. It deliberately shares a single job lock so two runs cannot both see "not open yet". Manual track trigger runs `phase=all`. Skip-if-running.
 - **`mcap_enter_at_80` freshness:** skips `milestone_too_old` outside `recencyMinutes` (default 240). **Entry mcap = live `current_mcap` at open** (copy-trade fill); milestone only gates eligibility. Telegram Entry is the buy-now reference.
 - **Mcap WR skew:** TP +200% / first_mcap (or live fill) baseline means winners often land near ~+200%; organic/holders gates off by default — compare other domains carefully.
-- **Env:** `MCAP_TRACKER_SIM_OPEN_INTERVAL` (default 15), `MCAP_TRACKER_SIM_INTERVAL` (default 120 manage).
+- **Env:** `MCAP_TRACKER_SIM_INTERVAL` (default 120, **open only** — this is the scheduled job) · `MCAP_TRACKER_SIM_OPEN_INTERVAL` (default 15, not scheduled separately).
+  **Prod runs the scheduled job at 120** (`.env`), so the single `phase=all` job runs every 2 min —
+  its open phase is dominated by the per-candidate OHLC entry gate, which is now loaded once per mint
+  per run instead of once per strategy.
 - **DB:** apply [`db/init/07-mcap-drop-peak.sql`](../db/init/07-mcap-drop-peak.sql) for `-40%`/`-80%` drop stamps + peak profit columns (auto `rugged` / `potential` labels).
 ## North star
 

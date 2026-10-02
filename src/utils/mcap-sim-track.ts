@@ -1,6 +1,6 @@
 import type { McapTrackerStrategy } from '@/strategies/types'
 import { isInTrackingRange, type McapSnapshot } from '@/utils/mcap-tracker'
-import { computeOpenTradeCycle } from '@/utils/simulation-trades'
+import { computeOpenTradeCycle, scopeRecordsToStrategy } from '@/utils/simulation-trades'
 import type { TrackingRecord } from '@/utils/trading-tracker'
 
 export type McapEffectiveExit = {
@@ -59,20 +59,34 @@ export function getOpenMcapPositions(
   const isSim = mode === 'sim'
   const seen = new Set<string>()
   const open: McapSimOpenPosition[] = []
+  // Scope the cycle to this strategy, otherwise another strategy's close for the
+  // same mint zeroes the aggregate and this position reads as closed.
+  const scoped = scopeRecordsToStrategy(records, strategyId)
+
+  // First matching buy per mint, hoisted out of the loop below: `records.find(...)` ran
+  // per token over the whole history, which made this O(records x mints) — seconds on the
+  // sim wallet's ~5k records. Same record wins (first in `records` order), so it is exact.
+  const firstBuyByMint = new Map<string, TrackingRecord>()
+  for (const rec of records) {
+    if (
+      rec.operationType !== 'buy' ||
+      rec.bot_strategy !== strategyId ||
+      rec.is_simulation !== isSim
+    ) {
+      continue
+    }
+    for (const tk of rec.tokens ?? []) {
+      if (!firstBuyByMint.has(tk.mintAddress)) firstBuyByMint.set(tk.mintAddress, rec)
+    }
+  }
 
   for (const r of records) {
     if (r.is_simulation !== isSim || r.bot_strategy !== strategyId) continue
     for (const t of r.tokens ?? []) {
       if (seen.has(t.mintAddress)) continue
-      const cycle = computeOpenTradeCycle(records, t.mintAddress, mode)
+      const cycle = computeOpenTradeCycle(scoped, t.mintAddress, mode)
       if (!cycle || cycle.simulationType !== 'strategy') continue
-      const buyRecord = records.find(
-        (rec) =>
-          rec.operationType === 'buy' &&
-          rec.bot_strategy === strategyId &&
-          rec.is_simulation === isSim &&
-          rec.tokens?.some((tk) => tk.mintAddress === t.mintAddress),
-      )
+      const buyRecord = firstBuyByMint.get(t.mintAddress)
       if (!buyRecord) continue
       seen.add(t.mintAddress)
       const sim = (buyRecord.trading_simulation ?? {}) as Record<string, unknown>

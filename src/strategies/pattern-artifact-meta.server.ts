@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'path'
 import { isPatternModelReady, type PatternModelMeta } from './entry-pattern-scorer'
+import { validateModelSchema } from './feature-registry'
 
 export type PatternPipelineState = {
   last_run_at?: string
@@ -51,11 +52,34 @@ function readArtifactJson<T>(filename: string): T | null {
   }
 }
 
+/** Last schema refusal, so the status surface can name the defect instead of a bare null. */
+let lastSchemaError: string | null = null
+
+export function getLastPatternSchemaError(): string | null {
+  return lastSchemaError
+}
+
 export async function readPatternModelMeta(): Promise<PatternModelMeta | null> {
   const meta = readArtifactJson<PatternModelMeta>('model.meta.json')
   if (!meta || !Array.isArray(meta.feature_columns) || meta.feature_columns.length === 0) {
+    lastSchemaError = null
     return null
   }
+
+  const verdict = validateModelSchema({
+    stage: 'pattern',
+    columns: meta.feature_columns,
+    version: meta.feature_schema_version ?? null,
+  })
+  if (!verdict.ok) {
+    lastSchemaError = verdict.reason
+    console.warn(
+      `[ml-pattern] refusing to score — feature schema mismatch: ${verdict.reason}`,
+    )
+    return null
+  }
+
+  lastSchemaError = null
   return meta
 }
 

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { resolveFreshMarketValue } from '@/utils/fresh-market-value'
 import { getActiveMcapTrackerStrategies } from '@/strategies/load-mcap-tracker'
 import { recordMcapTrackerOutcome } from '@/strategies/outcomes'
+import { registerSimExitContract, type SimExitThresholds } from '@/strategies/sim-exit-contract'
 import { closeOutcomeStatusFromPnl } from '@/strategies/close-outcome-status'
 import {
   appendMonitorSnapshot,
@@ -37,6 +39,7 @@ import { mcapTrackerToCanonical } from '@/strategies/canonical-params'
 import { resolveExitOverlayForOpen } from '@/strategies/potential-exit-overlay'
 import type { McapTrackerStrategy, StrategyChain } from '@/strategies/types'
 import { STRATEGY_CHAINS } from '@/strategies/types'
+import { captureTokenInfoDetectBatch } from '@/strategies/token-info-detect'
 import { simWalletForChain } from '@/strategies/sim-wallets'
 import { getNativeUsd } from '@/utils/native-usd'
 import {
@@ -46,11 +49,13 @@ import {
   type SocialContext,
 } from '@/strategies/social/context'
 import {
-  appendSimPositionMonitorSnapshot,
   resolveTokenMonitorSnapshot,
 } from '@/strategies/sim-monitor-snapshots'
-import { checkGmgnLiveBoostForOpenPosition } from '@/strategies/gmgn-live-boost'
-import { fetchTradingRecordsForWallet, loadMcapSimClosedOutcomeKeys } from '@/strategies/db'
+import {
+  fetchTradingRecordsForWallet,
+  loadMcapSimClosedOutcomeKeys,
+  upsertMarketRegimeTag,
+} from '@/strategies/db'
 import {
   acquireTradeLock,
   isRealTradingHalted,
@@ -67,7 +72,10 @@ import {
   resolveMcapSlippageBps,
 } from '@/utils/mcap-raptor-trade'
 import { computeOpenTradeCycle } from '@/utils/simulation-trades'
+import type { OhlcRugShadowMemo } from '@/strategies/ohlc-rug-shadow'
 import { buildTradingRecord, insertTradingRecords } from '@/utils/trading-records-db'
+import { evaluateConsensusGateForOpen } from '@/strategies/db'
+import { recordConsensusShadow } from '@/strategies/consensus-gate'
 import type { TrackingRecord } from '@/utils/trading-tracker'
 import { getSolPriceUSD } from '@/utils/solana'
 import { toClimateChipPayload } from '@/utils/climateDisplay'
@@ -79,7 +87,6 @@ import {
   computeMcapSimPnlPct,
   fetchMcapTrackingRow,
   fetchMcapSimCandidateRows,
-  getMcapSimCloseReason,
   type McapSnapshot,
 } from '@/utils/mcap-tracker'
 import {
@@ -171,6 +178,10 @@ async function openSimPosition(params: {
   brainRisk?: ResolvedBrainRisk
   /** Live USD at the spine pass. Missing stays unset — do not invent a price. */
   priceUsd?: number | null
+  /** The effective thresholds the spine resolved for THIS trade (S8), not the strategy's base. */
+  exitThresholds?: SimExitThresholds
+  /** The price actually paid (S10) — the impact-included fill. Falls back to `priceUsd`. */
+  entryPriceUsd?: number | null
   /** REL-20: records are collected and bulk-inserted by the route per phase. */
   collect: (record: TrackingRecord) => void
 }): Promise<void> {
@@ -381,123 +392,70 @@ async function openSimPosition(params: {
       features: scoredEntryFeatures,
     })
   }
+  // Paper position → the exit contract (S8/S10), evaluated and recorded but never executed.
+  //
+  // The thresholds are the spine's EFFECTIVE exit — the cl/brain-adjusted ones this trade was
+  // actually opened under. The previous form re-parsed them out of the strategy id (`sl_30_tp200`),
+  // which is the strategy's *base* and re-introduces a value the trade was never sized against.
+  if (params.exitThresholds) {
+    await registerSimExitContract({
+      chain: params.chain,
+      walletAddress: simWallet,
+      strategyId: params.strategyId,
+      mintAddress: params.mintAddress,
+      symbol: params.symbol,
+      positionSize: params.solAmount,
+      entryPriceUsd: params.entryPriceUsd ?? priceUsd,
+      basis: 'price',
+      thresholds: params.exitThresholds,
+    })
+  }
 }
 
-async function closeSimPosition(params: {
-  strategyId: string
-  chain: StrategyChain
-  mintAddress: string
-  symbol: string
-  entryAt: string | null
-  entryMcap: number
-  entryTemplate: 'first_seen' | 'milestone_80'
-  snapshot: McapSnapshot
-  closeReason: NonNullable<ReturnType<typeof getMcapSimCloseReason>>
-  /** REL-20: records are collected and bulk-inserted by the route per phase. */
-  collect: (record: TrackingRecord) => void
-}): Promise<number> {
-  const simWallet = simWalletForChain(MCAP_TRACKER_SIM_WALLET, params.chain)
-  const records = await fetchTradingRecordsForWallet(simWallet)
-  const cycle = computeOpenTradeCycle(records, params.mintAddress, 'sim')
-  if (!cycle) return 0
-
-  const exitMcap = params.snapshot.current_mcap
-  const pnlPct = computeMcapSimPnlPct(params.entryMcap, exitMcap)
-  const solPrice = await getNativeUsd(params.chain)
-  const sellPriceUsd = 0.000001
-  const remaining = cycle.remainingTokenAmount
-  const solReceived =
-    sellPriceUsd && solPrice > 0
-      ? (remaining * sellPriceUsd) / solPrice
-      : cycle.totalSolBought * (1 + pnlPct / 100)
-
-  const record = buildTradingRecord({
-    walletAddress: simWallet,
-    chain: params.chain,
-    operationType: 'sell',
-    is_simulation: true,
-    simulation_type: 'strategy',
-    bot_strategy: params.strategyId,
-    close_position: true,
-    tokens: [
-      {
-        mintAddress: params.mintAddress,
-        symbol: params.symbol,
-        tokenAmount: remaining,
-        solAmount: solReceived,
-        priceUsd: sellPriceUsd,
-        solPrice,
-      },
-    ],
-    successCount: 1,
-    failureCount: 0,
-    totalTokens: 1,
-    solAmount: solReceived,
-    feesPaid: 0,
-    solPriceUsd: solPrice,
-    signatures: [`mcap-tracker-sim-close-${Date.now()}`],
-    status: closeOutcomeStatusFromPnl(pnlPct),
-  })
-
-  params.collect(record)
-
-  const buyRecord = [...records]
-    .reverse()
-    .find(
-      (rec) =>
-        rec.operationType === 'buy' &&
-        rec.bot_strategy === params.strategyId &&
-        rec.tokens?.some((t) => t.mintAddress === params.mintAddress),
+/** Writes today's regime tag at most once per process per (day, state); failures may retry. */
+let lastRegimeTagWrite = ''
+let regimeFetchAttemptedFor = ''
+async function persistDailyRegimeTag(climate: { state?: string | null } | null): Promise<void> {
+  let state = typeof climate?.state === 'string' ? climate.state.trim() : ''
+  const tagDate = new Date().toISOString().slice(0, 10)
+  // The sim only resolves the climate when the brain universe applies, which made this depend on an
+  // unrelated opt-in and silently write nothing. Ask the climate service directly instead — it
+  // answers in ~100ms — and remember the attempt for the day either way so a failing service is not
+  // hammered once per cycle.
+  if (!state && regimeFetchAttemptedFor !== tagDate) {
+    regimeFetchAttemptedFor = tagDate
+    try {
+      const fetched = toClimateChipPayload(await fetchClimate())
+      state = typeof fetched?.state === 'string' ? fetched.state.trim() : ''
+    } catch (error) {
+      console.warn(
+        '[mcap-sim] regime fetch failed:',
+        error instanceof Error ? error.message : error,
+      )
+      return
+    }
+  }
+  if (!state) return
+  const key = `${tagDate}:${state}`
+  if (lastRegimeTagWrite === key) return
+  try {
+    const res = await upsertMarketRegimeTag({
+      tagDate,
+      regimeTag: state,
+      notes: 'brain climate (auto, mcap sim)',
+    })
+    if (!res.ok) {
+      console.warn('[mcap-sim] regime tag write failed:', res.error)
+      return
+    }
+    lastRegimeTagWrite = key
+    console.warn(`[mcap-sim] regime tag persisted: ${tagDate} → ${state}`)
+  } catch (error) {
+    console.warn(
+      '[mcap-sim] regime tag write threw:',
+      error instanceof Error ? error.message : error,
     )
-  const buyFeaturesRaw =
-    buyRecord?.trading_simulation &&
-    typeof buyRecord.trading_simulation === 'object' &&
-    buyRecord.trading_simulation.entry_features &&
-    typeof buyRecord.trading_simulation.entry_features === 'object'
-      ? (buyRecord.trading_simulation.entry_features as Record<string, unknown>)
-      : null
-  const buyFeatures = await ensureCompleteBuyFeaturesForOutcome({
-    mintAddress: params.mintAddress,
-    symbol: params.symbol,
-    entryAt: params.entryAt,
-    entryMcap: params.entryMcap,
-    entryTemplate: params.entryTemplate,
-    snapshot: params.snapshot,
-    buyFeatures: buyFeaturesRaw,
-  })
-
-  const closeFeatures = buildMcapOutcomeFeatures({
-    snapshot: params.snapshot,
-    entryTemplate: params.entryTemplate,
-    entryMcap: params.entryMcap,
-    exitMcap,
-    closeReason: params.closeReason,
-  })
-  const monitorSnapshots = appendMonitorSnapshot(
-    readMonitorSnapshotsFromFeatures(buyFeatures),
-    {
-      timestamp: new Date().toISOString(),
-      volume_5m: params.snapshot.volume_5m ?? null,
-      market_cap: exitMcap,
-    },
-  )
-
-  await recordMcapTrackerOutcome({
-    strategyId: params.strategyId,
-    chain: params.chain,
-    tokenAddress: params.mintAddress,
-    entryAt: params.entryAt,
-    exitAt: new Date().toISOString(),
-    pnlPct,
-    status: closeOutcomeStatusFromPnl(pnlPct),
-    isSimulated: true,
-    features: mergeEntryFeaturesForOutcome(buyFeatures, {
-      ...closeFeatures,
-      monitor_snapshots: monitorSnapshots,
-    }),
-  })
-
-  return pnlPct
+  }
 }
 
 async function openLivePosition(params: {
@@ -593,142 +551,17 @@ async function openLivePosition(params: {
   })
 }
 
-async function closeLivePosition(params: {
-  walletAddress: string
-  strategyId: string
-  mintAddress: string
-  symbol: string
-  entryAt: string | null
-  entryMcap: number
-  entryTemplate: 'first_seen' | 'milestone_80'
-  snapshot: McapSnapshot
-  closeReason: NonNullable<ReturnType<typeof getMcapSimCloseReason>>
-  slippageBps: number
-  /** REL-20: records are collected and bulk-inserted by the route per phase. */
-  collect: (record: TrackingRecord) => void
-}): Promise<number> {
-  const records = await fetchTradingRecordsForWallet(params.walletAddress)
-  const cycle = computeOpenTradeCycle(records, params.mintAddress, 'live')
-  if (!cycle) return 0
-
-  const buyRecord = [...records]
-    .reverse()
-    .find(
-      (rec) =>
-        rec.operationType === 'buy' &&
-        rec.bot_strategy === params.strategyId &&
-        rec.is_simulation === false &&
-        rec.tokens?.some((t) => t.mintAddress === params.mintAddress),
-    )
-  const buyFeatures =
-    buyRecord?.trading_simulation &&
-    typeof buyRecord.trading_simulation === 'object' &&
-    buyRecord.trading_simulation.entry_features &&
-    typeof buyRecord.trading_simulation.entry_features === 'object'
-      ? (buyRecord.trading_simulation.entry_features as Record<string, unknown>)
-      : null
-
-  const amountRaw =
-    typeof buyFeatures?.[RAPTOR_OUTPUT_AMOUNT_RAW_KEY] === 'string'
-      ? (buyFeatures[RAPTOR_OUTPUT_AMOUNT_RAW_KEY] as string)
-      : null
-  if (!amountRaw || amountRaw === '0') {
-    throw new Error(`Missing ${RAPTOR_OUTPUT_AMOUNT_RAW_KEY} for live close`)
-  }
-
-  const sell = await executeMcapRaptorSell(
-    params.mintAddress,
-    amountRaw,
-    params.slippageBps,
-    params.symbol,
-  )
-
-  const solSpent = cycle.totalSolBought
-  const pnlPct =
-    solSpent > 0 ? ((sell.solReceived - solSpent) / solSpent) * 100 : 0
-  const solPrice = await getSolPriceUSD()
-  const remaining = cycle.remainingTokenAmount
-
-  const record = buildTradingRecord({
-    walletAddress: params.walletAddress,
-    operationType: 'sell',
-    is_simulation: false,
-    simulation_type: 'strategy',
-    bot_strategy: params.strategyId,
-    close_position: true,
-    tokens: [
-      {
-        mintAddress: params.mintAddress,
-        symbol: params.symbol,
-        tokenAmount: remaining,
-        solAmount: sell.solReceived,
-        priceUsd: 0.000001,
-        solPrice,
-      },
-    ],
-    successCount: 1,
-    failureCount: 0,
-    totalTokens: 1,
-    solAmount: sell.solReceived,
-    feesPaid: 0,
-    solPriceUsd: solPrice,
-    signatures: [sell.signature],
-    status: closeOutcomeStatusFromPnl(pnlPct),
-  })
-
-  params.collect(record)
-
-  const exitMcap = params.snapshot.current_mcap
-  const completeBuyFeatures = await ensureCompleteBuyFeaturesForOutcome({
-    mintAddress: params.mintAddress,
-    symbol: params.symbol,
-    entryAt: params.entryAt,
-    entryMcap: params.entryMcap,
-    entryTemplate: params.entryTemplate,
-    snapshot: params.snapshot,
-    buyFeatures,
-  })
-  const closeFeatures = buildMcapOutcomeFeatures({
-    snapshot: params.snapshot,
-    entryTemplate: params.entryTemplate,
-    entryMcap: params.entryMcap,
-    exitMcap,
-    closeReason: params.closeReason,
-  })
-  const monitorSnapshots = appendMonitorSnapshot(
-    readMonitorSnapshotsFromFeatures(completeBuyFeatures),
-    {
-      timestamp: new Date().toISOString(),
-      volume_5m: params.snapshot.volume_5m ?? null,
-      market_cap: exitMcap,
-    },
-  )
-
-  await recordMcapTrackerOutcome({
-    strategyId: params.strategyId,
-    tokenAddress: params.mintAddress,
-    entryAt: params.entryAt,
-    exitAt: new Date().toISOString(),
-    pnlPct,
-    status: closeOutcomeStatusFromPnl(pnlPct),
-    isSimulated: false,
-    features: mergeEntryFeaturesForOutcome(completeBuyFeatures, {
-      ...closeFeatures,
-      monitor_snapshots: monitorSnapshots,
-      raptor_sell_signature: sell.signature,
-    }),
-  })
-
-  return pnlPct
-}
-
 export async function POST(request: NextRequest) {
   const key = request.nextUrl.searchParams.get('key')
   if (!isAuthorizedRequest(key, getSimTrackSecret())) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
   }
   const { withJobLock } = await import('@/utils/bot-job-lock')
-  return withJobLock(`mcap_tracker_sim_${request.nextUrl.searchParams.get('phase') ?? 'all'}`, 300, () => runSimTrack(request))
+  // One lock for the whole sim, not one per phase: `phase=all` includes both the
+  // open and manage passes, so per-phase names let two runs open the same mint
+  // concurrently and each compute "not open yet" from records lacking the other's
+  // in-flight buys.
+  return withJobLock('mcap_tracker_sim', 900, () => runSimTrack(request))
 }
 
 async function runSimTrack(request: NextRequest) {
@@ -738,8 +571,20 @@ async function runSimTrack(request: NextRequest) {
     phaseParam === 'open' || phaseParam === 'manage' || phaseParam === 'all'
       ? phaseParam
       : 'all'
-  const runManage = phase === 'manage' || phase === 'all'
+  // The 60s SL/TP worker owns EVERY exit (SPEC-strategy-exit-standard S9), so this route is
+  // discovery + entry only.
+  //
+  // The manage phase is GONE, not disabled. It closed positions on this 900s clock through its own
+  // mcap-growth evaluator (`getMcapSimCloseReason`) — a second opinion on the same position,
+  // reading the same thresholds as a different unit. That branch is what the standard removes, and
+  // carrying it as unreachable code would have left it one flag away from returning.
+  //
+  // `?phase=manage` is still accepted and simply runs nothing: the cron sends `phase=all`, and
+  // rejecting the old value would break a request shape for no benefit.
   const runOpen = phase === 'open' || phase === 'all'
+  // One OHLC load per mint per run. The seven strategies evaluate the same candidates, and that
+  // load is rate-gated (~1.07 s measured), so without this the run pays it once per strategy.
+  const ohlcRugMemo: OhlcRugShadowMemo = new Map()
 
   try {
     const liveAvailable = isMcapLiveTradingAvailable()
@@ -783,6 +628,13 @@ async function runSimTrack(request: NextRequest) {
       ? toClimateChipPayload(await fetchClimate())
       : null
 
+    // Persist the day's regime. `insertStrategyOutcome` already stamps `regime_tag_at_exit` from
+    // market_regime_tags, so writing the brain's climate there is all it takes for every outcome to
+    // carry the day's regime as context — that table has had no rows since 2026-07-10, which is why
+    // the column is empty on recent closes. Keyed on the UTC day, the same expression the stamping
+    // uses, so the lookup lines up.
+    await persistDailyRegimeTag(brainClimate)
+
     for (const strategy of strategies) {
       // Robinhood has no live execution path yet — every RH definition stays paper.
       const execMode =
@@ -807,7 +659,14 @@ async function runSimTrack(request: NextRequest) {
       const nativeBuyAmount =
         strategy.config.execution.simBuyNative ?? strategy.config.execution.simBuySol
       const slippageBps = resolveMcapSlippageBps(strategy.config.execution.slippageBps)
-      let records = await fetchTradingRecordsForWallet(walletAddress)
+      // DELIBERATELY UNBOUNDED. `sinceLastClose` is not free: the bound is the only reason the
+      // query extracts JSONB paths server-side, and extracting them forces Postgres to detoast
+      // the whole `data` column for every row. Measured on mcap-tracker-sim — 44,968 buffers,
+      // 416ms idle and ~10s under load, against 2,307 buffers / 12ms for the plain indexed read
+      // this replaces. `SELECT data` defers that detoast to the client instead.
+      // The bound is worth it only where the payload is huge; this wallet is 6,302 rows. Do not
+      // "optimise" this into a bound without re-measuring buffers.
+      const records = await fetchTradingRecordsForWallet(walletAddress)
       const openPositions = getOpenPositionsForStrategy(
         records,
         strategy.id,
@@ -823,9 +682,11 @@ async function runSimTrack(request: NextRequest) {
         trackingRows.map((row) => row.token_address),
       )
 
-      // REL-20: collect this strategy's trading-record writes per phase and
-      // flush once (UNNEST bulk insert) instead of one insert per position.
-      // The manage phase MUST flush before the open phase re-fetches records.
+      // REL-20: collect this strategy's trading-record writes and flush once (UNNEST bulk insert)
+      // instead of one insert per position. Every write this route makes is an OPEN, so there is
+      // exactly one flush — after the open loop. (This said "the manage phase MUST flush before the
+      // open phase re-fetches records", which outlived the manage phase by a long time and read as
+      // a reason to keep a redundant re-fetch; see the open gate below.)
       let pendingRecords: TrackingRecord[] = []
       const collect = (record: TrackingRecord) => {
         pendingRecords.push(record)
@@ -848,118 +709,43 @@ async function runSimTrack(request: NextRequest) {
         })
       }
 
-      if (runManage) {
-      for (const pos of openPositions) {
-        const snapshot =
-          trackingByMint.get(pos.mintAddress) ??
-          (await fetchMcapTrackingRow(pos.mintAddress))
-        if (!snapshot) continue
-
-        await appendSimPositionMonitorSnapshot({
-          records,
-          strategyId: strategy.id,
-          mintAddress: pos.mintAddress,
-          marketCap: snapshot.current_mcap,
-        })
-
-        await checkGmgnLiveBoostForOpenPosition({
-          walletAddress,
-          strategyId: strategy.id,
-          mintAddress: pos.mintAddress,
-          entryAt: pos.entryAt,
-          symbol: pos.symbol,
-        })
-
-        // Sim: prefer frozen effective_exit from open when apply mode persisted it.
-        // Live: always registry exit (ignore effective_exit).
-        const exitForClose =
-          execMode.isSimulated && pos.effectiveExit
-            ? pos.effectiveExit
-            : {
-                stopLossPct: strategy.config.exit.stopLossPct,
-                takeProfitPct: strategy.config.exit.takeProfitPct,
-                maxHoldHours: strategy.config.exit.maxHoldHours,
-              }
-        const closeReason = getMcapSimCloseReason(snapshot, exitForClose)
-        if (!closeReason) continue
-
-        const enrichedSnapshot = {
-          ...snapshot,
-          volume_5m:
-            snapshot.volume_5m ??
-            (
-              await resolveTokenMonitorSnapshot(
-                pos.mintAddress,
-                snapshot.current_mcap,
-              )
-            ).volume_5m,
-        }
-
-        try {
-          if (execMode.isSimulated) {
-            await closeSimPosition({
-              strategyId: strategy.id,
-              chain,
-              mintAddress: pos.mintAddress,
-              symbol: pos.symbol,
-              entryAt: pos.entryAt,
-              entryMcap: pos.entryMcap || snapshot.first_mcap,
-              entryTemplate: pos.entryTemplate,
-              snapshot: enrichedSnapshot,
-              closeReason,
-              collect,
-            })
-          } else {
-            await closeLivePosition({
-              walletAddress,
-              strategyId: strategy.id,
-              mintAddress: pos.mintAddress,
-              symbol: pos.symbol,
-              entryAt: pos.entryAt,
-              entryMcap: pos.entryMcap || snapshot.first_mcap,
-              entryTemplate: pos.entryTemplate,
-              snapshot: enrichedSnapshot,
-              closeReason,
-              slippageBps,
-              collect,
-            })
-          }
-          closed++
-        } catch (closeError) {
-          skipped.push(
-            `${pos.symbol}: live_close_failed (${closeError instanceof Error ? closeError.message : String(closeError)})`,
-          )
-          continue
-        }
-
-        openMintSet.delete(pos.mintAddress)
-        closedOutcomeKeys.add(pos.mintAddress)
-      }
-      // REL-20: flush manage-phase writes before the open phase re-fetches
-      // records; a failed close write previously surfaced per position via the
-      // try/catch above, so keep it non-fatal and record it in skipped.
-      try {
-        await flushPending('manage')
-      } catch (flushError) {
-        skipped.push(
-          `close_writes_failed (${flushError instanceof Error ? flushError.message : String(flushError)})`,
-        )
-      }
-      }
-
       if (runOpen) {
-      records = await fetchTradingRecordsForWallet(walletAddress)
-      const currentOpen = getOpenPositionsForStrategy(
-        records,
-        strategy.id,
-        execMode.isSimulated,
-      ).length
+      // Reuses the read above. This used to re-fetch "because the manage phase has since closed
+      // positions" — but the manage phase is gone (SPEC-strategy-exit-standard S9, see the note at
+      // the top of runSimTrack) and the only flushPending() in this route is the open-phase one at
+      // the bottom, so nothing writes between the two reads. It was a full extra wallet hydration
+      // per strategy per pass, computing an identical value: getOpenPositionsForStrategy over the
+      // same unmodified `records` with the same arguments. `openPositions` is that same value.
+      const currentOpen = openPositions.length
       const maxOpen = strategy.config.execution.maxOpenPositions
 
       const openRows =
         execMode.isSimulated && brainUniverse.applied
           ? brainUniverse.items
           : trackingRows
+
+      if (chain === 'sol') {
+        const selected = openRows.filter(
+          (snapshot) =>
+            getMcapSimOpenSkipReason(
+              strategy,
+              snapshot,
+              openMintSet,
+              closedOutcomeKeys,
+            ) == null,
+        )
+        void captureTokenInfoDetectBatch(
+          selected.map((snapshot) => ({
+            chain: 'sol' as const,
+            tokenAddress: snapshot.token_address,
+            detectingStrategy: strategy.id,
+            source:
+              strategy.config.entryTemplate === 'first_seen'
+                ? 'mcap_first_seen'
+                : 'mcap_at_80',
+          })),
+        )
+      }
 
       const brainRisk = execMode.isSimulated
         ? await brainRiskSession.resolve({
@@ -1008,11 +794,28 @@ async function runSimTrack(request: NextRequest) {
           break
         }
 
-        const entry = resolveMcapSimEntry(strategy, snapshot)
-        if (!entry) {
+        const resolved = resolveMcapSimEntry(strategy, snapshot)
+        if (!resolved) {
           skipped.push(`${snapshot.token_symbol}: no_entry_mcap`)
           continue
         }
+
+        // The value booked at open must be the value observed AT OPEN. `resolveMcapSimEntry`
+        // returns `snapshot.current_mcap` from the candidate read, and that row can be as old as
+        // the 240-minute recency window — measured median 23.2 min across these very candidates,
+        // p90 3.2 h, worst 4.0 h, and 0 of 201 within 5s (see fresh-market-value.ts). Prod
+        // 2026-10-02: a token that crossed its 80% milestone at 13:20 was opened at 16:13 against
+        // a frozen $307.2K row and closed four minutes later at $171K, −44.2%.
+        //
+        // A null here is a SKIP, not a stale booking: the live read is fresh by construction, so
+        // there is nothing to age-check. `resolved.entryMcap`/`entryAt` are dropped rather than
+        // kept as a fallback — falling back is how the stale price got booked in the first place.
+        const live = await resolveFreshMarketValue(snapshot.token_address)
+        if (!live) {
+          skipped.push(`${snapshot.token_symbol}: stale_snapshot`)
+          continue
+        }
+        const entry = { entryMcap: live.value, entryAt: live.observedAtIso }
 
         if (execMode.skipOpen) {
           skipped.push(`${snapshot.token_symbol}: ${execMode.reason ?? 'live_unavailable'}`)
@@ -1064,6 +867,7 @@ async function runSimTrack(request: NextRequest) {
         const { attachOhlcRugShadow } = await import('@/strategies/ohlc-rug-shadow')
         const ohlc = await attachOhlcRugShadow(snapshot.token_address, annotated, {
           enforce: execMode.isSimulated,
+          memo: ohlcRugMemo,
         })
         if (ohlc.reject) {
           skipped.push(
@@ -1106,6 +910,9 @@ async function runSimTrack(request: NextRequest) {
 
         let sized: { sol: number; mult: number }
         let sizedFeatures: Record<string, unknown>
+        // The spine's contract, carried out of the branch so the sim open can stamp it (S8/S10).
+        let spineExit: SimExitThresholds | null = null
+        let spineEntryPrice: number | null = null
         if (execMode.isSimulated) {
           const { prepareTargetMachinePaperOpen } = await import(
             '@/strategies/prepare-target-machine-paper-open'
@@ -1121,11 +928,11 @@ async function runSimTrack(request: NextRequest) {
             features: scoredEntryFeatures,
             priceUsd: liveMetrics.price_usd,
             baseSol: nativeBuyAmount,
-            baseExit: {
-              takeProfitPct: strategy.config.exit.takeProfitPct,
-              stopLossPct: strategy.config.exit.stopLossPct,
-              maxHoldHours: strategy.config.exit.maxHoldHours,
-            },
+            // Brain TP/SL/hold FIRST, then the spine's closed-loop adjustment on top — the same
+            // order signals and trending use. openSimPosition already did this for its own record,
+            // but the spine computes the exit CONTRACT, so leaving it out stamped thresholds the
+            // brain never agreed to.
+            baseExit: applyBrainRiskToExit(mcapTrackerToCanonical(strategy).exit, brainRisk),
             entryMcap: entry.entryMcap,
           })
           if (!spine.ok) {
@@ -1143,6 +950,8 @@ async function runSimTrack(request: NextRequest) {
           }
           sized = spine.sized
           sizedFeatures = spine.features
+          spineExit = spine.effectiveExit
+          spineEntryPrice = spine.priceUsd
           await appendSpineDecision(
             spinePassDecision(
               'mcap_tracker_sim_track',
@@ -1163,6 +972,24 @@ async function runSimTrack(request: NextRequest) {
             pBad: ml.pBad,
             pWinner: ml.pWinner,
           })
+        }
+
+        // Strategy-consensus gate — SHADOW by default (consensus-gate.ts). Records what
+        // it would decide for this would-be open and only skips when the gate is set to
+        // enforce AND the consensus lift is significant. Fail-soft: an error here must
+        // never block an open.
+        const consensus = await evaluateConsensusGateForOpen({
+          chain,
+          strategyId: strategy.id,
+          tokenAddress: snapshot.token_address,
+          symbol: snapshot.token_symbol,
+        }).catch(() => null)
+        if (consensus) {
+          void recordConsensusShadow(consensus.row)
+          if (consensus.decision.enforced) {
+            skipped.push(`${snapshot.token_symbol}: consensus_gate`)
+            continue
+          }
         }
 
         if (!execMode.isSimulated) {
@@ -1213,6 +1040,8 @@ async function runSimTrack(request: NextRequest) {
             symbol: snapshot.token_symbol,
             solAmount: simSol,
             priceUsd: liveMetrics.price_usd,
+            entryPriceUsd: spineEntryPrice,
+            exitThresholds: spineExit ?? undefined,
             entryMcap: entry.entryMcap,
             entryTemplate: strategy.config.entryTemplate,
             entryAt: entry.entryAt,

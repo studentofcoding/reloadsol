@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ReloadSOL · North-star map — the rug label and its seven concerns</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --paper:#fafaf7; --paper2:#f0efe9; --ink:#163b2a; --muted:#5b6b60;
+    --soft:#8a968d; --accent:#84cc16; --link:#2e5aa8; --rule:rgba(22,59,42,0.14);
+    --sans:'DM Sans', system-ui, sans-serif;
+    --serif:'Fraunces', serif;
+    --mono:'Geist Mono', ui-monospace, monospace;
+  }
+  body { font-family:var(--sans); background:var(--paper); color:var(--ink); line-height:1.5; }
+  .wrap { max-width:1200px; margin:0 auto; padding:3.5rem 2rem 4rem; }
+  .eyebrow { font-family:var(--mono); font-size:.68rem; font-weight:500; letter-spacing:.2em; text-transform:uppercase; color:var(--muted); }
+  h1 { font-family:var(--serif); font-weight:400; font-size:clamp(1.6rem,3vw,2.4rem); letter-spacing:-.02em; margin:.4rem 0 .6rem; }
+  .lede { color:var(--muted); max-width:76ch; font-size:1rem; margin-bottom:2.25rem; }
+  .lede code, p code, li code, td code { font-family:var(--mono); font-size:.8rem; color:var(--ink); background:rgba(22,59,42,0.05); padding:.05rem .28rem; border-radius:3px; }
+
+  .diagram { margin-bottom:1.75rem; overflow-x:auto; }
+  svg { width:100%; min-width:1000px; display:block; }
+
+  h2 { font-family:var(--mono); font-weight:500; font-size:.7rem; letter-spacing:.2em; text-transform:uppercase; color:var(--soft); margin:2.5rem 0 1rem; }
+  h2 .rule { display:inline-block; width:2.5rem; height:1px; background:var(--rule); vertical-align:middle; margin-right:.75rem; }
+
+  .callout { font-family:var(--serif); font-style:italic; font-size:1rem; color:var(--muted); margin:-.5rem 0 2rem; }
+  .callout b { font-style:normal; font-weight:600; color:var(--ink); }
+
+  table.reg { width:100%; border-collapse:collapse; font-size:.84rem; }
+  table.reg th { font-family:var(--mono); font-size:.6rem; letter-spacing:.14em; text-transform:uppercase; color:var(--soft); text-align:left; padding:.5rem .6rem; border-bottom:1px solid var(--rule); font-weight:500; }
+  table.reg td { padding:.6rem; border-bottom:1px solid rgba(22,59,42,0.07); color:var(--muted); vertical-align:top; }
+  table.reg td:first-child { font-family:var(--mono); color:var(--ink); width:2rem; }
+  table.reg td strong { color:var(--ink); font-weight:600; }
+  table.reg code { font-family:var(--mono); font-size:.76rem; color:var(--ink); background:rgba(22,59,42,0.05); padding:.05rem .25rem; border-radius:3px; }
+
+  .cards { display:grid; grid-template-columns:1fr 1.1fr 0.9fr; gap:1rem; }
+  @media (max-width:900px) { .cards { grid-template-columns:1fr; } }
+  .card { background:#fff; border:1px solid rgba(22,59,42,0.12); border-radius:6px; padding:1.25rem; }
+  .card .eyebrow { color:var(--soft); font-size:.62rem; }
+  .card-head { display:flex; align-items:center; gap:.5rem; margin:.45rem 0 .7rem; }
+  .card-head h3 { font-size:1rem; font-weight:600; }
+  .dot { width:7px; height:7px; border-radius:50%; flex:none; }
+  .dot.coral { background:var(--accent); } .dot.ink { background:var(--ink); } .dot.muted { background:var(--muted); }
+  .card ul { list-style:none; }
+  .card li { font-size:.86rem; color:var(--muted); padding-left:.9rem; position:relative; margin-bottom:.4rem; }
+  .card li::before { content:"—"; position:absolute; left:0; color:var(--soft); }
+
+  .footer { margin-top:3rem; padding-top:1rem; border-top:1px solid var(--rule); font-family:var(--mono); font-size:.72rem; color:var(--soft); display:flex; justify-content:space-between; flex-wrap:wrap; gap:.5rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">ReloadSOL · North-star map · 2026-10-01</p>
+  <h1>The rug label, and the seven concerns under it</h1>
+  <p class="lede">The goal has not changed since it was set: <b>make the staircase / up-only ramp actually get
+  labelled <code>rug</code></b>. Everything built since is either raw material for that verdict, the plumbing that
+  makes the material trustworthy, or the lane that would consume the signal. This page is the one context that ties
+  them together — the dependency spine, a readiness×evidence matrix for evaluating what to do next, and the register
+  with each concern's state, blocker and artifact.</p>
+
+  <h2><span class="rule"></span>The spine — what unblocks what</h2>
+  <div class="diagram">
+  <svg viewBox="0 0 1160 420" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="nm-title nm-desc">
+    <title id="nm-title">Dependency spine from enablers to the rug verdict</title>
+    <desc id="nm-desc">Three enablers on the left — the shipped feature registry, the ramp data collection, and the production env truth — feed two workstreams in the middle, standardizing the feature data and validating the ramp pattern, which both converge on the ML shadow lane on the right; a release bar sits below the lane, orthogonal to the spine. The ramp verdict is the focal node.</desc>
+    <defs>
+      <marker id="arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#5b6b60"/></marker>
+      <marker id="arr-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#84cc16"/></marker>
+    </defs>
+    <rect width="100%" height="100%" fill="#fafaf7"/>
+
+    <!-- arrows (before boxes) -->
+    <path d="M 272 104 H 456 Q 464 104 464 112 V 144 Q 464 152 472 152 H 480" fill="none" stroke="#5b6b60" stroke-width="1.2" marker-end="url(#arr)"/>
+    <path d="M 272 216 H 456 Q 464 216 464 224 V 280 Q 464 288 472 288 H 480" fill="none" stroke="#5b6b60" stroke-width="1.2" marker-end="url(#arr)"/>
+    <path d="M 696 152 H 792 Q 800 152 800 160 V 200 Q 800 208 808 208 H 840" fill="none" stroke="#5b6b60" stroke-width="1.2" marker-end="url(#arr)"/>
+    <path d="M 696 288 H 760 Q 768 288 768 280 V 248 Q 768 240 776 240 H 840" fill="none" stroke="#84cc16" stroke-width="1.4" marker-end="url(#arr-accent)"/>
+    <path d="M 272 344 H 776 Q 784 344 784 336 V 268 Q 784 260 792 260 H 840" fill="none" stroke="#5b6b60" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#arr)"/>
+
+    <!-- enablers -->
+    <rect x="64" y="64" width="208" height="80" rx="6" fill="rgba(22,59,42,0.05)" stroke="#5b6b60" stroke-width="1"/>
+    <rect x="76" y="72" width="40" height="12" rx="2" fill="transparent" stroke="rgba(91,107,96,0.45)" stroke-width="0.8"/>
+    <text x="96" y="81" fill="#5b6b60" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">DONE</text>
+    <text x="168" y="112" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Feature registry</text>
+    <text x="168" y="130" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">one schema + load check</text>
+
+    <rect x="64" y="176" width="208" height="80" rx="6" fill="#ffffff" stroke="#163b2a" stroke-width="1"/>
+    <rect x="76" y="184" width="40" height="12" rx="2" fill="transparent" stroke="rgba(22,59,42,0.40)" stroke-width="0.8"/>
+    <text x="96" y="193" fill="#163b2a" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">BUILD</text>
+    <text x="168" y="224" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Ramp data</text>
+    <text x="168" y="242" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">volume + metrics history</text>
+
+    <rect x="64" y="288" width="208" height="80" rx="6" fill="#ffffff" stroke="#163b2a" stroke-width="1"/>
+    <rect x="76" y="296" width="64" height="12" rx="2" fill="transparent" stroke="rgba(22,59,42,0.40)" stroke-width="0.8"/>
+    <text x="108" y="305" fill="#163b2a" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">1 LINE</text>
+    <text x="168" y="336" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Ops env truth</text>
+    <text x="168" y="354" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">a bogus artifact path</text>
+
+    <!-- work -->
+    <rect x="480" y="112" width="216" height="80" rx="6" fill="#ffffff" stroke="#163b2a" stroke-width="1"/>
+    <rect x="492" y="120" width="40" height="12" rx="2" fill="transparent" stroke="rgba(22,59,42,0.40)" stroke-width="0.8"/>
+    <text x="512" y="129" fill="#163b2a" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">P2</text>
+    <text x="588" y="160" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Standardize data</text>
+    <text x="588" y="178" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">one builder · 11 writers</text>
+
+    <rect x="480" y="248" width="216" height="80" rx="6" fill="rgba(132,204,22,0.12)" stroke="#84cc16" stroke-width="1.4"/>
+    <rect x="492" y="256" width="56" height="12" rx="2" fill="transparent" stroke="rgba(132,204,22,0.55)" stroke-width="0.8"/>
+    <text x="520" y="265" fill="#84cc16" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">VERDICT</text>
+    <text x="588" y="296" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Validate the ramp</text>
+    <text x="588" y="314" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">is the shape really a rug?</text>
+
+    <!-- outcome -->
+    <rect x="840" y="176" width="248" height="96" rx="6" fill="#ffffff" stroke="#163b2a" stroke-width="1"/>
+    <rect x="852" y="184" width="48" height="12" rx="2" fill="transparent" stroke="rgba(22,59,42,0.40)" stroke-width="0.8"/>
+    <text x="876" y="193" fill="#163b2a" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">LIVE</text>
+    <text x="964" y="232" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">ML shadow lane</text>
+    <text x="964" y="250" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">where a rug signal would be</text>
+    <text x="964" y="264" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">consumed — currently silent</text>
+
+    <rect x="840" y="300" width="248" height="64" rx="6" fill="rgba(22,59,42,0.02)" stroke="rgba(22,59,42,0.25)" stroke-width="1" stroke-dasharray="4,3"/>
+    <rect x="852" y="308" width="72" height="12" rx="2" fill="transparent" stroke="rgba(22,59,42,0.30)" stroke-width="0.8"/>
+    <text x="888" y="317" fill="#8a968d" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">ORTHOGONAL</text>
+    <text x="964" y="340" fill="#163b2a" font-size="12" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Release</text>
+    <text x="964" y="356" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">39 files uncommitted</text>
+
+    <!-- legend -->
+    <line x1="40" y1="392" x2="1120" y2="392" stroke="rgba(22,59,42,0.10)" stroke-width="0.8"/>
+    <text x="40" y="412" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.18em">LEGEND</text>
+    <rect x="128" y="404" width="14" height="10" rx="2" fill="rgba(22,59,42,0.05)" stroke="#5b6b60" stroke-width="1"/>
+    <text x="148" y="412" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">shipped</text>
+    <rect x="252" y="404" width="14" height="10" rx="2" fill="#ffffff" stroke="#163b2a" stroke-width="1"/>
+    <text x="272" y="412" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">to build</text>
+    <rect x="376" y="404" width="14" height="10" rx="2" fill="rgba(132,204,22,0.12)" stroke="#84cc16" stroke-width="1"/>
+    <text x="396" y="412" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">the verdict we want</text>
+    <line x1="552" y1="409" x2="580" y2="409" stroke="#5b6b60" stroke-width="1" stroke-dasharray="5,4"/>
+    <text x="588" y="412" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">enables indirectly</text>
+    <line x1="748" y1="409" x2="776" y2="409" stroke="#84cc16" stroke-width="1.4" marker-end="url(#arr-accent)"/>
+    <text x="784" y="412" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">carries the signal</text>
+  </svg>
+  </div>
+  <p class="callout">Read it left to right: <b>the verdict is not blocked by more code — it is blocked by the absence
+  of a hundred minutes of volume-bearing history per token.</b> The registry (shipped) and the standardizer (P2) make
+  the data trustworthy; the ramp collection is what makes the verdict possible at all.</p>
+
+  <h2><span class="rule"></span>Where each concern sits — readiness against evidence</h2>
+  <div class="diagram">
+  <svg viewBox="0 0 1160 480" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="nq-title nq-desc">
+    <title id="nq-title">Concerns positioned by actionability and evidence</title>
+    <desc id="nq-desc">A two-by-two matrix of the seven concerns. Vertically the axis runs from blocked at the bottom to ready to act at the top; horizontally from asserted at the left to measured at the right. The bottom-left cell holds the ramp verdict, whose premise is asserted and which is blocked on data; the top-right cell holds the four measured and actionable items; the bottom-right holds the starved shadow lane. The top-left cell is empty.</desc>
+    <defs>
+      <marker id="arrq" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#5b6b60"/></marker>
+    </defs>
+    <rect width="100%" height="100%" fill="#fafaf7"/>
+
+    <!-- axes -->
+    <line x1="640" y1="80" x2="640" y2="420" stroke="rgba(22,59,42,0.20)" stroke-width="1"/>
+    <line x1="200" y1="250" x2="1080" y2="250" stroke="rgba(22,59,42,0.20)" stroke-width="1"/>
+
+    <!-- cell labels -->
+    <text x="216" y="100" fill="#8a968d" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.16em">READY · ASSERTED</text>
+    <text x="656" y="100" fill="#8a968d" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.16em">READY · MEASURED</text>
+    <text x="216" y="270" fill="#8a968d" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.16em">BLOCKED · ASSERTED</text>
+    <text x="656" y="270" fill="#8a968d" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.16em">BLOCKED · MEASURED</text>
+
+    <!-- top-left: empty, and that is the finding -->
+    <rect x="200" y="122" width="424" height="88" rx="6" fill="rgba(22,59,42,0.02)" stroke="rgba(22,59,42,0.16)" stroke-width="1" stroke-dasharray="4,3"/>
+    <text x="412" y="158" fill="#5b6b60" font-size="13" font-family="'Fraunces',serif" font-style="italic" text-anchor="middle">empty — nothing we are about</text>
+    <text x="412" y="180" fill="#5b6b60" font-size="13" font-family="'Fraunces',serif" font-style="italic" text-anchor="middle">to act on rests on an unmeasured assumption</text>
+
+    <!-- top-right: measured + ready -->
+    <rect x="656" y="108" width="200" height="52" rx="6" fill="#ffffff" stroke="#163b2a" stroke-width="1"/>
+    <text x="756" y="130" fill="#163b2a" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Feature registry</text>
+    <text x="756" y="147" fill="#5b6b60" font-size="8.5" font-family="'Geist Mono',monospace" text-anchor="middle">shipped · P1</text>
+
+    <rect x="872" y="108" width="200" height="52" rx="6" fill="#ffffff" stroke="#163b2a" stroke-width="1"/>
+    <text x="972" y="130" fill="#163b2a" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Standardize data</text>
+    <text x="972" y="147" fill="#5b6b60" font-size="8.5" font-family="'Geist Mono',monospace" text-anchor="middle">measured · P2 next</text>
+
+    <rect x="656" y="176" width="200" height="52" rx="6" fill="#ffffff" stroke="#163b2a" stroke-width="1"/>
+    <text x="756" y="198" fill="#163b2a" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Ops env truth</text>
+    <text x="756" y="215" fill="#5b6b60" font-size="8.5" font-family="'Geist Mono',monospace" text-anchor="middle">measured · one line</text>
+
+    <rect x="872" y="176" width="200" height="52" rx="6" fill="#ffffff" stroke="#163b2a" stroke-width="1"/>
+    <text x="972" y="198" fill="#163b2a" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">Ramp data</text>
+    <text x="972" y="215" fill="#5b6b60" font-size="8.5" font-family="'Geist Mono',monospace" text-anchor="middle">gap measured · buildable</text>
+
+    <!-- bottom-right: measured + blocked -->
+    <rect x="656" y="300" width="280" height="64" rx="6" fill="#ffffff" stroke="#163b2a" stroke-width="1"/>
+    <text x="796" y="324" fill="#163b2a" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">ML shadow lane</text>
+    <text x="796" y="341" fill="#5b6b60" font-size="8.5" font-family="'Geist Mono',monospace" text-anchor="middle">measured: 2,493 identity rows, 0 changes</text>
+    <text x="796" y="356" fill="#5b6b60" font-size="8.5" font-family="'Geist Mono',monospace" text-anchor="middle">blocked: no signal to carry</text>
+
+    <!-- bottom-left: the north star -->
+    <rect x="216" y="300" width="280" height="64" rx="6" fill="rgba(132,204,22,0.12)" stroke="#84cc16" stroke-width="1.4"/>
+    <text x="356" y="324" fill="#163b2a" font-size="11" font-weight="600" font-family="'DM Sans',sans-serif" text-anchor="middle">The ramp verdict</text>
+    <text x="356" y="341" fill="#5b6b60" font-size="8.5" font-family="'Geist Mono',monospace" text-anchor="middle">asserted: "up-only = 99% rug"</text>
+    <text x="356" y="356" fill="#5b6b60" font-size="8.5" font-family="'Geist Mono',monospace" text-anchor="middle">blocked: no pre-dump history</text>
+
+    <!-- axis end labels -->
+    <text x="200" y="444" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" letter-spacing="0.06em">ASSERTED / UNMEASURED</text>
+    <text x="1080" y="444" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="end" letter-spacing="0.06em">MEASURED</text>
+    <text x="648" y="404" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" letter-spacing="0.06em">BLOCKED</text>
+    <text x="648" y="96" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" letter-spacing="0.06em">   </text>
+    <text x="196" y="254" fill="#5b6b60" font-size="9" font-family="'Geist Mono',monospace" text-anchor="end" letter-spacing="0.06em">ready ↑</text>
+
+    <!-- legend -->
+    <line x1="40" y1="452" x2="1120" y2="452" stroke="rgba(22,59,42,0.10)" stroke-width="0.8"/>
+    <text x="40" y="472" fill="#5b6b60" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.18em">LEGEND</text>
+    <rect x="128" y="464" width="14" height="10" rx="2" fill="rgba(132,204,22,0.12)" stroke="#84cc16" stroke-width="1"/>
+    <text x="148" y="472" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">the north star (goal)</text>
+    <rect x="320" y="464" width="14" height="10" rx="2" fill="#ffffff" stroke="#163b2a" stroke-width="1"/>
+    <text x="340" y="472" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">active concern</text>
+    <rect x="488" y="464" width="14" height="10" rx="2" fill="rgba(22,59,42,0.02)" stroke="rgba(22,59,42,0.16)" stroke-width="1"/>
+    <text x="508" y="472" fill="#5b6b60" font-size="8.5" font-family="'DM Sans',sans-serif">empty cell (the good news)</text>
+  </svg>
+  </div>
+  <p class="callout">The matrix is the evaluation: <b>one</b> thing we want is unmeasured and blocked (the verdict),
+  <b>four</b> things are measured and ready, and the empty top-left cell means nothing we are about to act on rests
+  on an assumption we never checked.</p>
+
+  <h2><span class="rule"></span>The register — every concern, its state, its blocker, where to read it</h2>
+  <table class="reg">
+    <thead>
+      <tr><th>#</th><th>Concern</th><th>State (measured)</th><th>Blocker</th><th>Open in</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td><strong>The ramp verdict</strong><br>Does the up-only staircase mean rug?</td>
+        <td>Scorer built and gated off (<code>RUG_SIGNAL_ENABLED</code> unset). Anchors <em>chosen, not fitted</em>. The premise is <em>unverified</em> — the corpus couldn't separate rug from rising.</td>
+        <td>No pre-dump history to test against (concern 2)</td>
+        <td><code>docs/diagrams/11-rug-signal.html</code> → <code>SPEC-rug-signal-v1.md</code> §Calibration</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td><strong>Ramp data</strong><br>Can it be backtested at all?</td>
+        <td><strong>No.</strong> <code>token_ohlc_bars.volume</code> NULL on 875,535/875,535 rows; no mcap/liquidity series; the label corpus anchors <em>at</em> the dump.</td>
+        <td>Nothing — it is the unblocker. Needs the sampler + a metrics-history table</td>
+        <td><code>SPEC-rug-pattern-data-v1.md</code> §gaps G1–G5</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td><strong>Standardize the data</strong><br>Is the feature blob clean enough to model?</td>
+        <td>Measured defective: <strong>113</strong> top-level keys over 2.65M instances; the blob is <strong>double-booked</strong> — 3,130 rows disagree on <code>token_symbol</code>, 3,021 on <code>training_class</code>.</td>
+        <td>P2 not started (one builder at the 11 writer sites)</td>
+        <td><code>docs/diagrams/14-strategy-data-pipeline.html</code> → <code>SPEC-strategy-data-pipeline-v1.md</code> §5</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td><strong>Feature registry</strong><br>Can a model be trusted with that data?</td>
+        <td><strong>Shipped (P1).</strong> One registry, a committed <code>ml/feature-schema.json</code> Python reads, and a load-time <em>refusal</em> on a schema mismatch. It already flags the stale pattern meta (7 cols vs 10).</td>
+        <td>—</td>
+        <td><code>ml/feature-schema.json</code> (the contract) → <code>SPEC-feature-registry-v1.md</code></td>
+      </tr>
+      <tr>
+        <td>5</td>
+        <td><strong>The ML shadow lane</strong><br>Is anything being produced we can act on?</td>
+        <td>Runs and records — but <strong>starved</strong>: <code>ml_exit_overlay_*</code> on 2,493 rows, <strong>100% <code>identity</code></strong>, tier null, 0 exit params changed; <strong>zero</strong> <code>ml_gate_*</code>/<code>ml_potential_*</code> keys in 82,861 rows; the config was never persisted.</td>
+        <td>No signal to carry (concern 1) and no model loaded</td>
+        <td><code>SPEC-ml-shadow-lane-v1.md</code> §2 as-is + §4 defects</td>
+      </tr>
+      <tr>
+        <td>6</td>
+        <td><strong>Ops env truth</strong><br>Does the environment match the code?</td>
+        <td>No <code>v2-gate</code>/<code>v2-potential</code> anywhere; <code>ML_POTENTIAL_ARTIFACT_DIR=/ml/artifacts/v2-potential</code> is a bogus path (host <code>.env:82</code>); only <code>pattern-gate</code> exists.</td>
+        <td>Nothing — one line on the VPS</td>
+        <td>Nowhere yet — these facts live only in this session</td>
+      </tr>
+      <tr>
+        <td>7</td>
+        <td><strong>Release</strong><br>What is pending?</td>
+        <td>39 files changed, nothing committed. Spans concerns 1–6.</td>
+        <td>Orthogonal — blocks nothing, but nothing ships until it happens</td>
+        <td><code>git status</code> · <code>docs/specs/README.md</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2><span class="rule"></span>What this says to do</h2>
+  <div class="cards">
+    <div class="card">
+      <p class="eyebrow">SHIPPED &amp; TRUSTWORTHY</p>
+      <div class="card-head"><span class="dot coral"></span><h3>Concern 4</h3></div>
+      <ul>
+        <li>One registry, one committed mirror, and a check that refuses to score on drift.</li>
+        <li>Verified: <code>tsc</code> clean · 2,104 tests · eslint 0 errors · clean build · the mirror idempotent.</li>
+        <li>It is the base every other ML concern stands on.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <p class="eyebrow">THE CRITICAL PATH</p>
+      <div class="card-head"><span class="dot ink"></span><h3>Concern 2 → 1 → 5</h3></div>
+      <ul>
+        <li><strong>2</strong> is the only item that unblocks the goal, and nothing blocks it: sampler volume + a metrics-history table.</li>
+        <li><strong>1</strong> cannot be answered until 2 exists — the verdict needs ~100 minutes of volume-bearing history per token.</li>
+        <li><strong>5</strong> is where the signal would be consumed; it stays silent until 1 lands.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <p class="eyebrow">CHEAP &amp; IMMEDIATE</p>
+      <div class="card-head"><span class="dot muted"></span><h3>6, then 3</h3></div>
+      <ul>
+        <li><strong>6</strong> is one line on the VPS — and it stops the config claiming a model that was never there.</li>
+        <li><strong>3</strong> (P2) is the largest scheduled job: one builder adopted at 11 writer sites, then the backfill.</li>
+        <li>Neither moves the rug verdict; both make everything after it trustworthy.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>ReloadSOL · docs/diagrams/16-north-star-map.html</span>
+    <span>rug label · 7 concerns · 1 shipped · 39 files uncommitted</span>
+  </div>
+</div>
+</body>
+</html>

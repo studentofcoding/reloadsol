@@ -400,9 +400,13 @@ function FlipArmCard({
           valueLabel={
             stats.agreementRate == null
               ? '—'
-              : `${pct(stats.agreementRate)} (${stats.agreementMatches}/${stats.agreementEligible})`
+              : `${pct(stats.agreementRate)} (${stats.agreementMatches}/${stats.agreementEligible})` +
+                // A rate can only be 100% because the deciding band is empty — an agreement between
+                // two things that both always say the same word. It must not read as a pass: the
+                // status chip above already says "vacuous", and this meter said ✓ beside it.
+                (vacuousAgreement ? ' · vacuous' : '')
           }
-          ok={bars.agreementOk}
+          ok={bars.agreementOk && !vacuousAgreement}
           fill={stats.agreementRate == null ? 0 : stats.agreementRate / aMin}
         />
         <BarMeter
@@ -605,6 +609,14 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
               {' · '}var {compactVar(flip.overall.clScoreVariance)}
               {' · '}≥0.55 {flip.overall.clScoreGeGate ?? 0}
               {' · '}range {score(flip.overall.clScoreMin)}–{score(flip.overall.clScoreMax)}
+              {/* A gate that no member of the population can reach is not a gate — it is a constant
+                  wearing the costume of a decision. Say so where the number is printed, rather than
+                  leaving `≥0.55 0` to be read as "nothing qualified yet". */}
+              {(flip.overall.clScoreGeGate ?? 0) === 0 &&
+              flip.overall.clScoreMax != null &&
+              flip.overall.clScoreMax < 0.55
+                ? ' · gate unreachable (population max is below 0.55)'
+                : ''}
               . Rows already stored stay in this sample until new emits accumulate.
             </p>
           ) : null}
@@ -1091,6 +1103,16 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
               : `Showing ${showingFrom}–${showingTo} of ${rowsTotal}`}
           </p>
         </div>
+
+        {/* T2, third case: a predicate that is false on every rendered row cannot distinguish one row
+            from another. Say it once, rather than painting N grey chips that read as N individual
+            rejections — the same vacuity the agreement rate above can have. */}
+        {funnelRows.length > 0 && funnelRows.every((r) => !r.specWouldPass) ? (
+          <p className="mb-2 text-xs text-amber-200/90 bg-amber-950/40 border border-amber-900/60 rounded-md px-3 py-2">
+            spec_would_pass is <span className="font-semibold">false on all {funnelRows.length}</span> rows
+            in this sample — the column discriminates nothing here.
+          </p>
+        ) : null}
 
         {funnelRows.length === 0 ? (
           <p className="text-gray-500 text-sm">

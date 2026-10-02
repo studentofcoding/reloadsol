@@ -1660,47 +1660,44 @@ export async function getTrackingHealthStats(): Promise<{
   timelineInconsistentCount: number
 }> {
   try {
-    const { rows: data } = await query<{
-      mcap_growth_percent: number | null
-      first_seen_at: string
-      last_updated_at: string
-      is_tracking_stuck: boolean
-      when_reach_80pct: string | null
-      when_reach_120pct: string | null
-      when_reach_200pct: string | null
+    // Aggregated in SQL. This used to read EVERY row of token_mcap_tracking (31,316 rows /
+    // ~7 MB on prod) and count/filter in Node, and the reports endpoint calls it on every
+    // cold render. The inconsistency rule mirrors isTrackingTimelineInconsistent().
+    const { rows } = await query<{
+      total_tokens: number
+      stuck_tokens: number
+      zero_growth_tokens: number
+      recently_updated: number
+      timeline_inconsistent: number
+      avg_age_seconds: number | null
     }>(
-      `SELECT mcap_growth_percent, first_seen_at, last_updated_at, is_tracking_stuck,
-              when_reach_80pct, when_reach_120pct, when_reach_200pct
-       FROM token_mcap_tracking`,
+      `SELECT count(*)::int AS total_tokens,
+              count(*) FILTER (WHERE is_tracking_stuck)::int AS stuck_tokens,
+              count(*) FILTER (WHERE abs(coalesce(mcap_growth_percent, 0)) < 0.01)::int AS zero_growth_tokens,
+              count(*) FILTER (WHERE last_updated_at > NOW() - INTERVAL '1 hour')::int AS recently_updated,
+              count(*) FILTER (
+                WHERE (when_reach_80pct  IS NOT NULL AND first_seen_at > when_reach_80pct)
+                   OR (when_reach_120pct IS NOT NULL AND first_seen_at > when_reach_120pct)
+                   OR (when_reach_200pct IS NOT NULL AND first_seen_at > when_reach_200pct)
+              )::int AS timeline_inconsistent,
+              avg(extract(epoch FROM (NOW() - first_seen_at)))::float8 AS avg_age_seconds
+         FROM token_mcap_tracking`,
     )
 
-    const now = Date.now()
-    const oneHourAgo = now - 60 * 60 * 1000
-
-    const totalTokens = data.length
-    const stuckTokens = data.filter((t) => t.is_tracking_stuck).length
-    const zeroGrowthTokens = data.filter((t) => Math.abs(t.mcap_growth_percent || 0) < 0.01).length
-    const recentlyUpdated = data.filter((t) => new Date(t.last_updated_at).getTime() > oneHourAgo).length
-
-    const timelineInconsistentCount = data.filter((t) =>
-      isTrackingTimelineInconsistent(t as McapSnapshot),
-    ).length
-
-    const avgTrackingAge =
-      data.reduce((sum, t) => sum + (now - new Date(t.first_seen_at).getTime()), 0) /
-      (data.length || 1)
-
-    const healthPercentage =
-      totalTokens > 0 ? ((totalTokens - stuckTokens) / totalTokens) * 100 : 100
+    const row = rows[0]
+    const totalTokens = row?.total_tokens ?? 0
+    const stuckTokens = row?.stuck_tokens ?? 0
 
     return {
       totalTokens,
       stuckTokens,
-      zeroGrowthTokens,
-      healthPercentage,
-      avgTrackingAge: avgTrackingAge / (1000 * 60 * 60),
-      recentlyUpdated,
-      timelineInconsistentCount,
+      zeroGrowthTokens: row?.zero_growth_tokens ?? 0,
+      healthPercentage:
+        totalTokens > 0 ? ((totalTokens - stuckTokens) / totalTokens) * 100 : 100,
+      // seconds -> hours, matching the previous mean(now - first_seen_at) / 3_600_000.
+      avgTrackingAge: (row?.avg_age_seconds ?? 0) / 3600,
+      recentlyUpdated: row?.recently_updated ?? 0,
+      timelineInconsistentCount: row?.timeline_inconsistent ?? 0,
     }
   } catch (error) {
     log.error('price_tracking', 'Failed to get tracking health stats', error as Error)

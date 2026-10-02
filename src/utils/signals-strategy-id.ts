@@ -38,6 +38,7 @@ export const SOL_SIGNALS_LIST_STRATEGY_IDS = [
   'signals_sell_over_100',
   'mcap_enter_first_seen',
   'mcap_enter_at_80',
+  'social_only_fomo_gt7',
 ] as const
 
 export const RH_SIGNALS_LIST_STRATEGY_IDS = [
@@ -51,12 +52,19 @@ export type SignalsListChain = 'sol' | 'robinhood'
 export type SignalsListPickerOption = {
   strategyId: string
   name: string
-  domain: 'signals' | 'mcap_tracker'
+  domain: 'signals' | 'mcap_tracker' | 'social'
   /** Null when n is 0. A real 0% mean stays 0. */
   avgPnlPct: number | null
   totalPnlPct: number | null
   /** strategy_outcomes trade_count for the sim row. */
   n: number
+}
+
+/** Picker domain for a universe id. */
+export function signalsListDomain(strategyId: string): SignalsListPickerOption['domain'] {
+  if (strategyId.startsWith('mcap_')) return 'mcap_tracker'
+  if (strategyId === 'social_only_fomo_gt7') return 'social'
+  return 'signals'
 }
 
 export function signalsListStrategyIds(chain: SignalsListChain): readonly string[] {
@@ -74,6 +82,7 @@ const SIGNALS_LIST_SEED_NAMES: Record<string, string> = {
   signals_default_rh: 'Default momentum (Robinhood)',
   mcap_enter_first_seen_rh: 'Enter at first seen (Robinhood)',
   mcap_enter_at_80_rh: 'Enter at 80% milestone (Robinhood)',
+  social_only_fomo_gt7: 'Social-only FOMO (>7)',
 }
 
 /** Instant picker rows: names only, n=0. Stats route patches real PnL. */
@@ -83,7 +92,7 @@ export function seedSignalsListPickerOptions(
   return signalsListStrategyIds(chain).map((strategyId) => ({
     strategyId,
     name: SIGNALS_LIST_SEED_NAMES[strategyId] ?? strategyId,
-    domain: strategyId.startsWith('mcap_') ? 'mcap_tracker' : 'signals',
+    domain: signalsListDomain(strategyId),
     avgPnlPct: null,
     totalPnlPct: null,
     n: 0,

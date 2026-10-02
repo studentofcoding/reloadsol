@@ -12,6 +12,19 @@ import {
 let pool: Pool | null = null;
 
 const POOL_MAX = parseInt(process.env.DATABASE_POOL_MAX || '10', 10);
+/**
+ * How long a query may wait for a free client before failing. Without this, a query that
+ * cannot get a client queues indefinitely and the only thing that ends it is the caller's
+ * own HTTP deadline — which is how the mcap sim's 30 s cron timeout turned pool contention
+ * into "context deadline exceeded" instead of a specific error.
+ */
+const POOL_CONN_TIMEOUT_MS = parseInt(
+  process.env.DATABASE_POOL_CONN_TIMEOUT_MS || '5000',
+  10,
+);
+// NOT statement_timeout: pg sends it as a *startup parameter* and PgBouncer rejects
+// unknown ones (`unsupported startup parameter: statement_timeout`), which breaks every
+// query in the app. connectionTimeoutMillis is client-side only, so it is safe.
 
 export function getPool(): Pool {
   if (!pool) {
@@ -22,11 +35,38 @@ export function getPool(): Pool {
     pool = new Pool({
       connectionString: url,
       max: POOL_MAX,
+      connectionTimeoutMillis: POOL_CONN_TIMEOUT_MS,
       // ponytail: PgBouncer transaction pool rejects prepared statements
       prepare: false,
     } as ConstructorParameters<typeof Pool>[0]);
   }
   return pool;
+}
+
+/**
+ * A query that holds a pool client longer than this gets a log line. Env-tunable; set
+ * DB_SLOW_QUERY_MS=0 to silence it.
+ *
+ * This is permanent, not scaffolding. Two production incidents were invisible without it: a
+ * `sinceLastClose` read that took 120s to return 1,360 rows (an unhashable join the planner
+ * turned into a nested loop), and a per-position price write that fired ~160 concurrent queries
+ * per pass. Neither errored — they simply held clients until unrelated requests, including
+ * /api/strategies/outcomes, hit the 5s acquire timeout and failed. The pool is small (see
+ * POOL_MAX) and a slow query is indistinguishable from a broken one at the call site.
+ */
+const SLOW_QUERY_MS = parseInt(process.env.DB_SLOW_QUERY_MS || '5000', 10);
+
+/** Two stack frames naming the caller, so a slow query is attributable without a profiler. */
+function callerFrames(depth: number): string {
+  return (new Error().stack ?? '')
+    .split('\n')
+    .slice(2, 2 + depth)
+    .map((s) => s.trim().replace(/^at\s+/, ''))
+    .join(' <- ');
+}
+
+function oneLine(sql: string, max: number): string {
+  return sql.replace(/\s+/g, ' ').trim().slice(0, max);
 }
 
 export type QueryOptions = { bypassCircuit?: boolean };
@@ -39,11 +79,33 @@ export async function query<T extends QueryResultRow = QueryResultRow>(
   if (!opts?.bypassCircuit && isDbCircuitOpen()) {
     throw new TypeError('Database circuit open (recent failures)');
   }
+  const startedAt = Date.now();
   try {
     const result = await getPool().query<T>(sql, params);
+    if (SLOW_QUERY_MS > 0) {
+      const ms = Date.now() - startedAt;
+      if (ms > SLOW_QUERY_MS) {
+        console.warn(
+          `[db-slow-query] ms=${ms} rows=${result.rowCount ?? 0} sql=${oneLine(sql, 90)} via=${callerFrames(4)}`,
+        );
+      }
+    }
     recordDbSuccess();
     return { rows: result.rows, rowCount: result.rowCount ?? 0 };
   } catch (error) {
+    // The pool's own view at the moment of failure. waitingCount is the direct measure of
+    // saturation — how many callers were queued when this one gave up. High waitingCount at
+    // totalCount=max means too few clients for the concurrency; waitingCount=0 means
+    // "timeout exceeded when trying to connect" is NOT pool exhaustion and the message misleads
+    // (that was the case during the 155k-row read, where the pool was still growing from scratch).
+    try {
+      const p = getPool();
+      console.warn(
+        `[db-pool] FAILED total=${p.totalCount} idle=${p.idleCount} waiting=${p.waitingCount} err=${error instanceof Error ? error.message : String(error)} sql=${oneLine(sql, 60)} via=${callerFrames(3)}`,
+      );
+    } catch {
+      /* never let logging mask the real error */
+    }
     if (isDbConnectivityError(error)) {
       recordDbFailure();
     }

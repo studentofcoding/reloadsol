@@ -38,9 +38,9 @@ the fetch path from wasting its budget.
 |---|---|
 | Store | Adopt the existing `token_ohlc_bars` (don't add a table, don't drop it) |
 | Cadence | `OHLC_SAMPLE_INTERVAL=15` s → 4 samples/minute so a real intra-minute high/low exists |
-| Watch set | mcap candidates in the 30k–2M band + `trending_token_tracker` rows + mints with a sim buy in the last 24 h; capped by `OHLC_SAMPLE_MAX_MINTS` (default 300); **sol only** (pricing is Jupiter) |
+| Watch set | mcap candidates in the 30k–2M band + `trending_token_tracker` rows + mints with a sim buy in the last 24 h + mints in `token_detect_snapshots` within `OHLC_SAMPLE_DETECT_WINDOW_MIN` (default 120 min); capped by `OHLC_SAMPLE_MAX_MINTS` (default 500, ceiling 1500; the metrics copier keeps its own 300 cap); **sol only** (pricing is Jupiter) |
 | Prices | `getUsdPrices` (Jupiter Price V3, 50 mints/call, shared 5 RPS gate) — never per-mint GMGN |
-| Volume | **NULL by design** for sampler bars; only the seed carries `v` |
+| Volume | **NULL for sampler bars** — the sampler only has a Jupiter spot price in scope, *not* because no 1-minute volume exists. Volume is persisted separately in `token_metrics_history` by the `metrics_copier` worker; see [SPEC-rug-pattern-data-v1.md](./SPEC-rug-pattern-data-v1.md) §G1. |
 | Source order | live upstream (brain → ST → GMGN) → **own 1m series** → storage fallback (labels/detect) → no fake axis |
 | Chart honesty | never draw the synthetic flat placeholder over an upstream timeout; name the failure |
 | Window | `window=auto` (and any span < 20 h) fetches exactly its own span; only a ~24 h window uses the canonical series |
@@ -117,7 +117,7 @@ chart being flat on day 1 for mints we have already labelled.
 | 2026-09-25 | Store | Adopt `token_ohlc_bars` (+ volume/source/samples), keep the unique key |
 | 2026-09-25 | Cadence | 15 s → real 1 m OHLC |
 | 2026-09-25 | Watch set | Candidates + tracked + recent sim buys, capped, sol only |
-| 2026-09-25 | Volume | NULL by design; seed carries `v` |
+| 2026-09-25 | Volume | NULL for sampler bars; seed carries `v`. **Corrected 2026-10-01:** 1m candle volume *is* available and is now persisted in `token_metrics_history` by `metrics_copier` — see SPEC-rug-pattern-data-v1 §G1 |
 | 2026-09-25 | Source order | upstream → own-1m → label/detect fallback → no fake axis |
 | 2026-09-25 | Dependency | Own code only; GT/DexScreener deferred |
 

@@ -13,12 +13,19 @@ export const JUPITER_SWAP_EXECUTE_URL = 'https://api.jup.ag/swap/v2/execute'
 const JUPITER_SWAP_EXECUTE_TIMEOUT_MS = 30_000
 
 export class JupiterSwapQuoteError extends Error {
-  constructor(
-    message: string,
-    public statusCode?: number,
-  ) {
+  statusCode?: number
+  /**
+   * The venue itself declined the swap — `/order` answers 200 with an empty `transaction` and an
+   * `errorMessage` (e.g. `"Insufficient funds"`). This is a decision, not a transport failure, so no
+   * other lane can know better and callers must not paper over it by falling back.
+   */
+  venueRefused?: boolean
+
+  constructor(message: string, statusCode?: number, options?: { venueRefused?: boolean }) {
     super(message)
     this.name = 'JupiterSwapQuoteError'
+    this.statusCode = statusCode
+    this.venueRefused = options?.venueRefused
   }
 }
 
@@ -195,9 +202,30 @@ export async function fetchJupiterSwapQuote(
       body && typeof body === 'object'
         ? (body as { error?: string; errorMessage?: string })
         : {}
+    // 422 is the status the route emits *only* for a venue refusal (`venueRefused` on the server side).
+    // The flag itself cannot cross the HTTP boundary, so it is reconstructed here — without this the
+    // browser reads a refusal as a generic fault, `prepareDeskSwap` misses it, and we fall back to Lite,
+    // which cannot simulate and would build a transaction the wallet cannot pay for.
     throw new JupiterSwapQuoteError(
       err.errorMessage || err.error || `Jupiter quote HTTP ${response.status}`,
       response.status,
+      response.status === 422 ? { venueRefused: true } : undefined,
+    )
+  }
+
+  // `/order` reports a venue refusal as HTTP 200 with an empty `transaction` plus a reason. The **browser**
+  // reaches `/order` through this proxied fetcher (`direct` is false in a tab), so the same distinction the
+  // direct path makes has to be made here too — otherwise a refusal reads as a generic failure, the caller
+  // falls back to Lite, and Lite happily builds a transaction the wallet cannot pay for.
+  const refusal =
+    body && typeof body === 'object'
+      ? (body as { errorMessage?: unknown })
+      : null
+  if (refusal && typeof refusal.errorMessage === 'string' && refusal.errorMessage.length > 0) {
+    throw new JupiterSwapQuoteError(
+      `Jupiter refused the order: ${refusal.errorMessage}`,
+      422,
+      { venueRefused: true },
     )
   }
 
@@ -223,33 +251,52 @@ export async function fetchJupiterSwapQuoteDirect(
     throw new JupiterSwapQuoteError('JUPITER_API_KEY is not set', 503)
   }
 
-  await throttleJupiterRps()
-  const url = buildJupiterSwapQuoteUrl(params)
-  const response = await fetch(url, { headers: jupiterApiHeaders() })
-  const text = await response.text()
-  let body: unknown = null
-  try {
-    body = text ? JSON.parse(text) : null
-  } catch {
-    body = { error: text.slice(0, 180) }
-  }
+  // `taker` set => this is the execution's prepare (quote + unsigned tx + requestId in one round
+  // trip). It must not queue behind background price lookups; a plain quote yields to it.
+  return withJupiterOrderQuote(params, async () => {
+    await throttleJupiterRps(params.taker ? 'trade' : 'background')
+    const url = buildJupiterSwapQuoteUrl(params)
+    const response = await fetch(url, { headers: jupiterApiHeaders() })
+    const text = await response.text()
+    let body: unknown = null
+    try {
+      body = text ? JSON.parse(text) : null
+    } catch {
+      body = { error: text.slice(0, 180) }
+    }
 
-  if (response.status === 429) {
-    throw new JupiterSwapQuoteError('Jupiter quote rate limited', 429)
-  }
-  if (!response.ok) {
-    const err = body && typeof body === 'object' ? (body as { error?: string; errorMessage?: string }) : {}
-    throw new JupiterSwapQuoteError(
-      err.errorMessage || err.error || `Jupiter quote HTTP ${response.status}`,
-      response.status,
-    )
-  }
+    if (response.status === 429) {
+      throw new JupiterSwapQuoteError('Jupiter quote rate limited', 429)
+    }
+    if (!response.ok) {
+      const err = body && typeof body === 'object' ? (body as { error?: string; errorMessage?: string }) : {}
+      throw new JupiterSwapQuoteError(
+        err.errorMessage || err.error || `Jupiter quote HTTP ${response.status}`,
+        response.status,
+      )
+    }
 
-  const mapped = mapJupiterOrderToDisplay(body, params.amount, params.slippageBps)
-  if (!mapped) {
-    throw new JupiterSwapQuoteError('Jupiter quote missing outAmount', 502)
-  }
-  return mapped
+    // `/order` reports a venue refusal as HTTP 200 with an empty `transaction`. Catch it here, while the
+    // venue's own reason is still in hand, so callers can abort instead of falling to a lane that cannot
+    // simulate and would happily build a transaction that can never land.
+    const refusal =
+      body && typeof body === 'object'
+        ? (body as { errorMessage?: unknown; transaction?: unknown })
+        : null
+    if (refusal && typeof refusal.errorMessage === 'string' && refusal.errorMessage.length > 0) {
+      throw new JupiterSwapQuoteError(
+        `Jupiter refused the order: ${refusal.errorMessage}`,
+        422,
+        { venueRefused: true },
+      )
+    }
+
+    const mapped = mapJupiterOrderToDisplay(body, params.amount, params.slippageBps)
+    if (!mapped) {
+      throw new JupiterSwapQuoteError('Jupiter quote missing outAmount', 502)
+    }
+    return mapped
+  })
 }
 
 export type JupiterSwapPrepared = {
@@ -380,7 +427,8 @@ export async function executeJupiterSwapDirect(
   if (!key) {
     throw new JupiterSwapQuoteError('JUPITER_API_KEY is not set', 503)
   }
-  await throttleJupiterRps()
+  // The submission: the one call that must never wait behind background work.
+  await throttleJupiterRps('trade')
   return postJupiterExecute(JUPITER_SWAP_EXECUTE_URL, params, {
     ...jupiterApiHeaders(),
     'Content-Type': 'application/json',
@@ -399,6 +447,87 @@ export async function executeJupiterSwap(
       'Content-Type': 'application/json',
     },
   )
+}
+
+/**
+ * Request identity, coalescing, and a short result cache for `/order`.
+ *
+ * The desk asks the same question repeatedly — the seller's estimate on an unchanged selection, a
+ * simulated fill re-resolving the same (mint, amount) across cycles, the estimate and the execution
+ * overlapping on one mint — and every repeat used to charge the shared Jupiter gate again. Measured
+ * demand that matters: the gate is the scarce resource (0.5 rps measured-clean, any concurrency
+ * rejected), so the cheapest speed-up is asking less often.
+ *
+ * - **Coalescing** joins identical in-flight requests into one upstream call. That is safe for a
+ *   prepare too: identical inputs produce the same unsigned transaction, and the executor already
+ *   shares prepared swaps through its own cache.
+ * - **Caching** is limited to requests **without** a `taker`. A taker-scoped request is the
+ *   execution's own quote + unsigned tx and must always be fresh; a plain quote is an estimate, and
+ *   `JUPITER_QUOTE_CACHE_MS` (default 4000, well inside the 30s quote-validity window) bounds how
+ *   stale it may be.
+ */
+function resolveQuoteCacheMs(env: Record<string, string | undefined> = process.env): number {
+  const parsed = Number(env.JUPITER_QUOTE_CACHE_MS)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 4000
+}
+
+export function jupiterOrderKey(params: {
+  inputMint: string
+  outputMint: string
+  amount: string
+  slippageBps: number
+  taker?: string
+  priorityFeeLamports?: number
+  broadcastFeeType?: string
+}): string {
+  return [
+    params.inputMint,
+    params.outputMint,
+    params.amount,
+    params.slippageBps,
+    params.taker ?? '',
+    params.priorityFeeLamports ?? '',
+    params.broadcastFeeType ?? '',
+  ].join('|')
+}
+
+const quoteCache = new Map<string, { at: number; value: JupiterQuoteDisplay }>()
+const inFlight = new Map<string, Promise<JupiterQuoteDisplay>>()
+
+export function resetJupiterQuoteCachesForTests(): void {
+  quoteCache.clear()
+  inFlight.clear()
+}
+
+/**
+ * Run `load` at most once per identical request; without a taker, reuse a result younger than the
+ * cache window. Callers with a taker always get a live request, only sharing an in-flight one.
+ */
+export async function withJupiterOrderQuote(
+  params: JupiterSwapQuoteParams,
+  load: () => Promise<JupiterQuoteDisplay>,
+): Promise<JupiterQuoteDisplay> {
+  const key = jupiterOrderKey(params)
+  const ttl = resolveQuoteCacheMs()
+
+  if (!params.taker && ttl > 0) {
+    const hit = quoteCache.get(key)
+    if (hit && Date.now() - hit.at < ttl) return hit.value
+  }
+
+  const pending = inFlight.get(key)
+  if (pending) return pending
+
+  const promise = load()
+    .then((value) => {
+      if (!params.taker && ttl > 0) quoteCache.set(key, { at: Date.now(), value })
+      return value
+    })
+    .finally(() => {
+      inFlight.delete(key)
+    })
+  inFlight.set(key, promise)
+  return promise
 }
 
 /** `/order` with `taker` — one round trip for quote, unsigned tx, and requestId. */

@@ -39,6 +39,27 @@ describe('toCanonicalEntryFeatures', () => {
     expect((out.domain_features as Record<string, unknown>).custom_flag).toBe(true)
   })
 
+  it('preserves the dlmm core keys the outcome dedupe reads', () => {
+    // These were listed in CORE_KEYS (so excluded from domain_features) but never
+    // emitted, so they vanished. position_id is the dlmm outcome dedupe key.
+    const out = toCanonicalEntryFeatures(
+      {
+        position_id: 'p-1',
+        pool_name: 'TOK-SOL',
+        amount_sol: 1.5,
+        pool_volume: 900,
+        fee_tvl_ratio_24h: 0.4,
+      },
+      'dlmm',
+      { mintAddress: MINT, poolAddress: 'Pool111' },
+    )
+    expect(out.position_id).toBe('p-1')
+    expect(out.pool_name).toBe('TOK-SOL')
+    expect(out.amount_sol).toBe(1.5)
+    expect(out.pool_volume).toBe(900)
+    expect(out.fee_tvl_ratio_24h).toBe(0.4)
+  })
+
   it('derives token_age_hours when missing', () => {
     const out = toCanonicalEntryFeatures(
       {
@@ -58,6 +79,30 @@ describe('toCanonicalEntryFeatures', () => {
       { mintAddress: MINT },
     )
     expect(out.ml_gate_p_bad).toBe(0.2)
+  })
+
+  it('keeps OHLC rug features at top level, not buried in domain_features', () => {
+    const out = toCanonicalEntryFeatures(
+      {
+        entry_mcap: 1000,
+        ohlc_rug_n: 10,
+        ohlc_rug_dump_pct: 0.5,
+        ohlc_rug_trip: 1,
+        ohlc_rug_skipped: 'no_bars_or_error',
+        ohlc_source: 'own-1m',
+        other_flag: true,
+      },
+      'social',
+      { mintAddress: MINT },
+    )
+    expect(out.ohlc_rug_n).toBe(10)
+    expect(out.ohlc_rug_dump_pct).toBe(0.5)
+    expect(out.ohlc_rug_trip).toBe(1)
+    expect(out.ohlc_rug_skipped).toBe('no_bars_or_error')
+    expect(out.ohlc_source).toBe('own-1m')
+    const bag = out.domain_features as Record<string, unknown>
+    expect(bag.ohlc_rug_n).toBeUndefined()
+    expect(bag.other_flag).toBe(true)
   })
 
   it('moves DLMM pool volume into domain_features.dlmm', () => {

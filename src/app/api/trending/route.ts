@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { NextRequest, connection } from 'next/server'
 import { JupiterBaseAsset, JupiterPool, JupiterResponse, TokenCache, TransformedToken } from '@/types'
-import { fetchAxiomTokenInfo, getRiskIndicators, calculateFeeToMarketCapRatio } from '@/utils/axiom'
+import { fetchTokenRiskData, getRiskIndicators, calculateFeeToMarketCapRatio } from '@/utils/token-risk'
 import { assessTokenRisk, formatDetailedRiskForDiscord, getRiskEmoji } from '@/utils/risk-assessment'
 import { trackTokenMcap, getMcapDisplayString, isInTrackingRange, bulkTrackTokenMcaps } from '@/utils/mcap-tracker'
 import { formatAppDateTimeWithZone } from '@/utils/datetime'
@@ -9,6 +9,7 @@ import {
   acquireTrendingListNotificationSlot,
   trendingListDiscordViaCronOnly,
 } from '@/utils/trending-notification-dedup'
+import { recordMetricSnapshots } from '@/strategies/token-metrics-history'
 
 // Environment variable for Discord webhook URL
 const DISCORD_WEBHOOK_URL =
@@ -551,7 +552,7 @@ async function sendDiscordNotification(
           }))
         })),
         messageSize: JSON.stringify(message).length,
-        hasAxiomErrors: error?.message?.includes('Axiom') || false
+        hasRiskErrors: error?.message?.includes('TokenRisk') || false
       });
 
       // Log the raw message structure for debugging
@@ -1047,6 +1048,26 @@ async function fetchAndUpdateCache(
 
     // Use all transformed tokens instead of filtered ones
     const allTokens = transformedTokens;
+
+    // Persist the price the payload already carries into the metrics series.
+    //
+    // Deliberately NOT the volume: Jupiter's `stats5m`/`stats1h` are ROLLING WINDOW readings, not
+    // per-minute candles, and this series' `vol_min` slots hold observed per-minute volume only.
+    // Writing a rolling window into a slot would fabricate precision the source does not have.
+    //
+    // Deliberately NOT the mcap either: `mcap_close` is derived from the market-cap **candles** by
+    // the copier, and this payload's mcap is a different reading of the same quantity. One value,
+    // one source — two writers would let them drift.
+    // Best-effort — never fails the route.
+    await recordMetricSnapshots(
+      allTokens.map((token) => ({
+        tokenAddress: token.token_address,
+        chain: 'sol',
+        priceUsd: token.price,
+      })),
+      new Date(),
+      'snapshot',
+    )
 
     // Log timestamps for all tokens in the final set
     allTokens.forEach(token => {

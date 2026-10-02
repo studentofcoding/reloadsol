@@ -7,6 +7,8 @@ export type McapToastItem = {
   strategyId?: string
   entryMcap?: number
   entryTemplate?: 'first_seen' | 'milestone_80' | 'signals_enter'
+  /** Shadow risk chip text, attached server-side at drain time. */
+  riskLabel?: string
 }
 
 export type McapToast = {

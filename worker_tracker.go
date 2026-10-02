@@ -128,6 +128,17 @@ func (wt *WorkerTracker) Fail(id string, msg string) {
 	wt.emitChange(id, "fail", msg)
 }
 
+// Skipped records that the tick did not run because another one held the job lock
+// (HTTP 409 from withJobLock). It deliberately touches neither lastSuccessAt nor
+// lastErrorAt: a skip is neither, and marking it a success is what made the ops view
+// report a healthy worker while the mcap sim was mostly not running.
+func (wt *WorkerTracker) Skipped(id string) {
+	wt.mu.Lock()
+	defer wt.mu.Unlock()
+	wt.ensureRuntime(id)
+	wt.emitChange(id, "skipped", "")
+}
+
 func (wt *WorkerTracker) Hydrate(id string, h WorkerRuntimeHydrate) {
 	wt.mu.Lock()
 	defer wt.mu.Unlock()
@@ -221,9 +232,12 @@ func (wt *WorkerTracker) Snapshot() []map[string]interface{} {
 }
 
 func (cs *CronService) initWorkerRegistry() {
+	// mcap_tracker_sim_open has no cron entry of its own: the open phase runs inside the phase=all job,
+	// so its real cadence is McapTrackerSimInterval. It used to report McapTrackerSimOpenInterval, a knob
+	// that schedules nothing, so the Workers table showed a cadence the service never ran.
 	workers := []WorkerMeta{
 		{ID: "signals_sim_track", Name: "Signals sim track", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.SignalsSimInterval, TriggerPath: "/trigger/signals-sim-track", CanTrigger: true},
-		{ID: "mcap_tracker_sim_open", Name: "MCap tracker sim open", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.McapTrackerSimOpenInterval, TriggerPath: "/trigger/mcap-tracker-sim-open", CanTrigger: true},
+		{ID: "mcap_tracker_sim_open", Name: "MCap tracker sim open", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.McapTrackerSimInterval, TriggerPath: "/trigger/mcap-tracker-sim-open", CanTrigger: true},
 		{ID: "mcap_tracker_sim_track", Name: "MCap tracker sim manage", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.McapTrackerSimInterval, TriggerPath: "/trigger/mcap-tracker-sim-track", CanTrigger: true},
 		{ID: "gmgn_sim_track", Name: "GMGN sim track", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.GmgnSimInterval, TriggerPath: "/trigger/gmgn-sim-track", CanTrigger: true},
 		{ID: "gmgn_activity_poll", Name: "GMGN activity poll", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.GmgnActivityPollInterval, TriggerPath: "/trigger/gmgn-activity-poll", CanTrigger: true},
@@ -246,8 +260,10 @@ func (cs *CronService) initWorkerRegistry() {
 		{ID: "strategy_search", Name: "Strategy search cycle", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.StrategySearchInterval, TriggerPath: "/trigger/strategy-search", CanTrigger: true, Disabled: cs.config.StrategySearchInterval <= 0},
 		{ID: "sol_arb_scan", Name: "SOL arb scan", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.SolArbScanInterval, TriggerPath: "/trigger/sol-arb-scan", CanTrigger: true, Disabled: cs.config.SolArbScanInterval <= 0},
 		{ID: "ohlc_sampler", Name: "OHLC 1m sampler", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.OhlcSampleInterval, TriggerPath: "/trigger/ohlc-sampler", CanTrigger: true, Disabled: cs.config.OhlcSampleInterval <= 0},
+		{ID: "metrics_copier", Name: "1m volume copier", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.MetricsCopyInterval, TriggerPath: "/trigger/metrics-copier", CanTrigger: true, Disabled: cs.config.MetricsCopyInterval <= 0},
 		{ID: "fomo_ws", Name: "FOMO trenches WS", Domain: "algo", Schedule: "always-on", IntervalSec: 0, TriggerPath: "/trigger/fomo-ws", CanTrigger: true, Disabled: !cs.config.FomoWsEnabled},
 		{ID: "strategy_report", Name: "Strategy report digest", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.StrategyReportInterval, TriggerPath: "/trigger/strategy-report", CanTrigger: true, Disabled: cs.config.StrategyReportInterval <= 0},
+		{ID: "report_precompute", Name: "Report precompute (consensus + capital)", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.ReportPrecomputeInterval, TriggerPath: "/trigger/report-precompute", CanTrigger: true, Disabled: cs.config.ReportPrecomputeInterval <= 0},
 		{ID: "sltp_monitor", Name: "SL/TP monitor", Domain: "infra", Schedule: "every Ns", IntervalSec: cs.config.SLTPMonitorInterval, TriggerPath: "/trigger/sltp", CanTrigger: true},
 		{ID: "daily_summary", Name: "Daily summary", Domain: "infra", Schedule: "daily 00:00 UTC", IntervalSec: 86400, TriggerPath: "/trigger/summary", CanTrigger: true},
 		{ID: "pnl_update", Name: "PnL update", Domain: "infra", Schedule: "daily 02:00 UTC", IntervalSec: 86400, TriggerPath: "/trigger/pnl", CanTrigger: true},

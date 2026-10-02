@@ -53,9 +53,10 @@ async function liteFetch<T>(
   timeoutMs = JUPITER_LITE_FETCH_TIMEOUT_MS,
 ): Promise<T> {
   const isClient = typeof window !== "undefined";
-  // Share the process-wide Jupiter RPS slot with Price V3 / Swap `/order`.
+  // Share the process-wide Jupiter RPS slot with Price V3 / Swap `/order`. `/swap` is the
+  // execution's own transaction build, so it takes the trade lane; `/quote` is a candidate.
   if (!isClient) {
-    await throttleJupiterRps();
+    await throttleJupiterRps(path.includes("/swap") ? "trade" : "background");
   }
 
   const controller = new AbortController();

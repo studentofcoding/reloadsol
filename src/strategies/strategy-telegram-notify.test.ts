@@ -158,15 +158,22 @@ describe('notifyStrategyOpen / notifyStrategyClose scheduling', () => {
     } as Awaited<ReturnType<typeof getSignalsStrategy>>)
   })
 
-  it('does not send close telegram until the after() task runs', async () => {
+  // These four used to assert the opposite: "does not send … until the after() task runs". That was
+  // the bug written down as a requirement. `after()` waits for the RESPONSE, and the sim-track
+  // handler responds only when its whole cycle is done — minutes later — so a post for a position
+  // that opened early in the cycle went out at the end of it. The contract now is: detached, now,
+  // off the critical path.
+
+  it('sends the close telegram immediately, not at the end of the response', async () => {
     notifyStrategyClose(closeParams)
-    expect(telegramMocks.sendStrategyTrackCloseAlert).not.toHaveBeenCalled()
-    expect(afterHarness.queue).toHaveLength(1)
-    await afterHarness.queue[0]!()
-    expect(telegramMocks.sendStrategyTrackCloseAlert).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => {
+      expect(telegramMocks.sendStrategyTrackCloseAlert).toHaveBeenCalledTimes(1)
+    })
+    // Nothing is parked waiting for the response to finish.
+    expect(afterHarness.queue).toHaveLength(0)
   })
 
-  it('does not send open telegram until the after() task runs', async () => {
+  it('sends the open telegram immediately, not at the end of the response', async () => {
     notifyStrategyOpen({
       domain: 'signals',
       strategyId: 'signals_default',
@@ -174,31 +181,30 @@ describe('notifyStrategyOpen / notifyStrategyClose scheduling', () => {
       tokenAddress: closeParams.tokenAddress,
       isSimulated: true,
     })
-    expect(telegramMocks.sendStrategyTrackOpenAlert).not.toHaveBeenCalled()
-    expect(afterHarness.queue).toHaveLength(1)
-    await afterHarness.queue[0]!()
-    expect(telegramMocks.sendStrategyTrackOpenAlert).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => {
+      expect(telegramMocks.sendStrategyTrackOpenAlert).toHaveBeenCalledTimes(1)
+    })
+    expect(afterHarness.queue).toHaveLength(0)
   })
 
-  it('logs close notify failures without rejecting the scheduler', async () => {
+  it('does not reject the caller when the close notify fails', async () => {
     telegramMocks.sendStrategyTrackCloseAlert.mockRejectedValueOnce(
       new Error('sharp down'),
     )
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    notifyStrategyClose(closeParams)
-    await expect(Promise.resolve(afterHarness.queue[0]!())).resolves.toBeUndefined()
-    expect(errorSpy).toHaveBeenCalled()
+    expect(() => notifyStrategyClose(closeParams)).not.toThrow()
+    await vi.waitFor(() => expect(errorSpy).toHaveBeenCalled())
     errorSpy.mockRestore()
   })
 
-  it('uses setImmediate when after() is outside a request', async () => {
+  it('does not depend on after() being callable at all', async () => {
+    // Detached means the send no longer routes through the request lifecycle, so a context where
+    // after() throws must not change the outcome.
     afterHarness.mode = 'throw'
     notifyStrategyClose(closeParams)
-    expect(telegramMocks.sendStrategyTrackCloseAlert).not.toHaveBeenCalled()
-    expect(afterHarness.queue).toHaveLength(0)
-    await new Promise((resolve) => setImmediate(resolve))
     await vi.waitFor(() => {
       expect(telegramMocks.sendStrategyTrackCloseAlert).toHaveBeenCalledTimes(1)
     })
+    expect(afterHarness.queue).toHaveLength(0)
   })
 })

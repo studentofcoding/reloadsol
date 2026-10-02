@@ -36,7 +36,6 @@ import { isAuthorizedRequest } from '@/utils/dlmm/config'
 import { simWalletForChain } from '@/strategies/sim-wallets'
 import {
   getOpenStrategySimPositions as getOpenPositionsForStrategy,
-  shouldCloseSignalsClExit,
   type StrategySimOpenPosition as OpenPosition,
 } from '@/strategies/open-strategy-sim-positions'
 import { STRATEGY_CHAINS, type StrategyChain } from '@/strategies/types'
@@ -53,156 +52,13 @@ function getSimTrackSecret(): string {
   )
 }
 
-async function closeSimPosition(params: {
-  strategyId: string
-  chain: StrategyChain
-  mintAddress: string
-  symbol: string
-  entryAt: string | null
-  entryFeatures: Record<string, unknown>
-  exitMcap?: number | null
-  exitGrowthPercent?: number | null
-  /** REL-20: records are collected and bulk-inserted by the route per phase. */
-  collect: (record: TrackingRecord) => void
-}): Promise<number> {
-  const simWallet = simWalletForChain(SIGNALS_SIM_WALLET_LOCAL, params.chain)
-  const records = await fetchTradingRecordsForWallet(simWallet)
-  const cycle = computeOpenSimCycle(records, params.mintAddress)
-  if (!cycle) return 0
-
-  const prices = await getOpenPositionPrices([params.mintAddress], params.chain)
-  const sellPriceUsd = prices[params.mintAddress] || cycle.weightedBuyPriceUsd
-  const solPrice = await getNativeUsd(params.chain)
-  const remaining = cycle.remainingTokenAmount
-  const solReceived =
-    sellPriceUsd && solPrice > 0
-      ? (remaining * sellPriceUsd) / solPrice
-      : cycle.totalSolBought
-
-  const firstMcap =
-    typeof params.entryFeatures.first_mcap === 'number'
-      ? params.entryFeatures.first_mcap
-      : typeof params.entryFeatures.entry_mcap === 'number'
-        ? params.entryFeatures.entry_mcap
-        : null
-  const exitMcap = params.exitMcap ?? null
-
-  // ponytail: signals strategies exit on mcap milestones — price PnL on rugged tokens lied (0% WR)
-  let pnlPct: number
-  if (firstMcap != null && firstMcap > 0 && exitMcap != null && exitMcap > 0) {
-    pnlPct = computeMcapSimPnlPct(firstMcap, exitMcap)
-  } else {
-    pnlPct =
-      cycle.totalSolBought > 0
-        ? ((solReceived - cycle.totalSolBought) / cycle.totalSolBought) * 100
-        : 0
-  }
-
-  const record = buildTradingRecord({
-    walletAddress: simWallet,
-    chain: params.chain,
-    operationType: 'sell',
-    is_simulation: true,
-    simulation_type: 'strategy',
-    bot_strategy: params.strategyId,
-    close_position: true,
-    tokens: [
-      {
-        mintAddress: params.mintAddress,
-        symbol: params.symbol,
-        tokenAmount: remaining,
-        solAmount: solReceived,
-        priceUsd: sellPriceUsd,
-        solPrice,
-      },
-    ],
-    successCount: 1,
-    failureCount: 0,
-    totalTokens: 1,
-    solAmount: solReceived,
-    feesPaid: 0,
-    solPriceUsd: solPrice,
-    signatures: [`signals-sim-close-${Date.now()}`],
-    status: closeOutcomeStatusFromPnl(pnlPct),
-  })
-
-  params.collect(record)
-
-  const buyRecord = [...records]
-    .reverse()
-    .find(
-      (rec) =>
-        rec.operationType === 'buy' &&
-        rec.bot_strategy === params.strategyId &&
-        rec.tokens?.some((t) => t.mintAddress === params.mintAddress),
-    )
-  const buyFeaturesRaw =
-    buyRecord?.trading_simulation &&
-    typeof buyRecord.trading_simulation === 'object' &&
-    buyRecord.trading_simulation.entry_features &&
-    typeof buyRecord.trading_simulation.entry_features === 'object'
-      ? (buyRecord.trading_simulation.entry_features as Record<string, unknown>)
-      : params.entryFeatures
-
-  const firstSeenAt =
-    typeof buyFeaturesRaw.first_seen_at === 'string'
-      ? buyFeaturesRaw.first_seen_at
-      : null
-  const entryMcapHint =
-    typeof buyFeaturesRaw.entry_mcap === 'number'
-      ? buyFeaturesRaw.entry_mcap
-      : typeof buyFeaturesRaw.first_mcap === 'number'
-        ? buyFeaturesRaw.first_mcap
-        : firstMcap
-
-  const buyFeatures =
-    (await ensureCompleteBuyFeaturesForOutcome({
-      mintAddress: params.mintAddress,
-      buyFeatures: buyFeaturesRaw,
-      domain: 'signals',
-      overrides: {
-        entryAt: params.entryAt,
-        firstSeenAt,
-        entryMcap: entryMcapHint,
-        tokenSymbol: params.symbol,
-      },
-    })) ?? buyFeaturesRaw
-
-  await recordSignalsOutcome({
-    strategyId: params.strategyId,
-    chain: params.chain,
-    tokenAddress: params.mintAddress,
-    entryAt: params.entryAt,
-    exitAt: new Date().toISOString(),
-    pnlPct,
-    status: closeOutcomeStatusFromPnl(pnlPct),
-    isSimulated: true,
-    features: mergeEntryFeaturesForOutcome(buyFeatures, {
-      ...params.entryFeatures,
-      token_symbol: params.symbol,
-      exit_price_usd: sellPriceUsd,
-      exit_mcap: exitMcap,
-      mcap_growth_at_exit: params.exitGrowthPercent ?? null,
-      pnl_basis: firstMcap != null && exitMcap != null ? 'mcap' : 'price',
-      initial_price_usd:
-        typeof buyFeatures.initial_price_usd === 'number'
-          ? buyFeatures.initial_price_usd
-          : cycle.weightedBuyPriceUsd,
-      sol_spent: cycle.totalSolBought,
-      sol_received: solReceived,
-    }),
-  })
-
-  return pnlPct
-}
-
 export async function POST(request: NextRequest) {
   const key = request.nextUrl.searchParams.get('key')
   if (!isAuthorizedRequest(key, getSimTrackSecret())) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
   }
   const { withJobLock } = await import('@/utils/bot-job-lock')
-  return withJobLock('signals_sim_track', 300, () => runSimTrack(request))
+  return withJobLock('signals_sim_track', 900, () => runSimTrack(request))
 }
 
 async function runSimTrack(request: NextRequest) {
@@ -258,15 +114,6 @@ async function runSimTrack(request: NextRequest) {
       const scored = await scoreSignalsForStrategy(strategy, { chain })
       const scoredByMint = new Map(scored.map((s) => [s.token_address, s]))
 
-      // Batch once for cl price-PnL fallback when entry/live mcap missing.
-      const openPrices =
-        openPositions.length > 0
-          ? await getOpenPositionPrices(
-              openPositions.map((p) => p.mintAddress),
-              chain,
-            )
-          : ({} as Record<string, number>)
-
       for (const pos of openPositions) {
         await appendSimPositionMonitorSnapshot({
           records,
@@ -286,63 +133,10 @@ async function runSimTrack(request: NextRequest) {
           symbol: pos.symbol,
         })
 
-        const signal = scoredByMint.get(pos.mintAddress)
-        const decision = signal?.decision ?? 'hold'
-        if (decision === 'exit') {
-          await closeSimPosition({
-            strategyId: strategy.id,
-            chain,
-            mintAddress: pos.mintAddress,
-            symbol: signal?.token_symbol || pos.symbol,
-            entryAt: pos.entryAt,
-            entryFeatures: pos.entryFeatures,
-            exitMcap: signal?.current_mcap ?? null,
-            exitGrowthPercent: signal?.mcap_growth_percent ?? null,
-            collect,
-          })
-          closed++
-          openMintSet.delete(pos.mintAddress)
-          continue
-        }
-
-        // Stage 5a: OR stamped cl TP/SL / maxHold when score says hold.
-        if (!pos.effectiveExit) continue
-        const entryMcap =
-          typeof pos.entryFeatures.entry_mcap === 'number'
-            ? pos.entryFeatures.entry_mcap
-            : typeof pos.entryFeatures.first_mcap === 'number'
-              ? pos.entryFeatures.first_mcap
-              : null
-        const currentMcap =
-          typeof signal?.current_mcap === 'number' ? signal.current_mcap : null
-        const clClose = shouldCloseSignalsClExit({
-          exit: pos.effectiveExit,
-          entryAt: pos.entryAt,
-          entryMcap,
-          currentMcap,
-          entryPriceUsd: pos.entryPriceUsd,
-          currentPriceUsd: openPrices[pos.mintAddress] ?? null,
-        })
-        if (!clClose.close) continue
-        await closeSimPosition({
-          strategyId: strategy.id,
-          chain,
-          mintAddress: pos.mintAddress,
-          symbol: signal?.token_symbol || pos.symbol,
-          entryAt: pos.entryAt,
-          entryFeatures: pos.entryFeatures,
-          exitMcap: currentMcap,
-          exitGrowthPercent:
-            entryMcap != null &&
-            entryMcap > 0 &&
-            currentMcap != null &&
-            currentMcap > 0
-              ? (clClose.pnlPct ?? null)
-              : null,
-          collect,
-        })
-        closed++
-        openMintSet.delete(pos.mintAddress)
+        // The 60s SL/TP worker owns this position's exit (SPEC-strategy-exit-standard S9). This
+        // pass monitors and opens only. Both closers that used to run here — the score's `exit`
+        // decision and the stamped cl TP/SL — are gone, so the worker is the single evaluator and
+        // the route cannot take a second opinion on a position it also opened.
       }
 
       // REL-20: flush close-phase writes before re-fetching records
@@ -529,6 +323,7 @@ async function runSimTrack(request: NextRequest) {
           symbol,
           solAmount: simSol,
           priceUsd: spine.priceUsd,
+          entryPriceImpactedUsd: spine.priceUsd,
           entryFeatures: stampBrainRisk(overlayResult.features, brainRisk, {
             sizedSol: simSol,
           }),

@@ -72,6 +72,7 @@ describe('GET /api/strategies/combined-score', () => {
       address: MINT,
       chain: 'sol',
       hours: 24,
+      window: 'fixed',
     })
   })
 

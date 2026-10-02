@@ -1,12 +1,32 @@
-import { describe, expect, it } from 'vitest'
-import { softMlSize, stampMlSize } from './ml-soft-size'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { resolveMlSizeEnabled, softMlSize, stampMlSize } from './ml-soft-size'
+
+afterEach(() => {
+  vi.unstubAllEnvs()
+})
 
 describe('softMlSize', () => {
-  it('passes through when pBad is missing', () => {
+  it('is flat by default — the multiplier does not size (P1, 2026-10-01)', () => {
+    expect(resolveMlSizeEnabled({})).toBe(false)
+    // Whatever pBad is: the score was measured to have no rank power within or across strategies,
+    // so it is out of the size path entirely.
+    expect(softMlSize(0.04, { pBad: 0.5 })).toEqual({ sol: 0.04, mult: 1 })
     expect(softMlSize(0.04, { pBad: null })).toEqual({ sol: 0.04, mult: 1 })
+    // The fail-soft inversion — a missing model earning the *largest* multiplier in the band — dies
+    // with it, which is what made P2 (the guard) redundant once P1 shipped.
+    expect(softMlSize(0.04, { pBad: 0 })).toEqual({ sol: 0.04, mult: 1 })
   })
 
-  it('scales by (1-pBad) × confidence and never goes below the floor', () => {
+  it('leaves a non-positive base alone rather than minting a stake', () => {
+    expect(softMlSize(0, { pBad: 0.5 })).toEqual({ sol: 0, mult: 1 })
+    expect(softMlSize(Number.NaN, { pBad: 0.5 })).toEqual({ sol: 0, mult: 1 })
+  })
+
+  it('keeps the legacy scaling reachable behind SOL_ML_SIZE_ENABLED for a soak', () => {
+    vi.stubEnv('SOL_ML_SIZE_ENABLED', '1')
+    expect(resolveMlSizeEnabled()).toBe(true)
+
+    expect(softMlSize(0.04, { pBad: null })).toEqual({ sol: 0.04, mult: 1 })
     const half = softMlSize(1, { pBad: 0.5 })
     expect(half.mult).toBe(0.5)
     expect(half.sol).toBe(0.5)

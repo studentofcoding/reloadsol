@@ -47,7 +47,10 @@ import GmgnChartEmbed from "@/components/signals/shared/GmgnChartEmbed";
 import DlmmChartActions from "@/components/dlmm/DlmmChartActions";
 import GlobalWatchlistButton from "@/components/GlobalWatchlistButton";
 import { useRugList } from "@/hooks/useRugList";
+import { TrackerSocialLinks } from "@/components/signals/TrackerSocialLinks";
+import { useTokenPresence } from "@/hooks/useTokenPresence";
 import { parseAddresses } from "@/components/signals/shared/parseAddresses";
+import { TRACKER_AUTO_PRIORITY_FEE } from '@/utils/tracker-market-swap'
 
 type SectionType = "watching" | "rising" | "rugged" | "mcap_tracker";
 
@@ -262,6 +265,7 @@ const ChartItem = React.memo(
     onMove,
     showMoveButtons,
     isMcapSource,
+    social,
   }: any) => {
     const { network } = useAppNetwork();
     return (
@@ -297,6 +301,8 @@ const ChartItem = React.memo(
               </a>
             </div>
           </div>
+
+          <TrackerSocialLinks social={social} />
 
           <div className="relative h-[200px] w-full bg-black">
             <GmgnChartEmbed
@@ -932,7 +938,7 @@ function ChartsContent() {
         outputMint: TOKENS.SOL,
         amount: balanceRaw,
         slippageBps: 200,
-        priorityFeeLamports: 30000,
+        priorityFeeLamports: TRACKER_AUTO_PRIORITY_FEE,
         connection,
         signTransaction: async (tx) => {
           const [signed] = await signAllTransactions!([tx]);
@@ -1278,6 +1284,10 @@ function ChartsContent() {
     [columns, rugAddressSet],
   );
 
+  // Web/social presence for every mint on the board (live-only, self-nulls).
+  const boardPresenceMints = useMemo(() => Object.values(columns).flat(), [columns]);
+  const { presenceFor } = useTokenPresence(boardPresenceMints);
+
   const renderCard = useCallback(
     (addr: string) => {
       const signal = signals[addr];
@@ -1304,12 +1314,14 @@ function ChartsContent() {
             columns.mcap_tracker.includes(addr)
           }
           isMcapSource={isMcapSource}
+          social={presenceFor(addr)}
         />
       );
     },
     [
       signals,
       symbols,
+      presenceFor,
       interval,
       isDraggingGlobal,
       buyStates,

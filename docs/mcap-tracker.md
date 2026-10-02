@@ -18,6 +18,11 @@
   - Calls `GET /api/mcap-tracking?action=list` with filters, pagination, and a PnL range (`minPnl`, `maxPnl`).
   - Refreshes every ~30s to keep stats and tokens current.
   - Displays any server-provided toasts via `pushToasts`.
+  - **Server-side cache:** the list payload is cached per query string for **60 s** and kept 24 h. An
+    expired entry is served **stale** while a detached, single-flight refresh recomputes it, so a
+    request never waits on the stats pass (which walks every tracked token). `X-Mcap-Cache` reports
+    `fresh` / `stale` / `miss` / `refresh`. Toasts ride along with the cached body, so the client-side
+    dedupe above still does the spam control.
 
 - **UI Components:**
   - **DailyRankingVisualization:** Displays daily performance rankings including "Top Gainers", "Highest Market Cap", and "Top Multipliers (>100%)". It supports filtering by date (Today, Yesterday, etc.) and provides a breakdown of gainers vs losers.
@@ -78,6 +83,7 @@
 ## Data Model (Postgres — `token_mcap_tracking`)
 
 - Core fields: `token_address`, `token_symbol`, `first_mcap`, `current_mcap`, `mcap_growth_percent`, `first_seen_at`, `last_updated_at`.
+- `first_seen_at` is mutable (`normalizeTrackingTimeline` repairs it; `resetTrackingSession` rewrites it). It is not the immutable Token Info detect clock. That clock is specified in [SPEC-token-info-universal-ledger-v1.md](./specs/SPEC-token-info-universal-ledger-v1.md).
 - Milestones: `when_reach_80pct`, `when_reach_120pct`, `when_reach_200pct`.
 - Status: `is_tracking_stuck` and inferred finished state (via API based on `MAX_TRACKING_AGE_MS`).
 

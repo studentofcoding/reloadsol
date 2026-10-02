@@ -1,13 +1,15 @@
 import { query, queryOne } from '@/utils/db'
 import {
   getCachedTokenOhlc24h1m,
+  loadOwn1mBars,
   tokenOhlcToRugBars,
 } from '@/strategies/token-map-chart'
 import {
   evaluateOhlcRugRules,
   OHLC_RUG_MAX_BARS,
   ohlcRugHitReasons,
-  takeLastOhlcBars,
+  resolveOhlcRugMaxBarAgeSec,
+  resolveOhlcRugWindow,
   type OhlcRugBar,
   type OhlcRugEval,
 } from '@/strategies/ohlc-rug-rules'
@@ -18,7 +20,7 @@ CREATE TABLE IF NOT EXISTS token_detect_snapshots (
   token_address TEXT NOT NULL,
   detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   source TEXT NOT NULL
-    CHECK (source IN ('concentration', 'freeview')),
+    CHECK (source IN ('concentration', 'freeview', 'social')),
   ohlc_interval TEXT NOT NULL DEFAULT '1m'
     CHECK (ohlc_interval IN ('1m', '5m', '15m', '1h')),
   bars JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -38,6 +40,11 @@ DO $$ BEGIN
     CHECK (rug_label IN ('system', 'rug', 'potential'));
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
+ALTER TABLE token_detect_snapshots
+  DROP CONSTRAINT IF EXISTS token_detect_snapshots_source_check;
+ALTER TABLE token_detect_snapshots
+  ADD CONSTRAINT token_detect_snapshots_source_check
+  CHECK (source IN ('concentration', 'freeview', 'social'));
 `
 
 let ensurePromise: Promise<void> | null = null
@@ -54,7 +61,7 @@ export async function ensureDetectSnapshotsTable(): Promise<void> {
   await ensurePromise
 }
 
-export type DetectSnapshotSource = 'concentration' | 'freeview'
+export type DetectSnapshotSource = 'concentration' | 'freeview' | 'social'
 export type DetectRugLabel = 'system' | 'rug' | 'potential'
 
 export type DetectSnapshotRow = {
@@ -70,14 +77,35 @@ export type DetectSnapshotRow = {
   updated_at: string
 }
 
-/** Last N 1m bars from the shared 24h cache (brain GET /ohlc when flag on). */
+/**
+ * Last N 1m bars from the shared 24h cache (brain GET /ohlc when flag on).
+ * Freeview passes `fallbackOwn1m` so an empty cache still reads `token_ohlc_bars`.
+ * Entry shadow leaves the flag off and stays on the canonical series.
+ *
+ * Recency: bars whose newest candle is older than `maxAgeSec` (default
+ * `OHLC_RUG_MAX_BAR_AGE_SEC`, 180s; 0 disables) vs `nowSec` are not current, so
+ * the result is `{ bars: [], source: 'stale' }` rather than a dead chart scored live.
+ */
 export async function fetchLastOhlcRugBars(
   tokenAddress: string,
   n = OHLC_RUG_MAX_BARS,
+  opts?: { fallbackOwn1m?: boolean; nowSec?: number; maxAgeSec?: number },
 ): Promise<{ bars: OhlcRugBar[]; source: string }> {
-  const { candles, source } = await getCachedTokenOhlc24h1m(tokenAddress)
-  const mapped = tokenOhlcToRugBars(candles)
-  return { bars: takeLastOhlcBars(mapped, n), source }
+  const fallbackOwn1m = opts?.fallbackOwn1m === true
+  const maxAgeSec = opts?.maxAgeSec ?? resolveOhlcRugMaxBarAgeSec()
+  const [cached, ownCandles] = await Promise.all([
+    getCachedTokenOhlc24h1m(tokenAddress),
+    fallbackOwn1m ? loadOwn1mBars(tokenAddress) : Promise.resolve([]),
+  ])
+  return resolveOhlcRugWindow({
+    cached: tokenOhlcToRugBars(cached.candles),
+    cachedSource: cached.source,
+    own: tokenOhlcToRugBars(ownCandles),
+    n,
+    fallbackOwn1m,
+    nowSec: opts?.nowSec,
+    maxAgeSec,
+  })
 }
 
 export async function insertDetectSnapshot(params: {
@@ -115,7 +143,11 @@ export async function captureDetectSnapshot(params: {
   evalResult: OhlcRugEval
   reasons: string[]
 }> {
-  const { bars } = await fetchLastOhlcRugBars(params.tokenAddress)
+  // Own-1m fills an empty canonical series (same as Freeview), so a detect-time snapshot of a
+  // mint the 24h cache has not seen still has bars to evaluate.
+  const { bars } = await fetchLastOhlcRugBars(params.tokenAddress, OHLC_RUG_MAX_BARS, {
+    fallbackOwn1m: true,
+  })
   const evalResult = evaluateOhlcRugRules(bars)
   const snapshotId = await insertDetectSnapshot({
     tokenAddress: params.tokenAddress,

@@ -7,6 +7,12 @@ import { useQuery } from '@tanstack/react-query'
 export type GmgnSnapshotWithBan = GmgnTokenSnapshot & {
   concentrationBanned?: boolean
   concentrationReasons?: string[]
+  riskChip?: {
+    text: string
+    tone: 'red' | 'amber' | 'emerald' | 'gray'
+    mode: 'shadow' | 'enforce'
+    reasons: string[]
+  } | null
 }
 
 type SnapshotResponse = GmgnSnapshotWithBan & {
@@ -35,6 +41,13 @@ function pctTone(n: number | null | undefined, safeBelow = 20): string {
 function authTone(active: boolean | null | undefined): string {
   if (active == null) return 'text-gray-300'
   return active ? 'text-amber-300' : 'text-emerald-400'
+}
+
+function riskToneClass(tone: 'red' | 'amber' | 'emerald' | 'gray'): string {
+  if (tone === 'red') return 'border-red-500/40 bg-red-950/40 text-red-200'
+  if (tone === 'amber') return 'border-amber-500/40 bg-amber-950/40 text-amber-200'
+  if (tone === 'emerald') return 'border-emerald-500/40 bg-emerald-950/40 text-emerald-200'
+  return 'border-gray-700 bg-gray-900/60 text-gray-300'
 }
 
 type Tile = {
@@ -208,38 +221,51 @@ export default function GmgnTokenStatsGrid({
   }
 
   const tiles = tilesFrom(query.data)
+  const chip = query.data.riskChip
 
   return (
-    <div
-      className={
-        isRail
-          ? 'grid grid-cols-1 gap-1 max-h-[320px] overflow-y-auto'
-          : 'grid grid-cols-3 gap-2'
-      }
-    >
-      {tiles.map((tile) => (
+    <div className="space-y-1.5">
+      {chip ? (
         <div
-          key={tile.key}
-          className={`rounded-lg border border-gray-700 bg-gray-950/80 ${
-            isRail ? 'px-1.5 py-1' : 'px-2.5 py-2'
-          }`}
+          className={`rounded-lg border px-2 py-1 font-semibold ${
+            isRail ? 'text-[11px] leading-tight' : 'text-xs'
+          } ${riskToneClass(chip.tone)}`}
+          title={chip.reasons.join('; ')}
         >
-          <p
-            className={`font-semibold leading-tight ${tile.valueClass} ${
-              isRail ? 'text-xs' : 'text-sm'
-            }`}
-          >
-            <TileValue tile={tile} />
-          </p>
-          <p
-            className={`text-gray-500 underline decoration-dashed decoration-gray-600 underline-offset-2 ${
-              isRail ? 'mt-0.5 text-[11px] leading-tight' : 'mt-1 text-xs'
-            }`}
-          >
-            {tile.label}
-          </p>
+          Risk · {chip.text}
         </div>
-      ))}
+      ) : null}
+      <div
+        className={
+          isRail
+            ? 'grid grid-cols-1 gap-1 max-h-[320px] overflow-y-auto'
+            : 'grid grid-cols-3 gap-2'
+        }
+      >
+        {tiles.map((tile) => (
+          <div
+            key={tile.key}
+            className={`rounded-lg border border-gray-700 bg-gray-950/80 ${
+              isRail ? 'px-1.5 py-1' : 'px-2.5 py-2'
+            }`}
+          >
+            <p
+              className={`font-semibold leading-tight ${tile.valueClass} ${
+                isRail ? 'text-xs' : 'text-sm'
+              }`}
+            >
+              <TileValue tile={tile} />
+            </p>
+            <p
+              className={`text-gray-500 underline decoration-dashed decoration-gray-600 underline-offset-2 ${
+                isRail ? 'mt-0.5 text-[11px] leading-tight' : 'mt-1 text-xs'
+              }`}
+            >
+              {tile.label}
+            </p>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

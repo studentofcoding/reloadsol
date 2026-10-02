@@ -7,7 +7,9 @@ export function sellAmountRaw(amount: number): string {
 
 export function sellQuoteAllFailedBanner(successCount: number): string | null {
   if (successCount === 0) {
-    return 'Failed to get quotes from Raptor. Please try again.'
+    // The desk path quotes Jupiter Swap V2 (Lite only if V2 fails) — Raptor is arbitrage-only, so
+  // naming it here misattributed every failure.
+  return 'Failed to get swap quotes. Please try again.'
   }
   return null
 }

@@ -3,6 +3,14 @@ import type { GmgnStrategy } from '@/strategies/types'
 import { getNativeUsd } from '@/utils/native-usd'
 import { simWalletForChain } from '@/strategies/sim-wallets'
 import { buildTradingRecord, insertTradingRecord } from '@/utils/trading-records-db'
+import {
+  applyBrainRiskToExit,
+  createBrainRiskSession,
+  resolveSimOpenSize,
+  stampBrainRisk,
+  type BrainRiskSession,
+} from '@/utils/brain-regime-risk'
+import { registerSimExitContract } from './sim-exit-contract'
 
 export const GMGN_SIM_WALLET =
   process.env.GMGN_SIM_WALLET_ADDRESS || 'gmgn-sim'
@@ -28,6 +36,8 @@ export async function openGmgnSimPosition(params: {
   symbol: string
   entryFeatures: Record<string, unknown>
   entryPriceUsd: number
+  /** Created once per sim cycle so the recipe/params fetch is shared across candidates. */
+  brainRiskSession?: BrainRiskSession
 }): Promise<boolean> {
   const chain = params.strategy.chain ?? 'sol'
   // solAmount / solPrice are native-token denominated; that's ETH on robinhood.
@@ -35,6 +45,28 @@ export async function openGmgnSimPosition(params: {
     params.strategy.config.execution.simBuyNative ??
     params.strategy.config.execution.simBuySol
   const solPrice = await getNativeUsd(chain)
+
+  // Level 1 market scalar, on the same path as mcap/signals/trending. Resolved before the spine so
+  // a stand-down skips the open entirely rather than recording a zero-size position.
+  const session = params.brainRiskSession ?? createBrainRiskSession()
+  const sized = await resolveSimOpenSize({
+    session,
+    strategyId: params.strategy.id,
+    baseSol,
+  })
+  if (sized.skip) {
+    const { appendSpineDecision, spineSkipDecision } = await import('@/strategies/spine-tick-log')
+    await appendSpineDecision(
+      spineSkipDecision(
+        'gmgn_sim_track',
+        params.mintAddress,
+        'size',
+        sized.risk.standDown ? 'brain_risk_stand_down' : 'brain_risk_zero_size',
+        params.symbol,
+      ),
+    )
+    return false
+  }
 
   const entryAt = new Date().toISOString()
   const entryMcap = readFiniteNumber(params.entryFeatures.gmgn_market_cap_usd)
@@ -65,8 +97,11 @@ export async function openGmgnSimPosition(params: {
     chain,
     features: fullFeatures,
     priceUsd: params.entryPriceUsd > 0 ? params.entryPriceUsd : null,
-    baseSol,
-    baseExit: params.strategy.config.exit,
+    baseSol: sized.sol,
+    // The brain's TP/SL/hold override, as signals and trending already do. Without it this family
+    // stamped `brain_stop_loss_pct` on every row while opening against the raw strategy exit — a
+    // risk control recorded as though it were in effect.
+    baseExit: applyBrainRiskToExit(params.strategy.config.exit, sized.risk),
     entryMcap,
   })
   if (!spine.ok) {
@@ -83,12 +118,15 @@ export async function openGmgnSimPosition(params: {
   }
   const solAmount = spine.solAmount
   const priceUsd = spine.priceUsd
-  const stampedFeatures = spine.features
+  // Stamp the applied scalar so a row is auditable on its own, and so a later re-tune can tell
+  // whether the risk layer was in the path at all.
+  const stampedFeatures = stampBrainRisk(spine.features, sized.risk, { sizedSol: solAmount })
   const tokenAmount =
     priceUsd > 0 && solPrice > 0 ? (solAmount * solPrice) / priceUsd : solAmount * 1_000_000
 
+  const walletAddress = simWalletForChain(GMGN_SIM_WALLET, chain)
   const record = buildTradingRecord({
-    walletAddress: simWalletForChain(GMGN_SIM_WALLET, chain),
+    walletAddress,
     chain,
     operationType: 'buy',
     is_simulation: true,
@@ -126,6 +164,20 @@ export async function openGmgnSimPosition(params: {
   })
 
   await insertTradingRecord(record)
+
+  // The exit contract (S8/S10). Without this the position is invisible to the worker, and its
+  // exit is decided only by whatever closer this family happens to run.
+  await registerSimExitContract({
+    chain,
+    walletAddress,
+    strategyId: params.strategy.id,
+    mintAddress: params.mintAddress,
+    symbol: params.symbol,
+    positionSize: solAmount,
+    entryPriceUsd: spine.priceUsd,
+    basis: spine.exitBasis,
+    thresholds: spine.effectiveExit,
+  })
 
   const { notifyStrategyOpen } = await import('@/strategies/strategy-telegram-notify')
   notifyStrategyOpen({

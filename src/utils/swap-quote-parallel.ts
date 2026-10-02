@@ -28,15 +28,33 @@ export type ParallelQuoteParams = {
   direct?: boolean;
 };
 
+export type QuoteFailure = { provider: SwapQuoteProvider; rateLimited: boolean }
+
+/**
+ * Classify a provider failure. A 429 is a **rate limit**, not a missing route — reading one as the other is
+ * how a throttled lane becomes "no route exists" and the caller quietly gives up on a pair that is fine.
+ */
+function isRateLimitFailure(error: unknown, message: string): boolean {
+  const status = (error as { status?: unknown } | null)?.status
+  if (status === 429) return true
+  return /429|rate limit|too many requests/i.test(message)
+}
+
 async function settleProvider<T>(
   provider: SwapQuoteProvider,
   fn: () => Promise<T>,
+  onFailure?: (failure: QuoteFailure) => void,
 ): Promise<T | null> {
   try {
     return await fn();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.warn(`[swap-quote] ${provider} failed:`, message);
+    const rateLimited = isRateLimitFailure(error, message);
+    console.warn(
+      `[swap-quote] ${provider} failed${rateLimited ? " (rate limited)" : ""}:`,
+      message,
+    );
+    onFailure?.({ provider, rateLimited });
     return null;
   }
 }
@@ -75,35 +93,48 @@ function jupiterOrderParams(params: ParallelQuoteParams, amount: string): Jupite
 /**
  * Desk quote: one Jupiter Swap V2 `/order` (no taker).
  * Lite runs only after V2 fails. Raptor is not queried.
+ *
+ * **Sequential, despite the filename.** Each provider is awaited and the first success short-circuits, so
+ * this can only ever return a single candidate — `pickBestSwapQuote` accepts a list and orders by
+ * `outAmount`, but has never been handed more than one. The name is historical. A real fan-out was
+ * measured and rejected: +5.0 bps mean / **0 median** for 2.59× the swap time (SPEC-swap-provider-routing-v1
+ * §2.8). Do not "fix" this into parallel quoting without re-reading that measurement.
  */
 export async function collectSwapQuoteCandidates(
   params: ParallelQuoteParams,
+  onFailure?: (failure: QuoteFailure) => void,
 ): Promise<SwapQuoteCandidate[]> {
   const useDirect = params.direct ?? typeof window === "undefined";
   const amount = String(params.amount);
   const orderParams = jupiterOrderParams(params, amount);
 
-  const swap = await settleProvider("jupiter_swap", () =>
-    useDirect
-      ? fetchJupiterSwapQuoteDirect(orderParams)
-      : fetchJupiterSwapQuote(orderParams),
+  const swap = await settleProvider(
+    "jupiter_swap",
+    () =>
+      useDirect
+        ? fetchJupiterSwapQuoteDirect(orderParams)
+        : fetchJupiterSwapQuote(orderParams),
+    onFailure,
   );
   if (swap) return [candidateFromSwap(swap)];
 
-  const lite = await settleProvider("jupiter_lite", () =>
-    useDirect
-      ? fetchJupiterLiteQuoteDirect(
-          params.inputMint,
-          params.outputMint,
-          amount,
-          params.slippageBps,
-        )
-      : fetchJupiterLiteQuote(
-          params.inputMint,
-          params.outputMint,
-          amount,
-          params.slippageBps,
-        ),
+  const lite = await settleProvider(
+    "jupiter_lite",
+    () =>
+      useDirect
+        ? fetchJupiterLiteQuoteDirect(
+            params.inputMint,
+            params.outputMint,
+            amount,
+            params.slippageBps,
+          )
+        : fetchJupiterLiteQuote(
+            params.inputMint,
+            params.outputMint,
+            amount,
+            params.slippageBps,
+          ),
+    onFailure,
   );
   return lite ? [candidateFromLite(lite)] : [];
 }
@@ -111,8 +142,9 @@ export async function collectSwapQuoteCandidates(
 export async function pickParallelSwapQuote(
   params: ParallelQuoteParams,
   maxImpactPct: number = getSwapQuoteMaxImpactPct(),
+  onFailure?: (failure: QuoteFailure) => void,
 ): Promise<SwapQuoteCandidate | null> {
-  const candidates = await collectSwapQuoteCandidates(params);
+  const candidates = await collectSwapQuoteCandidates(params, onFailure);
   const gatedOut = candidates.filter((c) => !passesImpactGate(c.impactPct, maxImpactPct));
   for (const c of gatedOut) {
     console.warn(

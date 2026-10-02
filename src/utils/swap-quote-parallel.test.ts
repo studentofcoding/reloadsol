@@ -35,7 +35,7 @@ vi.mock("@/utils/jupiter-swap-quote", async (importOriginal) => {
 import { fetchRaptorQuoteDirect } from "@/utils/solanatracker-raptor";
 import { fetchJupiterLiteQuoteDirect } from "@/utils/jupiter-lite-swap";
 import { fetchJupiterSwapQuoteDirect } from "@/utils/jupiter-swap-quote";
-import { pickParallelSwapQuote } from "@/utils/swap-quote-parallel";
+import { pickParallelSwapQuote, type QuoteFailure } from "@/utils/swap-quote-parallel";
 import { fetchSwapQuote } from "@/utils/swap-executor";
 
 const SOL = "So11111111111111111111111111111111111111112";
@@ -139,5 +139,55 @@ describe("pickParallelSwapQuote / fetchSwapQuote", () => {
     expect(await pickParallelSwapQuote(PARAMS)).toBeNull();
     expect(await fetchSwapQuote(SOL, TOKEN, 1_000_000_000, 200, true)).toBeNull();
     expect(fetchRaptorQuoteDirect).not.toHaveBeenCalled();
+  });
+});
+
+describe("rate-limit legibility (T6)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("reports a 429 as a rate limit rather than a missing route", async () => {
+    vi.mocked(fetchJupiterSwapQuoteDirect).mockRejectedValue(
+      new JupiterSwapQuoteError("Jupiter quote rate limited", 429),
+    );
+    vi.mocked(fetchJupiterLiteQuoteDirect).mockRejectedValue(
+      new JupiterLiteError("Lite rate limited", 429),
+    );
+
+    const failures: QuoteFailure[] = [];
+    const winner = await pickParallelSwapQuote(PARAMS, undefined, (f) =>
+      failures.push(f),
+    );
+
+    expect(winner).toBeNull();
+    expect(failures.map((f) => f.provider)).toEqual(["jupiter_swap", "jupiter_lite"]);
+    // Every failure was a throttle — so the caller can say "rate limited", not "no route exists".
+    expect(failures.every((f) => f.rateLimited)).toBe(true);
+  });
+
+  it("does not mistake a transport failure for a rate limit", async () => {
+    vi.mocked(fetchJupiterSwapQuoteDirect).mockRejectedValue(new Error("ECONNRESET"));
+    vi.mocked(fetchJupiterLiteQuoteDirect).mockRejectedValue(new Error("ECONNRESET"));
+
+    const failures: QuoteFailure[] = [];
+    await pickParallelSwapQuote(PARAMS, undefined, (f) => failures.push(f));
+
+    expect(failures).toHaveLength(2);
+    expect(failures.every((f) => f.rateLimited)).toBe(false);
+  });
+
+  it("reports no failure when a lane answers", async () => {
+    vi.mocked(fetchJupiterSwapQuoteDirect).mockResolvedValue(
+      swapDisplay("1000000", 0.01) as never,
+    );
+
+    const failures: QuoteFailure[] = [];
+    const winner = await pickParallelSwapQuote(PARAMS, undefined, (f) =>
+      failures.push(f),
+    );
+
+    expect(winner?.provider).toBe("jupiter_swap");
+    expect(failures).toHaveLength(0);
   });
 });

@@ -1,7 +1,9 @@
 import type { StrategyDomain } from './types'
 import { computeTokenAgeHours } from './entry-feature-snapshot'
+import { FEATURE_SCHEMA_VERSION } from './feature-registry'
 
-export const FEATURE_SCHEMA_VERSION = 1 as const
+// Declared once in the feature registry; re-exported here so importers are unchanged.
+export { FEATURE_SCHEMA_VERSION }
 
 export type InstrumentKind = 'spot_token' | 'dlmm_lp'
 
@@ -53,6 +55,24 @@ function readBool(features: Record<string, unknown>, key: string): boolean | nul
   return null
 }
 
+/**
+ * OHLC rug-shadow output. Kept top-level (not folded into `domain_features`) so
+ * the entry gate's candle read is queryable and visible to consumers.
+ */
+const OHLC_FEATURE_KEYS = [
+  'ohlc_rug_shadow_at',
+  'ohlc_rug_trip',
+  'ohlc_rug_would_reject',
+  'ohlc_rug_n',
+  'ohlc_rug_dump_pct',
+  'ohlc_rug_avg_upper_wick',
+  'ohlc_rug_vol_death',
+  'ohlc_rug_up_only_count',
+  'ohlc_rug_hits',
+  'ohlc_rug_skipped',
+  'ohlc_source',
+] as const
+
 const CORE_KEYS = new Set([
   'feature_schema_version',
   'mint_address',
@@ -84,6 +104,7 @@ const CORE_KEYS = new Set([
   'position_id',
   'amount_sol',
   'first_seen_at',
+  ...OHLC_FEATURE_KEYS,
 ])
 
 /**
@@ -176,8 +197,14 @@ export function toCanonicalEntryFeatures(
     if (k.startsWith('ml_')) mlTop[k] = v
   }
 
+  const ohlcTop: Record<string, unknown> = {}
+  for (const k of OHLC_FEATURE_KEYS) {
+    if (features[k] !== undefined) ohlcTop[k] = features[k]
+  }
+
   return {
     ...mlTop,
+    ...ohlcTop,
     feature_schema_version: FEATURE_SCHEMA_VERSION,
     mint_address: mint,
     pool_address: pool,
@@ -194,6 +221,15 @@ export function toCanonicalEntryFeatures(
     entry_template: readStr(features, 'entry_template') ?? entryTrigger,
     pnl_basis: readStr(features, 'pnl_basis'),
     first_seen_at: readStr(features, 'first_seen_at'),
+    // CORE_KEYS above are "handled explicitly", but these five were listed there
+    // and then never emitted, so they were silently dropped (the dlmm outcome
+    // dedupe keys on position_id, so every manage cycle re-inserted the same
+    // closed position).
+    pool_name: readStr(features, 'pool_name'),
+    position_id: readStr(features, 'position_id'),
+    amount_sol: readNum(features, 'amount_sol'),
+    pool_volume: readNum(features, 'pool_volume'),
+    fee_tvl_ratio_24h: readNum(features, 'fee_tvl_ratio_24h'),
     // Dual-write social aliases for gate + pattern extractors
     mention_count_30m: mentionCount,
     telegram_mention_count_30m: mentionCount,

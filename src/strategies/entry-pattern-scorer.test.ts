@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  patternRuntimeStatus,
   resolvePatternDecisionThreshold,
   scoreClosedLoopLogistic,
   scorePatternBinary,
@@ -33,5 +34,73 @@ describe('scorePatternBinary', () => {
         metrics: { decision_threshold: 0.35 },
       }),
     ).toBe(0.35)
+  })
+})
+
+describe('patternRuntimeStatus', () => {
+  it('reports a loaded but not-yet-ready model as loaded (regression)', () => {
+    const status = patternRuntimeStatus({
+      meta: { feature_columns: ['a'], metrics: { pattern_ready: false } },
+      loadError: null,
+      modelVersion: 'pattern-gate',
+    })
+    expect(status.runtime_loaded).toBe(true)
+    expect(status.pattern_ready).toBe(false)
+    expect(status.model_version).toBe('pattern-gate')
+    expect(status.error).toBeNull()
+  })
+
+  it('reports a ready model as loaded and ready', () => {
+    const status = patternRuntimeStatus({
+      meta: { feature_columns: ['a'], metrics: { pattern_ready: true } },
+      loadError: null,
+      modelVersion: 'pattern-gate',
+    })
+    expect(status).toMatchObject({
+      runtime_loaded: true,
+      pattern_ready: true,
+      model_version: 'pattern-gate',
+      error: null,
+    })
+  })
+
+  it('surfaces the real load error when no model loaded', () => {
+    const status = patternRuntimeStatus({
+      meta: null,
+      loadError: '/app/ml/artifacts/pattern-gate/model.onnx not found',
+      modelVersion: null,
+    })
+    expect(status.runtime_loaded).toBe(false)
+    expect(status.pattern_ready).toBe(false)
+    expect(status.model_version).toBeNull()
+    expect(status.error).toBe('/app/ml/artifacts/pattern-gate/model.onnx not found')
+  })
+
+  it('falls back to a generic error when no load error was recorded', () => {
+    const status = patternRuntimeStatus({ meta: null, loadError: null, modelVersion: null })
+    expect(status.error).toBe('pattern model not loaded')
+  })
+
+  it('marks schema_ok true when nothing was refused', () => {
+    const status = patternRuntimeStatus({
+      meta: { feature_columns: ['a'], metrics: { pattern_ready: true } },
+      loadError: null,
+      modelVersion: 'pattern-gate',
+    })
+    expect(status.schema_ok).toBe(true)
+    expect(status.schema_error).toBeNull()
+  })
+
+  it('carries the named schema refusal and does not report a loaded model', () => {
+    const status = patternRuntimeStatus({
+      meta: null,
+      loadError: '7 columns match no pattern set · missing vs default: gmgn_activity_score_60m',
+      modelVersion: null,
+      schemaError: '7 columns match no pattern set · missing vs default: gmgn_activity_score_60m',
+    })
+    expect(status.schema_ok).toBe(false)
+    expect(status.schema_error).toContain('missing vs default')
+    expect(status.runtime_loaded).toBe(false)
+    expect(status.error).toContain('missing vs default')
   })
 })

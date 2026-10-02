@@ -2,6 +2,7 @@ import { bulkInsert, query, type BulkWriteStats } from '@/utils/db'
 import { parseDbChain, normalizeRecordWallet } from '@/utils/app-network-db'
 import type { TrackingRecord } from '@/utils/trading-tracker'
 import { invalidateTradingRecordsCache } from '@/utils/trading-records-cache'
+import { invalidateWalletRecordsCache } from '@/utils/wallet-records-cache'
 import { broadcastTradeUpdateServer } from '@/utils/trading-notifications'
 
 interface DatabaseRecord {
@@ -149,10 +150,15 @@ export async function updateTradingRecordData(
   }
 }
 
-/** Invalidate GET cache and broadcast SSE after any successful insert. */
+/** Invalidate caches and broadcast SSE after any successful insert. */
 export async function afterTradingRecordInserted(
   record: TrackingRecord,
 ): Promise<void> {
+  // Must clear BOTH: the GET-route cache, and the `fetchTradingRecordsForWallet` cache the cycle
+  // reconstruction reads. Without this second one, a caller that re-reads right after writing —
+  // the sim-track routes' open gate, which exists precisely to see post-close state — would get
+  // the pre-write rows back.
+  invalidateWalletRecordsCache(record.walletAddress)
   const invalidated = invalidateTradingRecordsCache(record.walletAddress)
   if (invalidated > 0) {
     console.log(

@@ -15,7 +15,9 @@ import {
 import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import { useRhWalletMode } from "@/contexts/RhWalletModeContext";
 import { useResolvedWalletPublicKey } from "@/hooks/useResolvedWalletPublicKey";
+import { useSolPrice } from "@/hooks/useSolPrice";
 import { useWalletTokens, refreshWalletTokensData, type WalletTokensData } from "@/hooks/useWalletTokens";
+import { useWarmOnIntent } from "@/hooks/useWarmOnIntent";
 import { compactDustOnlyDefault } from "@/utils/reload-home";
 import UniversalWalletButton from "./UniversalWalletButton";
 import TradeOutcomeModal, { useTradeOutcome } from "./TradeOutcomeModal";
@@ -44,11 +46,10 @@ import {
   type SellOutputPreset,
 } from "@/utils/sell-output-mint";
 import {
-  mintsNeedingJupiterQuote,
   sellAmountRaw,
   sellQuoteAllFailedBanner,
 } from "@/utils/sell-quote-fallback";
-import { JUPITER_MAX_RPS } from "@/utils/jupiter-rps";
+import { isQuoteUsable, quoteMatchesAmount } from "@/utils/quote-freshness";
 import TokenAddressSearchField from "./TokenAddressSearchField";
 import { walletsMatch } from "@/utils/rh-wallet-holdings";
 import { executeGmgnBulkSell } from "@/utils/gmgn-bulk-trade";
@@ -60,7 +61,8 @@ import {
   peekFreshPreparedSwap,
   warmResolvedPreparedSwap,
 } from "@/utils/swap-executor";
-import { impactToAbsPct } from "@/utils/swap-quote-pick";
+import { impactToAbsPct, passesImpactGate } from "@/utils/swap-quote-pick";
+import { requestQuote, QUOTE_ESTIMATE_REFRESH_MS_DEFAULT } from "@/utils/quote-engine";
 import {
   AUTO_SLIPPAGE_BPS,
   AUTO_SLIPPAGE_CAP_BPS,
@@ -121,7 +123,7 @@ import { useRpc } from "@/contexts/RpcContext";
 import RpcPanel from "./RpcPanel";
 import PnLShareModal from "./PnLShareModal";
 import { pnlShareService } from "@/utils/pnl-share-service";
-import { mapRaptorQuoteToDisplay, RAPTOR_DEV_FEE_ACCOUNT, RAPTOR_DEV_FEE_BPS } from "@/utils/solanatracker-raptor";
+import { RAPTOR_DEV_FEE_ACCOUNT, RAPTOR_DEV_FEE_BPS } from "@/utils/solanatracker-raptor";
 
 function patchWalletTokenLists(
   data: WalletTokensData,
@@ -382,14 +384,16 @@ export default function BulkTokenSeller({
   const [balanceBefore, setBalanceBefore] = useState<number>(0);
   const [balanceAfter, setBalanceAfter] = useState<number>(0);
 
-  // SOL price in USD
-  const [solPriceUsd, setSolPriceUsd] = useState<number>(145); // Default fallback
+  // SOL price in USD — always the app's live price (`/api/solprice`). No hardcoded fallback:
+  // a literal converts USD at a rate that is not the market's, and nothing downstream can tell.
+  const solPriceQuery = useSolPrice();
+  const solPriceUsd = solPriceQuery.data && solPriceQuery.data > 0 ? solPriceQuery.data : 0;
 
   // Quote state (Raptor via /api/solanatracker/quote)
   const [autoQuote, setAutoQuote] = useState<boolean>(true);
+  /** Inside the 30s quote validity so the estimate never blanks between refreshes. */
+  const AUTO_QUOTE_REFRESH_MS = QUOTE_ESTIMATE_REFRESH_MS_DEFAULT;
   const [quotes, setQuotes] = useState<Record<string, QuoteData>>({});
-  const quotesRef = useRef(quotes);
-  quotesRef.current = quotes;
   const [isGettingQuotes, setIsGettingQuotes] = useState<boolean>(false);
   const [lastQuoteTime, setLastQuoteTime] = useState<number>(0);
   const [showSettings, setShowSettings] = useState<boolean>(false);
@@ -441,98 +445,100 @@ export default function BulkTokenSeller({
   const feeRates = getAllFeeRates();
 
   // Quote utilities
+  /**
+   * The quote map is keyed by MINT, but a quote is only meaningful for the amount it was taken at.
+   * Passing `amount` makes the lookup amount-aware: a quote fetched for a previous amount is treated
+   * as absent, so the estimate re-quotes instead of reporting a stale number. That mismatch is what
+   * showed ~4 SOL for a position whose live quote was ~6.46 — the USD side was fresh, the SOL side
+   * was a quote for an older quantity, and nothing compared the two.
+   */
   const getQuoteForToken = useCallback(
-    (mintAddress: string): QuoteData | null => {
-      return quotes[mintAddress] || null;
+    (mintAddress: string, amount?: string): QuoteData | null => {
+      const quote = quotes[mintAddress] || null;
+      if (!quote) return null;
+      if (amount !== undefined && !quoteMatchesAmount(quote, amount)) return null;
+      return quote;
     },
     [quotes],
   );
 
-  const isQuoteValid = useCallback((quote: QuoteData | null): boolean => {
-    if (!quote) return false;
-    const age = Date.now() - quote.timestamp;
-    return age < 30000; // Valid for 30 seconds
+  const isQuoteValid = useCallback((quote: QuoteData | null, amount?: string): boolean => {
+    return isQuoteUsable(quote, amount);
   }, []);
 
   // Quote fetching functions for different providers
-  const fetchSolanaTrackerQuote = useCallback(
-    async (inputMint: string, amount: string): Promise<QuoteData | null> => {
-      try {
-        const query = new URLSearchParams({
-          inputMint,
-          outputMint: sellOut.outputMint,
-          amount,
-          slippageBps: prefetchSlippageBps(slippage).toString(),
-        });
-        const response = await fetch(
-          `/api/solanatracker/quote?${query.toString()}`,
-        );
-        if (!response.ok) throw new Error("Solana Tracker quote failed");
-
-        const data = await response.json();
-        const mapped = mapRaptorQuoteToDisplay(data, amount);
-
-        return {
-          provider: "solanatracker",
-          inputMint,
-          outputMint: sellOut.outputMint,
-          amount,
-          outAmount: mapped.outAmount,
-          priceImpact: mapped.priceImpact * 100,
-          timestamp: Date.now(),
-          route: mapped.route,
-        };
-      } catch (error) {
-        console.error("Solana Tracker quote error:", error);
-        return null;
-      }
-    },
-    [slippage, sellOut.outputMint],
-  );
-
-  const fetchJupiterPreviewQuote = useCallback(
-    async (inputMint: string, amount: string): Promise<QuoteData | null> => {
-      try {
-        const query = new URLSearchParams({
-          inputMint,
-          outputMint: sellOut.outputMint,
-          amount,
-          slippageBps: prefetchSlippageBps(slippage).toString(),
-        });
-        const response = await fetch(`/api/jupiter/quote?${query.toString()}`);
-        if (!response.ok) throw new Error("Jupiter quote failed");
-        const mapped = (await response.json()) as {
-          outAmount?: string;
-          priceImpact?: number;
-          route?: unknown;
-        };
-        if (!mapped.outAmount || !/^\d+$/.test(mapped.outAmount)) return null;
-        return {
-          provider: "jupiter",
-          inputMint,
-          outputMint: sellOut.outputMint,
-          amount,
-          outAmount: mapped.outAmount,
-          priceImpact: (mapped.priceImpact ?? 0) * 100,
-          timestamp: Date.now(),
-          route: mapped.route,
-        };
-      } catch (error) {
-        console.error("Jupiter preview quote error:", error);
-        return null;
-      }
-    },
-    [slippage, sellOut.outputMint],
-  );
-
+  /**
+   * One token -> the executor's own prepared swap when it is already warm, otherwise the shared quote
+   * engine's estimate (Raptor first, Jupiter picker on escalation, impact-gated either way).
+   *
+   * This used to race the picker here and re-implement the Raptor client locally, which is why the
+   * estimate could disagree with the achievable route — for a two-pool token Raptor alone returned a
+   * single-hop, 38%-impact route. Both now live in `quote-engine`, so buy, signals and PnL get the
+   * same rule instead of each rediscovering it.
+   */
   const fetchQuoteForToken = useCallback(
     async (token: TokenToSell): Promise<QuoteData | null> => {
       const amount = sellAmountRaw(token.sellAmount);
-      const raptor = await fetchSolanaTrackerQuote(token.mintAddress, amount);
-      if (raptor) return raptor;
-      return fetchJupiterPreviewQuote(token.mintAddress, amount);
+      if (!amount || amount === "0") return null;
+
+      // Prefer the prepared swap the executor would trade: it is built with the same `taker` the
+      // signed transaction uses, so the estimate and the executed route are the same object rather
+      // than two quotes that differ only in their inputs.
+      const publicKeyBase58 = publicKey?.toBase58();
+      if (publicKeyBase58) {
+        const prepared = peekFreshPreparedSwap({
+          userPublicKey: publicKeyBase58,
+          inputMint: token.mintAddress,
+          outputMint: sellOut.outputMint,
+          amount: token.sellAmount,
+          slippageBps: prefetchSlippageBps(slippage),
+          priorityFeeLamports: priorityFee,
+          feeAccount: RAPTOR_DEV_FEE_ACCOUNT,
+          feeBps: RAPTOR_DEV_FEE_BPS,
+        });
+        if (prepared?.outAmount) {
+          return {
+            provider:
+              prepared.provider === "raptor" ? "solanatracker" : "jupiter",
+            inputMint: token.mintAddress,
+            outputMint: sellOut.outputMint,
+            amount,
+            outAmount: prepared.outAmount,
+            priceImpact: impactToAbsPct(prepared.priceImpact),
+            timestamp: Date.now(),
+          };
+        }
+      }
+
+      // One source of truth. The engine asks the venue that will execute on this path first (Raptor —
+      // ungated, and it answers a whole batch in well under a second where the Jupiter-backed picker
+      // took 3-29s per token), keeps that answer only while its own impact passes the gate, and
+      // escalates to the picker otherwise. It also guarantees a display number never draws the Jupiter
+      // trade lane.
+      try {
+        const estimate = await requestQuote({
+          inputMint: token.mintAddress,
+          outputMint: sellOut.outputMint,
+          amount,
+          slippageBps: slippage,
+          purpose: "estimate",
+        });
+        return {
+          provider:
+            estimate.provider === "solanatracker" ? "solanatracker" : "jupiter",
+          inputMint: estimate.inputMint,
+          outputMint: estimate.outputMint,
+          amount,
+          outAmount: estimate.outAmount,
+          priceImpact: estimate.priceImpact,
+          timestamp: estimate.timestamp,
+          route: estimate.route,
+        };
+      } catch {
+        return null;
+      }
     },
-    [fetchSolanaTrackerQuote, fetchJupiterPreviewQuote],
+    [slippage, priorityFee, publicKey, sellOut.outputMint],
   );
 
   const fetchAllQuotes = useCallback(async () => {
@@ -547,59 +553,22 @@ export default function BulkTokenSeller({
     setError("");
 
     try {
-      const raptorResults = await Promise.allSettled(
-        tokensToQuote.map(async (token) => {
-          const amount = sellAmountRaw(token.sellAmount);
-          const quote = await fetchSolanaTrackerQuote(token.mintAddress, amount);
-          return { mintAddress: token.mintAddress, amount, quote };
-        }),
+      const results = await Promise.all(
+        tokensToQuote.map(async (token) => ({
+          mint: token.mintAddress,
+          quote: await fetchQuoteForToken(token),
+        })),
       );
 
       const newQuotes: Record<string, QuoteData> = {};
-      const raptorHits = new Set<string>();
-      raptorResults.forEach((result) => {
-        if (result.status === "fulfilled" && result.value.quote) {
-          newQuotes[result.value.mintAddress] = result.value.quote;
-          raptorHits.add(result.value.mintAddress);
-        }
-      });
-
-      const amountByMint = new Map(
-        tokensToQuote.map((t) => [t.mintAddress, sellAmountRaw(t.sellAmount)]),
-      );
-      const needJup = mintsNeedingJupiterQuote(
-        tokensToQuote.map((t) => t.mintAddress),
-        raptorHits,
-        quotesRef.current,
-        Date.now(),
-      );
-
-      const jupGapMs = 1000 / JUPITER_MAX_RPS;
-      let jupiterHits = 0;
-      for (let i = 0; i < needJup.length; i++) {
-        if (i > 0) {
-          await new Promise((r) => setTimeout(r, jupGapMs));
-        }
-        const mint = needJup[i];
-        const amount = amountByMint.get(mint) ?? "0";
-        const quote = await fetchJupiterPreviewQuote(mint, amount);
-        if (quote) {
-          newQuotes[mint] = quote;
-          jupiterHits++;
-        }
+      for (const r of results) {
+        if (r.quote) newQuotes[r.mint] = r.quote;
       }
 
       setQuotes((prevQuotes) => ({ ...prevQuotes, ...newQuotes }));
       setLastQuoteTime(Date.now());
 
-      const keptValid = tokensToQuote.filter(
-        (t) =>
-          !raptorHits.has(t.mintAddress) &&
-          !needJup.includes(t.mintAddress) &&
-          quotesRef.current[t.mintAddress],
-      ).length;
-      const successCount = raptorHits.size + jupiterHits + keptValid;
-      const banner = sellQuoteAllFailedBanner(successCount);
+      const banner = sellQuoteAllFailedBanner(Object.keys(newQuotes).length);
       if (banner) setError(banner);
     } catch (error) {
       console.error("Batch quote error:", error);
@@ -611,14 +580,18 @@ export default function BulkTokenSeller({
     isSolTrade,
     selectedTokens,
     selectedZeroBalanceTokens,
-    fetchSolanaTrackerQuote,
-    fetchJupiterPreviewQuote,
+    fetchQuoteForToken,
     isGettingQuotes,
   ]);
 
   // ===== Auto-quote effect (Sol only) =====
   // 1. Runs immediately whenever token selection changes (or autoQuote toggles on)
-  // 2. Refreshes every 5 s as long as the selection stays the same
+  // 2. Refreshes on a slow interval, and only while the tab is visible.
+  //
+  // It used to re-quote every 5s, which spent the scarce Jupiter budget (0.5 rps measured-clean) on an
+  // unchanged selection. `JUPITER_QUOTE_CACHE_MS` coalesces repeats within a few seconds, and the
+  // interval is set inside the 30s quote-validity window so the estimate never goes blank between
+  // refreshes. A hidden tab does no quoting at all.
   const tokensHash = useMemo(
     () =>
       selectedTokens
@@ -640,12 +613,12 @@ export default function BulkTokenSeller({
     // Fetch immediately on mount / token change
     fetchAllQuotesRef.current();
 
-    // Poll every 5 seconds while the token list is unchanged
+    // Slow refresh while the token list is unchanged, paused while the tab is hidden.
     const interval = setInterval(() => {
-      if (autoQuote && selectedTokens.length > 0) {
-        fetchAllQuotesRef.current();
-      }
-    }, 5000);
+      if (!autoQuote || selectedTokens.length === 0) return;
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      fetchAllQuotesRef.current();
+    }, AUTO_QUOTE_REFRESH_MS);
 
     return () => clearInterval(interval);
   }, [isSolTrade, autoQuote, tokensHash, selectedTokens.length, sellOut.outputMint]);
@@ -656,41 +629,44 @@ export default function BulkTokenSeller({
     [selectedTokens],
   );
 
-  useEffect(() => {
+  // Warm on intent rather than on every settled edit — the warm is a taker-scoped prepare on the Jupiter
+  // trade lane, which is the budget a real execution needs (see useWarmOnIntent).
+  const warmSellLegs = useCallback(() => {
     if (!isSolTrade || !publicKey || !connection) return;
     if (selectedTokens.length === 0) return;
     const pk = publicKey.toBase58();
     const legs = selectedTokens.filter((t) => t.sellAmount > 0);
-    const timer = window.setTimeout(() => {
-      void Promise.all(
-        legs.map((token) =>
-          warmResolvedPreparedSwap(
-            {
-              userPublicKey: pk,
-              inputMint: token.mintAddress,
-              outputMint: sellOut.outputMint,
-              amount: token.sellAmount,
-              priorityFeeLamports: priorityFee,
-              feeAccount: RAPTOR_DEV_FEE_ACCOUNT,
-              feeBps: RAPTOR_DEV_FEE_BPS,
-              connection,
-            },
-            slippage,
-          ).catch(() => undefined),
-        ),
-      );
-    }, 400);
-    return () => window.clearTimeout(timer);
+    void Promise.all(
+      legs.map((token) =>
+        warmResolvedPreparedSwap(
+          {
+            userPublicKey: pk,
+            inputMint: token.mintAddress,
+            outputMint: sellOut.outputMint,
+            amount: token.sellAmount,
+            priorityFeeLamports: priorityFee,
+            feeAccount: RAPTOR_DEV_FEE_ACCOUNT,
+            feeBps: RAPTOR_DEV_FEE_BPS,
+            connection,
+          },
+          slippage,
+        ).catch(() => undefined),
+      ),
+    );
   }, [
     isSolTrade,
     publicKey,
     connection,
-    sellPrefetchKey,
-    slippage,
-    priorityFee,
     selectedTokens,
     sellOut.outputMint,
+    slippage,
+    priorityFee,
   ]);
+
+  const { warmProps: sellWarmProps } = useWarmOnIntent(
+    warmSellLegs,
+    selectedTokens.length > 0 ? `${sellPrefetchKey}:${sellOut.outputMint}:${slippage}` : "",
+  );
 
   // Fetch SOL price using robust multi-API system — handled by useSolPrice
 
@@ -1102,7 +1078,8 @@ export default function BulkTokenSeller({
     }
     const fromQuotes = selectedTokens.map((t) => {
       const q = quotes[t.mintAddress];
-      return q && isQuoteValid(q) ? q.priceImpact : null;
+      const amount = sellAmountRaw(t.sellAmount);
+      return q && isQuoteValid(q, amount) ? q.priceImpact : null;
     });
     const worst = worstImpactPct(fromQuotes);
     if (worst != null) return resolveTradeSlippageBps(slippage, worst);
@@ -1261,15 +1238,10 @@ export default function BulkTokenSeller({
         success,
         operation: "sell",
         isSimulation: false,
-        tokenSymbol:
-          ok.length === 1 ? ok[0]?.symbol : `${ok.length} tokens`,
-        amountUnit:
-          sellOut.symbol === "SOL" ||
-          sellOut.symbol === "ETH" ||
-          sellOut.symbol === "USDG" ||
-          sellOut.symbol === "WETH"
-            ? sellOut.symbol
-            : undefined,
+        tokenSymbols: ok.map((r) => r.symbol),
+        // The output symbol, whatever it is — a whitelist dropped custom token outputs and the modal
+        // then defaulted to "SOL".
+        amountUnit: sellOut.symbol,
         error: success
           ? undefined
           : fail[0]?.error ||
@@ -1547,16 +1519,28 @@ export default function BulkTokenSeller({
           success: sellResult.success,
           operation: "sell",
           isSimulation: false,
-          tokenSymbol:
-            sellResult.successfulSwaps.length === 1
-              ? selectedTokens.find(
-                  (t) =>
-                    t.mintAddress ===
-                    sellResult.successfulSwaps[0]?.mintAddress,
-                )?.symbol
-              : `${sellResult.successfulSwaps.length} tokens`,
+          tokenSymbols: sellResult.successfulSwaps.map(
+            (s) =>
+              selectedTokens.find((t) => t.mintAddress === s.mintAddress)
+                ?.symbol,
+          ),
           solAmount: sellResult.totalReceived,
-          amountUnit: "SOL",
+          // Exact quantity that left the wallet (base units -> UI) for the single-token case. The
+          // swap is exact-in, so the requested amount is the filled amount.
+          tokenAmount:
+            sellResult.successfulSwaps.length === 1
+              ? (() => {
+                  const sold = selectedTokens.find(
+                    (t) =>
+                      t.mintAddress ===
+                      sellResult.successfulSwaps[0]?.mintAddress,
+                  );
+                  return sold
+                    ? sold.sellAmount / 10 ** sold.decimals
+                    : undefined;
+                })()
+              : undefined,
+          amountUnit: sellOut.symbol,
           error: sellResult.success
             ? undefined
             : sellResult.failedSwaps[0]?.error || "Sell failed",
@@ -2257,20 +2241,6 @@ export default function BulkTokenSeller({
     return () => clearMetadataUpdateCallback();
   }, [handleMetadataUpdate]);
 
-  // Calculate estimated SOL after fees for selected tokens
-  const grossUSD = selectedTokens.reduce(
-    (total, token) => total + (token.usdValue * token.sellPercentage) / 100,
-    0,
-  );
-  const grossSOL = grossUSD / solPriceUsd; // Convert USD to SOL
-  const sellFee = getFeeForOperation("SELL", grossSOL); // 0.25% of SOL received
-  // Close fees/rent only for explicit close targets (zero-balance), not 100% sells —
-  // sell no longer auto-closes emptied ATAs (use Close for rent reclaim).
-  const tokensToClose = selectedZeroBalanceTokens.length;
-  const closeFee = getFeeForOperation("CLOSE") * tokensToClose;
-  const rentRecovery = tokensToClose * 0.00203928;
-  const estimatedSOL = grossSOL - sellFee - closeFee + rentRecovery;
-
   // Calculate total reload estimation based on showDustOnly filter
   const dustTokenList = useMemo(
     () => [...dustTokens, ...zeroValueTokens],
@@ -2295,13 +2265,17 @@ export default function BulkTokenSeller({
   const totalZeroTokens = showDustOnly
     ? zeroValueTokens.length
     : zeroBalanceTokens.length;
-  const totalGrossSOL = totalGrossUSD / solPriceUsd;
-  const totalSellFee = getFeeForOperation("SELL", totalGrossSOL);
+  // `null` until a real price is known — never a number derived from a made-up rate.
+  const totalGrossSOL = solPriceUsd > 0 ? totalGrossUSD / solPriceUsd : null;
+  const totalSellFee =
+    totalGrossSOL != null ? getFeeForOperation("SELL", totalGrossSOL) : 0;
   // Rent reclaim is a separate Close step; estimate sell proceeds only here.
   const totalCloseFee = getFeeForOperation("CLOSE") * totalZeroTokens;
   const totalRentRecovery = totalZeroTokens * 0.00203928;
   const totalReloadEstimate =
-    totalGrossSOL - totalSellFee - totalCloseFee + totalRentRecovery;
+    totalGrossSOL != null
+      ? totalGrossSOL - totalSellFee - totalCloseFee + totalRentRecovery
+      : null;
 
   // Handle token selection for chart display
   const handleSelectToken = useCallback((mintAddress: string) => {
@@ -2744,6 +2718,7 @@ export default function BulkTokenSeller({
                   {(showDustOnly
                     ? dustTokenList.length > 0
                     : userTokens.length > 0) &&
+                    totalReloadEstimate != null &&
                     totalReloadEstimate > 0 && (
                       <span className="font-bold">
                         ~ {totalReloadEstimate.toFixed(3)} SOL
@@ -3459,10 +3434,8 @@ export default function BulkTokenSeller({
                           <div className="text-green-400 font-bold text-lg">
                             {selectedTokens
                               .reduce((total, token) => {
-                                const quote = getQuoteForToken(
-                                  token.mintAddress,
-                                );
-                                if (quote && isQuoteValid(quote)) {
+                                const quote = getQuoteForToken(token.mintAddress, sellAmountRaw(token.sellAmount));
+                                if (quote && isQuoteValid(quote, sellAmountRaw(token.sellAmount))) {
                                   return (
                                     total +
                                     parseFloat(quote.outAmount) /
@@ -3483,19 +3456,15 @@ export default function BulkTokenSeller({
                             {selectedTokens.length > 0
                               ? (
                                   selectedTokens.reduce((total, token) => {
-                                    const quote = getQuoteForToken(
-                                      token.mintAddress,
-                                    );
-                                    if (quote && isQuoteValid(quote)) {
+                                    const quote = getQuoteForToken(token.mintAddress, sellAmountRaw(token.sellAmount));
+                                    if (quote && isQuoteValid(quote, sellAmountRaw(token.sellAmount))) {
                                       return total + quote.priceImpact;
                                     }
                                     return total;
                                   }, 0) /
                                   selectedTokens.filter((token) => {
-                                    const quote = getQuoteForToken(
-                                      token.mintAddress,
-                                    );
-                                    return quote && isQuoteValid(quote);
+                                    const quote = getQuoteForToken(token.mintAddress, sellAmountRaw(token.sellAmount));
+                                    return quote && isQuoteValid(quote, sellAmountRaw(token.sellAmount));
                                   }).length
                                 ).toFixed(2)
                               : "0.00"}
@@ -3509,10 +3478,8 @@ export default function BulkTokenSeller({
                           <div className="text-blue-400 font-bold text-lg">
                             {
                               selectedTokens.filter((token) => {
-                                const quote = getQuoteForToken(
-                                  token.mintAddress,
-                                );
-                                return quote && isQuoteValid(quote);
+                                const quote = getQuoteForToken(token.mintAddress, sellAmountRaw(token.sellAmount));
+                                return quote && isQuoteValid(quote, sellAmountRaw(token.sellAmount));
                               }).length
                             }
                             /{selectedTokens.length}
@@ -3543,6 +3510,7 @@ export default function BulkTokenSeller({
               {/* Sell — only when sellable tokens selected */}
               {selectedTokens.length > 0 && (
                 <button
+                  {...sellWarmProps}
                   onClick={() => void handleBulkSell()}
                   disabled={
                     isLoading || (isRhChain && !tradeFromAddress)
@@ -3583,40 +3551,48 @@ export default function BulkTokenSeller({
                               ? `Sell ${n} ${tokenWord} → ${sellOut.symbol} (~$${usd.toLocaleString(undefined, { maximumFractionDigits: 2 })})`
                               : `Sell ${n} ${tokenWord} → ${sellOut.symbol}`;
                           }
-                          const totalOut = selectedTokens.reduce(
+                          // `null` while any selected token lacks a quote for its CURRENT amount:
+                          // a partial sum must never be presented as the total.
+                          const totalOut = selectedTokens.reduce<number | null>(
                             (total, token) => {
+                              if (total === null) return null;
                               const quote = getQuoteForToken(
                                 token.mintAddress,
+                                sellAmountRaw(token.sellAmount),
                               );
-                              if (quote && isQuoteValid(quote)) {
+                              if (
+                                quote &&
+                                isQuoteValid(quote, sellAmountRaw(token.sellAmount)) &&
+                                passesImpactGate(quote.priceImpact)
+                              ) {
                                 return (
                                   total +
                                   parseFloat(quote.outAmount) /
                                     10 ** sellOut.decimals
                                 );
                               }
-                              return total;
+                              return null;
                             },
                             0,
                           );
 
                           if (compact) {
-                            return totalOut > 0
+                            return totalOut != null
                               ? `Reload ${n} ${tokenWord} to SOL (${totalOut.toFixed(4)})`
-                              : `Reload ${n} ${tokenWord} to SOL`;
+                              : `Reload ${n} ${tokenWord} to SOL (quoting…)`;
                           }
 
                           const willCloseZeroBalance =
                             selectedZeroBalanceTokens.length > 0;
 
                           if (willCloseZeroBalance) {
-                            return totalOut > 0
+                            return totalOut != null
                               ? `Sell ${n} ${tokenWord} → ${sellOut.symbol} (${totalOut.toFixed(4)}) & close dust`
-                              : `Sell ${n} ${tokenWord} → ${sellOut.symbol} & close dust`;
+                              : `Sell ${n} ${tokenWord} → ${sellOut.symbol} (quoting…) & close dust`;
                           }
-                          return totalOut > 0
+                          return totalOut != null
                             ? `Sell ${n} ${tokenWord} → ${sellOut.symbol} (${totalOut.toFixed(4)})`
-                            : `Sell ${n} ${tokenWord} → ${sellOut.symbol}`;
+                            : `Sell ${n} ${tokenWord} → ${sellOut.symbol} (quoting…)`;
                         })()}
                       </span>
                       <svg

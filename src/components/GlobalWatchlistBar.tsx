@@ -50,9 +50,12 @@ function ChipFace({
   return (
     <>
       {logoUrl ? (
+        // Decorative: the symbol is the adjacent label. An alt here is rendered by the browser
+        // while the image is unpainted (these logos are Arweave/Irys gateway redirects), which
+        // showed every chip as "STONK STONK —".
         <OptimizedImage
           src={logoUrl}
-          alt={symbol}
+          alt=""
           width={24}
           height={24}
           className="w-6 h-6 rounded-full"

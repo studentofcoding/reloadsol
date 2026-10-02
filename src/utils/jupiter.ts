@@ -16,13 +16,14 @@ import {
   runWithConcurrency,
   submitSignedSwap,
   submitSignedSwapBatch,
-  fetchSwapQuote,
+  dropRevertingPreparedSwaps,
   buildSwapTransaction,
   signTransactionsWithFallback,
   tryLandPreparedOnServer,
   type PreparedSwapMeta,
   type SubmitSignedSwapBatchResult,
 } from './swap-executor'
+import { requestQuote, solanaQuoteToSwapQuote } from './quote-engine'
 import { beginTradeInFlight } from './trade-inflight'
 import { signPreparedSwapTransactions } from './sol-desk-signer'
 import { waitForRpcRateLimit } from './rpc-rate-limit'
@@ -500,14 +501,39 @@ function getTokenIdentifierForLogging(mintAddress: string): string {
   return `${mintAddress.slice(0, 4)}...${mintAddress.slice(-4)}`
 }
 
-// Get quote for a single token swap (parallel Raptor / Lite / Swap + impact gate)
+// Get quote for a single token swap — through the shared quote engine (see below).
+/**
+ * Every quote surface this repo already calls — the signals tab's buy/sell hovers, the PnL tracker's
+ * sell estimate, the desk quote — routes through here, so this is the one place to point at the shared
+ * engine.
+ *
+ * It previously called `fetchSwapQuote`, the Jupiter-only picker: a Jupiter-background-lane request per
+ * mint (3-29s per token when the lane is starved) with no cross-surface dedupe, so the same sell
+ * estimate was fetched independently by three components. Through the engine the callers share one
+ * keyed cache, ask Raptor first (ungated), and a displayed number never touches the trade lane.
+ */
 export async function getSwapQuote(
   inputMint: string,
   outputMint: string,
   amount: number,
   slippageBps: number = 100
 ): Promise<SwapQuote | null> {
-  return fetchSwapQuote(inputMint, outputMint, amount, slippageBps)
+  try {
+    const quote = await requestQuote({
+      inputMint,
+      outputMint,
+      amount,
+      slippageBps,
+      purpose: "estimate",
+    });
+    return solanaQuoteToSwapQuote(quote);
+  } catch (error) {
+    console.warn(
+      "[quote] estimate failed:",
+      error instanceof Error ? error.message : error,
+    );
+    return null;
+  }
 }
 
 // Get swap transaction — Raptor quote-and-swap
@@ -1886,7 +1912,7 @@ export async function executeBulkBuy(
               feeAccount: FEE_CONFIG.DEV_WALLET,
               feeBps: BUYBULK_PLATFORM_FEE_BPS,
               connection,
-            })
+            }, { lane: 'auto' })
 
             console.log(`✅ Swap prepared for ${mint} via ${meta.provider}`)
             return { success: true as const, mint, tx, meta }
@@ -1926,6 +1952,53 @@ export async function executeBulkBuy(
 
     if (transactions.length === 0) {
       throw new Error('No valid transactions could be created')
+    }
+
+    // Refuse to sign anything that would revert on chain. One such leg otherwise poisons the whole batch,
+    // because the landing lane reports a single failure for all of them — see `dropRevertingPreparedSwaps`.
+    const checked = await dropRevertingPreparedSwaps(
+      transactions
+        .map((tx, i) => ({
+          key: transactionMints[i],
+          tx,
+          meta: transactionMetas[i],
+        }))
+        .filter(
+          (
+            item,
+          ): item is {
+            key: string
+            tx: VersionedTransaction
+            meta: PreparedSwapMeta
+          } => item.key != null && item.meta != null,
+        ),
+      connection,
+    )
+    if (checked.dropped.length > 0) {
+      for (const dropped of checked.dropped) {
+        result.failedPurchases.push({
+          mintAddress: dropped.key,
+          error: `Would revert on chain: ${dropped.reason}`,
+        })
+      }
+      transactions.length = 0
+      transactionMints.length = 0
+      transactionMetas.length = 0
+      for (const item of checked.keep) {
+        transactions.push(item.tx)
+        transactionMints.push(item.key)
+        transactionMetas.push(item.meta)
+      }
+      console.log(
+        `Pre-flight simulation dropped ${checked.dropped.length} of ${
+          checked.dropped.length + checked.keep.length
+        } swaps before signing`,
+      )
+      if (transactions.length === 0) {
+        throw new Error(
+          `Every swap would revert on chain (e.g. ${checked.dropped[0]!.reason})`,
+        )
+      }
     }
 
     const signatures: string[] = []
@@ -2680,7 +2753,7 @@ export async function executeBulkSellAlt(
                   feeAccount: FEE_CONFIG.DEV_WALLET,
                   feeBps: BUYBULK_PLATFORM_FEE_BPS,
                   connection,
-                });
+                }, { lane: 'auto' });
 
                 return {
                   success: true,
@@ -2712,6 +2785,54 @@ export async function executeBulkSellAlt(
           }));
         } finally {
           clearTimeout(timeoutId);
+        }
+
+        // The same guard the buy path runs — it was only wired into `executeBulkBuy`, so a batch SELL had
+        // nothing checking it. Measured 2026-10-02 on a token->token sell: Raptor's own program rejects
+        // these with `Custom 6006 TotalAmountsMustBeEqualToAmountIn` (raptor-v1/common_swap.rs:897), and
+        // two txs landed on chain as failures with nothing swapped and fees burned.
+        const tokenByMint = new Map(
+          transactionTokens.filter(Boolean).map((token) => [token.mintAddress, token]),
+        )
+        const checked = await dropRevertingPreparedSwaps(
+          transactions
+            .map((tx, i) => ({
+              key: transactionTokens[i]?.mintAddress,
+              tx,
+              meta: transactionMetas[i],
+            }))
+            .filter(
+              (
+                item,
+              ): item is {
+                key: string
+                tx: VersionedTransaction
+                meta: PreparedSwapMeta
+              } => item.key != null && item.meta != null,
+            ),
+          connection,
+        )
+        if (checked.dropped.length > 0) {
+          for (const dropped of checked.dropped) {
+            result.failedSwaps.push({
+              mintAddress: dropped.key,
+              error: `Would revert on chain: ${dropped.reason}`,
+            })
+          }
+          transactions.length = 0
+          transactionTokens.length = 0
+          transactionMetas.length = 0
+          for (const item of checked.keep) {
+            transactions.push(item.tx)
+            transactionMetas.push(item.meta)
+            const original = tokenByMint.get(item.key)
+            if (original) transactionTokens.push(original)
+          }
+          console.log(
+            `Pre-flight simulation dropped ${checked.dropped.length} of ${
+              checked.dropped.length + checked.keep.length
+            } swaps before signing`,
+          )
         }
 
         if (transactions.length > 0) {

@@ -69,7 +69,8 @@ export async function getSolPriceUSD(): Promise<number> {
     }
   } catch (error) {
     console.error('Error fetching SOL price:', error);
-    // Return a reasonable fallback price if the API fails
-    return 145; // Default SOL price
+    // Never substitute a made-up price: callers check `> 0` and skip rather than record a
+    // fabricated conversion.
+    return 0;
   }
 }

@@ -19,16 +19,22 @@ export type WalletTokensData = {
 
 export const WALLET_TOKENS_SOURCE = "shyft-all-tokens-v2" as const;
 
-export function walletTokensQueryKey(
-  walletAddress: string | null,
-  includeZeroBalance: boolean,
-) {
-  return [
-    "wallet-tokens",
-    walletAddress,
-    includeZeroBalance,
-    WALLET_TOKENS_SOURCE,
-  ] as const;
+/**
+ * One key per wallet — deliberately WITHOUT `includeZeroBalance`.
+ *
+ * That flag never reached the fetch: the queryFn calls `fetchWalletTokens(connection, publicKey,
+ * walletAddress, false)`, which does not take it, and nothing filtered the returned lists by it. Its
+ * only effect was to split the SAME data into two cache entries. That split is what broke freshness
+ * after a trade — the buy flow's post-buy `refetchFresh()` updated the entry keyed `true`, while the
+ * watchlist bar sat on `false` and never saw a new mint.
+ *
+ * Sharing one entry means a single post-trade refresh reaches every consumer, with ONE request rather
+ * than one per mounted hook. That is the freshness fix without the burst the refresh hook documents.
+ * Callers that want a narrower view filter the returned lists (as the bar and the row hooks already
+ * do).
+ */
+export function walletTokensQueryKey(walletAddress: string | null) {
+  return ["wallet-tokens", walletAddress, WALLET_TOKENS_SOURCE] as const;
 }
 
 function sourceLabel(source: "shyft" | "jupiter"): string {
@@ -93,11 +99,13 @@ export function useWalletTokens({
   publicKey,
   walletAddress,
   enabled = true,
+  /** No effect on the fetch or the key; kept for call-site compatibility. Filter the lists instead. */
   includeZeroBalance = true,
   refetchInterval = false,
 }: UseWalletTokensOptions) {
   const queryClient = useQueryClient();
-  const queryKey = walletTokensQueryKey(walletAddress, includeZeroBalance);
+  // The flag is intentionally NOT part of the key — see walletTokensQueryKey.
+  const queryKey = walletTokensQueryKey(walletAddress);
   const isEnabled = enabled && !!connection && !!publicKey && !!walletAddress;
 
   const query = useQuery({

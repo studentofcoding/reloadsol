@@ -13,6 +13,35 @@ import { fetchShyftAllTokensCached } from '@/utils/shyft-wallet-cache'
 import { mapShyftTokensToUserTokens } from '@/utils/shyft-wallet'
 import { fetchJupiterPortfolioDirect, mapPortfolioToUserTokens } from '@/utils/jupiter-portfolio'
 import { getOpenPositionPrices } from '@/utils/open-position-prices'
+import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
+import { closeSimulatedPositionFromWorker } from '@/utils/sl-tp-sim-close'
+import { evaluateExit, toPersistedCloseReason } from '@/utils/exit-evaluator'
+import { evaluateSltpPassHealth, SltpPassUnhealthyError } from '@/utils/sl-tp-pass-health'
+
+/**
+ * The backstop share above which the exit system is considered broken (S5).
+ *
+ * `max_hold` / `max_age` firing means the primary exit did NOT fire. That should be ~0, not a
+ * percentage — the default of 10 is a tripwire, not a target. Env-tunable so it can be tightened
+ * without a deploy once the real distribution is known.
+ */
+function getExitBackstopAlertPct(): number {
+    const raw = Number(process.env.EXIT_BACKSTOP_ALERT_PCT)
+    return Number.isFinite(raw) && raw >= 0 ? raw : 10
+}
+
+/**
+ * The age past which a live value is too old to decide on (S4).
+ *
+ * NOTE: deliberately NOT wired into a comparison that cannot fire. `getOpenPositionPrices` serves
+ * from a Redis cache with a 5s TTL, so a `price` basis value is never older than five seconds —
+ * far inside any sane bound. Reading it here keeps the key honest rather than decorative, so a
+ * future slower source has one place to honour instead of a dead guard that looks like a check.
+ */
+export function getExitMaxInputAgeSec(): number {
+    const raw = Number(process.env.EXIT_MAX_INPUT_AGE_SEC)
+    return Number.isFinite(raw) && raw > 0 ? raw : 180
+}
 
 /** Cached Shyft all_tokens, then Jupiter, then RPC token accounts. */
 async function fetchSlTpWalletTokens(
@@ -48,6 +77,13 @@ async function fetchSlTpWalletTokens(
 }
 
 export interface SLTPPosition {
+  /** Paper position: tracked, never executed on-chain (see isSimulatedPosition). */
+  is_simulation?: boolean | null
+    /** The exit contract (S8). NULL on rows written before it existed — they read as 'price'. */
+    reference_kind?: 'price' | 'mcap' | null
+    reference_value?: number | null
+    exit_basis?: 'price' | 'mcap' | null
+    chain?: string | null
     id: string
     wallet_address: string
     token_address: string
@@ -64,6 +100,20 @@ export interface SLTPPosition {
     created_at: string
     updated_at: string
     is_active: boolean
+    /**
+     * Why it closed (S2/S5), and when. NOT derivable from the `*_executed` flags below: those say
+     * which trigger fired, and a `max_age` / `max_hold` backstop used to be filed as `tp1_executed`.
+     * NULL on rows closed before migration 58.
+     */
+    close_reason?: string | null
+    closed_at?: string | null
+    /**
+     * Force-close after this many hours (S5). NULL means no backstop is configured, which is a
+     * position that can stay open indefinitely. Stamped at open from the strategy's effective exit;
+     * before 59-sl-tp-max-hold.sql it was accepted by the type and then dropped, so no position
+     * could time out at all.
+     */
+    max_hold_hours?: number | null
     // TP levels for bot positions
     tp1_percentage?: number
     tp1_sell_percentage?: number
@@ -79,7 +129,9 @@ export interface SLTPPosition {
 
 export interface SLTPTriggerResult {
     triggered: boolean
-    trigger_type: 'stop_loss' | 'take_profit_1' | 'take_profit_2' | 'take_profit_3' | 'max_hold_time'
+    // `max_age` is separate from `max_hold_time`: two backstops that reported the same trigger could
+    // not be told apart in the row, which is what made S5's backstop share uncomputable.
+    trigger_type: 'stop_loss' | 'take_profit_1' | 'take_profit_2' | 'take_profit_3' | 'max_hold_time' | 'max_age' | 'label_rugged'
     sell_percentage: number
     current_price: number
     trigger_price: number
@@ -419,6 +471,18 @@ export async function syncExistingOpenPositions(walletAddress: string, options?:
 }
 
 // Function to add a new SL/TP position
+/**
+ * THE invariant that keeps a paper stop-loss from spending real money.
+ *
+ * `executeSellOrder` runs a REAL swap — it hardcodes isSimulated: false — so every path that could
+ * reach it must first ask this. A simulated position is evaluated and recorded, never executed
+ * on-chain, and never balance-reconciled either: paper tokens do not exist on-chain, so the wallet
+ * lookup reads zero and reconciliation would prune the position on its first pass.
+ */
+export function isSimulatedPosition(position: { is_simulation?: boolean | null } | null | undefined): boolean {
+  return position?.is_simulation === true
+}
+
 export async function addSLTPPosition(params: {
     walletAddress: string
     tokenAddress: string
@@ -429,6 +493,24 @@ export async function addSLTPPosition(params: {
     takeProfitPercentage: number
     positionType: 'manual' | 'bot'
     strategyId?: string
+    /** Paper position: tracked and triggered, never executed on-chain. */
+    isSimulation?: boolean
+    /**
+     * The exit contract (S8). `referenceKind` says what `referenceValue` is, `exitBasis` says what
+     * the thresholds are expressed in. Both default to 'price' with `referenceValue = entryPrice`,
+     * so a caller that predates the contract writes exactly what it wrote before.
+     */
+    referenceKind?: 'price' | 'mcap'
+    referenceValue?: number
+    exitBasis?: 'price' | 'mcap'
+    /** The chain the position is on. The worker prices Sim burns and Robinhood differently. */
+    chain?: string
+    /**
+     * The max-hold backstop (S5), in hours. Carried here because the worker reads it off the row; a
+     * position opened without one has no backstop and can stay open indefinitely, which is why the
+     * exit contract stamps it rather than leaving it to a caller to remember.
+     */
+    maxHoldHours?: number
     // Bot-specific TP levels
     tp1Percentage?: number
     tp1SellPercentage?: number
@@ -447,6 +529,11 @@ export async function addSLTPPosition(params: {
             takeProfitPercentage,
             positionType,
             strategyId,
+            referenceKind,
+            referenceValue,
+            exitBasis,
+            chain,
+            maxHoldHours,
             tp1Percentage,
             tp1SellPercentage,
             tp2Percentage,
@@ -470,6 +557,11 @@ export async function addSLTPPosition(params: {
             take_profit_percentage: takeProfitPercentage,
             position_type: positionType,
             strategy_id: strategyId,
+            reference_kind: referenceKind ?? 'price',
+            reference_value: referenceValue ?? entryPrice,
+            exit_basis: exitBasis ?? 'price',
+            chain: chain ?? 'sol',
+            max_hold_hours: maxHoldHours ?? null,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
             is_active: true,
@@ -493,10 +585,12 @@ export async function addSLTPPosition(params: {
                strategy_id, created_at, updated_at, is_active,
                tp1_percentage, tp1_sell_percentage, tp2_percentage,
                tp3_percentage, tp3_enabled,
-               tp1_executed, tp2_executed, tp3_executed, sl_executed
+               tp1_executed, tp2_executed, tp3_executed, sl_executed,
+               is_simulation,
+               reference_kind, reference_value, exit_basis, chain, max_hold_hours
              ) VALUES (
                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-               $16, $17, $18, $19, $20, $21, $22, $23, $24
+               $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30
              ) RETURNING id`,
             [
                 position.wallet_address,
@@ -523,6 +617,12 @@ export async function addSLTPPosition(params: {
                 position.tp2_executed ?? false,
                 position.tp3_executed ?? false,
                 position.sl_executed ?? false,
+                params.isSimulation ?? false,
+                position.reference_kind ?? 'price',
+                position.reference_value ?? position.entry_price,
+                position.exit_basis ?? 'price',
+                position.chain ?? 'sol',
+                position.max_hold_hours ?? null,
             ],
         )
 
@@ -548,104 +648,194 @@ export async function addSLTPPosition(params: {
 }
 
 // Function to get current token prices
-async function getCurrentTokenPrices(tokenAddresses: string[]): Promise<Map<string, number>> {
-    try {
-        const prices = await getOpenPositionPrices(tokenAddresses, 'sol') // sl_tp_positions is Solana live-only
-
-        const priceMap = new Map<string, number>()
-        for (const [address, price] of Object.entries(prices)) {
-            if (typeof price === 'number' && price > 0) {
-                priceMap.set(address, price)
-            }
-        }
-
-        return priceMap
-    } catch (error) {
-        log.error('price_tracking', 'Failed to fetch token prices', error as Error)
-        return new Map()
+/**
+ * Prices for a set of positions, grouped by the chain each row declares.
+ *
+ * This used to pass a hardcoded 'sol' for every row ("sl_tp_positions is Solana live-only"), which
+ * was true when only the mcap family registered. A Robinhood row priced through the Solana path
+ * returns a number that is not its price — and the exit would then be evaluated against it. The
+ * chain is read off the row (S8's `chain`, defaulting to 'sol' for every pre-existing row).
+ */
+async function getCurrentTokenPrices(
+    positions: Array<{ token_address: string; chain?: string | null }>,
+): Promise<{ prices: Map<string, number>; failedChains: string[] }> {
+    const priceMap = new Map<string, number>()
+    const failedChains: string[] = []
+    const byChain = new Map<string, string[]>()
+    for (const position of positions) {
+        const chain = position.chain === 'robinhood' ? 'robinhood' : 'sol'
+        const mints = byChain.get(chain) ?? []
+        mints.push(position.token_address)
+        byChain.set(chain, mints)
     }
+
+    for (const [chain, mints] of Array.from(byChain.entries())) {
+        try {
+            const prices = await getOpenPositionPrices(mints, chain as GmgnTradeChain)
+            for (const [address, price] of Object.entries(prices)) {
+                if (typeof price === 'number' && price > 0) {
+                    priceMap.set(address, price)
+                }
+            }
+        } catch (error) {
+            // Still degrades to "unpriced" (the loop reports STALE and the backstops run), but the
+            // failure is RECORDED and returned so the pass can fail loudly instead of reading as a
+            // success — a swallowed error here is how a price outage looked like a healthy closer.
+            failedChains.push(chain)
+            log.error('price_tracking', 'Failed to fetch token prices', error as Error, {
+                chain,
+                mints: mints.length,
+            })
+        }
+    }
+
+    return { prices: priceMap, failedChains }
+}
+
+/**
+ * Persist the pass's prices in ONE statement.
+ *
+ * This was one `UPDATE ... WHERE id = $1` per position, issued inside the trigger map, so a pass
+ * with ~160 open positions fired ~160 concurrent queries at the pool. Measured against a
+ * 25-client pool: `total=25 idle=0 waiting=4…9` with 273 acquire failures in five minutes, and
+ * `/api/strategies/outcomes` failing at the 5s timeout because it queued behind them. Every
+ * waiter was one of these writes. One statement is one round-trip and removes the burst.
+ */
+async function persistCurrentPrices(
+    positions: Array<{ id: string; token_address: string }>,
+    prices: Map<string, number>,
+): Promise<void> {
+    const ids: string[] = []
+    const values: number[] = []
+    for (const position of positions) {
+        const price = prices.get(position.token_address)
+        if (typeof price === 'number' && Number.isFinite(price) && price > 0) {
+            ids.push(position.id)
+            values.push(price)
+        }
+    }
+    if (ids.length === 0) return
+    const ts = new Date().toISOString()
+    await query(
+        `UPDATE sl_tp_positions AS p
+            SET current_price = v.price, updated_at = v.ts
+           FROM unnest($1::uuid[], $2::numeric[], $3::timestamptz[]) AS v(id, price, ts)
+          WHERE p.id = v.id`,
+        [ids, values, ids.map(() => ts)],
+    )
 }
 
 // Function to check SL/TP triggers for a position
-function checkSLTPTriggers(position: SLTPPosition, currentPrice: number): SLTPTriggerResult {
-    const gainPercentage = ((currentPrice - position.entry_price) / position.entry_price) * 100
+// Exported for its own test: it is the row -> decision adapter, and the one place a row's fields are
+// translated into the evaluator's inputs.
+export function checkSLTPTriggers(
+    position: SLTPPosition,
+    currentPrice: number,
+    opts: { stale?: boolean; rugged?: boolean } = {},
+): SLTPTriggerResult {
+    // The decision itself lives in `evaluateExit` (S2), so the worker, the sims and the live path
+    // all resolve a trigger the same way. This function is the row -> decision adapter.
+    const isStop = position.sl_executed === true
+    const decision = evaluateExit({
+        // Pre-contract rows have no reference_value; their entry price is the same thing.
+        referenceValue: position.reference_value ?? position.entry_price,
+        referenceKind: position.reference_kind,
+        live: currentPrice,
+        stopLossPct: isStop ? null : position.stop_loss_percentage,
+        takeProfitPct: position.take_profit_percentage,
+        ladder: {
+            tp1Pct: position.tp1_percentage,
+            tp1SellPct: position.tp1_sell_percentage,
+            tp2Pct: position.tp2_percentage,
+            tp3Pct: position.tp3_percentage,
+            tp3Enabled: position.tp3_enabled,
+            tp1Executed: position.tp1_executed,
+            tp2Executed: position.tp2_executed,
+            tp3Executed: position.tp3_executed,
+        },
+        entryAt: position.created_at,
+        // The backstop, read off the row. It was never passed before, so `max_hold` / `max_age`
+        // could not fire and a position that never crossed its stop or target stayed open forever.
+        maxHoldHours: position.max_hold_hours,
+        // Both resolved by the caller: this stays a pure adapter. `stale` is what turns an
+        // unevaluable position into a REPORTED one rather than a silent skip (S4); `rugged` closes
+        // a known rug regardless of where the price sits.
+        stale: opts.stale,
+        rugged: opts.rugged,
+        // NOTE: `maxAgeHours` is still not passed, and there is no column or config for it — so
+        // `max_age` remains unreachable while `max_hold` now fires. The two were interchangeable
+        // before (`max_age` was the mcap family's version of the same idea), so one live backstop is
+        // the honest state rather than two flags where only one can ever be set.
+    })
 
-    // Check Stop Loss
-    if (gainPercentage <= position.stop_loss_percentage && !position.sl_executed) {
-        return {
-            triggered: true,
-            trigger_type: 'stop_loss',
-            sell_percentage: 100,
-            current_price: currentPrice,
-            trigger_price: position.stop_loss_price,
-            gain_percentage: gainPercentage,
-            reason: `Stop loss triggered: ${gainPercentage.toFixed(2)}% <= ${position.stop_loss_percentage}%`
-        }
-    }
-
-    // For bot positions, check multiple TP levels
-    if (position.position_type === 'bot') {
-        // Check TP1
-        if (position.tp1_percentage && !position.tp1_executed && gainPercentage >= position.tp1_percentage) {
-            return {
-                triggered: true,
-                trigger_type: 'take_profit_1',
-                sell_percentage: position.tp1_sell_percentage || 80,
-                current_price: currentPrice,
-                trigger_price: position.entry_price * (1 + position.tp1_percentage / 100),
-                gain_percentage: gainPercentage,
-                reason: `TP1 triggered: ${gainPercentage.toFixed(2)}% >= ${position.tp1_percentage}%`
-            }
-        }
-
-        // Check TP2 (only if TP1 was executed)
-        if (position.tp2_percentage && position.tp1_executed && !position.tp2_executed && gainPercentage >= position.tp2_percentage) {
-            return {
-                triggered: true,
-                trigger_type: 'take_profit_2',
-                sell_percentage: 100,
-                current_price: currentPrice,
-                trigger_price: position.entry_price * (1 + position.tp2_percentage / 100),
-                gain_percentage: gainPercentage,
-                reason: `TP2 triggered: ${gainPercentage.toFixed(2)}% >= ${position.tp2_percentage}%`
-            }
-        }
-
-        // Check TP3 (trailing stop after TP1)
-        if (position.tp3_percentage && position.tp3_enabled && position.tp1_executed && !position.tp3_executed && gainPercentage <= position.tp3_percentage) {
-            return {
-                triggered: true,
-                trigger_type: 'take_profit_3',
-                sell_percentage: 100,
-                current_price: currentPrice,
-                trigger_price: position.entry_price * (1 + position.tp3_percentage / 100),
-                gain_percentage: gainPercentage,
-                reason: `TP3 (trailing stop) triggered: ${gainPercentage.toFixed(2)}% <= ${position.tp3_percentage}% after TP1`
-            }
-        }
-    } else {
-        // For manual positions, simple TP check
-        if (gainPercentage >= position.take_profit_percentage) {
-            return {
-                triggered: true,
-                trigger_type: 'take_profit_1',
-                sell_percentage: 100,
-                current_price: currentPrice,
-                trigger_price: position.take_profit_price,
-                gain_percentage: gainPercentage,
-                reason: `Take profit triggered: ${gainPercentage.toFixed(2)}% >= ${position.take_profit_percentage}%`
-            }
-        }
-    }
+    const gainPercentage = decision.pnlPct ?? 0
+    const pctForPrice =
+        decision.triggerType === 'take_profit_1'
+            ? (position.tp1_percentage ?? position.take_profit_percentage)
+            : decision.triggerType === 'take_profit_2'
+              ? position.tp2_percentage
+              : decision.triggerType === 'take_profit_3'
+                ? position.tp3_percentage
+                : null
 
     return {
-        triggered: false,
-        trigger_type: 'stop_loss',
-        sell_percentage: 0,
+        triggered: decision.close,
+        // The shape predates the decision function and always names a type; keep its contract.
+        trigger_type: decision.triggerType ?? 'stop_loss',
+        sell_percentage: decision.sellPercentage,
         current_price: currentPrice,
-        trigger_price: 0,
+        trigger_price:
+            decision.triggerType === 'stop_loss'
+                ? position.stop_loss_price
+                : pctForPrice != null
+                  ? position.entry_price * (1 + pctForPrice / 100)
+                  : 0,
         gain_percentage: gainPercentage,
-        reason: 'No triggers met'
+        reason: decision.close
+            ? `${decision.triggerType} triggered at ${gainPercentage.toFixed(2)}% (${decision.basisUsed} basis)`
+            : decision.reason === 'stale'
+              ? 'No triggers met (stale input)'
+              : 'No triggers met',
+    }
+}
+
+/** The triggers that need only a clock or a rug label, never a live price. */
+const UNPRICED_BACKSTOP_TRIGGERS = new Set<SLTPTriggerResult['trigger_type']>([
+    'label_rugged',
+    'max_hold_time',
+    'max_age',
+])
+
+/**
+ * Exit decision for a position with NO readable price this pass.
+ *
+ * A live price is what stop-loss and take-profit are measured against, so those must never fire from
+ * a stale number. `maxHoldHours` and a rug label are different: they are true regardless of price and
+ * only need *a* price to book the close at. That price is the last one persisted on the row
+ * (`current_price`, refreshed every priced pass). Returns the close to take, or `null` when nothing
+ * backstop-level fires or the row has never held a usable price (it then stays reported STALE).
+ */
+export function resolveUnpricedBackstop(
+    position: SLTPPosition,
+    rugged: boolean,
+): SLTPTriggerResult | null {
+    const last = position.current_price
+    if (!(typeof last === 'number' && Number.isFinite(last) && last > 0)) return null
+    // Thresholds off: with the last price already past a stop/target, SL/TP would shadow the
+    // backstop (evaluateExit checks them first) and a due max-hold would stay open.
+    const backstopOnly = {
+        ...position,
+        stop_loss_percentage: null,
+        take_profit_percentage: null,
+        tp1_percentage: null,
+        tp2_percentage: null,
+        tp3_percentage: null,
+    } as unknown as SLTPPosition
+    const result = checkSLTPTriggers(backstopOnly, last, { rugged })
+    if (!result.triggered || !UNPRICED_BACKSTOP_TRIGGERS.has(result.trigger_type)) return null
+    return {
+        ...result,
+        reason: `${result.reason} [unpriced: closed on last known price]`,
     }
 }
 
@@ -682,6 +872,12 @@ async function reconcileClosedPositions(positions: SLTPPosition[]): Promise<{ fi
         const tokenMap = await getWalletTokenMap(wallet)
 
         for (const pos of walletPositions) {
+            if (isSimulatedPosition(pos)) {
+                // Paper tokens are not on-chain: the balance reads zero and this would prune the
+                // position immediately. Keep it; the sims close their own positions.
+                keep.push(pos)
+                continue
+            }
             const tokenInfo = tokenMap.get(pos.token_address)
             const hasBalance = tokenInfo && tokenInfo.uiAmount > ZERO_BALANCE_THRESHOLD
 
@@ -690,7 +886,8 @@ async function reconcileClosedPositions(positions: SLTPPosition[]): Promise<{ fi
                 try {
                     await query(
                         `UPDATE sl_tp_positions
-                         SET is_active = false, updated_at = $2
+                         SET is_active = false, updated_at = $2,
+                             close_reason = 'reconciled', closed_at = $2
                          WHERE id = $1`,
                         [pos.id, new Date().toISOString()],
                     )
@@ -739,6 +936,43 @@ export async function forceCloseSLTPPositionForDeactivate(
   })
 }
 
+/** Marks a simulated position closed on trigger. Deliberately DB-only: no chain, no wallet. */
+async function markSimulatedPositionClosed(
+  position: SLTPPosition,
+  triggerResult: SLTPTriggerResult,
+): Promise<void> {
+  try {
+    // `tp1_executed` is set only by an actual TP1. It used to be set by EVERY non-stop trigger, so a
+    // `max_age` / `max_hold` backstop was filed under take-profit — which inflated the TP count by
+    // exactly the closes that are not take-profits, and made S5's backstop share uncomputable.
+    const isStop = triggerResult.trigger_type === 'stop_loss'
+    const isTp1 = triggerResult.trigger_type === 'take_profit_1'
+    const { closeReasonForTrigger } = await import('@/strategies/close-strategy-sim-position')
+    const now = new Date().toISOString()
+    await query(
+      `UPDATE sl_tp_positions SET
+         is_active = false,
+         sl_executed = CASE WHEN $2 THEN true ELSE sl_executed END,
+         tp1_executed = CASE WHEN $3 THEN true ELSE tp1_executed END,
+         close_reason = $4,
+         closed_at = $5,
+         updated_at = $5
+       WHERE id = $1`,
+      [
+        position.id,
+        isStop,
+        isTp1,
+        toPersistedCloseReason(closeReasonForTrigger(triggerResult.trigger_type)),
+        now,
+      ],
+    )
+  } catch (error) {
+    log.error('price_tracking', 'Failed to close simulated SL/TP position', error as Error, {
+      positionId: position.id,
+    })
+  }
+}
+
 async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTriggerResult): Promise<boolean> {
     try {
         await initializeTradingConnection()
@@ -772,7 +1006,8 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
         if (walletUiAmount <= ZERO_BALANCE_THRESHOLD) {
             await query(
                 `UPDATE sl_tp_positions
-                 SET is_active = false, updated_at = $2, current_price = $3
+                 SET is_active = false, updated_at = $2, current_price = $3,
+                     close_reason = 'no_balance', closed_at = $2
                  WHERE id = $1`,
                 [position.id, new Date().toISOString(), triggerResult.current_price],
             )
@@ -798,7 +1033,8 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
             })
             await query(
                 `UPDATE sl_tp_positions
-                 SET is_active = false, updated_at = $2, current_price = $3
+                 SET is_active = false, updated_at = $2, current_price = $3,
+                     close_reason = 'no_balance', closed_at = $2
                  WHERE id = $1`,
                 [position.id, new Date().toISOString(), triggerResult.current_price],
             )
@@ -888,7 +1124,33 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
                 updateData.tp3_executed = true
                 updateData.is_active = false
                 break
+            // These three close the position but are deliberately NOT filed under a ladder flag.
+            // The flags say WHICH trigger fired, and a rug or a backstop is not a take-profit — the
+            // old code marked every non-stop close as `tp1_executed`, which is exactly how a
+            // backstop ended up in the take-profit bucket. `close_reason` carries why; the flags
+            // stay honest about what.
+            case 'label_rugged':
+            case 'max_age':
+            case 'max_hold_time':
+                updateData.is_active = false
+                break
         }
+
+        // The reason, decided before the UPDATE so the row carries it in the same statement as the
+        // flags. `close_reason` is the only place a backstop is distinguishable from a stop-loss:
+        // the boolean flags say WHICH trigger fired, never whether it was the last resort.
+        const { closeReasonForTrigger: reasonForTrigger } = await import(
+            '@/strategies/close-strategy-sim-position'
+        )
+        const persistedReason = toPersistedCloseReason(
+            // A deactivation force-close arrives as a nominal `stop_loss` trigger, so reading the
+            // trigger alone would file it as a stop the market never hit.
+            triggerResult.reason === 'strategy_deactivated'
+                ? 'strategy_deactivated'
+                : reasonForTrigger(triggerResult.trigger_type),
+        )
+        const isFullClose = updateData.is_active === false
+        const nowIso = updateData.updated_at as string
 
         await query(
             `UPDATE sl_tp_positions SET
@@ -898,7 +1160,9 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
                tp1_executed = COALESCE($5, tp1_executed),
                tp2_executed = COALESCE($6, tp2_executed),
                tp3_executed = COALESCE($7, tp3_executed),
-               is_active = COALESCE($8, is_active)
+               is_active = COALESCE($8, is_active),
+               close_reason = CASE WHEN $9 THEN $10 ELSE close_reason END,
+               closed_at = CASE WHEN $9 THEN $11::timestamptz ELSE closed_at END
              WHERE id = $1`,
             [
                 position.id,
@@ -909,6 +1173,9 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
                 updateData.tp2_executed ?? null,
                 updateData.tp3_executed ?? null,
                 updateData.is_active ?? null,
+                isFullClose,
+                persistedReason,
+                nowIso,
             ],
         )
 
@@ -933,7 +1200,6 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
             triggerType: triggerResult.trigger_type
         })
 
-        const isFullClose = updateData.is_active === false
         const closeReasonMap: Record<
           string,
           'sl' | 'tp1' | 'tp2' | 'tp3' | 'strategy_deactivated' | 'sltp_monitor'
@@ -1017,7 +1283,8 @@ export async function removeSLTPPosition(positionId: string): Promise<boolean> {
     try {
         await query(
             `UPDATE sl_tp_positions
-             SET is_active = false, updated_at = $2
+             SET is_active = false, updated_at = $2,
+                 close_reason = 'removed', closed_at = $2
              WHERE id = $1`,
             [positionId, new Date().toISOString()],
         )
@@ -1073,6 +1340,21 @@ export interface SLTPTrackingSummary {
             take_profit_2: number
             take_profit_3: number
         }
+        /**
+         * Exactly one bucket per finished row, keyed by `close_reason`. This is the mutually
+         * exclusive view — `finished_by_trigger` counts triggers, not positions, so a laddered
+         * position appears in more than one of its buckets. Compute the backstop share from here.
+         */
+        by_reason: Record<string, number>
+        /**
+         * `max_hold` + `max_age` as a share of closes that carry a reason (S5). A health metric: it
+         * measures how often the primary exit failed to fire, so it should be ~0.
+         */
+        backstop_share_pct: number
+        /** The value `backstop_share_pct` is compared against before it logs a warning. */
+        backstop_alert_pct: number
+        /** The window `total_finished` counts over. Was silently 24h. */
+        window_hours: number
         total_tracked_tokens: number
         unique_wallets: number
     }
@@ -1080,8 +1362,11 @@ export interface SLTPTrackingSummary {
 }
 
 // ✅ NEW: Get comprehensive tracking summary
-export async function getSLTPTrackingSummary(): Promise<SLTPTrackingSummary> {
+export async function getSLTPTrackingSummary(windowHours = 24): Promise<SLTPTrackingSummary> {
     try {
+        // Epoch ms, not setHours: setHours mutates to local time, so "last 24h" shifted with the
+        // server's timezone. The window is now explicit and reported back in `window_hours`.
+        const windowStart = new Date(Date.now() - windowHours * 60 * 60 * 1000)
         // Get all active positions
         const { rows: activePositions } = await query<SLTPPosition>(
             `SELECT * FROM sl_tp_positions
@@ -1089,14 +1374,11 @@ export async function getSLTPTrackingSummary(): Promise<SLTPTrackingSummary> {
              ORDER BY updated_at DESC`,
         )
 
-        const last24h = new Date()
-        last24h.setHours(last24h.getHours() - 24)
-
         const { rows: finishedPositions } = await query<SLTPPosition>(
             `SELECT * FROM sl_tp_positions
-             WHERE is_active = false AND updated_at >= $1
-             ORDER BY updated_at DESC`,
-            [last24h.toISOString()],
+             WHERE is_active = false AND COALESCE(closed_at, updated_at) >= $1
+             ORDER BY COALESCE(closed_at, updated_at) DESC`,
+            [windowStart.toISOString()],
         )
 
         // Calculate statistics
@@ -1107,12 +1389,42 @@ export async function getSLTPTrackingSummary(): Promise<SLTPTrackingSummary> {
             activeByType[pos.position_type as 'manual' | 'bot']++
         })
 
+        // WHICH trigger fired, from the flags. These remain non-exclusive by design: a laddered
+        // position can legitimately touch more than one, so this counts triggers, not positions.
         finishedPositions.forEach(pos => {
             if (pos.sl_executed) finishedByTrigger.stop_loss++
             if (pos.tp1_executed) finishedByTrigger.take_profit_1++
             if (pos.tp2_executed) finishedByTrigger.take_profit_2++
             if (pos.tp3_executed) finishedByTrigger.take_profit_3++
         })
+
+        // WHY it closed, from close_reason. Exactly one bucket per row, so this is the view S5's
+        // backstop share and any alert have to be computed from. `unknown` counts rows closed before
+        // the column existed, or by a writer that has not been taught to stamp it.
+        const byReason: Record<string, number> = {}
+        for (const pos of finishedPositions) {
+            const reason = pos.close_reason ?? 'unknown'
+            byReason[reason] = (byReason[reason] ?? 0) + 1
+        }
+
+        // S5: the backstop share is a HEALTH METRIC, not a statistic. `max_hold` firing means the
+        // primary exit did not. It should be ~0, so it is computed against a closed-set
+        // denominator (rows that actually carry a reason) and compared to an alerting threshold
+        // rather than just printed.
+        const reasonKnown = finishedPositions.filter((p) => p.close_reason != null).length
+        const backstopCloses = (byReason.max_hold ?? 0) + (byReason.max_age ?? 0)
+        const backstopSharePct =
+            reasonKnown > 0 ? (backstopCloses / reasonKnown) * 100 : 0
+        const backstopAlertPct = getExitBackstopAlertPct()
+        if (reasonKnown > 0 && backstopSharePct > backstopAlertPct) {
+            log.warn('price_tracking', 'Backstop share above threshold — primary exits are not firing', {
+                backstopSharePct: Number(backstopSharePct.toFixed(1)),
+                thresholdPct: backstopAlertPct,
+                backstopCloses,
+                reasonKnown,
+                windowHours,
+            })
+        }
 
         const uniqueWallets = new Set([
             ...activePositions.map(p => p.wallet_address),
@@ -1127,6 +1439,10 @@ export async function getSLTPTrackingSummary(): Promise<SLTPTrackingSummary> {
                 total_finished: finishedPositions.length,
                 active_by_type: activeByType,
                 finished_by_trigger: finishedByTrigger,
+                by_reason: byReason,
+                backstop_share_pct: Number(backstopSharePct.toFixed(2)),
+                backstop_alert_pct: backstopAlertPct,
+                window_hours: windowHours,
                 total_tracked_tokens: activePositions.length + finishedPositions.length,
                 unique_wallets: uniqueWallets
             },
@@ -1139,7 +1455,44 @@ export async function getSLTPTrackingSummary(): Promise<SLTPTrackingSummary> {
     }
 }
 
-// ✅ MODIFIED: Enhanced monitoring function that can return summary data
+/** `${chain}:${mint}` — a mint can exist on more than one chain, so the key carries both. */
+function ruggedKey(chain: string | null | undefined, mint: string): string {
+    return `${chain || 'sol'}:${mint}`
+}
+
+function isRugged(rugged: Set<string>, position: SLTPPosition): boolean {
+    return rugged.has(ruggedKey(position.chain, position.token_address))
+}
+
+/**
+ * The pass's known-rug mints, in ONE batched read.
+ *
+ * Fail-open in the strict sense: every failure path returns an empty set, so the evaluator falls
+ * back to the price path exactly as it would without this input. A rug lookup must never be able to
+ * block an exit — it can only ever ADD a reason to close.
+ */
+async function getRuggedMints(positions: SLTPPosition[]): Promise<Set<string>> {
+    const mints = Array.from(new Set(positions.map((p) => p.token_address).filter(Boolean)))
+    if (mints.length === 0) return new Set()
+    const chains = Array.from(new Set(positions.map((p) => p.chain || 'sol')))
+    try {
+        const { rows } = await query<{ chain: string; token_address: string }>(
+            `SELECT chain, token_address FROM token_mcap_tracking
+              WHERE label = 'rugged'
+                AND chain = ANY($1::text[])
+                AND token_address = ANY($2::text[])`,
+            [chains, mints],
+        )
+        return new Set(rows.map((r) => ruggedKey(r.chain, r.token_address)))
+    } catch (error) {
+        log.warn('price_tracking', 'Rug label lookup failed; exiting on price alone (fail-open)', {
+            positions: positions.length,
+            error: error instanceof Error ? error.message : String(error),
+        })
+        return new Set()
+    }
+}
+
 export async function monitorSLTPPositions(returnSummary: boolean = false): Promise<SLTPTrackingSummary | void> {
     try {
         // Get all active positions
@@ -1172,31 +1525,58 @@ export async function monitorSLTPPositions(returnSummary: boolean = false): Prom
         log.info('price_tracking', 'Monitoring SL/TP positions', { count: filteredPositions.length })
 
         // Get current prices for all tokens
-        const tokenAddresses = filteredPositions.map(p => p.token_address)
-        const currentPrices = await getCurrentTokenPrices(tokenAddresses)
+        const { prices: currentPrices, failedChains } = await getCurrentTokenPrices(filteredPositions)
+
+        await persistCurrentPrices(filteredPositions, currentPrices)
+
+        // The pass's rug set, one batched read resolved before the loop so nothing inside it does
+        // per-position I/O. Fail-open by construction (see getRuggedMints).
+        const ruggedMints = await getRuggedMints(filteredPositions)
+
+        // Per-pass counters. `stale` is the one that matters: it used to be invisible, because a
+        // position with no readable price was dropped before it could be counted.
+        let staleCount = 0
+        let ruggedCount = 0
+        let shadowCount = 0
 
         // Check each position for triggers
         const triggerPromises = filteredPositions.map(async (position) => {
-            const currentPrice = currentPrices.get(position.token_address)
+            let currentPrice = currentPrices.get(position.token_address)
+            const rugged = isRugged(ruggedMints, position)
+            let backstopResult: SLTPTriggerResult | null = null
 
             if (!currentPrice) {
-                log.warn('price_tracking', 'No price data for token', {
+                // NOT a silent skip. A position with no readable price is unevaluable, and that has
+                // to be REPORTED rather than dropped — S4: never a hold we cannot see. The decision
+                // still runs (with `stale`), which is what puts it in the pass's count and in the
+                // log; what it returns is `stale`, not a close.
+                staleCount += 1
+                const staleResult = checkSLTPTriggers(position, 0, { stale: true, rugged })
+                log.warn('price_tracking', 'No price data for token — reported STALE, not skipped', {
+                    positionId: position.id,
                     tokenAddress: position.token_address,
-                    tokenSymbol: position.token_symbol
+                    tokenSymbol: position.token_symbol,
+                    rugged,
+                    decision: staleResult.reason,
                 })
-                return
+                // The backstops (rugged / max-hold) do not need a live price, only a price to book
+                // the close at. Without this an unpriced position could never age out or retire on a
+                // rug label — the one state the stale count made visible but nothing resolved.
+                backstopResult = resolveUnpricedBackstop(position, rugged)
+                if (!backstopResult) return
+                currentPrice = backstopResult.current_price
+                log.warn('price_tracking', 'Unpriced position closed by backstop on last known price', {
+                    positionId: position.id,
+                    tokenSymbol: position.token_symbol,
+                    triggerType: backstopResult.trigger_type,
+                    lastPrice: currentPrice,
+                })
             }
 
-            // Update current price in database
-            await query(
-                `UPDATE sl_tp_positions
-                 SET current_price = $2, updated_at = $3
-                 WHERE id = $1`,
-                [position.id, currentPrice, new Date().toISOString()],
-            )
+            if (rugged) ruggedCount += 1
 
             // Check for triggers
-            const triggerResult = checkSLTPTriggers(position, currentPrice)
+            const triggerResult = backstopResult ?? checkSLTPTriggers(position, currentPrice, { rugged })
 
             if (triggerResult.triggered) {
                 log.info('deviation_alert', 'SL/TP trigger detected', {
@@ -1206,12 +1586,91 @@ export async function monitorSLTPPositions(returnSummary: boolean = false): Prom
                     reason: triggerResult.reason
                 })
 
-                // Execute sell order
-                await executeSellOrder(position, triggerResult)
+                if (isSimulatedPosition(position)) {
+                    // Paper: close the TRADE, never the chain. The closer writes the sell record and
+                    // the outcome; the mirror is retired only when that succeeded, so a failed close
+                    // stays open and is retried on the next pass rather than silently vanishing.
+                    const closeResult = await closeSimulatedPositionFromWorker({
+                        position,
+                        triggerType: triggerResult.trigger_type,
+                        currentPrice,
+                    })
+                    log.info('deviation_alert', 'Simulated SL/TP trigger recorded (no on-chain sell)', {
+                        positionId: position.id,
+                        tokenSymbol: position.token_symbol,
+                        triggerType: triggerResult.trigger_type,
+                        domain: closeResult.domain,
+                        closed: closeResult.closed,
+                    })
+                    if (closeResult.claimedElsewhere) {
+                        // Another pass is closing this position right now. Neither a shadow nor a
+                        // failure: skip without counting, and let that pass retire the mirror.
+                        return
+                    }
+                    if (!closeResult.closed) {
+                        // No closer owns this family, so this is a SHADOW: the worker evaluated the
+                        // position, the trigger fired, and it declines to act. That is how a strategy
+                        // gets compared against its own ladder before anything enforces the
+                        // comparison — `att_rh` today, whose `decideRhTrendingExit` ladder still owns
+                        // its exits. Reported with the fields needed to compare the two.
+                        shadowCount += 1
+                        log.info('deviation_alert', 'SHADOW — trigger fired, no closer owns this family', {
+                            positionId: position.id,
+                            strategyId: position.strategy_id,
+                            tokenSymbol: position.token_symbol,
+                            triggerType: triggerResult.trigger_type,
+                            sellPercentage: triggerResult.sell_percentage,
+                            gainPercentage: triggerResult.gain_percentage,
+                        })
+                    }
+                    if (closeResult.alreadyClosed) {
+                        // A pass killed between the outcome write and the mirror update leaves exactly
+                        // this. Reported rather than silent, because it means the previous pass did
+                        // not finish — the mirror is retired and nothing else is written.
+                        log.warn('deviation_alert', 'Already closed — retiring the mirror only', {
+                            positionId: position.id,
+                            tokenSymbol: position.token_symbol,
+                            triggerType: triggerResult.trigger_type,
+                        })
+                    }
+                    if (closeResult.closed) {
+                        await markSimulatedPositionClosed(position, triggerResult)
+                    }
+                } else {
+                    // Execute sell order
+                    await executeSellOrder(position, triggerResult)
+                }
             }
         })
 
         await Promise.all(triggerPromises)
+
+        // Always reported, even at zero. A count that only appears when non-zero is a count nobody
+        // notices is missing, and `stale` is precisely the state that used to be invisible.
+        log.info('price_tracking', 'Pass exit evaluation summary', {
+            positions: filteredPositions.length,
+            stale: staleCount,
+            rugged: ruggedCount,
+            shadow: shadowCount,
+        })
+
+        // The pass did its work (backstops, closes). If it could not price its book, it is still not
+        // a success: fail it so the route answers 500, the worker records the error instead of a
+        // `last_success_at`, and the freshness watchdog sees the outage.
+        const health = evaluateSltpPassHealth({
+            positions: filteredPositions.length,
+            stale: staleCount,
+            failedChains,
+        })
+        if (!health.ok) {
+            log.error('price_tracking', 'SL/TP pass unhealthy — price outage', new Error(health.reason ?? 'unhealthy'), {
+                positions: filteredPositions.length,
+                stale: staleCount,
+                staleRatio: health.staleRatio,
+                failedChains,
+            })
+            throw new SltpPassUnhealthyError(health.reason ?? 'unhealthy', health.staleRatio)
+        }
 
         // Return summary if requested
         if (returnSummary) {
@@ -1219,6 +1678,7 @@ export async function monitorSLTPPositions(returnSummary: boolean = false): Prom
         }
 
     } catch (error) {
+        if (error instanceof SltpPassUnhealthyError) throw error
         log.error('error_handling', 'Error monitoring SL/TP positions', error as Error)
         if (returnSummary) {
             // Return summary even on error for cronjob visibility
@@ -1258,31 +1718,58 @@ export async function runSLTPMonitorAndSummarize(): Promise<SLTPTrackingSummary>
         log.info('price_tracking', 'Monitoring SL/TP positions', { count: filteredPositions.length })
 
         // Get current prices for all tokens
-        const tokenAddresses = filteredPositions.map(p => p.token_address)
-        const currentPrices = await getCurrentTokenPrices(tokenAddresses)
+        const { prices: currentPrices, failedChains } = await getCurrentTokenPrices(filteredPositions)
+
+        await persistCurrentPrices(filteredPositions, currentPrices)
+
+        // The pass's rug set, one batched read resolved before the loop so nothing inside it does
+        // per-position I/O. Fail-open by construction (see getRuggedMints).
+        const ruggedMints = await getRuggedMints(filteredPositions)
+
+        // Per-pass counters. `stale` is the one that matters: it used to be invisible, because a
+        // position with no readable price was dropped before it could be counted.
+        let staleCount = 0
+        let ruggedCount = 0
+        let shadowCount = 0
 
         // Check each position for triggers
         const triggerPromises = filteredPositions.map(async (position) => {
-            const currentPrice = currentPrices.get(position.token_address)
+            let currentPrice = currentPrices.get(position.token_address)
+            const rugged = isRugged(ruggedMints, position)
+            let backstopResult: SLTPTriggerResult | null = null
 
             if (!currentPrice) {
-                log.warn('price_tracking', 'No price data for token', {
+                // NOT a silent skip. A position with no readable price is unevaluable, and that has
+                // to be REPORTED rather than dropped — S4: never a hold we cannot see. The decision
+                // still runs (with `stale`), which is what puts it in the pass's count and in the
+                // log; what it returns is `stale`, not a close.
+                staleCount += 1
+                const staleResult = checkSLTPTriggers(position, 0, { stale: true, rugged })
+                log.warn('price_tracking', 'No price data for token — reported STALE, not skipped', {
+                    positionId: position.id,
                     tokenAddress: position.token_address,
-                    tokenSymbol: position.token_symbol
+                    tokenSymbol: position.token_symbol,
+                    rugged,
+                    decision: staleResult.reason,
                 })
-                return
+                // The backstops (rugged / max-hold) do not need a live price, only a price to book
+                // the close at. Without this an unpriced position could never age out or retire on a
+                // rug label — the one state the stale count made visible but nothing resolved.
+                backstopResult = resolveUnpricedBackstop(position, rugged)
+                if (!backstopResult) return
+                currentPrice = backstopResult.current_price
+                log.warn('price_tracking', 'Unpriced position closed by backstop on last known price', {
+                    positionId: position.id,
+                    tokenSymbol: position.token_symbol,
+                    triggerType: backstopResult.trigger_type,
+                    lastPrice: currentPrice,
+                })
             }
 
-            // Update current price in database
-            await query(
-                `UPDATE sl_tp_positions
-                 SET current_price = $2, updated_at = $3
-                 WHERE id = $1`,
-                [position.id, currentPrice, new Date().toISOString()],
-            )
+            if (rugged) ruggedCount += 1
 
             // Check for triggers
-            const triggerResult = checkSLTPTriggers(position, currentPrice)
+            const triggerResult = backstopResult ?? checkSLTPTriggers(position, currentPrice, { rugged })
 
             if (triggerResult.triggered) {
                 log.info('deviation_alert', 'SL/TP trigger detected', {
@@ -1292,17 +1779,97 @@ export async function runSLTPMonitorAndSummarize(): Promise<SLTPTrackingSummary>
                     reason: triggerResult.reason
                 })
 
-                // Execute sell order
-                await executeSellOrder(position, triggerResult)
+                if (isSimulatedPosition(position)) {
+                    // Paper: close the TRADE, never the chain. The closer writes the sell record and
+                    // the outcome; the mirror is retired only when that succeeded, so a failed close
+                    // stays open and is retried on the next pass rather than silently vanishing.
+                    const closeResult = await closeSimulatedPositionFromWorker({
+                        position,
+                        triggerType: triggerResult.trigger_type,
+                        currentPrice,
+                    })
+                    log.info('deviation_alert', 'Simulated SL/TP trigger recorded (no on-chain sell)', {
+                        positionId: position.id,
+                        tokenSymbol: position.token_symbol,
+                        triggerType: triggerResult.trigger_type,
+                        domain: closeResult.domain,
+                        closed: closeResult.closed,
+                    })
+                    if (closeResult.claimedElsewhere) {
+                        // Another pass is closing this position right now. Neither a shadow nor a
+                        // failure: skip without counting, and let that pass retire the mirror.
+                        return
+                    }
+                    if (!closeResult.closed) {
+                        // No closer owns this family, so this is a SHADOW: the worker evaluated the
+                        // position, the trigger fired, and it declines to act. That is how a strategy
+                        // gets compared against its own ladder before anything enforces the
+                        // comparison — `att_rh` today, whose `decideRhTrendingExit` ladder still owns
+                        // its exits. Reported with the fields needed to compare the two.
+                        shadowCount += 1
+                        log.info('deviation_alert', 'SHADOW — trigger fired, no closer owns this family', {
+                            positionId: position.id,
+                            strategyId: position.strategy_id,
+                            tokenSymbol: position.token_symbol,
+                            triggerType: triggerResult.trigger_type,
+                            sellPercentage: triggerResult.sell_percentage,
+                            gainPercentage: triggerResult.gain_percentage,
+                        })
+                    }
+                    if (closeResult.alreadyClosed) {
+                        // A pass killed between the outcome write and the mirror update leaves exactly
+                        // this. Reported rather than silent, because it means the previous pass did
+                        // not finish — the mirror is retired and nothing else is written.
+                        log.warn('deviation_alert', 'Already closed — retiring the mirror only', {
+                            positionId: position.id,
+                            tokenSymbol: position.token_symbol,
+                            triggerType: triggerResult.trigger_type,
+                        })
+                    }
+                    if (closeResult.closed) {
+                        await markSimulatedPositionClosed(position, triggerResult)
+                    }
+                } else {
+                    // Execute sell order
+                    await executeSellOrder(position, triggerResult)
+                }
             }
         })
 
         await Promise.all(triggerPromises)
 
+        // Always reported, even at zero. A count that only appears when non-zero is a count nobody
+        // notices is missing, and `stale` is precisely the state that used to be invisible.
+        log.info('price_tracking', 'Pass exit evaluation summary', {
+            positions: filteredPositions.length,
+            stale: staleCount,
+            rugged: ruggedCount,
+            shadow: shadowCount,
+        })
+
+        // The pass did its work (backstops, closes). If it could not price its book, it is still not
+        // a success: fail it so the route answers 500, the worker records the error instead of a
+        // `last_success_at`, and the freshness watchdog sees the outage.
+        const health = evaluateSltpPassHealth({
+            positions: filteredPositions.length,
+            stale: staleCount,
+            failedChains,
+        })
+        if (!health.ok) {
+            log.error('price_tracking', 'SL/TP pass unhealthy — price outage', new Error(health.reason ?? 'unhealthy'), {
+                positions: filteredPositions.length,
+                stale: staleCount,
+                staleRatio: health.staleRatio,
+                failedChains,
+            })
+            throw new SltpPassUnhealthyError(health.reason ?? 'unhealthy', health.staleRatio)
+        }
+
         // Return summary
         return await getSLTPTrackingSummary()
 
     } catch (error) {
+        if (error instanceof SltpPassUnhealthyError) throw error
         log.error('error_handling', 'Error monitoring SL/TP positions', error as Error)
         // Try to return summary even on failure
         try {

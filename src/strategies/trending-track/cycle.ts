@@ -19,6 +19,10 @@ import { trendingListDiscordViaCronOnly } from '@/utils/trending-notification-de
 import { formatAppDateTime } from '@/utils/datetime'
 import type { JupiterResponse } from '@/types'
 import { assignTokenToStrategy } from '@/strategies/assign'
+import {
+  captureTokenInfoDetectBatch,
+  type TokenInfoDetectCapture,
+} from '@/strategies/token-info-detect'
 import { tokenMatchesTrendingBotStrategy } from '@/strategies/strategy-filters'
 import {
   refreshTrackStrategyCache,
@@ -80,11 +84,45 @@ async function simBrainBuyPlan(
   return { skip: false, buyAmountSol: sized, risk }
 }
 
+
+/**
+ * Runs the Robinhood sim cycle without blocking the request that triggered it.
+ *
+ * Its own in-process flag plus a DB lock: the Solana cycle's `trending_track` lock is released
+ * when the request returns, so it cannot be what serialises this work any more.
+ */
+let rhSimCycleRunning = false
+
+async function runTrendingBotRhSimDetached(logger: any): Promise<void> {
+  if (rhSimCycleRunning) {
+    console.warn('⏭️ Robinhood sim cycle already running — not starting another')
+    return
+  }
+  const { acquireJobLock, releaseJobLock } = await import('@/utils/bot-job-lock')
+  const lock = await acquireJobLock('trending_rh_sim', 1800)
+  if (!lock.acquired) {
+    console.warn(`⏭️ Robinhood sim cycle skipped: ${lock.reason}`)
+    return
+  }
+  rhSimCycleRunning = true
+  const started = Date.now()
+  try {
+    await runTrendingBotRhSimCycle()
+    console.warn(`✅ Robinhood sim cycle finished in ${Date.now() - started}ms`)
+  } catch (rhError) {
+    logger.error('api_request', 'Robinhood trending sim cycle failed', rhError as Error)
+  } finally {
+    rhSimCycleRunning = false
+    await releaseJobLock('trending_rh_sim')
+  }
+}
+
 export async function internalTrackPost(request: NextRequest, logger: any) {
   const requestStartTime = Date.now()
   const requestId = Math.random().toString(36).substring(7)
 
   const { acquireJobLock, releaseJobLock } = await import('@/utils/bot-job-lock')
+  const tokenInfoCaptures: TokenInfoDetectCapture[] = []
   const jobLock = await acquireJobLock('trending_track', 600)
   if (!jobLock.acquired) {
     console.log(`⏭️ Skipping track cycle: ${jobLock.reason}`)
@@ -115,12 +153,13 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Robinhood twin runs on GMGN market rank; a failure there must not stop Solana.
-    try {
-      await runTrendingBotRhSimCycle()
-    } catch (rhError) {
-      logger.error('api_request', 'Robinhood trending sim cycle failed', rhError as Error)
-    }
+    // Robinhood twin runs on GMGN market rank; a failure there must not stop Solana — and it must
+    // not delay it either. Measured while awaited inline: one cycle held the lock 4m12s and was
+    // still going, which blew this request's own deadline and starved every other request in the
+    // shared Node process (the sims' 30s timeouts were the same starvation). Detached, with its own
+    // guard so it cannot overlap itself; the standalone web server is long-lived, so the work
+    // continues after this response is sent.
+    void runTrendingBotRhSimDetached(logger)
 
     // Log incoming request
     logger.info('api_request', 'Tracking Request Started', {
@@ -752,6 +791,12 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
               console.log(`🚫 Token ${token.token_symbol} rejected: no active strategy matches mcap/organic/holders band`)
               continue
             }
+            tokenInfoCaptures.push({
+              chain: 'sol',
+              tokenAddress: token.token_address,
+              detectingStrategy: assignedStrategy,
+              source: 'trending',
+            })
 
             const strategy = resolveTradingStrategy(assignedStrategy)
 
@@ -1049,6 +1094,12 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
                 console.log(`🚫 Dip buy ${token.token_symbol} rejected: no active strategy matches band`)
                 continue
               }
+              tokenInfoCaptures.push({
+                chain: 'sol',
+                tokenAddress: token.token_address,
+                detectingStrategy: assignedStrategy,
+                source: 'trending',
+              })
 
               const strategy = resolveTradingStrategy(assignedStrategy)
 
@@ -1843,7 +1894,11 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
       timestamp: new Date().toISOString()
     }, { status: 500 })
   } finally {
+    // Release the lock FIRST and never await the capture: it queues behind GMGN's rate gate
+    // (0.9 rps, 2 POSTs per 8-mint chunk) and, on the OpenAPI path, one serial snapshot per mint, so
+    // awaiting it held `trending_track` and the HTTP response for however long GMGN took.
     await releaseJobLock('trending_track')
+    void captureTokenInfoDetectBatch(tokenInfoCaptures)
   }
 }
 

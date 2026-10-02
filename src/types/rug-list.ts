@@ -10,6 +10,8 @@ export type TokenRugSource =
   | 'dlmm-general'
   | 'gmgn-radar'
   | 'concentration'
+  | 'rug-signal'
+  | 'rug-signal-dev'
   | 'freeview';
 
 export interface TokenRugEntry {

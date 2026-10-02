@@ -7,8 +7,13 @@ import {
   updateDetectSnapshotLabel,
   type DetectRugLabel,
 } from '@/strategies/detect-snapshots'
-import { evaluateOhlcRugRules } from '@/strategies/ohlc-rug-rules'
+import {
+  evaluateOhlcRugRules,
+  OHLC_RUG_EMPTY_STORAGE,
+  OHLC_RUG_MAX_BARS,
+} from '@/strategies/ohlc-rug-rules'
 import { isValidMintAddress } from '@/utils/jupiter'
+import { readRiskChip } from '@/strategies/risk-store'
 
 
 export async function GET(request: NextRequest) {
@@ -23,8 +28,13 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Live bars first — DB snapshot must not block Freeview rules
-    const { bars } = await fetchLastOhlcRugBars(address)
+    // Live bars first — DB snapshot must not block Freeview rules.
+    // Canonical 24h cache, then own-1m storage when that cache is empty.
+    const { bars, source: ohlcSource } = await fetchLastOhlcRugBars(
+      address,
+      OHLC_RUG_MAX_BARS,
+      { fallbackOwn1m: true },
+    )
     const evalResult = evaluateOhlcRugRules(bars)
 
     let existing: Awaited<ReturnType<typeof getLatestDetectSnapshot>> = null
@@ -58,12 +68,18 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // Stored shadow risk chip (RugCheck + dev reputation); null until the
+    // strategy pipeline has evaluated this token.
+    const riskChip = await readRiskChip('sol', address)
+
     return NextResponse.json(
       {
         success: true,
         address,
         bars,
         barCount: bars.length,
+        ohlc_source: ohlcSource,
+        empty_reason: bars.length === 0 ? OHLC_RUG_EMPTY_STORAGE : null,
         features: evalResult.features,
         rule_hits: evalResult.hits,
         trip: evalResult.trip,
@@ -73,6 +89,7 @@ export async function GET(request: NextRequest) {
         source: snapSource,
         frozen_features: existing?.features ?? null,
         frozen_rule_hits: existing?.rule_hits ?? null,
+        riskChip,
       },
       { headers: { 'Cache-Control': 'no-store' } },
     )

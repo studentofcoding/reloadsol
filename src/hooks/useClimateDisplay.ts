@@ -1,7 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
 
 export const CLIMATE_DISPLAY_QUERY_KEY = ['regime-climate-display'] as const
-export const CLIMATE_DISPLAY_POLL_MS = 30_000
+// The climate is a daily value and this chip is on every page (measured: ~18 requests/min across the
+// open tabs). Two minutes keeps it fresh enough without the constant load.
+export const CLIMATE_DISPLAY_POLL_MS = 120_000
 
 export type ClimateChipLabel = 'Safe' | 'Not safe' | 'Unknown'
 

@@ -1,6 +1,6 @@
 import type { StrategyDomain } from "@/strategies/types";
 
-export const ALGO_TESTER_TABS = ["config", "open", "closed"] as const;
+export const ALGO_TESTER_TABS = ["config", "open", "closed", "health"] as const;
 export type AlgoTesterTab = (typeof ALGO_TESTER_TABS)[number];
 
 export const ALGO_TESTER_OPEN_HREF = "/dev/algo-tester?tab=open";
