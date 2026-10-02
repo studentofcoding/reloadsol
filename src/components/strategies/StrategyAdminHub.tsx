@@ -117,6 +117,12 @@ function StrategyNotifyBar({
   const flags = readNotifyFlags(notify)
   return (
     <div className="flex flex-wrap gap-3 items-center text-xs text-gray-300">
+      {/* T4 step 3: a switch, not configuration. These change what the running system *does* — whether
+          this strategy notifies at all — not what it trades on, and they read as tunable parameters
+          when they sit unlabelled beside the thresholds. */}
+      <span className="font-mono text-[10px] uppercase tracking-wide text-gray-500 mr-1">
+        Notify switches
+      </span>
       <label className="flex items-center gap-1.5 cursor-pointer">
         <input
           type="checkbox"
