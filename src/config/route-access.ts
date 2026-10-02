@@ -21,6 +21,9 @@ export const DEV_ROUTES = [
   '/dev/dev-reputation',
   '/dev/arbitrage',
   '/dev/fomo',
+  '/dev/rug-signal',
+  '/dev/paper-trade',
+  '/dev/social',
 ] as const;
 
 export type WalletRequiredRoute = (typeof WALLET_REQUIRED_ROUTES)[number];

@@ -157,18 +157,20 @@ export default function NavigationTabs({
                 </Link>
                 ) : null}
 
-                {can("/dev/paper-trade") ? (
+                {/* Took the "Paper" chip's slot: /dev/paper-trade is still reachable by URL, and the
+                    rug signal page is where that work now lives. */}
+                {can("/dev/rug-signal") ? (
                     <Link
-                      href="/dev/paper-trade"
+                      href="/dev/rug-signal"
                       className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
-                        isActive("/dev/paper-trade")
+                        isActive("/dev/rug-signal")
                           ? "bg-gray-700 text-white"
                           : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
                       }`}
-                      title="Paper trade PnL"
-                      aria-label="Paper trade PnL"
+                      title="Rug signal - reachability and soak"
+                      aria-label="Rug signal"
                     >
-                      <span className="text-xs font-semibold">Paper</span>
+                      <span className="text-xs font-semibold">Rug</span>
                     </Link>
                     ) : null}
                     {can("/dev/search-token") ? (
@@ -337,18 +339,20 @@ export default function NavigationTabs({
                       </svg>
                     </Link>
                     ) : null}
-                    {can("/dev/paper-trade") ? (
+                    {/* Took the "Paper" chip's slot: /dev/paper-trade is still reachable by URL, and the
+                    rug signal page is where that work now lives. */}
+                {can("/dev/rug-signal") ? (
                     <Link
-                      href="/dev/paper-trade"
+                      href="/dev/rug-signal"
                       className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
-                        isActive("/dev/paper-trade")
+                        isActive("/dev/rug-signal")
                           ? "bg-gray-700 text-white"
                           : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
                       }`}
-                      title="Paper trade PnL"
-                      aria-label="Paper trade PnL"
+                      title="Rug signal - reachability and soak"
+                      aria-label="Rug signal"
                     >
-                      <span className="text-xs font-semibold">Paper</span>
+                      <span className="text-xs font-semibold">Rug</span>
                     </Link>
                     ) : null}
                     {can("/dev/search-token") ? (
@@ -787,18 +791,20 @@ export default function NavigationTabs({
                   <span className="text-xs font-medium">Social</span>
                 </Link>
                 ) : null}
-                {can("/dev/paper-trade") ? (
+                {/* Took the "Paper" chip's slot: /dev/paper-trade is still reachable by URL, and the
+                    rug signal page is where that work now lives. */}
+                {can("/dev/rug-signal") ? (
                     <Link
-                      href="/dev/paper-trade"
+                      href="/dev/rug-signal"
                       className={`px-4 py-3 ml-1 rounded-lg font-medium ${navChromeItem} ${
-                        isActive("/dev/paper-trade")
+                        isActive("/dev/rug-signal")
                           ? "bg-gray-700 text-white"
                           : "text-gray-400 fine-hover:text-white fine-hover:bg-gray-800"
                       }`}
-                      title="Paper trade PnL"
-                      aria-label="Paper trade PnL"
+                      title="Rug signal - reachability and soak"
+                      aria-label="Rug signal"
                     >
-                      <span className="text-xs font-semibold">Paper</span>
+                      <span className="text-xs font-semibold">Rug</span>
                     </Link>
                     ) : null}
                     {can("/dev/search-token") ? (
