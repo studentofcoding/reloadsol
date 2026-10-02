@@ -11,6 +11,7 @@ export type TokenRugSource =
   | 'gmgn-radar'
   | 'concentration'
   | 'rug-signal'
+  | 'rug-signal-dev'
   | 'freeview';
 
 export interface TokenRugEntry {

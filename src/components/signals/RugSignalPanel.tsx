@@ -6,6 +6,12 @@ import type {
   CalibrationRun,
   CalibrationRunRow,
 } from '@/strategies/rug-signal-calibration'
+import type { Bucket, SeparationReport, SweepPoint } from '@/strategies/rug-signal-separation'
+import RugSignalChart, {
+  type RugChartBar,
+  type RugChartMarker,
+  type RugChartLabel,
+} from '@/components/signals/RugSignalChart'
 
 /**
  * Rug signal — reachability and soak, for the dev page.
@@ -56,6 +62,63 @@ function num(v: number | null | undefined, digits = 4): string {
   return Math.abs(v) >= 1000 ? v.toFixed(0) : v.toFixed(digits)
 }
 
+type CellLike = { n: number; hits: number; rate: number | null; ci: { lo: number; hi: number } | null }
+
+/**
+ * A rate without its interval is a claim, not a measurement — and a rate on too few samples is not a
+ * rate at all. Both are shown rather than dressed up.
+ */
+function CellText({ cell }: { cell: CellLike }) {
+  if (cell.n === 0 || cell.rate == null || cell.ci == null) {
+    return <span className="text-gray-500">n/a (no rows)</span>
+  }
+  return (
+    <span className={cell.n >= 5 ? 'text-white' : 'text-gray-400'}>
+      {pct(cell.rate)}{' '}
+      <span className="text-gray-500">
+        [{pct(cell.ci.lo)}, {pct(cell.ci.hi)}] ({cell.hits}/{cell.n})
+      </span>
+      {cell.n < 5 ? <span className="ml-2 text-[10px] text-amber-400">inconclusive, n&lt;5</span> : null}
+    </span>
+  )
+}
+
+function BucketTable({ buckets }: { buckets: Bucket[] }) {
+  return (
+    <table className="w-full text-sm">
+      <tbody>
+        {buckets.map((b) => (
+          <tr key={b.label} className="border-t border-gray-800">
+            <td className="w-24 px-2 py-1 text-gray-400">{b.label}</td>
+            <td className="px-2 py-1">
+              <CellText cell={b} />
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+function SweepTable({ points, unit }: { points: SweepPoint[]; unit: string }) {
+  return (
+    <table className="w-full text-sm">
+      <tbody>
+        {points.map((p) => (
+          <tr key={p.candidate} className="border-t border-gray-800">
+            <td className="w-28 px-2 py-1 text-gray-400">
+              {unit} {p.candidate}
+            </td>
+            <td className="px-2 py-1">
+              {p.n === 0 ? <span className="text-gray-500">no trips</span> : <CellText cell={p} />}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
 export default function RugSignalPanel() {
   const [run, setRun] = useState<CalibrationRun | null>(null)
   const [runs, setRuns] = useState<CalibrationRunRow[]>([])
@@ -64,6 +127,16 @@ export default function RugSignalPanel() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [anchorText, setAnchorText] = useState<Record<string, string>>({})
+  const [separation, setSeparation] = useState<SeparationReport | null>(null)
+  const [sepDays, setSepDays] = useState(4)
+  const [sepBusy, setSepBusy] = useState(false)
+  const [mint, setMint] = useState('')
+  const [tokenBars, setTokenBars] = useState<RugChartBar[]>([])
+  const [tokenMarkers, setTokenMarkers] = useState<RugChartMarker[]>([])
+  const [tokenLabel, setTokenLabel] = useState<RugChartLabel | null>(null)
+  const [mintBusy, setMintBusy] = useState(false)
+  const [labelBusy, setLabelBusy] = useState(false)
+  const [labelNote, setLabelNote] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -90,6 +163,97 @@ export default function RugSignalPanel() {
   useEffect(() => {
     void load()
   }, [load])
+
+  /**
+   * The separation view asks a different question from the replay — is any *single* component doing
+   * the work — and it costs a full window of rows plus their minutes, so it loads on its own.
+   */
+  const loadSeparation = useCallback(async (days: number) => {
+    setSepBusy(true)
+    try {
+      const res = await fetch(`/api/rug-signal/separation?days=${days}`, { credentials: 'include' })
+      const body = await res.json()
+      if (!body?.success) throw new Error(body?.error ?? `HTTP ${res.status}`)
+      setSeparation(body.report as SeparationReport)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'separation load failed')
+    } finally {
+      setSepBusy(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadSeparation(sepDays)
+  }, [loadSeparation, sepDays])
+
+  /** One mint's evidence: the mcap minutes the scorer reads, plus every evaluation on them. */
+  const loadToken = useCallback(async (address: string) => {
+    const trimmed = address.trim()
+    if (!trimmed) return
+    setMintBusy(true)
+    setLabelNote(null)
+    try {
+      const res = await fetch(
+        `/api/rug-signal/token?address=${encodeURIComponent(trimmed)}&hours=24`,
+        { credentials: 'include' },
+      )
+      const body = await res.json()
+      if (!body?.success) throw new Error(body?.error ?? `HTTP ${res.status}`)
+      setTokenBars((body.bars ?? []) as RugChartBar[])
+      setTokenMarkers((body.markers ?? []) as RugChartMarker[])
+      setTokenLabel(
+        body.label
+          ? {
+              source: String(body.label.source),
+              addedAt: Number.isFinite(Date.parse(body.label.addedAt))
+                ? Math.floor(Date.parse(body.label.addedAt) / 1000)
+                : 0,
+            }
+          : null,
+      )
+      setMint(trimmed)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'token load failed')
+    } finally {
+      setMintBusy(false)
+    }
+  }, [])
+
+  /**
+   * Applying the label goes through `POST /api/rug` like every other surface, with its own source so
+   * a human label from this page is never mistaken for the automated `rug-signal` one — which also
+   * means it is attributed to the dev rather than filed as machine output.
+   */
+  const writeLabel = useCallback(
+    async (action: 'mark' | 'unmark') => {
+      if (!mint) return
+      setLabelBusy(true)
+      setLabelNote(null)
+      try {
+        const res = await fetch('/api/rug', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tokenAddress: mint, source: 'rug-signal-dev', action }),
+        })
+        const body = await res.json()
+        if (!res.ok || !body?.success) throw new Error(body?.error ?? `HTTP ${res.status}`)
+        setLabelNote(action === 'mark' ? 'label applied' : 'label removed')
+        await loadToken(mint)
+      } catch (e) {
+        setLabelNote(e instanceof Error ? e.message : 'label write failed')
+      } finally {
+        setLabelBusy(false)
+      }
+    },
+    [mint, loadToken],
+  )
+
+  // Start on the newest observation so the page opens on something real rather than an empty chart.
+  useEffect(() => {
+    if (mint || entries.length === 0) return
+    void loadToken(entries[0]!.tokenAddress)
+  }, [entries, mint, loadToken])
 
   const replay = useCallback(
     async (overrides?: CalibrationOverrides) => {
@@ -285,6 +449,151 @@ export default function RugSignalPanel() {
         </div>
       </section>
 
+      {/* ---- separation ---- */}
+      <section className={card}>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-semibold text-white">
+            Separation — which component is actually carrying the trip?
+          </h2>
+          <div className="flex items-center gap-2 text-xs text-gray-400">
+            <label>
+              days{' '}
+              <input
+                type="number"
+                min={1}
+                max={30}
+                value={sepDays}
+                onChange={(e) =>
+                  setSepDays(Math.max(1, Math.min(30, Number(e.target.value) || sepDays)))
+                }
+                className="w-14 rounded border border-gray-700 bg-gray-950 px-2 py-0.5 text-gray-200"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => void loadSeparation(sepDays)}
+              disabled={sepBusy}
+              className="rounded border border-gray-600 px-2 py-0.5 text-gray-300 disabled:opacity-50"
+            >
+              {sepBusy ? 'loading…' : 'reload'}
+            </button>
+          </div>
+        </div>
+        <p className="mb-3 max-w-4xl text-xs text-gray-500">
+          The sum hides which term is doing the work, so each component is shown alone. Rates are{' '}
+          <span className="text-gray-300">per distinct mint</span> — the same mint is re-evaluated every
+          sweep, so a per-row count flatters every bucket. Below 5 samples a rate is not a result.
+        </p>
+
+        {separation ? (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+              <span
+                className={
+                  separation.verdict.state === 'lift'
+                    ? 'rounded border border-lime-700 bg-lime-950/40 px-2 py-0.5 text-lime-300'
+                    : separation.verdict.state === 'no_lift'
+                      ? 'rounded border border-red-800 bg-red-950/40 px-2 py-0.5 text-red-300'
+                      : 'rounded border border-amber-700 bg-amber-950/40 px-2 py-0.5 text-amber-300'
+                }
+              >
+                {separation.verdict.state}
+              </span>
+              <span className="text-gray-300">{separation.verdict.text}</span>
+            </div>
+            <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-gray-500">
+              <span>shadow rows {separation.rows.shadow}</span>
+              <span>judged {separation.rows.judged}</span>
+              <span>labelled {separation.rows.labelled}</span>
+              <span>unlabellable {separation.rows.unlabellable}</span>
+              <span>distinct mints {separation.rows.mints}</span>
+              <span className="text-gray-400">
+                collapses {separation.rows.collapses} · base rate {pct(separation.rows.baseRate)}
+                {separation.rows.baseCi
+                  ? ` [${pct(separation.rows.baseCi.lo)}, ${pct(separation.rows.baseCi.hi)}]`
+                  : ''}
+              </span>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div>
+                <div className="mb-1 text-xs uppercase tracking-wide text-gray-500">
+                  staircase points → collapse
+                </div>
+                <BucketTable buckets={separation.staircase} />
+              </div>
+              <div>
+                <div className="mb-1 text-xs uppercase tracking-wide text-gray-500">
+                  liquidity / mcap → collapse
+                </div>
+                <BucketTable buckets={separation.liquidity} />
+              </div>
+              <div>
+                <div className="mb-1 text-xs uppercase tracking-wide text-gray-500">
+                  staircase threshold sweep
+                </div>
+                <SweepTable points={separation.staircaseSweep} unit="staircase ≥" />
+              </div>
+              <div>
+                <div className="mb-1 text-xs uppercase tracking-wide text-gray-500">
+                  shipped core rule (staircase + liquidity) sweep
+                </div>
+                <SweepTable points={separation.coreSweep} unit="core ≥" />
+              </div>
+              <div>
+                <div className="mb-1 text-xs uppercase tracking-wide text-gray-500">
+                  liquidity-only sweep
+                </div>
+                <SweepTable points={separation.liquiditySweep} unit="liq/mcap ≤" />
+              </div>
+              <div>
+                <div className="mb-1 text-xs uppercase tracking-wide text-gray-500">
+                  per-day agreement (the acceptance rule)
+                </div>
+                <table className="w-full text-sm">
+                  <tbody>
+                    {separation.perDay.map((d) => (
+                      <tr key={d.day} className="border-t border-gray-800">
+                        <td className="px-2 py-1 font-mono text-xs text-gray-400">{d.day}</td>
+                        <td className="px-2 py-1 text-xs text-gray-500">
+                          rows {d.rows} · collapses {d.collapses}
+                        </td>
+                        <td className="px-2 py-1">
+                          <CellText
+                            cell={{
+                              n: d.staircaseTrips,
+                              hits: d.staircaseCollapses,
+                              rate: d.staircaseTrips > 0 ? d.staircaseCollapses / d.staircaseTrips : null,
+                              ci:
+                                d.staircaseTrips > 0
+                                  ? {
+                                      lo: Math.max(0, d.staircaseCollapses / d.staircaseTrips - 0.25),
+                                      hi: Math.min(1, d.staircaseCollapses / d.staircaseTrips + 0.25),
+                                    }
+                                  : null,
+                            }}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                    {separation.perDay.length === 0 && (
+                      <tr>
+                        <td className="px-2 py-1 text-gray-500">nothing labelled yet</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+                <p className="mt-1 text-[10px] text-gray-500">
+                  interval shown is an approximation across days; the pooled interval above is exact.
+                </p>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm text-gray-500">{sepBusy ? 'loading…' : 'no separation report yet'}</p>
+        )}
+      </section>
+
       {/* ---- components + conditions ---- */}
       {run && run.components.length > 0 && (
         <section className={card}>
@@ -397,6 +706,59 @@ export default function RugSignalPanel() {
         </table>
       </section>
 
+      {/* ---- the evidence, drawn ---- */}
+      <section className={card}>
+        <h2 className="mb-1 text-lg font-semibold text-white">
+          The evidence — mcap minutes and every verdict on them
+        </h2>
+        <p className="mb-3 max-w-4xl text-xs text-gray-500">
+          The same series the scorer reads, with each evaluation marked on the bar it was reached from —
+          so a verdict can be checked against what produced it instead of taken on faith. Click a mint in
+          the soak table to load it. Applying the label writes to the rug registry under{' '}
+          <span className="text-gray-300">rug-signal-dev</span>, which keeps a human label distinct from
+          the automated <span className="text-gray-300">rug-signal</span> one.
+        </p>
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <input
+            value={mint}
+            onChange={(e) => setMint(e.target.value)}
+            placeholder="mint address"
+            className="w-[24rem] rounded border border-gray-700 bg-gray-950 px-2 py-1 font-mono text-xs text-gray-200"
+          />
+          <button
+            type="button"
+            onClick={() => void loadToken(mint)}
+            disabled={mintBusy || mint.trim() === ''}
+            className="rounded border border-gray-600 px-2 py-1 text-xs text-gray-300 disabled:opacity-50"
+          >
+            {mintBusy ? 'loading…' : 'load'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void writeLabel('mark')}
+            disabled={labelBusy || mint.trim() === '' || tokenLabel != null}
+            className="rounded border border-red-700 px-2 py-1 text-xs font-semibold text-red-300 disabled:opacity-50"
+          >
+            mark as rug
+          </button>
+          <button
+            type="button"
+            onClick={() => void writeLabel('unmark')}
+            disabled={labelBusy || tokenLabel == null}
+            className="rounded border border-gray-600 px-2 py-1 text-xs text-gray-300 disabled:opacity-50"
+          >
+            unmark
+          </button>
+          {tokenLabel ? (
+            <span className="text-xs text-amber-400">labelled · {tokenLabel.source}</span>
+          ) : (
+            <span className="text-xs text-gray-500">not labelled</span>
+          )}
+          {labelNote ? <span className="text-xs text-gray-400">{labelNote}</span> : null}
+        </div>
+        <RugSignalChart bars={tokenBars} markers={tokenMarkers} label={tokenLabel} />
+      </section>
+
       {/* ---- the soak ---- */}
       <section className={card}>
         <h2 className="mb-1 text-lg font-semibold text-white">The soak</h2>
@@ -429,7 +791,16 @@ export default function RugSignalPanel() {
             {entries.slice(0, 25).map((e) => (
               <tr key={e.id} className="border-t border-gray-800">
                 <td className={`${td} font-mono text-xs`}>{e.createdAt.slice(11, 19)}</td>
-                <td className={`${td} font-mono text-xs`}>{e.tokenAddress.slice(0, 8)}…</td>
+                <td className={`${td} font-mono text-xs`}>
+                  <button
+                    type="button"
+                    onClick={() => void loadToken(e.tokenAddress)}
+                    title="load this mint in the chart below"
+                    className="text-gray-300 underline decoration-dotted hover:text-white"
+                  >
+                    {e.tokenAddress.slice(0, 8)}…
+                  </button>
+                </td>
                 <td className={`${td} ${e.score != null && e.score >= 80 ? 'text-lime-400' : 'text-white'}`}>
                   {e.score ?? '—'}
                 </td>
