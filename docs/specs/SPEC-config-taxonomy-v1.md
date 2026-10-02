@@ -1,7 +1,10 @@
 # SPEC — Categorise the config surface: by substrate, then by scope
 
-**Status:** To-spec (docs only) — **for review, nothing implemented by this document.**
-**Date:** 2026-10-02
+**Status:** **Implemented** — T1–T4 and T6 shipped; **T5 is half-done** (the lifecycle word ships for cron
+workers, but the strategy-level `trial | active | retired` and retiring the six `search_*` variants are
+outstanding). The body below is kept as the design record; **§ As built** records what landed and where the
+build diverged from the plan.
+**Date:** 2026-10-02 (as-built 2026-10-03)
 **Provenance:** the `/debug` pass of 2026-10-02 over `/dev/algo-tester?tab=config` (the rendered page's
 full text) plus a code read of `AlgoTesterHub.tsx` — the Config tab is a dynamic import, fed by a single
 `GET /api/strategies?chain=…`.
@@ -10,6 +13,35 @@ full text) plus a code read of `AlgoTesterHub.tsx` — the Config tab is a dynam
 [SPEC-strategy-data-pipeline-v1.md](./SPEC-strategy-data-pipeline-v1.md) (one canonical builder, the same
 instinct one layer down) · [SPEC-rug-verdict-block-v1.md](./SPEC-rug-verdict-block-v1.md) (where the
 "vacuous is not green" rule was first forced)
+
+## As built (2026-10-03)
+
+| task | status | evidence |
+|---|---|---|
+| **T1** census | **Shipped** | `scripts/config-census.mjs` + baseline `SPEC-config-taxonomy-v1.census.json` — 141 fields across 11 types, **NO_READER 0 / UI_ONLY 0**. Committed and re-run after every slice; unchanged at 141. |
+| **T2** vacuity | **Shipped** | The Noul flip-readiness meter no longer renders green when its deciding band is empty — `ok={bars.agreementOk && !vacuousAgreement}` with "· vacuous" beside it; the token funnel states `spec_would_pass is false on all N rows`. Three live cases. |
+| **T3** Health tab | **Shipped** | `health` added to `ALGO_TESTER_TABS` / `TAB_LABELS`; a new `AlgoHealthPanel` carries `EarlyEnterNoulShadowPanel` (Noul funnel, peak/token lists, token funnel) and the Workers/cron table + `domain_heartbeat`. Config no longer carries them, and the cron table is one copy (`WorkersTable`), not two. |
+| **T4** four scopes | **Shipped** | **Global:** `CombinedScoreWeightsPanel` (v1 defaults shown beside the fields, per-field source). **Family:** a read-only `FamilyDefaultRow` renders each shared block once — gmgn radar / security / exit, signals scoring, mcap exit. **Overrides:** a card shows only the fields it overrode; the rest sits behind a `CardFieldReveal` *"show inherited (N)"* toggle, inherited greyed and overrides bold, and a never-overridden section collapses rather than leaving an empty titled shell. **Switches:** `ExecutionModeSelect` / notify toggles as effect-labelled badges. |
+| **T5** lifecycle | **Partial** | The lifecycle word ships for **cron workers**, derived from fields the row already carries (`disabled → retired`, succeeded → active, never → trial; `b0a9d9d`). **Outstanding:** the same `trial \| active \| retired` for **strategies**, and retiring the six `search_*` variants — neither is implemented. |
+| **T6** source / radius | **Shipped** | **Source (rule 1):** `SourceTag` + the route's `sources` diff. **Radius (rule 2):** stated where the number is — the weights panel's "two mechanisms answer to rug" note, the family-row labels, and the per-card override count. |
+
+**Where the build diverged from the plan** (kept, because a wrong record is worse than none):
+
+1. **T1's anchor moved.** Not "every key the page renders" but the **exported config types in
+   `src/strategies/types.ts`** — a first attempt anchored on `merge-strategy-config-patch.ts` and reported
+   that function's *parameters*; deleted, not committed.
+2. **T1's result is a scope statement.** The two keys known inert in production (`brain_stop_loss_pct` on
+   726 rows, `ml_exit_overlay` on 1136 / applied on 0) sit **outside** those types — in the per-strategy data
+   blobs. The trend block's own inert `filtering` editor later became `SPEC-inert-filtering-block-v1.md`,
+   and the overlay is covered by `SPEC-ml-shadow-lane-v1.md`; this SPEC labels them, it does not wire them.
+3. **T2's premise was half wrong** — the *"Agreement is vacuous: keep band is 0"* banner already existed.
+   The defect was the green ✓ meter beside it.
+4. **Rule 1 (source) could not be settled in the UI.** A stored value equal to the default is ambiguous
+   between *saved* and *falling back*, and the defaults are not in scope at the call sites — so provenance is
+   computed at the route (`GET /api/strategies` → `sources`, `diffSource`) and threaded to the cards.
+5. **The card override count was family-wide, not per-card.** `sources.<family>` is the whole family's diff
+   keyed `<id>.<path>`; the first cut counted all of it. Fixed while wiring T4's second half by slicing to
+   the card (`own(...)` in `StrategyConfigTab`).
 
 ## Goal
 
@@ -95,6 +127,8 @@ matching their stale cron jobs exactly (`rh_lp_screen` since 07/09; `dlmm_manage
    experiments and, reused, lets the cron's dead workers stop occupying attention.
 
 ## Tasks
+
+*Shipped — see § As built for evidence and the T5 remainder. The list is kept as written.*
 
 **T1 — the census (first, and it is the rule that makes the rest hold).** A script that walks every config
 key the page renders, greps the codebase for its reader, and reports three buckets: **read** / **read but

@@ -8,6 +8,28 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — the Config tab now says what each value is, who owns it, and what a save reaches
+
+`SPEC-config-taxonomy-v1`, T1–T4 and T6. The config surface rendered three substrates (config, deploy-time
+runtime switches, read-only evidence) and four scopes (global, family, per-strategy, switches) as one flat
+column, so a global weight, a family default, a per-strategy override and an env switch all read as the same
+editable field.
+
+- **Global policy** up top; each **family default rendered once** as a read-only row; each strategy card shows
+  **only the fields it overrode**, the rest behind a *"show inherited (N)"* toggle — inherited greyed,
+  overrides bold — and a never-overridden section collapses instead of leaving an empty shell.
+- **A rate no input can reach renders `vacuous`, not a green ✓.** The Noul flip-readiness meter was green at
+  100% (2622/2622) while its keep band was **0**; the token funnel now states `spec_would_pass is false on all
+  N rows`.
+- **Five read-only surfaces moved out of the editor** (Noul funnel, peak/token lists, token funnel, cron
+  table, domain heartbeat) into a new **Health** tab.
+- **Half-done: T5.** The lifecycle word (`retired / active / trial`) ships for cron workers; the
+  strategy-level `trial | active | retired` and retiring the six `search_*` variants are not built.
+
+Presentation only — no value, gate or enforcement changed, and the T1 census (141 fields, NO_READER 0,
+UI_ONLY 0) is identical before and after. **Fixed along the way:** a card's "N overrides" counted the whole
+family, not the card — `sources.<family>` is keyed `<id>.<path>` and is now sliced per strategy.
+
 ### Fixed — the Axiom risk panel had 503'd for 441 days (`8710fa1`, `33764f1`)
 
 The console flood was our own `[axiom] risk data unavailable …: upstream 503` plus the browser's
