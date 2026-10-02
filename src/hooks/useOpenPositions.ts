@@ -14,6 +14,7 @@ import type { OpenBarPosition } from '@/utils/open-bar-positions';
 import { pctFromBaseline } from '@/utils/watchlist/pct';
 import { mergeTokensByMint } from '@/components/signals/shared/row-holdings';
 import { useIsClient } from '@/hooks/useIsClient';
+import { subscribeOpenPrices } from '@/utils/open-price-stream';
 import {
   readOpenBarPositionsCache,
   writeOpenBarPositionsCache,
@@ -136,7 +137,31 @@ export function useOpenPositions() {
     refetchInterval: OPEN_BAR_PRICE_POLL_MS,
   });
 
-  const currentPrices = pricesQuery.data ?? {};
+  // Live prices pushed over the ONE shared SSE connection (see open-price-stream.ts). This is what
+  // takes the bar off a 15s poll and onto near-realtime, and it is deliberately layered ON TOP of
+  // the poll rather than replacing it: `pricesQuery` stays exactly as it was, so if the stream dies
+  // the safety net is still there and the worst case is the old cadence, never a missing price.
+  const [streamPrices, setStreamPrices] = useState<Record<string, number>>({});
+  const streamMints = useMemo(
+    () => candidates.map((p) => p.mintAddress),
+    [candidates],
+  );
+  useEffect(() => {
+    if (!enabled || streamMints.length === 0) return;
+    return subscribeOpenPrices(streamMints, (mint, price) => {
+      setStreamPrices((prev) =>
+        prev[mint] === price ? prev : { ...prev, [mint]: price },
+      );
+    });
+  }, [enabled, streamMints]);
+
+  // Stream wins over poll: it is strictly fresher, and the poll can only ever be a lagging copy of
+  // the same server-side cache. Merging rather than replacing keeps every mint the stream has not
+  // sent yet at its polled value.
+  const currentPrices = useMemo(
+    () => ({ ...(pricesQuery.data ?? {}), ...streamPrices }),
+    [pricesQuery.data, streamPrices],
+  );
 
   // The response this one replaced. One poll of grace: a price that misses a single poll must not
   // make a real position flap out of the bar. Counting polls instead of milliseconds keeps every
