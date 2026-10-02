@@ -54,95 +54,20 @@ function getApiBaseUrl(): string {
 }
 
 export async function fetchAxiomTokenInfo(mintAddress: string): Promise<AxiomResponse> {
-  // Cache first: successes for 5m, failures for 2m.
-  const cached = axiomCache.get(mintAddress)
-  if (cached) {
-    const ttl = cached.response.success ? CACHE_DURATION : NEGATIVE_CACHE_DURATION
-    if (Date.now() - cached.timestamp < ttl) return cached.response
-  }
-
-  const remember = (response: AxiomResponse): AxiomResponse => {
-    axiomCache.set(mintAddress, { response, timestamp: Date.now() })
-    return response
-  }
-
+  // Delegates to the GMGN token-snapshot route, the same source the Robinhood path already used.
+  // The direct client is gone on purpose: api.axiom.trade carried hardcoded auth cookies whose
+  // access token expired 2025-07-18, so every call 503'd for over a year. GMGN returns the same
+  // six holder-distribution fields plus honeypot, and its route is served from a 10s cache with
+  // in-flight de-duplication behind the GMGN priority lanes (docs/GMGN_RATE_BUDGET.md).
   try {
-    const jupiterData = await fetchTokenMetadataFromJupiter(mintAddress)
-    const graduatedPool = jupiterData?.graduatedPool
-
-    if (!graduatedPool) {
-      return remember({
-        success: false,
-        error: 'No graduated pool available for this token',
-        pairNotFound: true,
-      })
+    const { fetchTokenRisk } = await import('./gmgn-risk-map')
+    const result = await fetchTokenRisk(mintAddress, 'sol')
+    if (!result.success || !result.data) {
+      return { success: false, error: result.error ?? 'risk data unavailable' }
     }
-
-    const baseUrl = getApiBaseUrl()
-    const response = await fetch(
-      `${baseUrl}/api/axiom/token-info?pairAddress=${encodeURIComponent(graduatedPool)}`,
-      {
-        method: 'GET',
-        headers: { Accept: 'application/json' },
-        signal: AbortSignal.timeout(10000), // 10 second timeout
-      },
-    )
-
-    const result = (await response.json().catch(() => ({}))) as AxiomResponse
-
-    // Upstream not answering: soft "unavailable", negative-cached, one log per mint.
-    if (UNAVAILABLE_STATUSES.has(response.status) || result.unavailable) {
-      logFailureOnce(mintAddress, `upstream ${response.status}`)
-      return remember({
-        success: false,
-        error: 'Axiom risk data unavailable',
-        unavailable: true,
-      })
-    }
-
-    if (result.requiresAuth) {
-      return remember({
-        success: false,
-        error: 'Axiom API requires authentication',
-        requiresAuth: true,
-      })
-    }
-
-    if (result.pairNotFound) {
-      return remember({
-        success: false,
-        error: 'Token not found in Axiom database',
-        pairNotFound: true,
-      })
-    }
-
-    if (!response.ok || !result.success || !result.data) {
-      logFailureOnce(mintAddress, result.error || `http ${response.status}`)
-      return remember({
-        success: false,
-        error: result.error || `Axiom API error: ${response.status}`,
-      })
-    }
-
-    const data: AxiomTokenInfo = result.data
-
-    // Validate required fields
-    if (
-      typeof data.numHolders !== 'number' ||
-      typeof data.insidersHoldPercent !== 'number' ||
-      typeof data.bundlersHoldPercent !== 'number'
-    ) {
-      logFailureOnce(mintAddress, 'invalid response format')
-      return remember({ success: false, error: 'Invalid response format from Axiom API' })
-    }
-
-    return remember({ success: true, data })
+    return { success: true, data: result.data }
   } catch (error) {
-    logFailureOnce(mintAddress, error instanceof Error ? error.message : 'Unknown error')
-    return remember({
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    })
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
   }
 }
 

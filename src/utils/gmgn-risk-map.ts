@@ -52,3 +52,46 @@ export function mapGmgnSnapshotToRisk(params: {
   }
   return { axiomData, risk }
 }
+
+/**
+ * The one risk fetch, both chains — the replacement for the retired Axiom client.
+ *
+ * Server-side callers (risk-assessment, /api/trending) need an absolute host; browser callers must
+ * stay relative so they hit the same origin. The retired Axiom client had the same split.
+ *
+ * Returns `{ success, data }` deliberately: that is the shape the existing call sites branch on, so
+ * moving them off Axiom is an import change rather than a rewrite.
+ */
+function apiBaseUrl(): string {
+  if (typeof window !== 'undefined') return ''
+  return process.env.API_HOST || process.env.NEXT_PUBLIC_API_HOST || 'http://localhost:3000'
+}
+
+export async function fetchTokenRisk(
+  address: string,
+  chain: 'sol' | 'robinhood' = 'sol',
+  marketCap?: number,
+): Promise<{ success: boolean; data?: AxiomTokenInfo; risk?: RiskIndicators; error?: string }> {
+  try {
+    const q = new URLSearchParams({ chain, address })
+    const res = await fetch(`${apiBaseUrl()}/api/gmgn/token-snapshot?${q}`)
+    const json = (await res.json()) as Record<string, unknown>
+    if (!res.ok || json.success !== true) {
+      return { success: false, error: (json.error as string) || `HTTP ${res.status}` }
+    }
+    const snapshot: GmgnRiskSnapshotInput = {
+      top10HoldPct: json.top10HoldPct as number | null,
+      devHoldPct: json.devHoldPct as number | null,
+      snipersHoldPct: json.snipersHoldPct as number | null,
+      insidersHoldPct: json.insidersHoldPct as number | null,
+      bundlersHoldPct: json.bundlersHoldPct as number | null,
+      holders: json.holders as number | null,
+      isHoneypot: json.isHoneypot as boolean | null,
+      marketCap,
+    }
+    const mapped = mapGmgnSnapshotToRisk({ snapshot, marketCap })
+    return { success: true, data: mapped.axiomData, risk: mapped.risk }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
+  }
+}
