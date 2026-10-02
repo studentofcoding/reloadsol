@@ -400,9 +400,13 @@ function FlipArmCard({
           valueLabel={
             stats.agreementRate == null
               ? '—'
-              : `${pct(stats.agreementRate)} (${stats.agreementMatches}/${stats.agreementEligible})`
+              : `${pct(stats.agreementRate)} (${stats.agreementMatches}/${stats.agreementEligible})` +
+                // A rate can only be 100% because the deciding band is empty — an agreement between
+                // two things that both always say the same word. It must not read as a pass: the
+                // status chip above already says "vacuous", and this meter said ✓ beside it.
+                (vacuousAgreement ? ' · vacuous' : '')
           }
-          ok={bars.agreementOk}
+          ok={bars.agreementOk && !vacuousAgreement}
           fill={stats.agreementRate == null ? 0 : stats.agreementRate / aMin}
         />
         <BarMeter
