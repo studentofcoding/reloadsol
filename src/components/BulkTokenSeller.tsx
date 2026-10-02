@@ -32,7 +32,7 @@ import { useRhEvmWallet } from "@/hooks/useRhEvmWallet";
 import { useRhBatchExecutorAddress } from "@/hooks/useRhBatchExecutorAddress";
 import { useRhWalletTokens } from "@/hooks/useRhWalletTokens";
 import { useQuery } from "@tanstack/react-query";
-import RosterSolChartLink from "@/components/signals/RosterSolChartLink";
+import RosterSolChip from "@/components/signals/RosterSolChip";
 import { fetchTokenMetadataBatch } from "@/utils/token-metadata-client";
 import type { Address } from "viem";
 import RhPermit2SetupSheet, {
@@ -2611,44 +2611,46 @@ export default function BulkTokenSeller({
             Roster digger ({effectiveChain})
           </div>
           <div className="flex flex-wrap gap-2">
-            {rosterSellRecsQuery.data!.map((addr) =>
-              effectiveChain === "sol" ? (
-                <RosterSolChartLink
+            {rosterSellRecsQuery.data!.map((addr) => {
+              const toggleRosterToken = () => {
+                const held =
+                  displayUserTokens.find((t) => t.mintAddress === addr) ??
+                  (isRhChain
+                    ? {
+                        mintAddress: addr,
+                        balance: 0,
+                        decimals: 18,
+                        symbol: addr.slice(0, 4),
+                        name: addr,
+                        uiAmount: 0,
+                        usdValue: 0,
+                      }
+                    : null);
+                if (held) toggleTokenSelection(held);
+              };
+              return effectiveChain === "sol" ? (
+                <RosterSolChip
                   key={addr}
                   mint={addr}
                   symbol={
                     displayUserTokens.find((t) => t.mintAddress === addr)?.symbol
                   }
                   metaSymbol={rosterSellMeta?.get(addr)?.symbol}
-                  className="rounded-lg bg-gray-800 px-2 py-1 text-xs text-gray-200 hover:bg-gray-700"
+                  onSelect={toggleRosterToken}
+                  selected={selectedTokens.some((t) => t.mintAddress === addr)}
                 />
               ) : (
                 <button
                   key={addr}
                   type="button"
-                  onClick={() => {
-                    const held =
-                      displayUserTokens.find((t) => t.mintAddress === addr) ??
-                      (isRhChain
-                        ? {
-                            mintAddress: addr,
-                            balance: 0,
-                            decimals: 18,
-                            symbol: addr.slice(0, 4),
-                            name: addr,
-                            uiAmount: 0,
-                            usdValue: 0,
-                          }
-                        : null);
-                    if (held) toggleTokenSelection(held);
-                  }}
+                  onClick={toggleRosterToken}
                   className="rounded-lg bg-gray-800 px-2 py-1 font-mono text-xs text-gray-200 hover:bg-gray-700"
                   title={addr}
                 >
                   {addr.slice(0, 6)}…{addr.slice(-4)}
                 </button>
-              ),
-            )}
+              );
+            })}
           </div>
         </div>
       ) : null}

@@ -31,7 +31,7 @@ import { useRhEvmWallet } from "@/hooks/useRhEvmWallet";
 import { useRhBatchExecutorAddress } from "@/hooks/useRhBatchExecutorAddress";
 import { useTrendingSearch } from "@/hooks/useTrendingSearch";
 import { useQuery } from "@tanstack/react-query";
-import RosterSolChartLink from "@/components/signals/RosterSolChartLink";
+import RosterSolChip from "@/components/signals/RosterSolChip";
 import { fetchTokenMetadataBatch } from "@/utils/token-metadata-client";
 import type { Address } from "viem";
 import RhPermit2SetupSheet, {
@@ -2034,11 +2034,11 @@ export default function BulkTokenBuyer() {
                   <div className="flex flex-wrap gap-2">
                     {rosterRecsQuery.data!.map((rec) =>
                       effectiveChain === "sol" ? (
-                        <RosterSolChartLink
+                        <RosterSolChip
                           key={rec.address}
                           mint={rec.address}
                           metaSymbol={rosterTokenMeta?.get(rec.address)?.symbol}
-                          className="rounded-lg bg-gray-800 px-2 py-1 text-xs text-gray-200 hover:bg-gray-700"
+                          onSelect={() => handleAddFromSearch(rec.address)}
                         />
                       ) : (
                         <button
