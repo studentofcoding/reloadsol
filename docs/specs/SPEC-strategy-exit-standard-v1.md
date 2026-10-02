@@ -321,6 +321,16 @@ concrete handling, and the test that pins it. Reading: **in** = implemented and 
 Still open: **A1/A5** (legacy rows, fail loudly — P3) · **B1–B5** (the live valuation and `stale` —
 P4) · **C4**, **D1**, **D6**, **E1**, **E3** · **G-a**–**G-g**.
 
+**P3 done (2026-10-02).** `backfill-exit-contracts-standalone.mjs` (dry-run by default, `--apply`,
+a before-image of every touched row) stamped the contract onto **all 510 legacy rows** —
+`reference_kind='price'`, `reference_value=entry_price`, `exit_basis='price'`. All 510 were
+derivable, so nothing was invented and nothing was NULLed. Applied on prod: `uncontracted` went
+**510 → 0**, and a re-run selects **0 rows**, which is the idempotency check. The 510 were entirely
+the three `search_mcap_*` families (183 + 164 + 163), which is the confirmation that these were old
+rows rather than a missing registration. `registerSimExitContract`'s refusal is now counted
+(`simExitRegistrationFailureCount`) and logs the strategy + mint, so an open that stops registering
+is measurable rather than merely a line in a log.
+
 ### 8.0 The measured baseline
 
 Counting the contract columns (`reference_kind`, `reference_value`, `exit_basis`) that S8 adds:

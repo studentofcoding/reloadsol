@@ -28,6 +28,32 @@ import { addSLTPPosition } from '@/utils/sl-tp-tracker'
 
 export type ExitBasis = 'price' | 'mcap'
 
+/**
+ * Registrations that could not be built, since process start.
+ *
+ * `registerSimExitContract` returns null rather than throwing, and that is deliberate — inventing a
+ * price would fabricate trigger data. But it used to be a single `console.warn`, so a strategy whose
+ * opens silently stopped registering looked identical to one that had simply not opened. This is a
+ * counter the exit summary can surface, which is the difference between "visible in a log" and
+ * "measurable".
+ */
+let registrationFailures = 0
+
+export function simExitRegistrationFailureCount(): number {
+  return registrationFailures
+}
+
+function failLoudly(reason: string, params: { strategyId?: string; mintAddress?: string }): null {
+  registrationFailures += 1
+  // console.warn, not console.error: the production build strips info/debug but keeps warn, and the
+  // failure is a skip rather than a crash. It carries the strategy and mint so a log line names the
+  // offending open instead of just reporting a count.
+  console.warn(
+    `[sim-exit-contract] exit contract NOT registered (${reason}) — strategy=${params.strategyId ?? '?'} mint=${params.mintAddress ?? '?'}`,
+  )
+  return null
+}
+
 /** The thresholds an exit will be evaluated against, already adjusted for this trade. */
 export type SimExitThresholds = {
   takeProfitPct: number
@@ -85,12 +111,17 @@ export async function registerSimExitContract(params: {
   thresholds: SimExitThresholds
 }): Promise<string | null> {
   const { entryPriceUsd } = params
-  if (!Number.isFinite(entryPriceUsd) || entryPriceUsd <= 0) return null
+  if (!Number.isFinite(entryPriceUsd) || entryPriceUsd <= 0) {
+    return failLoudly(`entry_price=${entryPriceUsd}`, params)
+  }
 
   const basis = params.basis ?? 'price'
   const thresholds = params.thresholds
   if (!Number.isFinite(thresholds.takeProfitPct) || !Number.isFinite(thresholds.stopLossPct)) {
-    return null
+    return failLoudly(
+      `thresholds not finite (tp=${thresholds.takeProfitPct} sl=${thresholds.stopLossPct})`,
+      params,
+    )
   }
 
   try {
@@ -129,10 +160,9 @@ export async function registerSimExitContract(params: {
       tp3Enabled: false,
     })
   } catch (error) {
-    console.warn(
-      '[sim-exit-contract] SL/TP registration skipped:',
-      error instanceof Error ? error.message : error,
+    return failLoudly(
+      `registration threw: ${error instanceof Error ? error.message : String(error)}`,
+      params,
     )
-    return null
   }
 }

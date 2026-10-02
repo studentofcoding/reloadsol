@@ -7,7 +7,8 @@ vi.mock('@/utils/sl-tp-tracker', () => ({
 }))
 
 const { addSLTPPosition } = await import('@/utils/sl-tp-tracker')
-const { registerSimExitContract, impactedEntryPriceUsd } = await import('./sim-exit-contract')
+const { registerSimExitContract, impactedEntryPriceUsd, simExitRegistrationFailureCount } =
+  await import('./sim-exit-contract')
 
 const base = {
   chain: 'sol',
@@ -97,6 +98,26 @@ describe('registerSimExitContract — the contract every open stamps', () => {
       }),
     ).toBeNull()
     expect(addSLTPPosition).not.toHaveBeenCalled()
+  })
+
+  it('COUNTS a refused registration, so a silently-unregistered strategy is measurable', async () => {
+    // The refusal was already a `console.warn`, which is why a strategy whose opens stopped
+    // registering looked exactly like one that had simply not opened. The counter is what makes it
+    // a number something can alert on.
+    const before = simExitRegistrationFailureCount()
+
+    await registerSimExitContract({ ...base, entryPriceUsd: 0 })
+    expect(simExitRegistrationFailureCount()).toBe(before + 1)
+
+    await registerSimExitContract({
+      ...base,
+      thresholds: { takeProfitPct: Number.NaN, stopLossPct: 30, maxHoldHours: 48 },
+    })
+    expect(simExitRegistrationFailureCount()).toBe(before + 2)
+
+    // A successful registration must not move it.
+    await registerSimExitContract(base)
+    expect(simExitRegistrationFailureCount()).toBe(before + 2)
   })
 })
 
