@@ -131,6 +131,31 @@ call sites and dropped; the close cards carry none at all.
 That discard is the cheapest fix available in this codebase: the value is already being fetched on the
 mcap open path, just not used.
 
+### Status: Tasks 1–2 SHIPPED (`ec4b544`)
+
+`resolveFreshMarketValue` (`src/utils/fresh-market-value.ts`) and the mcap entry wiring are live.
+Two corrections the probe forced, both recorded here rather than in the code alone:
+
+**The probe.** 20 live candidates, run inside the web container so the egress matches prod:
+
+```
+100% returned an mcap, 0 errors
+latency  min 30ms   p50 38ms   p90 43ms   max 336ms
+every value agreed with the tracked row within ~1-5% (each of those rows was exactly 102s old)
+```
+
+**Correction 1 — no age threshold is needed.** Because a *successful* live read is fresh by
+construction, the `stale_snapshot` guard below collapses to *"the read returned a value, or we
+skip"*. There is nothing to age-check. That is simpler and strictly safer than the threshold this
+SPEC originally proposed, and it is what shipped.
+
+**Correction 2 — the substitution is small, not a change of basis.** The 1–5% agreement means
+entry-range filters and PnL shift by a few percent, not orders of magnitude, so no strategy
+parameters need re-tuning. Without that measurement this would have been a much riskier change.
+
+Also of note: a 5-minute age guard on the *tracked row* would have rejected **59%** of mcap entries
+over 24 h, and a 30-second one **100%** — which is why the guard alone could not ship first.
+
 ### Task 1 — one resolver, one choke point
 
 Add `resolveFreshMarketValue({ mint, chain, kind: 'mcap' | 'price' })` returning
