@@ -13,6 +13,7 @@ import { getMergedSocialRegistry } from '@/strategies/load-social'
 import { getMergedDlmmStrategy } from '@/strategies/load-dlmm'
 import { TRENDING_BOT_STRATEGIES } from '@/strategies/registry'
 import { mapRegistryToCanonical } from '@/strategies/canonical-params'
+import { diffSource } from '@/strategies/config-source'
 import { parseStrategyChain } from '@/strategies/types'
 
 
@@ -60,6 +61,13 @@ export async function GET(request: NextRequest) {
       success: true,
       chain,
       canonical,
+      // T7: which values came from stored config and which are the code's fallback. Computed here
+      // because this is the only place both sides exist — `registry` is the stored config merged over
+      // its defaults, `TRENDING_BOT_STRATEGIES` is those defaults. `stored` and `defaults` render
+      // identically on the page and mean opposite things, so the display must not have to infer it.
+      sources: {
+        trending_bot: diffSource(registry, TRENDING_BOT_STRATEGIES),
+      },
       trending_bot: {
         defaults: TRENDING_BOT_STRATEGIES,
         effective: registry,
