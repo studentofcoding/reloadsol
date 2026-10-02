@@ -17,12 +17,11 @@ const mockQuery = vi.mocked(query)
 
 describe('fetchTradingRecordsForWallet bounds', () => {
   beforeEach(() => {
-    // `fetchTradingRecordsForWallet` memoises per (wallet, opts) for 60s, and the key does not include
-    // the floor. A test that re-reads a wallet an earlier test (or an earlier read in the same test)
-    // already read gets the cached [] and never reaches `query` — `mock.calls[0]` is then undefined.
+    // fetchTradingRecordsForWallet memoises per (wallet, opts) for 60s and the key does not include the
+    // floor, so a test that re-reads a wallet an earlier test already read gets the cached [] and never
+    // reaches `query` — `mock.calls[0]` is then undefined.
     resetWalletRecordsCacheForTests()
-    // Hermetic: the default floor (4 days) is what these tests pin, so they must not inherit
-    // TRADING_RECORDS_MAX_AGE_DAYS from the runner's shell or .env (the VPS sets it to 0).
+    // Hermetic: the default under test must not depend on the runner's environment.
     vi.stubEnv('TRADING_RECORDS_MAX_AGE_DAYS', undefined)
     mockQuery.mockReset()
     mockQuery.mockResolvedValue({ rows: [], rowCount: 0 } as never)
@@ -32,20 +31,35 @@ describe('fetchTradingRecordsForWallet bounds', () => {
     vi.unstubAllEnvs()
   })
 
-  it('stays unbounded by WINDOW when no opts are given, but floored by max age', async () => {
+  it('applies NO floor by default (historical behaviour, restored 2026-10-03)', async () => {
     await fetchTradingRecordsForWallet('wallet-1')
     const [sql, params] = mockQuery.mock.calls[0]!
     expect(String(sql)).toContain('WHERE wallet_address = $1')
     expect(String(sql)).not.toContain('bot_strategy')
-    // The hard floor added 2026-10-03 IS applied here — an unbounded wallet read of
-    // `trending-bot-sim-rh` is 155,054 of the table's 164,382 rows and saturates the pool.
-    expect(String(sql)).toContain('make_interval')
+    // The floor is OFF by default. It shipped as 4 days in 75d5478 and had to be disabled within the
+    // hour: 4 days is safe for a position the WORKER manages, but the RECONSTRUCTION reads
+    // trading_records and its "open" cycles were 83–92 days old, so the window erased them and the
+    // sim would re-open duplicates. A fresh deploy must not reintroduce that by omitting a variable.
+    expect(String(sql)).not.toContain('make_interval')
     // Still ascending: openPositionsFor and computeOpenSimCycles both walk by time.
     expect(String(sql)).toContain('ORDER BY timestamp ASC')
-    expect(params).toEqual(['wallet-1', 4])
+    expect(params).toEqual(['wallet-1'])
   })
 
-  it('bounds by strategy and window when asked', async () => {
+  it('applies the floor when explicitly configured', async () => {
+    // The MECHANISM is pinned even though the default is off — and this is the assertion that would
+    // catch the default being flipped back on without the cycles being reconciled first.
+    vi.stubEnv('TRADING_RECORDS_MAX_AGE_DAYS', '4')
+    try {
+      await fetchTradingRecordsForWallet('wallet-1')
+      expect(String(mockQuery.mock.calls[0]![0])).toContain('make_interval')
+      expect(mockQuery.mock.calls[0]![1]).toEqual(['wallet-1', 4])
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it('bounds by strategy and window when asked, and adds the floor only if configured', async () => {
     await fetchTradingRecordsForWallet('trending-bot-sim-rh', {
       strategies: ['att_rh'],
       sinceDays: 14,
@@ -54,15 +68,29 @@ describe('fetchTradingRecordsForWallet bounds', () => {
     const text = String(sql)
     expect(text).toContain(`data->>'bot_strategy' = ANY($2::text[])`)
     expect(text).toContain('timestamp >= NOW() - make_interval(days => $3::int)')
-    // The floor rides along as $4 — `sinceDays` can TIGHTEN it, never remove it.
-    expect(params).toEqual(['trending-bot-sim-rh', ['att_rh'], 14, 4])
+    // `sinceDays` is the caller's own bound; with the floor off there is no $4.
+    expect(params).toEqual(['trending-bot-sim-rh', ['att_rh'], 14])
+
+    mockQuery.mockReset()
+    mockQuery.mockResolvedValue({ rows: [], rowCount: 0 } as never)
+    resetWalletRecordsCacheForTests() // same (wallet, opts) key as the read above
+    vi.stubEnv('TRADING_RECORDS_MAX_AGE_DAYS', '4')
+    try {
+      await fetchTradingRecordsForWallet('trending-bot-sim-rh', {
+        strategies: ['att_rh'],
+        sinceDays: 14,
+      })
+      // With the floor on it rides along as $4 — `sinceDays` can TIGHTEN it, never remove it.
+      expect(mockQuery.mock.calls[0]![1]).toEqual(['trending-bot-sim-rh', ['att_rh'], 14, 4])
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
-  it('a non-positive window does not remove the floor', async () => {
-    // `sinceDays: 0` used to mean "no window at all"; the floor is separate and still applies.
+  it('a non-positive window does not add a floor either', async () => {
     await fetchTradingRecordsForWallet('w', { sinceDays: 0 })
-    expect(String(mockQuery.mock.calls[0]![0])).toContain('make_interval')
-    expect(mockQuery.mock.calls[0]![1]).toEqual(['w', 4])
+    expect(String(mockQuery.mock.calls[0]![0])).not.toContain('make_interval')
+    expect(mockQuery.mock.calls[0]![1]).toEqual(['w'])
   })
 
   it('sinceLastClose bounds per (strategy, mint), not per mint', async () => {

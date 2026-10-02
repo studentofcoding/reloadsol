@@ -96,18 +96,19 @@ REASON="$(decide "$AGE_MIN" "$MAX_AGE_MIN")"
 
 # THE SECOND THING THAT CAN SILENTLY BREAK EXITS: the reconstruction window.
 #
-# `fetchTradingRecordsForWallet` is floored at TRADING_RECORDS_MAX_AGE_DAYS (default 4) so a wallet
-# read cannot pull its whole history — one wallet holds 155,054 of the table's 164,382 rows and those
-# reads saturated the connection pool, which is what slowed the pass past its client timeout.
+# `fetchTradingRecordsForWallet` can be floored at TRADING_RECORDS_MAX_AGE_DAYS. The default is 0 (OFF):
+# the 4-day floor it first shipped with erased 83–92-day reconstructed sim cycles and caused silent
+# duplicate re-opens, and the trading_records index (f6b3665) makes the unbounded read cheap. This
+# check therefore only applies when the variable is set to a non-zero value.
 #
-# That floor is safe ONLY while every open position is younger than it. The moment one is older, its
+# When a floor IS set, it is safe ONLY while every open position is younger than it. The moment one is older, its
 # rows fall outside the window, the reconstruction sees no history for it, and a LIVE position reads
 # as absent — the exact hazard db.ts:3250 records from 29/09 (an open att_rh position at 10 days).
 # It would be silent: nothing errors, the position simply stops being managed.
 #
 # So the margin is asserted here rather than assumed. This is the one check that has to exist for the
 # bound to be safe, and it alerts BEFORE the crossing, at 80% of the window.
-WINDOW_DAYS="${TRADING_RECORDS_MAX_AGE_DAYS:-4}"
+WINDOW_DAYS="${TRADING_RECORDS_MAX_AGE_DAYS:-0}"
 WARN_AT_HOURS=$(awk -v d="$WINDOW_DAYS" 'BEGIN { printf "%.1f", d * 24 * 0.8 }')
 
 IFS='|' read -r OLDEST_H OLDEST_SYM <<<"$(
@@ -117,7 +118,8 @@ IFS='|' read -r OLDEST_H OLDEST_SYM <<<"$(
        FROM sl_tp_positions WHERE is_active"
 )"
 
-if [ -n "${OLDEST_H:-}" ] && [ "${OLDEST_H%.*}" -ge "${WARN_AT_HOURS%.*}" ] 2>/dev/null; then
+# WARN_AT_HOURS is 0 when the floor is off: skip, or every tick would alert.
+if [ "${WARN_AT_HOURS%.*}" -gt 0 ] 2>/dev/null && [ -n "${OLDEST_H:-}" ] && [ "${OLDEST_H%.*}" -ge "${WARN_AT_HOURS%.*}" ] 2>/dev/null; then
   WINDOW_REASON="oldest OPEN position is ${OLDEST_H}h (${OLDEST_SYM}) against a ${WINDOW_DAYS}-day reconstruction window — it will stop being reconstructed, i.e. a live position will read as absent"
   REASON="${REASON:+$REASON; }${WINDOW_REASON}"
 fi
@@ -127,7 +129,7 @@ fi
 # `last error msg` names the cause when passes FAIL rather than stop: since the price-outage guard a
 # pass that cannot price its book answers 500 ("SL/TP pass unhealthy: ..."), so last_success_at stops
 # advancing and this line says why, instead of the closer looking merely quiet.
-SUMMARY="last success: ${LAST_SUCCESS}${AGE_MIN:+ (${AGE_MIN}m ago)} | last error: ${LAST_ERROR} | last error msg: ${LAST_ERROR_MSG:-none} | last skip: ${LAST_SKIP} | oldest open: ${OLDEST_H:-?}h (${OLDEST_SYM:-?}) vs ${WINDOW_DAYS}d window"
+SUMMARY="last success: ${LAST_SUCCESS}${AGE_MIN:+ (${AGE_MIN}m ago)} | last error: ${LAST_ERROR} | last error msg: ${LAST_ERROR_MSG:-none} | last skip: ${LAST_SKIP} | oldest open: ${OLDEST_H:-?}h (${OLDEST_SYM:-?}) vs ${WINDOW_DAYS}d window (0 = floor off)"
 
 if [ -z "$REASON" ]; then
   log "OK ${SUMMARY}"
