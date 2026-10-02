@@ -180,23 +180,24 @@ section got wrong.
 3. **Do not** flatten the populations. The bar stays the filtered view; `PnLTracker` stays the
    superset. Whether the *classification* should also be extracted is a separate, lower-value job —
    parked.
-4. ⚠️ **PARTIAL (`07dbca6`)** — `open-price-stream.ts` is the shared transport: ONE `EventSource`,
-   re-opened with the **union** of subscribers' mints (the bar's set and PnLTracker's superset
-   genuinely differ, so a single subscriber's set serves neither). The bar now consumes it and gets
-   near-realtime prices instead of a 15 s poll.
+4. ✅ **DONE (`07dbca6` + `9cf9a78`)** — `open-price-stream.ts` is the shared transport: ONE
+   `EventSource`, re-opened with the **union** of subscribers' mints (the bar's set and PnLTracker's
+   superset genuinely differ, so a single subscriber's set serves neither). Both surfaces now consume
+   it; `grep "new EventSource"` across the app returns exactly one hit — the module.
 
-   **But PnLTracker is NOT wired to it yet** — it still holds its own `EventSource` (`:2001`). So
-   today there are still **two** connections; the module only makes it *possible* to have one. That
-   is the remaining piece, and it is a smaller change than this one because the module already
-   handles the union.
+   The bar gets near-realtime prices instead of a 15 s poll. PnLTracker's private `EventSource` and
+   its 5 s `startPollFallback` are both gone; the react-query safety net at `:2009` still re-polls
+   unconditionally at 15 s, so the stream-is-dead case stays covered without a second timer.
 
-   The bar's 15 s poll is deliberately kept as a safety net underneath the stream (`pricesQuery`
-   untouched, stream merges on top and wins per-mint). Ordering matters: a stream that never
-   connects degrades to exactly the old behaviour, and it cannot leave a stale price standing
-   because the poll keeps overwriting it. That is what made this safe to land without a browser.
+   Two things the wiring had to get right, both of which would have caused a reconnect storm: the
+   subscriptions key on the sorted mint-set **string**, not the array (`openPositions` is replaced on
+   every price tick, so an array dependency resubscribes continuously — and since the module
+   refcounts, each unsubscribe closes the socket before the next subscribe reopens it); and
+   PnLTracker's handler goes through a **ref**, because depending on `applyOpenPrices`'s identity
+   would do the same.
 
-**Remaining after 4:** wire PnLTracker onto `subscribeOpenPrices` and drop its private `EventSource`
-— which is also what makes the "one connection" claim actually true.
+   The bar keeps its 15 s poll underneath the stream (`pricesQuery` untouched, stream merges and wins
+   per-mint), so a stream that never connects degrades to exactly the old behaviour.
 
 **What changed my mind twice:** the first two versions of this section treated the two surfaces as
 one computation done twice. They are not. They share one holdings *source* and differ in
