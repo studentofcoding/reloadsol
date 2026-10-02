@@ -232,9 +232,12 @@ func (wt *WorkerTracker) Snapshot() []map[string]interface{} {
 }
 
 func (cs *CronService) initWorkerRegistry() {
+	// mcap_tracker_sim_open has no cron entry of its own: the open phase runs inside the phase=all job,
+	// so its real cadence is McapTrackerSimInterval. It used to report McapTrackerSimOpenInterval, a knob
+	// that schedules nothing, so the Workers table showed a cadence the service never ran.
 	workers := []WorkerMeta{
 		{ID: "signals_sim_track", Name: "Signals sim track", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.SignalsSimInterval, TriggerPath: "/trigger/signals-sim-track", CanTrigger: true},
-		{ID: "mcap_tracker_sim_open", Name: "MCap tracker sim open", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.McapTrackerSimOpenInterval, TriggerPath: "/trigger/mcap-tracker-sim-open", CanTrigger: true},
+		{ID: "mcap_tracker_sim_open", Name: "MCap tracker sim open", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.McapTrackerSimInterval, TriggerPath: "/trigger/mcap-tracker-sim-open", CanTrigger: true},
 		{ID: "mcap_tracker_sim_track", Name: "MCap tracker sim manage", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.McapTrackerSimInterval, TriggerPath: "/trigger/mcap-tracker-sim-track", CanTrigger: true},
 		{ID: "gmgn_sim_track", Name: "GMGN sim track", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.GmgnSimInterval, TriggerPath: "/trigger/gmgn-sim-track", CanTrigger: true},
 		{ID: "gmgn_activity_poll", Name: "GMGN activity poll", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.GmgnActivityPollInterval, TriggerPath: "/trigger/gmgn-activity-poll", CanTrigger: true},

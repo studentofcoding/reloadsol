@@ -30,6 +30,131 @@ Presentation only — no value, gate or enforcement changed, and the T1 census (
 UI_ONLY 0) is identical before and after. **Fixed along the way:** a card's "N overrides" counted the whole
 family, not the card — `sources.<family>` is keyed `<id>.<path>` and is now sliced per strategy.
 
+### Added — T7: every config value says whether it is stored or the fallback (`73b451d` → `ab4c869`, 2026-10-02)
+
+`stored` and `defaults` rendered identically on the config page and mean opposite things — the system
+using your value versus falling back to stock. That cannot be derived in the UI (the defaults are not in
+scope at the call sites), so it is computed where both sides exist.
+
+- **`diffSource(effective, defaults)`** (`95c9203`) returns `parent.child → stored | defaults`, with the
+  default as the shape authority. Its test run shaped it: `diffSource(null, {a:1})` first returned `{}` —
+  silence reading as a result — so a null side is now an empty object, not a leaf.
+- **`NumberField` / `CheckboxField` take an optional `source`** (`73b451d`), rendered by `SourceTag`
+  (`stored` / `defaults` / `inherited`), so the rule lands once rather than at 141 call sites.
+- **`GET /api/strategies` returns `sources`** for trending_bot (`4ec494c`), then all six families
+  (`80e9e08`); the hub types it (`e29c1a6`).
+- **Surfaces tagged:** trending TP1/SL/Buy SOL (`ef46df1`), GMGN discovery (`0241c05`), DLMM (`e7c1c24`),
+  signals (`eed05d6`), mcap tracker (`efd5b10`), the shared filters, computed in place (`5cd259a`),
+  social (`32baea3`, `2f7c096`), and the weights page (`ab4c869`).
+- **T5 (`b0a9d9d`):** each Workers row now carries a lifecycle word — `retired` / `active` / `trial` — derived
+  from fields it already had, so a retired worker (`fomo_ws`, 301ing since 07/09) no longer renders the same
+  red as a broken one.
+- **Known limit:** provenance is decided by comparing values, so a stored value that equals the default
+  reads `defaults`. Open fix: tag by key presence in the raw stored config (PR #116).
+
+### Added — the Health tab, and the cron table moves onto it (`ba64d2d` → `60ca335`, 2026-10-03)
+
+T3 of the config taxonomy. `health` joins `ALGO_TESTER_TABS`; because the label map is a
+`Record<AlgoTesterTab, string>`, the tab cannot ship half-added. It hosts the Noul shadow panel (`ba64d2d`)
+and the Workers/cron table (`b6c11cb`, exported from `StrategyAdminHub` and mounted — one copy, not two,
+on its own `/api/workers/status` query). The Noul panel's old unguarded mount in Config is removed
+(`60ca335`), and Health stops rendering a simulated-toggle that filtered nothing (`6947147`); the strip
+filters now narrow to `open` / `closed`. **Not carried over:** the Config mount passed `onNotify`; Health
+passes none, so that panel's toasts are silent there until Health gets a toast host.
+
+### Added — `att_rh` joins the exit standard in SHADOW (`b201d77`, 2026-10-02)
+
+`att_rh` is the most active strategy (417 outcomes / 7 d) and had **zero** `sl_tp_positions` rows, so the
+worker never saw it — it exited entirely through its own `decideRhTrendingExit` ladder, the second
+evaluator. It is shadow *by construction*: `simCloseDomainForStrategy('att_rh')` returns null, so the worker
+evaluates and reports its triggers each pass but refuses to close because no closer owns the family.
+Registering the row turns the shadow on; giving it a domain later is the enforce step.
+
+The two ladders were compared first. Stop-loss, max-hold and TP1 are identical; TP3 is opposite in sense
+(profit target vs trailing) but moot, `tp3_enabled` being false; and **one case diverges** — a position that
+gaps past +100 % before TP1 fires closes 100 % at tp2 today but would sell TP1's 90 % and leave 10 % open
+under the worker. `SimExitThresholds` gained `tp1SellPct` (registered as the real 90) and the pass summary
+reports `shadowCount` plus a SHADOW line per fired trigger.
+
+Same-window exit hardening: a trade that already closed can no longer close twice (`a40738e`); 160 active
+positions that could never time out got their backstop stamped (`fa21168`); the backstop could never fire
+because `maxHoldHours` was typed, resolved and dropped (`448657f`); the backstop share is now a health metric
+with a threshold (`3b997a2`); the close reason is persisted and the sole closer stops running twice
+(`2e96be7` — and the lock heartbeat it added was dropped in `55e259e` after it starved the queue).
+
+### Added — a watchdog for the sole closer, and a copier watchdog that can actually speak (`61789cb`, `53829fa`, `7a3a1e6`, 2026-10-02)
+
+With the per-family closers deleted, `sltp_monitor` is the only thing that closes a position; if it stops,
+nothing exits and the only symptom is a stale badge. The watchdog (host crontab `*/5`, advisory) **reads
+Postgres directly and never calls the web app** — the thing it watches *is* the web app, so a watchdog behind
+an API route would go silent in exactly the incident it exists for. Cooldown is a DB row
+(`db/init/60-watchdog-alert-state.sql`): an hour-long outage sends one message, and a *failed* send does not
+record the cooldown so the next tick retries. It found a live incident on its first run (24 min without a
+successful pass).
+
+Two defects found in the existing copier watchdog: it read `TELEGRAM_CHAT_ID` / `TELEGRAM_CHAT_ID_ALERTS`,
+neither of which exists (the stack uses `TELEGRAM_ALERT_CHAT_ID`), so it logged and never sent
+(`53829fa`); and its age expression was a bare aggregate with no `FROM`, with stderr discarded, so a failing
+query read as an empty one — a **false negative**, the one failure a watchdog must not have (`7a3a1e6`).
+
+### Fixed — the DLMM screen returned nothing for 35 days, and the page showed the stale row as current (`f4d0ddb`, `bdadb0f`, `f54e9db`, 2026-10-03)
+
+`dlmm_candidates` held 2 rows, newest 35 days old. `/dev/dlmm` tested **presence** (`candidates.length > 0`)
+not **freshness**, so a dead screener silently degraded to one August row; `candidatesAreFresh` replaces it
+and fails closed (empty, unparseable or future `screened_at` all return false). The cause recorded in
+`f4d0ddb` — "no cron entry" — was wrong and is corrected in `f54e9db`: the screener ran every 15 min
+(`DLMM_SCREEN_INTERVAL=900`) and found nothing, because `fetchMeteoraPools` sorted by
+`fee_tvl_ratio_24h:desc`, a fees ÷ TVL ratio that descends into dust pools (TVL ≈ 0: 0 of 10 clear `min_tvl`;
+`tvl:desc`: 10 of 10). The API also ignores `limit` (always page_size 10), so a one-page window made the sort
+decisive; the fetch now walks pages. An empty screen used to be reported as `"meteora fetch error"` over a 200
+response; it now says `screen returned no qualifying pools`. Also `62-sol-balance-null-not-zero.sql`:
+`increment_operation_counts` wrote an unmeasured balance as `0`; NULL stays NULL (and the column's NOT NULL
+was dropped, which the verification showed would otherwise have failed every call without a balance).
+
+### Changed — every RH lever is env-tunable, and the candidate funnel is visible (`2ea630a`, 2026-10-03)
+
+`RH_MCAP_MIN` / `RH_MCAP_MAX` (300 000 / 2 000 000), `RH_MAX_OPEN_POSITIONS_DEFAULT` (10),
+`RH_BUY_AMOUNT_ETH` / `RH_SIM_BUY_ETH` (0.0015 / 0.001), the seven `RH_FILTER_*` keys and
+`GMGN_TRENDING_LIMIT` (100) are read through `envNumber`, which is deliberately not `Number(x) || fallback`
+— `0` is a real value for limiter-style knobs and `||` would silently re-enable what you just turned off.
+`RH sim candidate funnel` is now logged per strategy per cycle (`feed_tokens`, `after_conditions`,
+`already_open`, `blocked_by_guard`, bounds compared); the previously visible `current_stats.skipped` is
+**cumulative**, which is how "451 skipped" was misread as 451 blocked mints. Nothing was tuned. `RH_FILTER_*`
+is currently inert: `passesConditions` reads `strategy.conditions`, not `filtering`.
+
+### Added — write-once Token Info detect ledger (#96, spec #91; 2026-09-27/28)
+
+`token_info_detect` freezes the Freeview nine tiles once per `(chain, token_address)` at the first Sol
+detect (`542298d`); soft readers prefer that row, and the live >65 % concentration ban stays on the snapshot
+already in hand. Bundler and sniper rates are read from the live web payload keys (`d5e01d1`) and the web
+cooldown is scoped per endpoint with window misses made soft (`3d290f1`). Known gaps, fixed in open PRs:
+`insiders_hold_pct` is always NULL and a partial panel is frozen (#111), and the capture sits on the entry
+path (#103).
+
+### Added — public GMGN web multi-token client, behind a Cloudflare Worker proxy (#93; 2026-09-27 → 2026-10-02)
+
+`GMGN_TOKEN_INFO_SOURCE=web` shadows Token Info / Freeview with the public gmgn.ai multi-token endpoint
+(max 8 mints, `GMGN_WEB_MAX_POST_PER_SEC` default 0.4); default stays OpenAPI (`00935fe`). Datacenter egress
+gets a Cloudflare 403 on gmgn.ai, so production routes through `workers/gmgn-web-proxy` with a `wnam`
+Durable Object so upstream fetches exit LAX/PDX; the client sends `X-Gmgn-Proxy-Secret` when
+`GMGN_WEB_PROXY_SECRET` is set (`53bec79`, Worker source restored in `6421c4f`). The 403/429s were a Cloudflare
+**managed challenge**, not a rate limit: parking is now **per endpoint** and a challenge is transient
+(`c5c297e`) — before, one challenged endpoint discarded a whole 15-minute copier sweep (`fetched 0`).
+Open hardening: proxy secret only to the proxy host (#105).
+
+### Fixed — Freeview rug panel showed OHLC 0/10m for mints that had own-1m rows (#95, 2026-09-27)
+
+The panel read only the canonical 24 h cache; it now fills the empty 10-minute window from own-1m, and the
+chart wall clock is `Asia/Jakarta` instead of a hardcoded `Asia/Bangkok` (`0eb9017`). The Cloudflare worker
+is excluded from the root tsconfig so `next build` stops type-checking `cloudflare:workers`.
+
+### Also in this window
+
+#92 renames the tracking tag `potential` → `rising`; #97–#99 harden `init-local-db.sh` / the migration runner
+(targetless `ON CONFLICT`, `social` in the domain checks, idempotency proven); #100 documents never shipping
+the standalone from a dirty tree; #101 tunes host swap policy and Postgres buffers (`vm.swappiness=10`,
+`shared_buffers` 256 MB, web `--max-old-space-size=512`).
+
 ### Fixed — the Axiom risk panel had 503'd for 441 days (`8710fa1`, `33764f1`)
 
 The console flood was our own `[axiom] risk data unavailable …: upstream 503` plus the browser's

@@ -262,6 +262,7 @@ type CronService struct {
 }
 
 func NewCronService() *CronService {
+    intervalResolutions = nil // the startup audit describes THIS construction, not an earlier one
     config := &Config{
         APIBaseURL:     getEnv("API_BASE_URL", "https://reloadsol.app"),
         TrendingSecret: getEnv("TRENDING_TRACKER_SECRET", "r3l0ads0l-trending"),
@@ -271,188 +272,34 @@ func NewCronService() *CronService {
         // working once the web proxy sends the same value.
         TriggerSecret:  getEnv("TRIGGER_SECRET", getEnv("TRENDING_TRACKER_SECRET", "r3l0ads0l-trending")),
         DiscordWebhook: getEnv("DISCORD_WEBHOOK_URL", ""),
-        SLTPMonitorInterval: func() int {
-            if v := os.Getenv("SLTP_MONITOR_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
-                    return iv
-                }
-            }
-            return 60 // default 60s
-        }(),
-        SignalRefreshInterval: func() int {
-            if v := os.Getenv("SIGNAL_REFRESH_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
-                    return iv
-                }
-            }
-            return 60 // default 60s
-        }(),
-        SignalsSimInterval: func() int {
-            if v := os.Getenv("SIGNALS_SIM_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
-                    return iv
-                }
-            }
-            return 120 // default 120s
-        }(),
-        McapTrackerSimInterval: func() int {
-            if v := os.Getenv("MCAP_TRACKER_SIM_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
-                    return iv
-                }
-            }
-            return 120 // manage/close default 120s
-        }(),
-        McapTrackerSimOpenInterval: func() int {
-            if v := os.Getenv("MCAP_TRACKER_SIM_OPEN_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
-                    return iv
-                }
-            }
-            return 15 // open hot path default 15s
-        }(),
-        GmgnSimInterval: func() int {
-            if v := os.Getenv("GMGN_SIM_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
-                    return iv
-                }
-            }
-            return 120 // default 120s
-        }(),
-        SocialSimInterval: func() int {
-            if v := os.Getenv("SOCIAL_SIM_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
-                    return iv
-                }
-            }
-            return 90 // default 90s
-        }(),
-        GmgnActivityPollInterval: func() int {
-            if v := os.Getenv("GMGN_ACTIVITY_POLL_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
-                    return iv
-                }
-            }
-            return 180 // default 180s
-        }(),
-        GmgnRadarDigestInterval: func() int {
-            if v := os.Getenv("GMGN_RADAR_DIGEST_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
-                    return iv
-                }
-            }
-            return 86400 // default daily; set 0 to disable
-        }(),
-        GmgnWalletDiggerInterval: func() int {
-            if v := os.Getenv("GMGN_WALLET_DIGGER_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
-                    return iv
-                }
-            }
-            return 14400 // default 4h; set 0 to disable
-        }(),
-        GmgnRosterWatchInterval: func() int {
-            if v := os.Getenv("GMGN_ROSTER_WATCH_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
-                    return iv
-                }
-            }
-            return 75 // default 75s; set 0 to disable
-        }(),
-        StrategyReportInterval: func() int {
-            if v := os.Getenv("STRATEGY_REPORT_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
-                    return iv
-                }
-            }
-            return 86400 // default daily (86400s); set 0 to disable
-        }(),
-        ReportPrecomputeInterval: func() int {
-            if v := os.Getenv("REPORT_PRECOMPUTE_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
-                    return iv
-                }
-            }
-            return 21600 // default every 6h; set 0 to disable
-        }(),
-        DLMMScreenInterval: func() int {
-            if v := os.Getenv("DLMM_SCREEN_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
-                    return iv
-                }
-            }
-            return 300 // 5m
-        }(),
-        DLMMSimTrackInterval: func() int {
-            if v := os.Getenv("DLMM_SIM_TRACK_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
-                    return iv
-                }
-            }
-            return 300 // 5m
-        }(),
-        DLMMManageInterval: func() int {
-            if v := os.Getenv("DLMM_MANAGE_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
-                    return iv
-                }
-            }
-            return 60
-        }(),
-        RhClmmManageInterval: func() int {
-            if v := os.Getenv("RH_CLMM_MANAGE_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
-                    return iv
-                }
-            }
-            return 300 // 5m — alert-only cycle
-        }(),
-        RhLpScreenInterval: func() int {
-            if v := os.Getenv("RH_LP_SCREEN_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
-                    return iv
-                }
-            }
-            return 300 // 5m — Pools indexer refreshes 24h aggregates per minute
-        }(),
-        StrategySearchInterval: func() int {
-            if v := os.Getenv("STRATEGY_SEARCH_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
-                    return iv
-                }
-            }
-            return 21600 // 6h — offline walk-forward + spawn top-K
-        }(),
+        SLTPMonitorInterval: intervalFor("SLTPMonitorInterval"),
+        SignalRefreshInterval: intervalFor("SignalRefreshInterval"),
+        SignalsSimInterval: intervalFor("SignalsSimInterval"),
+        McapTrackerSimInterval: intervalFor("McapTrackerSimInterval"),
+        McapTrackerSimOpenInterval: intervalFor("McapTrackerSimOpenInterval"),
+        GmgnSimInterval: intervalFor("GmgnSimInterval"),
+        SocialSimInterval: intervalFor("SocialSimInterval"),
+        GmgnActivityPollInterval: intervalFor("GmgnActivityPollInterval"),
+        GmgnRadarDigestInterval: intervalFor("GmgnRadarDigestInterval"),
+        GmgnWalletDiggerInterval: intervalFor("GmgnWalletDiggerInterval"),
+        GmgnRosterWatchInterval: intervalFor("GmgnRosterWatchInterval"),
+        StrategyReportInterval: intervalFor("StrategyReportInterval"),
+        ReportPrecomputeInterval: intervalFor("ReportPrecomputeInterval"),
+        DLMMScreenInterval: intervalFor("DLMMScreenInterval"),
+        DLMMSimTrackInterval: intervalFor("DLMMSimTrackInterval"),
+        DLMMManageInterval: intervalFor("DLMMManageInterval"),
+        RhClmmManageInterval: intervalFor("RhClmmManageInterval"),
+        RhLpScreenInterval: intervalFor("RhLpScreenInterval"),
+        StrategySearchInterval: intervalFor("StrategySearchInterval"),
         DLMMSecret: getEnv("DLMM_MANAGE_SECRET", getEnv("TRENDING_TRACKER_SECRET", "r3l0ads0l-trending")),
-        SolArbScanInterval: func() int {
-            if v := os.Getenv("SOL_ARB_SCAN_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
-                    return iv
-                }
-            }
-            return 60 // default 60s; set 0 to disable
-        }(),
+        SolArbScanInterval: intervalFor("SolArbScanInterval"),
         // Own 1m OHLC series: 15s ticks give 4 samples per minute, which is what
         // makes a real intra-minute high/low possible.
-        OhlcSampleInterval: func() int {
-            if v := os.Getenv("OHLC_SAMPLE_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
-                    return iv
-                }
-            }
-            return 15 // default 15s; set 0 to disable
-        }(),
+        OhlcSampleInterval: intervalFor("OhlcSampleInterval"),
         // 1m volume copier. GMGN's candle endpoint returns a SERIES (~8.35h of minutes per call),
         // so the cadence governs snapshot freshness only, not slot completeness. Keep it well
         // under that window or the gap loses minutes permanently.
-        MetricsCopyInterval: func() int {
-            if v := os.Getenv("METRICS_COPY_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
-                    return iv
-                }
-            }
-            return 900 // default 15 min; set 0 to disable
-        }(),
+        MetricsCopyInterval: intervalFor("MetricsCopyInterval"),
         FomoWsEnabled: envBool("FOMO_WS_ENABLED", true),
     }
 
@@ -472,6 +319,7 @@ func NewCronService() *CronService {
 func (cs *CronService) Start() {
 	cs.logger.Info("🚀 Starting Cron Service for reloadsol...")
 	cs.initWorkerRegistry()
+	cs.auditIntervals()
 	cs.workers.SetOnChange(func(workerID, event, msg string) {
 		cs.persistWorkerRuntimeEvent(workerID, event, msg)
 	})

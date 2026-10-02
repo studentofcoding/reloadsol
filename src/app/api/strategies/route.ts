@@ -20,7 +20,8 @@ import {
   DLMM_STRATEGY_DEFAULTS,
 } from '@/strategies/registry'
 import { mapRegistryToCanonical } from '@/strategies/canonical-params'
-import { diffSource } from '@/strategies/config-source'
+import { diffSource, storedConfigById } from '@/strategies/config-source'
+import { loadStrategyDefinitionRows } from '@/strategies/db'
 import { parseStrategyChain } from '@/strategies/types'
 
 
@@ -37,6 +38,7 @@ export async function GET(request: NextRequest) {
       gmgnRegistry,
       socialRegistry,
       dlmmStrategy,
+      storedRows,
     ] = await Promise.all([
       getMergedTrendingBotRegistry(chain),
       getActiveStrategiesWithState(chain),
@@ -46,6 +48,9 @@ export async function GET(request: NextRequest) {
       getMergedGmgnRegistry(chain),
       getMergedSocialRegistry(chain),
       getMergedDlmmStrategy(),
+      // Raw stored rows, uncached and unmerged: provenance is key presence in these, so they must not
+      // have passed through the merge that fills defaults in.
+      loadStrategyDefinitionRows(),
     ])
 
     let dlmmConfig = defaultAgentConfig()
@@ -72,13 +77,40 @@ export async function GET(request: NextRequest) {
       // because this is the only place both sides exist — `registry` is the stored config merged over
       // its defaults, `TRENDING_BOT_STRATEGIES` is those defaults. `stored` and `defaults` render
       // identically on the page and mean opposite things, so the display must not have to infer it.
+      // Decided by key presence in the raw stored row, not by value equality: a stored value that
+      // equals today's default is still stored.
       sources: {
-        trending_bot: diffSource(registry, TRENDING_BOT_STRATEGIES),
-        signals: diffSource(signalsRegistry, SIGNALS_STRATEGIES),
-        mcap_tracker: diffSource(mcapTrackerRegistry, MCAP_TRACKER_STRATEGIES),
-        gmgn: diffSource(gmgnRegistry, GMGN_STRATEGIES),
-        social: diffSource(socialRegistry, SOCIAL_STRATEGIES),
-        dlmm: diffSource(dlmmStrategy, DLMM_STRATEGY_DEFAULTS),
+        trending_bot: diffSource(
+          registry,
+          TRENDING_BOT_STRATEGIES,
+          storedConfigById(storedRows, 'trending_bot', chain),
+        ),
+        signals: diffSource(
+          signalsRegistry,
+          SIGNALS_STRATEGIES,
+          storedConfigById(storedRows, 'signals', chain),
+        ),
+        mcap_tracker: diffSource(
+          mcapTrackerRegistry,
+          MCAP_TRACKER_STRATEGIES,
+          storedConfigById(storedRows, 'mcap_tracker', chain),
+        ),
+        gmgn: diffSource(
+          gmgnRegistry,
+          GMGN_STRATEGIES,
+          storedConfigById(storedRows, 'gmgn', chain),
+        ),
+        social: diffSource(
+          socialRegistry,
+          SOCIAL_STRATEGIES,
+          storedConfigById(storedRows, 'social', chain),
+        ),
+        dlmm: diffSource(
+          dlmmStrategy,
+          DLMM_STRATEGY_DEFAULTS,
+          storedConfigById(storedRows, 'dlmm', undefined, { nestConfig: true })[dlmmStrategy.id] ??
+            {},
+        ),
       },
       trending_bot: {
         defaults: TRENDING_BOT_STRATEGIES,
