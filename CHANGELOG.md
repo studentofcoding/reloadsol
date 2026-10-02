@@ -8,6 +8,70 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the Axiom risk panel had 503'd for 441 days (`8710fa1`, `33764f1`)
+
+The console flood was our own `[axiom] risk data unavailable …: upstream 503` plus the browser's
+`GET /api/axiom/token-info?… 503`, from seven call sites. Axiom's route carried **hardcoded auth
+cookies whose access token expired 2025-07-18** — 441 days — so every call went out on a dead
+session.
+
+Axiom cannot be repaired and GMGN already had field-for-field parity (`holders`, `top10HoldPct`,
+`devHoldPct`, `insidersHoldPct`, `bundlersHoldPct`, `snipersHoldPct`) plus a honeypot flag, and the
+Robinhood path was already on it. Rather than migrate seven callers at once — which is what broke
+the first attempt — `fetchAxiomTokenInfo` now **delegates to the GMGN snapshot route** behind its
+existing `{ success, data }` shape, so no call site changed. Verified live: HTTP 200, cold 1950 ms,
+cache hit 11 ms/7 ms, and every field `RiskAnalysis` renders is finite (GMGN returns
+`insidersHoldPct: null`, which the mapper's `pct()` coerces).
+
+**`/api/axiom/token-info` now has no callers.**
+
+### Fixed — React #418 hydration mismatch from `localStorage` read during render (`c0ca7a5`, `9b70ba5`)
+
+`PnLTracker` held five preferences as lazy `useState(() => localStorage.getItem(...))` initialisers.
+A lazy initialiser also runs during the client's **hydration** render, so the server rendered the
+defaults while the first client paint rendered the stored values — server HTML ≠ client HTML, i.e.
+React #418. Reachable on every trade page (`<PnLTracker />` is in `trade-shell-client.tsx`).
+
+They are now **derived** from `useLocalStorageValue`, built on `useSyncExternalStore` (the project's
+own idiom — see `useIsClient`): server snapshot = fallback, client snapshot = stored value, so React
+reconciles them and no restoring effect is needed.
+
+**Bug found on the way:** the closed-positions hint read `closedPositionsHintDismissed` while its
+dismiss handler wrote `pnl-closed-positions-hint-dismissed` — two keys, so dismissing never
+persisted and the hint returned on every load. One key now, and its setter writes it.
+
+### Changed — one source of truth for open positions (`19f59a1`, `4e1fa8d`, `07dbca6`, `9cf9a78`)
+
+Open positions were derived twice, sharing no code: the watchlist bar (`useGlobalOpenPositionsBar`)
+and `PnLTracker`'s inline derivation and inline percentage. `useGlobalOpenPositionsBar.ts:23` said
+*"Match PnL open marks"* — agreement maintained by a comment rather than by shared code. Three
+duplications were closed:
+
+- **The percentage.** `PnLTracker` computed `((current - buy) / buy) * 100` inline while the bar
+  called `pctFromBaseline`. Now shared. Equivalent by construction: the guards above the call site
+  already establish the positivity that is `pctFromBaseline`'s only null branch. It had no test
+  while both surfaces depended on it, so it has one now.
+- **The holdings.** `PnLTracker` called `fetchSolWalletHoldings` imperatively inside its PnL
+  recompute while everything else read the same data through `useWalletTokens`. The hook's
+  `fetchWalletTokens` calls that same function, so this was never a source divergence — one source
+  behind two doors, one of them uncached. The panel now reads the shared entry: **one cache, one
+  fewer round trip per recompute**, and a post-trade `refetchFresh()` reaches it for the first time.
+- **The price transport.** Two pollers against `/api/prices/open/refresh` and two `EventSource`s.
+  `open-price-stream.ts` now holds **one** connection, re-opened with the **union** of subscribers'
+  mints — the bar's set and `PnLTracker`'s superset genuinely differ, so one subscriber's set serves
+  neither. The bar moves from a 15 s poll to near-realtime.
+
+`useOpenPositions` was extracted from `useGlobalOpenPositionsBar` **verbatim, comments included** —
+those comments record two bugs already paid for (the `useWalletTokens` cache-key trap behind "new
+buys never show up in Open positions", and the clone-vs-real rule).
+
+**What was deliberately not changed:** the populations. `PnLTracker` remains the superset (it *adds*
+sim, bot and external wallet holdings on top of tracked cycles); the bar stays the filtered view of
+real, priced, held positions. Flattening that is a functional regression, and two earlier drafts of
+the plan would have done exactly that — see `docs/specs/SPEC-open-positions-single-source-v1.md`,
+which records the four attempts and what evidence overturned each.
+
+
 ### Added — one verdict per token, on a fixed 10-minute block (rug signal)
 
 `rug_verdicts`: a token is judged **once**, at its own clock, on a 10-minute 1m block, features

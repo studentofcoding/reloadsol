@@ -19,7 +19,7 @@ ReloadSOL uses **three execution stacks** for swaps and closes, plus supporting 
 
 | Supporting layer | Role |
 |------------------|------|
-| **Jupiter Portfolio** | Wallet token list + USD values (`useWalletTokens`); PnL Fast Sell / Refresh list holdings prune |
+| **Jupiter Portfolio** | Wallet token list + USD values (`useWalletTokens`) — Shyft `all_tokens` is the primary source, Jupiter Portfolio the fallback (`sol-wallet-holdings.ts`); PnL Fast Sell / Refresh list holdings prune |
 | **`/api/rpc` proxy** | On-chain read/write (balances, send, confirm, manual close) |
 | **GMGN iframe** | Price charts on `/buy`, `/sell`, ChartBuyModal (no swap execution) |
 | **Toast → buy bridge** | `add-token-to-buy` — toast token click appends mint on `/buy` + opens chart (not `/chart`) |
@@ -137,7 +137,7 @@ Wallet tokens: `useWalletTokens` → `GET /api/jupiter/portfolio` → `https://w
 | `/api/solprice` | GET | SOL/USD for UI |
 | `/api/tokens/prices` | GET | Token prices (supporting) |
 | `/api/trending/search` | GET | Token search in buyer UI |
-| `/api/axiom/token-info` | GET | Risk analysis panel |
+| `/api/gmgn/token-snapshot` | GET | Risk analysis panel (replaced `/api/axiom/token-info`, retired 2026-10-02) |
 
 **External**
 
@@ -265,7 +265,7 @@ handleBuyToken
 
 | Internal API | External |
 |--------------|----------|
-| `/api/trading/records`, `/api/operations/track`, `/api/tokens/prices`, `/api/signals`, `/api/axiom/token-info`, `/api/rpc` | `lite-api.jup.ag/swap/v1/quote`, `lite-api.jup.ag/swap/v1/swap` |
+| `/api/trading/records`, `/api/operations/track`, `/api/tokens/prices`, `/api/signals`, `/api/gmgn/token-snapshot`, `/api/rpc` | `lite-api.jup.ag/swap/v1/quote`, `lite-api.jup.ag/swap/v1/swap` |
 
 #### B. BoardTab / Chart / ChartBuyModal — Raptor
 
@@ -458,7 +458,7 @@ Server-side Jupiter Lite with configured keypair; not triggered from UI buttons.
 | `/api/solprice` | SOL/USD |
 | `/api/rpc/health`, `/api/rpc/diagnostics`, `/api/rpc/config` | RPC panel / auto-select |
 | `/api/signals` | LiveTab / BoardTab board state |
-| `/api/axiom/token-info` | Risk panel |
+| `/api/gmgn/token-snapshot` | Risk panel (superseded `/api/axiom/token-info`; the Axiom route is now uncalled) |
 | `/api/buy` | Legacy Jupiter Lite server buy (no UI) |
 | `/api/sl-tp-monitor` | Automated SL/TP sells (server keypair) |
 
