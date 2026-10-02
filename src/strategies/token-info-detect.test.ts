@@ -335,6 +335,25 @@ describe('token_info_detect', () => {
     expect(stored?.top10_hold_pct).toBeCloseTo(25, 5)
   })
 
+  it('never rejects, so callers can fire-and-forget it off the entry path', async () => {
+    // The pre-work (shadow-risk enqueue) used to sit outside the try, so a throw there escaped into
+    // the caller's `finally` and — in the trending cycle — skipped the job-lock release behind it.
+    vi.mocked(enqueueRiskShadow).mockImplementationOnce(() => {
+      throw new Error('queue exploded')
+    })
+    await expect(
+      captureTokenInfoDetectBatch([
+        {
+          chain: 'sol',
+          tokenAddress: MINT,
+          detectingStrategy: 'mcap_enter_first_seen',
+          source: 'mcap_first_seen',
+          detectedAt: DETECTED,
+        },
+      ]),
+    ).resolves.toBeUndefined()
+  })
+
   it('does not invent a numeric soft threshold and leaves the live ban alone', () => {
     expect(TOKEN_INFO_DETECT_SOURCES).toEqual([
       'mcap_first_seen',

@@ -286,8 +286,25 @@ async function captureWeb(items: TokenInfoDetectCapture[]): Promise<void> {
  * Freeze the panel at first Sol detect. Robinhood is ignored.
  * Best-effort: a DB or upstream error logs and leaves the tick running.
  * An empty panel does not occupy the unique key.
+ *
+ * NEVER REJECTS, and callers on a latency-sensitive path (mcap sim-open, social/trending cycles,
+ * gmgn pipeline) must call it as `void captureTokenInfoDetectBatch(...)`: it waits on GMGN's rate
+ * gate, so awaiting it delays the entry it is only annotating (the same reason `risk-shadow-queue`
+ * says it "must never sit inline on a latency-sensitive path").
  */
 export async function captureTokenInfoDetectBatch(
+  items: TokenInfoDetectCapture[],
+): Promise<void> {
+  try {
+    await captureTokenInfoDetectBatchUnsafe(items)
+  } catch (error) {
+    log.warn('token_detection', 'token_info_detect capture crashed', {
+      error: error instanceof Error ? error.message : String(error),
+    })
+  }
+}
+
+async function captureTokenInfoDetectBatchUnsafe(
   items: TokenInfoDetectCapture[],
 ): Promise<void> {
   const sol = firstByMint(items)
