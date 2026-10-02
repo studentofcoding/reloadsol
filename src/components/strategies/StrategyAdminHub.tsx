@@ -3069,10 +3069,13 @@ function SignalsCard({
   strategy,
   saving,
   onSave,
+  sources,
 }: {
   strategy: SignalsStrategy;
   saving: boolean;
   onSave: (id: string, patch: Record<string, unknown>) => void;
+  /** T7: this strategy's fields, `config.query.limit -> stored | defaults`. */
+  sources?: Record<string, "stored" | "defaults">;
 }) {
   const q = strategy.config.query;
   const s = strategy.config.scoring;
@@ -3111,10 +3114,10 @@ function SignalsCard({
       </label>
       <Section title="Query">
         <FieldGrid>
-          <NumberField label="limit" value={limit} onChange={setLimit} step="1" />
-          <NumberField label="recency (min)" value={recency} onChange={setRecency} step="1" />
-          <NumberField label="minGrowth" value={minGrowth} onChange={setMinGrowth} />
-          <NumberField label="maxAge (min)" value={maxAge} onChange={setMaxAge} step="1" />
+          <NumberField label="limit" value={limit} onChange={setLimit} step="1" source={sources?.[`${strategy.id}.config.query.limit`]} />
+          <NumberField label="recency (min)" value={recency} onChange={setRecency} step="1" source={sources?.[`${strategy.id}.config.query.recencyMinutes`]} />
+          <NumberField label="minGrowth" value={minGrowth} onChange={setMinGrowth} source={sources?.[`${strategy.id}.config.query.minGrowth`]} />
+          <NumberField label="maxAge (min)" value={maxAge} onChange={setMaxAge} step="1" source={sources?.[`${strategy.id}.config.query.maxAgeMinutes`]} />
           <CheckboxField
             label="includeStuck"
             checked={includeStuck}
@@ -3125,13 +3128,13 @@ function SignalsCard({
       </Section>
       <Section title="Entry">
         <FieldGrid>
-          <NumberField label="enter score ≥" value={enterFloor} onChange={setEnterFloor} colSpan={2} />
+          <NumberField label="enter score ≥" value={enterFloor} onChange={setEnterFloor} colSpan={2} source={sources?.[`${strategy.id}.config.enterScoreFloor`]} />
         </FieldGrid>
       </Section>
       <Section title="Execution">
         <FieldGrid>
-          <NumberField label="sim buy SOL" value={simBuy} onChange={setSimBuy} step="0.001" />
-          <NumberField label="max open positions" value={maxOpen} onChange={setMaxOpen} step="1" />
+          <NumberField label="sim buy SOL" value={simBuy} onChange={setSimBuy} step="0.001" source={sources?.[`${strategy.id}.config.execution.simBuySol`]} />
+          <NumberField label="max open positions" value={maxOpen} onChange={setMaxOpen} step="1" source={sources?.[`${strategy.id}.config.execution.maxOpenPositions`]} />
         </FieldGrid>
       </Section>
       <Section title="Scoring">
@@ -4067,6 +4070,7 @@ function StrategyConfigTab({
             <SignalsCard
               key={s.id}
               strategy={s}
+              sources={sources?.signals}
               saving={saving === s.id}
               onSave={onSave}
             />
