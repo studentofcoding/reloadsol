@@ -171,7 +171,7 @@ async function closePriceDomainOpens(
         : SOCIAL_SIM_WALLET,
     chain,
   )
-  const records = await fetchTradingRecordsForWallet(wallet)
+  const records = await fetchTradingRecordsForWallet(wallet, { sinceLastClose: true })
   const open = getOpenStrategySimPositions(records, strategyId)
 
   for (const pos of open) {

@@ -140,6 +140,10 @@ export async function maybeRecordSignalsOutcome(
   const mintAddress = record.tokens?.[0]?.mintAddress
   if (!mintAddress || !record.walletAddress) return
 
+  // DELIBERATELY UNBOUNDED — do not add `sinceLastClose` here. This rebuilds the cycle that has
+  // just CLOSED, from its opening buys, and the tail begins at that same close: bounding it would
+  // truncate the very buys the PnL is computed from. This is the one caller that genuinely needs
+  // the full mint history.
   const records = await fetchTradingRecordsForWallet(record.walletAddress)
   await recordOutcomeForClose({
     record,

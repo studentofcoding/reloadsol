@@ -289,7 +289,9 @@ async function boostOpenSimForWallet(params: {
   hotEvent: GmgnHotEventLike
   source: string
 }): Promise<number> {
-  const records = await fetchTradingRecordsForWallet(params.walletAddress)
+  const records = await fetchTradingRecordsForWallet(params.walletAddress, {
+    sinceLastClose: true,
+  })
   const cycle = computeOpenSimCycle(records, params.tokenAddress)
   if (!cycle) return 0
 

@@ -658,7 +658,11 @@ async function runSimTrack(request: NextRequest) {
       const nativeBuyAmount =
         strategy.config.execution.simBuyNative ?? strategy.config.execution.simBuySol
       const slippageBps = resolveMcapSlippageBps(strategy.config.execution.slippageBps)
-      let records = await fetchTradingRecordsForWallet(walletAddress)
+      // Bounded to each (strategy, mint)'s last full close — the exact form documented on
+      // fetchTradingRecordsForWallet and already used by db.ts:520 / :1412. `records` is read
+      // ONLY through getOpenPositionsForStrategy here, so the tail is what this needs; the
+      // unbounded form moved the whole wallet (6,302 rows / 11 MB, ~11s) per strategy per chain.
+      let records = await fetchTradingRecordsForWallet(walletAddress, { sinceLastClose: true })
       const openPositions = getOpenPositionsForStrategy(
         records,
         strategy.id,
@@ -700,7 +704,9 @@ async function runSimTrack(request: NextRequest) {
       }
 
       if (runOpen) {
-      records = await fetchTradingRecordsForWallet(walletAddress)
+      // Deliberately a SECOND read, not a reuse of the one above: the manage phase has since
+      // closed positions and flushed its writes, so the open gate must see the new state.
+      records = await fetchTradingRecordsForWallet(walletAddress, { sinceLastClose: true })
       const currentOpen = getOpenPositionsForStrategy(
         records,
         strategy.id,

@@ -201,7 +201,7 @@ export async function listEvalCandidates(opts?: {
       chain,
     })
     const wallet = simWalletForChain(MCAP_TRACKER_SIM_WALLET, chain as StrategyChain)
-    const records = await fetchTradingRecordsForWallet(wallet)
+    const records = await fetchTradingRecordsForWallet(wallet, { sinceLastClose: true })
 
     for (const strategy of strategies) {
       const open = new Set(
