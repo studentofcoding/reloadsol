@@ -420,7 +420,14 @@ Residual risk: the fan-out doubles the number of quote calls per swap (T5c).
 - [x] **T9 — transfer-fee awareness. DONE (§2.12).** `token-transfer-fee.ts` reads the mint's
       `transferFeeConfig` and `prepareSwapTransaction` raises slippage to fee + margin, so a 100 bps fee
       can no longer eat a 20 bps auto budget and leave the router's post-check failing with `6001`.
-- [x] **T9b — a venue refusal must abort, not fall back. DONE (§2.12).** `venueRefused` distinguishes
+- [x] **T9b — a venue refusal must abort, not fall back. CLOSED 2026-10-02, on the second attempt.**
+  §2.12 identified the exact hole — *"`fetchJupiterSwapQuote` (the proxied one) did not"* carry the
+  distinction, *"and that is the path a **browser** uses"* — and `4cdc2f5` still shipped without closing
+  it. Live 2026-10-02: `GET /api/jupiter/quote` → `422`, followed by *"falling back to Lite: Jupiter
+  refused the order: Insufficient funds"* — the abort inert, the fallback happening anyway.
+  `acd2d64` reconstructs `venueRefused` from the 422 on the client side, with tests pinning 422=refusal /
+  502=not. Verified against the deployed route. **The SPEC was right and the implementation was not —
+  the note existed and nobody acted on it.** `venueRefused` distinguishes
       `/order`'s 200-with-empty-tx from a transport fault, and `prepareDeskSwap` rethrows it instead of
       letting Lite build a transaction that can never land.
 - [x] **T10 — the send path always carries a priority fee now. DONE (2026-10-01).**

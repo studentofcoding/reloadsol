@@ -102,7 +102,11 @@ always used successfully.
 3. **Set the tip by replacing** Jupiter's `SetComputeUnitPrice`, never appending — a second one is
    `invalid transaction: Transaction contains a duplicate instruction`.
 4. **Land it ourselves** — the tx simulates clean, which every earlier attempt failed at.
-5. **Guard**: assert the response's `feeBps` and the on-chain CU delta, so the fee can never silently stop.
+5. **Guard — CORRECTED 2026-10-02.** The original text here said *"assert the response's `feeBps`"*. **That
+   is not implementable:** `/build` does **not** return `feeBps` or `feeMint` at all. Measured on six
+   `/build` calls (all directions) — both fields absent every time, where `/order` reports them. So the
+   fee can only be verified by **simulation** (the +1,653 CU delta §3 used) or by reading the settled
+   transaction, never from the response. A response-level guard would have been dead code.
 
 ### Env
 
@@ -110,6 +114,43 @@ always used successfully.
 |---|---|---|
 | `BUYBULK_PLATFORM_FEE_BPS` | `25` | unchanged; `resolveBuybulkFeeBps` ignores callers |
 | `BUYBULK_SOL_FEE_ACCOUNT` | dev wallet | **still the right party, still the wrong type** — the ATA is derived from it |
+
+### 6.1 `/build` measured across every direction (2026-10-02)
+
+| pair | result |
+|---|---|
+| `SOL→DEW` · `DEW→SOL` (sell) · `DEW→BPX` (token→token) | **all 200**, `swapInstruction` present |
+
+`/build` covers every direction the migration needs, and routes across venues (`Manifest`, `Meteora DLMM`
+both observed), so it is not Metis-only in practice.
+
+**Two things this probe did NOT settle, both load-bearing:**
+
+1. **`feeBps` / `feeMint` are absent from every `/build` response** — see §6 item 5. The fee cannot be
+   confirmed from the response, only from a simulation.
+2. **The correct `feeAccount` for a non-SOL feeMint is unknown.** For token→token the feeMint is the
+   output token, so the account should be *that token's* ATA, not the WSOL ATA. Both the WSOL ATA and a
+   BPX ATA returned **200** — and **200 with a valid-looking response is not evidence it lands**: the
+   wallet-as-`feeAccount` also returned 200, right up until it simulated to `6025` (§3). This needs the
+   same A/B treatment before any non-SOL fee path is built.
+
+**And the outAmount is not a fee measurement.** Comparing `+fee` against `no fee` looked like ~97 bps, but
+the control picked a **different router** (`Manifest` vs `Meteora DLMM`) — that is route variance. Only the
+token→token trio shared a router, and there the fee runs did price lower (`35.47M` / `35.37M` vs `35.57M`),
+which is **consistent with** a fee applying, not proof it executes.
+
+### 6.2 A flag cannot cross the HTTP boundary — a defect class, not a one-off
+
+`4cdc2f5` taught the swap path to abort on a venue refusal. It worked server-side and was **defeated in the
+browser**: the server threw `422` + `{ venueRefused: true }`, but only the **status** survives an HTTP hop
+and the client fetcher threw a bare error without the flag, so `prepareDeskSwap` missed the refusal and
+fell back to Lite — the exact behaviour the fix existed to stop. Repaired in `acd2d64` by reconstructing
+the flag from the 422.
+
+**The general rule:** any distinction carried as a **flag on an error object** is lost when that error
+crosses a proxy. If the client must act on it, encode it in something that survives — status code, or a
+field in the body — and reconstruct it on the far side. `venueRefused` was applied on one side of a
+boundary that it could not cross.
 
 ## 7. Non-goals
 
