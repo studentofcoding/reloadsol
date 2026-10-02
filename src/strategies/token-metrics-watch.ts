@@ -81,3 +81,33 @@ export async function loadWatchMints(
   ])
   return rows.map((r) => r.token_address).filter(Boolean)
 }
+
+/**
+ * Symbols for watch mints, drawn from the same tables the watch set comes from.
+ *
+ * `WATCH_SQL` is deliberately left alone: it is load-bearing for both series writers, and its four
+ * sources do not all carry a symbol — adding a column to it risks the sweep for a display string.
+ * This is a separate best-effort lookup, and a mint it does not know simply has no entry. A missing
+ * symbol must stay missing rather than be invented from the address.
+ */
+export async function loadWatchSymbols(mints: string[]): Promise<Map<string, string>> {
+  const unique = [...new Set(mints.map((m) => m.trim()).filter(Boolean))]
+  if (unique.length === 0) return new Map()
+  const { rows } = await query<{ token_address: string; token_symbol: string | null }>(
+    `SELECT token_address, MAX(token_symbol) AS token_symbol
+       FROM (
+         SELECT token_address, token_symbol FROM token_mcap_tracking
+          WHERE token_address = ANY($1::text[]) AND token_symbol IS NOT NULL AND token_symbol <> ''
+         UNION ALL
+         SELECT token_address, token_symbol FROM trending_token_tracker
+          WHERE token_address = ANY($1::text[]) AND token_symbol IS NOT NULL AND token_symbol <> ''
+       ) s
+      GROUP BY token_address`,
+    [unique],
+  )
+  const out = new Map<string, string>()
+  for (const row of rows) {
+    if (row.token_symbol) out.set(row.token_address, row.token_symbol)
+  }
+  return out
+}

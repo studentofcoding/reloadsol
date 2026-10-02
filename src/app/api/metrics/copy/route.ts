@@ -33,6 +33,7 @@ import {
   DEFAULT_WATCH_MAX_MINTS,
   intEnv,
   loadWatchMints,
+  loadWatchSymbols,
 } from '@/strategies/token-metrics-watch'
 
 /**
@@ -117,6 +118,9 @@ export async function POST(request: NextRequest) {
 
     const now = new Date()
     const mints = await loadWatchMints({ maxMints })
+    // The watch set is addresses only; the symbol is a separate best-effort lookup from the same
+    // tables. Resolved once per sweep, so a row is never written with a symbol invented from its mint.
+    const symbols = await loadWatchSymbols(mints)
 
     // 1) FREE LANE — pure cache reads, no upstream calls.
     const reads = await mapWithConcurrency(mints, CACHE_READ_CONCURRENCY, (mint) =>
@@ -283,7 +287,7 @@ export async function POST(request: NextRequest) {
         await recordRugSignalShadow({
           chain: 'sol',
           tokenAddress: entry.mint,
-          symbol: null,
+          symbol: symbols.get(entry.mint) ?? null,
           score: result.score,
           breakdown: result.breakdown as unknown as Record<string, number>,
           barsSource: 'series',
