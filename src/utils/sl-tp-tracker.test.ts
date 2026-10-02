@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { checkSLTPTriggers, getExitMaxInputAgeSec, isSimulatedPosition } from './sl-tp-tracker'
+import {
+  checkSLTPTriggers,
+  getExitMaxInputAgeSec,
+  isSimulatedPosition,
+  resolveUnpricedBackstop,
+} from './sl-tp-tracker'
 import type { SLTPPosition } from './sl-tp-tracker'
 
 /**
@@ -131,5 +136,51 @@ describe('the manual/bot split is a label, not a branch', () => {
     // And a row with no backstop does NOT time out, which is the state the 160 backfilled rows were
     // in before Item 1 stamped them.
     expect(checkSLTPTriggers({ ...held, max_hold_hours: null }, 1).triggered).toBe(false)
+  })
+})
+
+describe('resolveUnpricedBackstop — backstops fire without a live price', () => {
+  const old = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString()
+
+  it('closes a position past max_hold_hours on its last known price', () => {
+    const r = resolveUnpricedBackstop(
+      row({ max_hold_hours: 6, created_at: old(7), current_price: 0.9 }),
+      false,
+    )
+    expect(r?.triggered).toBe(true)
+    expect(r?.trigger_type).toBe('max_hold_time')
+    expect(r?.current_price).toBe(0.9)
+    expect(r?.reason).toContain('unpriced')
+  })
+
+  it('does not close before max_hold_hours', () => {
+    expect(
+      resolveUnpricedBackstop(row({ max_hold_hours: 6, created_at: old(2) }), false),
+    ).toBeNull()
+  })
+
+  it('closes a rugged position on its last known price', () => {
+    const r = resolveUnpricedBackstop(row({ current_price: 0.4 }), true)
+    expect(r?.trigger_type).toBe('label_rugged')
+    expect(r?.current_price).toBe(0.4)
+  })
+
+  it('never fires stop-loss / take-profit from a stale price', () => {
+    // last price is far below the -30% stop and no backstop is due: must stay open (reported stale)
+    expect(resolveUnpricedBackstop(row({ current_price: 0.1 }), false)).toBeNull()
+    expect(resolveUnpricedBackstop(row({ current_price: 10 }), false)).toBeNull()
+  })
+
+  it('a due max-hold is not shadowed by a last price already past the stop', () => {
+    const r = resolveUnpricedBackstop(
+      row({ max_hold_hours: 6, created_at: old(7), current_price: 0.1 }),
+      false,
+    )
+    expect(r?.trigger_type).toBe('max_hold_time')
+  })
+
+  it('stays open when the row never had a usable price', () => {
+    expect(resolveUnpricedBackstop(row({ current_price: 0 }), true)).toBeNull()
+    expect(resolveUnpricedBackstop(row({ current_price: Number.NaN }), true)).toBeNull()
   })
 })

@@ -791,6 +791,46 @@ export function checkSLTPTriggers(
     }
 }
 
+/** The triggers that need only a clock or a rug label, never a live price. */
+const UNPRICED_BACKSTOP_TRIGGERS = new Set<SLTPTriggerResult['trigger_type']>([
+    'label_rugged',
+    'max_hold_time',
+    'max_age',
+])
+
+/**
+ * Exit decision for a position with NO readable price this pass.
+ *
+ * A live price is what stop-loss and take-profit are measured against, so those must never fire from
+ * a stale number. `maxHoldHours` and a rug label are different: they are true regardless of price and
+ * only need *a* price to book the close at. That price is the last one persisted on the row
+ * (`current_price`, refreshed every priced pass). Returns the close to take, or `null` when nothing
+ * backstop-level fires or the row has never held a usable price (it then stays reported STALE).
+ */
+export function resolveUnpricedBackstop(
+    position: SLTPPosition,
+    rugged: boolean,
+): SLTPTriggerResult | null {
+    const last = position.current_price
+    if (!(typeof last === 'number' && Number.isFinite(last) && last > 0)) return null
+    // Thresholds off: with the last price already past a stop/target, SL/TP would shadow the
+    // backstop (evaluateExit checks them first) and a due max-hold would stay open.
+    const backstopOnly = {
+        ...position,
+        stop_loss_percentage: null,
+        take_profit_percentage: null,
+        tp1_percentage: null,
+        tp2_percentage: null,
+        tp3_percentage: null,
+    } as unknown as SLTPPosition
+    const result = checkSLTPTriggers(backstopOnly, last, { rugged })
+    if (!result.triggered || !UNPRICED_BACKSTOP_TRIGGERS.has(result.trigger_type)) return null
+    return {
+        ...result,
+        reason: `${result.reason} [unpriced: closed on last known price]`,
+    }
+}
+
 // ✅ NEW: Build wallet token map for quick lookups
 async function getWalletTokenMap(walletAddress: string): Promise<Map<string, { uiAmount: number; decimals: number }>> {
     try {
@@ -1493,8 +1533,9 @@ export async function monitorSLTPPositions(returnSummary: boolean = false): Prom
 
         // Check each position for triggers
         const triggerPromises = filteredPositions.map(async (position) => {
-            const currentPrice = currentPrices.get(position.token_address)
+            let currentPrice = currentPrices.get(position.token_address)
             const rugged = isRugged(ruggedMints, position)
+            let backstopResult: SLTPTriggerResult | null = null
 
             if (!currentPrice) {
                 // NOT a silent skip. A position with no readable price is unevaluable, and that has
@@ -1510,13 +1551,24 @@ export async function monitorSLTPPositions(returnSummary: boolean = false): Prom
                     rugged,
                     decision: staleResult.reason,
                 })
-                return
+                // The backstops (rugged / max-hold) do not need a live price, only a price to book
+                // the close at. Without this an unpriced position could never age out or retire on a
+                // rug label — the one state the stale count made visible but nothing resolved.
+                backstopResult = resolveUnpricedBackstop(position, rugged)
+                if (!backstopResult) return
+                currentPrice = backstopResult.current_price
+                log.warn('price_tracking', 'Unpriced position closed by backstop on last known price', {
+                    positionId: position.id,
+                    tokenSymbol: position.token_symbol,
+                    triggerType: backstopResult.trigger_type,
+                    lastPrice: currentPrice,
+                })
             }
 
             if (rugged) ruggedCount += 1
 
             // Check for triggers
-            const triggerResult = checkSLTPTriggers(position, currentPrice, { rugged })
+            const triggerResult = backstopResult ?? checkSLTPTriggers(position, currentPrice, { rugged })
 
             if (triggerResult.triggered) {
                 log.info('deviation_alert', 'SL/TP trigger detected', {
@@ -1655,8 +1707,9 @@ export async function runSLTPMonitorAndSummarize(): Promise<SLTPTrackingSummary>
 
         // Check each position for triggers
         const triggerPromises = filteredPositions.map(async (position) => {
-            const currentPrice = currentPrices.get(position.token_address)
+            let currentPrice = currentPrices.get(position.token_address)
             const rugged = isRugged(ruggedMints, position)
+            let backstopResult: SLTPTriggerResult | null = null
 
             if (!currentPrice) {
                 // NOT a silent skip. A position with no readable price is unevaluable, and that has
@@ -1672,13 +1725,24 @@ export async function runSLTPMonitorAndSummarize(): Promise<SLTPTrackingSummary>
                     rugged,
                     decision: staleResult.reason,
                 })
-                return
+                // The backstops (rugged / max-hold) do not need a live price, only a price to book
+                // the close at. Without this an unpriced position could never age out or retire on a
+                // rug label — the one state the stale count made visible but nothing resolved.
+                backstopResult = resolveUnpricedBackstop(position, rugged)
+                if (!backstopResult) return
+                currentPrice = backstopResult.current_price
+                log.warn('price_tracking', 'Unpriced position closed by backstop on last known price', {
+                    positionId: position.id,
+                    tokenSymbol: position.token_symbol,
+                    triggerType: backstopResult.trigger_type,
+                    lastPrice: currentPrice,
+                })
             }
 
             if (rugged) ruggedCount += 1
 
             // Check for triggers
-            const triggerResult = checkSLTPTriggers(position, currentPrice, { rugged })
+            const triggerResult = backstopResult ?? checkSLTPTriggers(position, currentPrice, { rugged })
 
             if (triggerResult.triggered) {
                 log.info('deviation_alert', 'SL/TP trigger detected', {
