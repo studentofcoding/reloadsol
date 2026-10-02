@@ -1606,8 +1606,11 @@ func (cs *CronService) runDLMMScreen() {
     cs.workers.Begin("dlmm_screen")
     cs.logger.Info("🌊 Running DLMM screen...")
     url := fmt.Sprintf("%s/api/dlmm/screen", cs.config.APIBaseURL)
+    // The route authorises against DLMM_SCREEN_SECRET (src/utils/dlmm/config.ts `screenSecret`), which is
+    // a different env var from the DLMM_MANAGE_SECRET every other DLMM job sends. If the two ever differ the
+    // screener answers 401 on every tick and /dev/dlmm quietly shows month-old candidates.
     resp, err := cs.makeRequest("POST", url, map[string]string{
-        "key": cs.config.DLMMSecret,
+        "key": getEnv("DLMM_SCREEN_SECRET", cs.config.DLMMSecret),
     })
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ DLMM screen failed: %v", err))
