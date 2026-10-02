@@ -1,10 +1,31 @@
 # SPEC — Open positions: one source of truth
 
-**Status:** proposed — docs-only, no code changed
+**Status:** **Steps 1 and 4 IMPLEMENTED** (`9b70ba5`, shipped). Steps 2–3 remain to-spec.
 **Date:** 2026-10-02
 **Author:** Command Code (this session)
 **Trigger:** "we have now have PnL on watchlist system check and make it one system instead of duality
 … it's mostly on open positions so we didn't have 2 system count it"
+
+### Implemented so far
+
+- **Step 1 — done.** `useOpenPositions` (`src/hooks/useOpenPositions.ts`) is the body of
+  `useGlobalOpenPositionsBar` lifted verbatim, comments included. That module is now a re-export, so
+  its one consumer (`GlobalWatchlistBar`) is untouched. Behaviour-free: no caller or logic change,
+  confirmed by tsc/lint/build.
+- **Step 4 — done.** `src/hooks/useLocalStorageValue.ts` is built on `useSyncExternalStore`, following
+  `useIsClient`. `PnLTracker`'s five preferences are now *derived* rather than initialised-and-restored,
+  so the raw effect from `c0ca7a5` is gone. Raw strings in/out keeps the snapshot value-stable; typed
+  wrappers preserve the call sites' functional-update shapes.
+  **Bug found and fixed on the way:** the hint read `closedPositionsHintDismissed` while the dismiss
+  handler wrote `pnl-closed-positions-hint-dismissed` — two keys, so dismissing never persisted. That
+  also made five hand-rolled `localStorage.setItem` calls at the call sites redundant, and they are
+  removed; a write in two places is how the keys drifted in the first place.
+
+### Still open
+
+- **Step 2** — point `PnLTracker`'s open section at `useOpenPositions`. Not started: it needs
+  PnLTracker's open path read end-to-end first (§7).
+- **Step 3** — retire the duplicate poll once there is one consumer.
 
 ---
 
