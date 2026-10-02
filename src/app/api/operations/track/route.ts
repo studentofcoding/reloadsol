@@ -8,6 +8,8 @@ interface TrackOperationRequest {
   successCount: number;
   failureCount?: number;
   solBalance?: number;
+  /** Idempotency key from the client. Present => a retry cannot double-count. */
+  operationKey?: string;
   // Optional metadata for logging
   metadata?: {
     tokenMints?: string[];
@@ -22,6 +24,7 @@ interface DirectUpdateRequest {
   type: 'close' | 'swap';
   count: number;
   solBalance?: number;
+  operationKey?: string;
 }
 
 // Points calculation (matching points.ts logic)
@@ -46,20 +49,38 @@ function mapOperationToType(operationType: 'buy' | 'sell' | 'close'): 'swap' | '
   return operationType === 'close' ? 'close' : 'swap';
 }
 
+/**
+ * Apply the operation. Returns whether it was actually applied.
+ *
+ * `increment_operation_counts` is a blind add with no nonce, so a retry double-counts and there is no
+ * per-operation row to reconcile against afterwards. When the client supplies an `operationKey` we go
+ * through `track_operation_once` (migration 61), which inserts the key first and increments only if it
+ * was new — making a retry a safe no-op. Without a key we keep the old behaviour verbatim.
+ */
 async function directUpdateOperation(
   walletAddress: string,
   type: 'close' | 'swap',
   count: number,
   solBalance?: number,
-) {
+  operationKey?: string,
+): Promise<boolean> {
   const timestamp = new Date().toISOString();
   const swapIncrement = type === 'swap' ? count : 0;
   const closeIncrement = type === 'close' ? count : 0;
+
+  if (operationKey) {
+    const result = await query<{ applied: boolean }>(
+      `SELECT track_operation_once($1, $2, $3, $4, $5, $6) AS applied`,
+      [operationKey, walletAddress, swapIncrement, closeIncrement, solBalance ?? null, timestamp],
+    );
+    return result.rows[0]?.applied ?? false;
+  }
 
   await query(
     `SELECT increment_operation_counts($1, $2, $3, $4, $5)`,
     [walletAddress, swapIncrement, closeIncrement, solBalance ?? null, timestamp],
   );
+  return true;
 }
 
 /* SECURITY_REVIEW
@@ -85,6 +106,7 @@ export async function POST(request: NextRequest) {
     let operationType: 'buy' | 'sell' | 'close';
     let successCount: number;
     let solBalance: number | undefined;
+    let operationKey: string | undefined;
 
     if ('type' in body) {
       // New simplified format from client supabase utils
@@ -93,6 +115,7 @@ export async function POST(request: NextRequest) {
       operationType = directUpdate.type === 'close' ? 'close' : 'buy'; // Default to buy for swap
       successCount = directUpdate.count;
       solBalance = directUpdate.solBalance;
+      operationKey = directUpdate.operationKey;
     } else {
       // Old format
       const trackRequest = body as TrackOperationRequest;
@@ -100,6 +123,7 @@ export async function POST(request: NextRequest) {
       operationType = trackRequest.operationType;
       successCount = trackRequest.successCount;
       solBalance = trackRequest.solBalance;
+      operationKey = trackRequest.operationKey;
     }
 
     // Input validation
@@ -145,23 +169,30 @@ export async function POST(request: NextRequest) {
     const dbOperationType = mapOperationToType(operationType);
 
     // Update database
-    await directUpdateOperation(
+    const applied = await directUpdateOperation(
       walletAddress,
       dbOperationType,
       successCount,
-      solBalance
+      solBalance,
+      operationKey
     );
 
-    // Calculate points earned
-    const pointsEarned = calculatePoints(operationType, successCount);
+    // A duplicate key means the operation was already counted — award nothing a second time.
+    const pointsEarned = applied ? calculatePoints(operationType, successCount) : 0;
 
     // Log successful operation (for monitoring)
+    if (!applied) {
+      console.warn(
+        `Operation already tracked (duplicate key) — ignored: ${walletAddress} - ${operationType} - ${successCount}`,
+      );
+    } else {
     console.log(`Operation tracked: ${walletAddress} - ${operationType} - ${successCount} successful`, {
       timestamp: new Date().toISOString(),
       operationType,
       successCount,
       pointsEarned,
     });
+    }
 
     return NextResponse.json({
       success: true,
@@ -169,7 +200,11 @@ export async function POST(request: NextRequest) {
       operationType,
       successCount,
       dbOperationType,
-      message: `Successfully tracked ${successCount} ${operationType} operation(s)`
+      applied,
+      duplicate: !applied,
+      message: applied
+        ? `Successfully tracked ${successCount} ${operationType} operation(s)`
+        : `Already tracked (duplicate operation key) — nothing incremented`,
     });
 
   } catch (error) {
