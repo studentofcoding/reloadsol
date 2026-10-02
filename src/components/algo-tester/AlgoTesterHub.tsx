@@ -15,6 +15,7 @@ import {
   type AlgoTesterSimulated,
   type AlgoTesterTab,
 } from "@/components/algo-tester/algo-tester-query";
+import { useState } from "react";
 import { AlgoOpenPositionsTab } from "@/components/AlgoPositions";
 import { useAppNetwork } from "@/contexts/AppNetworkContext";
 
@@ -38,6 +39,14 @@ const TAB_LABELS: Record<AlgoTesterTab, string> = {
   closed: "Closed reports",
   health: "Health",
 };
+
+// T3: the cron/workers table, moved to Health. It is exported from `StrategyAdminHub` rather than
+// reimplemented — `.then` on the dynamic import keeps it in that chunk instead of pulling the whole hub
+// into the main bundle, and there is still exactly one copy of the table.
+const WorkersTab = dynamic(
+  () => import("@/components/strategies/StrategyAdminHub").then((m) => ({ default: m.WorkersTab })),
+  { loading: () => <TabLoading label="Workers" /> },
+);
 
 function TabLoading({ label }: { label: string }) {
   return (
@@ -190,6 +199,37 @@ function AlgoTesterHubContent() {
     staleTime: 30_000,
   });
 
+  // T3: the workers table moved to Health, so its data did too — same endpoint and the same 30s cadence
+  // as the Config panel used, just gated on the tab that renders it.
+  const workersQuery = useQuery({
+    queryKey: ["workers-status"],
+    queryFn: async () => {
+      const res = await fetch("/api/workers/status");
+      // Deliberately uncast: `WorkersStatusResponse` is declared inside `StrategyAdminHub` and the shape
+      // is checked where it is consumed. Casting to a partial type here is exactly what made the prop
+      // unassignable — the compiler was right and the cast was wrong.
+      const json = await res.json();
+      if (!json.success) throw new Error("Failed to load workers");
+      return json;
+    },
+    refetchInterval: query.tab === "health" ? 30_000 : false,
+    enabled: query.tab === "health",
+  });
+  const [triggeringWorker, setTriggeringWorker] = useState<string | null>(null);
+  const runWorkerNow = async (workerId: string) => {
+    setTriggeringWorker(workerId);
+    try {
+      await fetch("/api/workers/trigger", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workerId }),
+      });
+      await workersQuery.refetch();
+    } finally {
+      setTriggeringWorker(null);
+    }
+  };
+
   const strategyOptions = useMemo(
     () => strategyIdOptionsFromRegistry(strategiesQuery.data, query.domain),
     [strategiesQuery.data, query.domain],
@@ -228,6 +268,14 @@ function AlgoTesterHubContent() {
       {query.tab === "health" && (
         <div className="space-y-3">
           <EarlyEnterNoulShadowPanel />
+          <WorkersTab
+            data={workersQuery.data}
+            loading={workersQuery.isLoading}
+            error={workersQuery.error}
+            onRefresh={() => void workersQuery.refetch()}
+            triggeringWorker={triggeringWorker}
+            onRunNow={runWorkerNow}
+          />
         </div>
       )}
 

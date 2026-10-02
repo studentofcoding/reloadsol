@@ -2594,7 +2594,7 @@ function workerStatusBadge(status: string) {
   return styles[status] ?? "bg-gray-700 text-gray-400";
 }
 
-function WorkersTab({
+export function WorkersTab({
   data,
   loading,
   error,
