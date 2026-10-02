@@ -1,6 +1,6 @@
 # SPEC — One verdict per token, on a fixed 10-minute block
 
-**Status:** To-spec (docs only) — **for review, nothing implemented by this document.**
+**Status:** **T1–T5 shipped; `rug_verdicts` is populated in prod** — 1,100 verdicts (2026-10-02 17:26 → 2026-10-03 02:28 +07), **206 labelled** (56 `rug` / 150 `safe`), one row per mint. **T6 (enforce) not started and not warranted by the data yet** — see [Live result](#live-result-2026-10-03) and [OPERATOR_STATE](../OPERATOR_STATE.md). The design below was written before implementation and is kept as the record; the corrections are in Live result.
 **Date:** 2026-10-02
 **Provenance:** the `/ask` + `/debug` passes of 2026-10-02 — the code reads of `rug-signal.ts`,
 `rug-signal-detect.ts`, `ohlc-rug-shadow.ts`, `canonical-features.ts` and the prod inventory/P1 queries
@@ -136,6 +136,40 @@ The slice covers **199 of those 2,459 (~8%)**. So:
 
 Invariants: **features are written once and never recomputed**; a verdict with a short block is
 recorded as short; `no_bars` is an unknown and must not enter a training set as a negative.
+
+## Live result (2026-10-03)
+
+Read-only against prod, 2026-10-03 ~02:30 +07. The corpus exists and can now be questioned — the first
+verdict on the scorer is **"not good enough to enforce"**.
+
+| | value |
+|---|---|
+| verdicts in `rug_verdicts` | 1,100 (206 labelled, 894 not yet labelled) |
+| labelled `rug` / `safe` | 56 / 150 → base rate **27 %** |
+| `rug_signal_shadow` rows / `would_rug` | 12,039 / 14 (6,925 `no_bars`, 5,100 `pass`) |
+
+Score threshold vs the 206 labelled verdicts (flagged = score ≥ t):
+
+| t | flagged | true rugs caught | precision | recall |
+|---|---|---|---|---|
+| **80 (shipped)** | **0** | 0 | n/a | 0 % |
+| 60 | 1 | 0 | 0 % | 0 % |
+| 50 | 8 | 2 | 25 % | 4 % |
+| **40** | 31 | 17 | **55 %** | **30 %** |
+| **30** | 77 | 33 | **43 %** | **59 %** |
+| 20 | 142 | 46 | 32 % | 82 % |
+| 0 (flag all) | 206 | 56 | 27 % | 100 % |
+
+**AUC ≈ 0.66.** The signal ranks better than chance but at the shipped threshold of 80 it flags **nothing**
+on the labelled set; lowering to 40 doubles the base rate's precision at 30 % recall, and 30 trades precision
+(43 %, still above the 27 % base) for 59 % recall. That is a threshold decision for a shadow lane — the
+acceptance rule in T6 (precision above base rate **and** per-day agreement) is not yet shown to hold, and
+206 labels over ~9 hours is one day, so per-day agreement is untestable.
+
+**Input coverage is the binding constraint, not the scorer.** As-of OHLC coverage at verdict time is **39 %
+against the 60 % gate**; the unjudged share is composition (tokens with no candle history when sampled),
+which is why work on bar recency, the own-1m fallback and sampler coverage (PRs #108–#110) comes before any
+threshold change.
 
 ## Tasks
 
