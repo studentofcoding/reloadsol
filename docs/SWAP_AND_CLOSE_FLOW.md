@@ -167,6 +167,9 @@ Per [Solana Tracker Swap API](https://docs.solanatracker.io/guides/swap-api):
   - Env: `RAPTOR_API_BASE` (optional). Platform fee is **always 25 bps (0.25%)**
     to the buy_bulk treasury (`feeAccount` / `feeBps` via `src/utils/buybulk-fee.ts`);
     clients cannot omit or override it.
+  - **Unverified on chain.** `BUYBULK_SOL_FEE_ACCOUNT` is the trading wallet, so for our own
+    trades the fee is a self-transfer and invisible. Raptor accepts a **wallet** here; Jupiter
+    does not — see `SPEC-swap-fee-collection-v1.md` §3.
 
 - **Jupiter Lite (desk fallback — only when V2 fails)**
   - Quote: `GET /api/jupiter/lite/quote` → `lite-api.jup.ag/swap/v1/quote`
@@ -177,6 +180,10 @@ Per [Solana Tracker Swap API](https://docs.solanatracker.io/guides/swap-api):
   - Quote: `GET /api/jupiter/quote` → `api.jup.ag/swap/v2/order` (no `taker`)
   - Prepare: same URL with `taker` = user pubkey (unsigned `transaction`)
   - Requires `JUPITER_API_KEY`; send still uses Shyft/RPC like Lite
+  - **Charges no platform fee.** `prepareJupiterSwapPrepared` (`swap-executor.ts:215-226`) forwards
+    seven fields and no fee field, so every desk swap and every token→token bulk leg pays 0 bps to
+    us. `/order` also *silently ignores* `platformFeeBps` (200 OK, our fee dropped). Jupiter's own
+    `feeBps: 10` applies either way. See `SPEC-swap-fee-collection-v1.md`.
 
 - **Jupiter Ultra Reclaim (close only — not swaps)**
   - Craft: `POST /api/jupiter/reclaim/craft` → reclaim API
