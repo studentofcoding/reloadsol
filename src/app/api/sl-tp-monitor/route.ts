@@ -52,9 +52,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { acquireJobLock, releaseJobLock, startJobLockHeartbeat } = await import(
-      '@/utils/bot-job-lock'
-    )
+    const { acquireJobLock, releaseJobLock } = await import('@/utils/bot-job-lock')
     const jobLock = await acquireJobLock('sltp_monitor', 120)
     if (!jobLock.acquired) {
       return NextResponse.json(
@@ -63,13 +61,22 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // The Go client's per-pass timeout is exactly 120s (main.go, runSLTPMonitor) and so was this
-    // lock's TTL. A pass that outlived its own timeout therefore LOST the lock while still running,
-    // and the next 60s tick acquired a fresh one and started a second pass over the same open
-    // positions. The heartbeat renews the lock while the pass is alive, so it can now only expire
-    // if the process actually dies — which is what the TTL is for.
-    const heartbeat = startJobLockHeartbeat('sltp_monitor', 120, 30)
-
+    // NO HEARTBEAT, and that is deliberate. One was added in 2e96be7 alongside this lock, because
+    // the TTL (120s) equalled the Go client's per-pass timeout (main.go, runSLTPMonitor) — so a pass
+    // that outlived its own timeout lost the lock while still running and the next 60s tick started a
+    // SECOND pass over the same positions.
+    //
+    // Two things have changed since. `closeSimulatedPositionFromWorker` now checks whether the trade
+    // already closed before writing anything (a40738e), so a concurrent pass is safe rather than a
+    // double-close. And the heartbeat renews indefinitely, which means one slow pass never yields:
+    // observed on 2026-10-02 as every tick reporting "previous run still in progress" for half an
+    // hour while positions went unmanaged. It was protecting against a hazard that no longer exists
+    // and starving the queue in exchange.
+    //
+    // So the lock is a 120s "one pass at a time" courtesy again, aligned with the client's own
+    // timeout: a pass that overruns it is abandoned by the caller anyway, and the next tick takes
+    // over. The lock still stops two passes starting simultaneously; it just no longer stops a stuck
+    // one from ever being replaced.
     try {
       const summary = await runSLTPMonitorAndSummarize()
 
@@ -84,7 +91,6 @@ export async function GET(request: NextRequest) {
         summary,
       })
     } finally {
-      clearInterval(heartbeat)
       await releaseJobLock('sltp_monitor')
     }
 
