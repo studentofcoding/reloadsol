@@ -26,6 +26,7 @@ import {
   resolveRugSignalThresholds,
   type RugSignalThresholds,
 } from '@/strategies/rug-signal'
+import { firstHeldMinute } from '@/strategies/rug-signal-separation'
 
 /** Anchors a replay may vary. Everything the scorer's bands and conditions read. */
 export type CalibrationOverrides = Partial<
@@ -64,6 +65,18 @@ export type CalibrationRun = {
    * where the 1m block can score. Both are reported so the switch is measurable, not a cliff.
    */
   bases: { fiveM: { judged: number; trips: number }; oneM: { judged: number; trips: number } }
+  /**
+   * The same comparison on the **fresh-token population** — each mint judged once, at its first held
+   * minute + the window, which is what the block basis is for. `noBars` is reported beside `judged`
+   * so a basis that judges more cannot be confused with one that scores higher.
+   */
+  freshBlock: {
+    windowMinutes: number
+    mints: number
+    skipped: number
+    fiveM: { judged: number; noBars: number; trips: number }
+    oneM: { judged: number; noBars: number; trips: number }
+  }
   /** The shape pair (`staircase + liquidity`) across the population, against its own threshold. */
   core: { avg: number; max: number }
   best: { score: number; mint: string } | null
@@ -233,6 +246,13 @@ export async function replayRugSignal(params: {
       tripRate: 0,
       tripsByPath: { score: 0, core: 0 },
       bases: { fiveM: { judged: 0, trips: 0 }, oneM: { judged: 0, trips: 0 } },
+      freshBlock: {
+        windowMinutes: 10,
+        mints: 0,
+        skipped: 0,
+        fiveM: { judged: 0, noBars: 0, trips: 0 },
+        oneM: { judged: 0, noBars: 0, trips: 0 },
+      },
       core: { avg: 0, max: 0 },
       best: null,
       scoreHistogram: [],
@@ -284,6 +304,56 @@ export async function replayRugSignal(params: {
   let judgedFiveM = 0
   let judgedOneM = 0
   let tripsOneM = 0
+
+  /**
+   * **The fresh-token slice — the population the block basis exists for.**
+   *
+   * The main loop replays observations from the sweeps, whose mints are mostly *old* tokens with
+   * hours of history. There five 5m bars and ten 1m bars both exist, so the basis makes no
+   * difference — measured live: 397/397 judged either way, the same 3 trips. That is a non-regression
+   * signal, but it is not the question.
+   *
+   * The question is what happens at ten minutes of life, so this walks each mint **once**, at its
+   * first held minute + the window, and scores the trailing slice both ways. `judged` is the number
+   * that moves: ten 1m bars is two 5m bars, so the 5m basis reports `no_bars` — an unknown, never a
+   * low score — where the block can actually score.
+   */
+  const FRESH_WINDOW_MIN = 10
+  let freshMints = 0
+  let freshSkipped = 0
+  let freshJudged5 = 0
+  let freshJudged1 = 0
+  let freshTrips5 = 0
+  let freshTrips1 = 0
+  for (const rows of byMint.values()) {
+    const firstMinute = firstHeldMinute(rows)
+    if (firstMinute == null) {
+      freshSkipped++
+      continue
+    }
+    const blockEndMs = (firstMinute + FRESH_WINDOW_MIN * 60) * 1000
+    const freshBars = barsUpTo(rows, blockEndMs)
+    if (freshBars.length === 0) {
+      freshSkipped++
+      continue
+    }
+    const freshMcap = freshBars[freshBars.length - 1]?.c ?? null
+    const freshLiquidity = liquidityAsOf(rows, blockEndMs)
+    const freshFive = evaluateRugSignalFrom1m(
+      { bars1m: freshBars, mcap: freshMcap, liquidityUsd: freshLiquidity, ageHours: null },
+      thresholds,
+    )
+    const freshOne = evaluateRugSignalFrom1m(
+      { bars1m: freshBars, mcap: freshMcap, liquidityUsd: freshLiquidity, ageHours: null },
+      thresholds,
+      { basis: '1m' },
+    )
+    freshMints++
+    if (freshFive.judged) freshJudged5++
+    if (freshOne.judged) freshJudged1++
+    if (freshFive.isRug) freshTrips5++
+    if (freshOne.isRug) freshTrips1++
+  }
   let crossCheckChecked = 0
   let crossCheckMismatches = 0
 
@@ -381,6 +451,13 @@ export async function replayRugSignal(params: {
     bases: {
       fiveM: { judged: judgedFiveM, trips },
       oneM: { judged: judgedOneM, trips: tripsOneM },
+    },
+    freshBlock: {
+      windowMinutes: FRESH_WINDOW_MIN,
+      mints: freshMints,
+      skipped: freshSkipped,
+      fiveM: { judged: freshJudged5, noBars: freshMints - freshJudged5, trips: freshTrips5 },
+      oneM: { judged: freshJudged1, noBars: freshMints - freshJudged1, trips: freshTrips1 },
     },
     core: {
       avg: coreValues.length > 0 ? coreValues.reduce((s, v) => s + v, 0) / coreValues.length : 0,
