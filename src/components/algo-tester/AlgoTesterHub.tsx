@@ -25,11 +25,18 @@ const StrategyAdminHub = dynamic(
 const HistoryTab = dynamic(() => import("@/components/algo-tester/HistoryTab"), {
   loading: () => <TabLoading label="History" />,
 });
+// T3: the evidence half of the surface. The Noul panel fetches its own data and renders its own
+// vacuity labels (T2), so it moves whole rather than being re-cut.
+const EarlyEnterNoulShadowPanel = dynamic(
+  () => import("@/components/strategies/EarlyEnterNoulShadowPanel"),
+  { loading: () => <TabLoading label="Health" /> },
+);
 
 const TAB_LABELS: Record<AlgoTesterTab, string> = {
   config: "Config",
   open: "Open positions",
   closed: "Closed reports",
+  health: "Health",
 };
 
 function TabLoading({ label }: { label: string }) {
@@ -214,6 +221,12 @@ function AlgoTesterHubContent() {
         showToken={query.tab === "open" || query.tab === "closed"}
         onPatch={patchQuery}
       />
+
+      {query.tab === "health" && (
+        <div className="space-y-3">
+          <EarlyEnterNoulShadowPanel />
+        </div>
+      )}
 
       {query.tab === "config" && (
         <StrategyAdminHub
