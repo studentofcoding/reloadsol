@@ -25,6 +25,24 @@ function allowedPath(pathname: string): boolean {
   return ALLOWED_PREFIXES.some((p) => pathname.startsWith(p))
 }
 
+/**
+ * Constant-time compare. `!==` returns at the first differing byte, which leaks the secret's prefix to
+ * anyone who can time the Worker. Both sides are hashed first so the compare is over equal-length
+ * digests regardless of the input length.
+ */
+async function secretsEqual(a: string, b: string): Promise<boolean> {
+  const enc = new TextEncoder()
+  const [ha, hb] = await Promise.all([
+    crypto.subtle.digest('SHA-256', enc.encode(a)),
+    crypto.subtle.digest('SHA-256', enc.encode(b)),
+  ])
+  const x = new Uint8Array(ha)
+  const y = new Uint8Array(hb)
+  let diff = 0
+  for (let i = 0; i < x.length; i++) diff |= x[i] ^ y[i]
+  return diff === 0
+}
+
 export class GmgnFetcher extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url)
@@ -48,6 +66,9 @@ export class GmgnFetcher extends DurableObject<Env> {
       init.body = await request.arrayBuffer()
     }
 
+    // No timeout meant a hung gmgn.ai connection held the single named Durable Object (and the VPS
+    // request behind it, which only gives up at its own 15s) for as long as the platform allowed.
+    init.signal = AbortSignal.timeout(12_000)
     const upstream = await fetch(target, init)
     const body = await upstream.arrayBuffer()
     const out = new Headers()
@@ -69,7 +90,7 @@ export default {
       return Response.json({ error: 'PROXY_SECRET not configured' }, { status: 500 })
     }
     const got = request.headers.get('X-Gmgn-Proxy-Secret') || ''
-    if (got !== secret) {
+    if (!(await secretsEqual(got, secret))) {
       return Response.json({ error: 'unauthorized' }, { status: 401 })
     }
 
