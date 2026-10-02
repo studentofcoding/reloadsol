@@ -169,6 +169,15 @@ export default function CombinedScoreWeightsPanel({ onNotify }: Props) {
           renormalizes when set. Each weight must be ≥ 0; save renormalizes so they sum to 1.
         </p>
         <p className="text-xs text-gray-500 mt-1">
+          {/* T6: the blast radius, where the number is. Two mechanisms answer to "rug" here and this
+              list is where they get conflated — this weight scores the freeview combined score only;
+              it is not the detector's threshold. */}
+          <span className="font-mono text-gray-300">OHLC rug patterns</span> weights{' '}
+          <span className="text-gray-400">this score only</span> — not the rug detector. Its knobs are{' '}
+          <span className="font-mono text-gray-300">RUG_SIG_*</span> on the rug page (
+          <span className="font-mono text-gray-300">/dev/rug-signal</span>).
+        </p>
+        <p className="text-xs text-gray-500 mt-1">
           Source:{' '}
           <span className="font-mono text-gray-300">{data.source ?? 'defaults'}</span>
           {draftSum != null ? (
