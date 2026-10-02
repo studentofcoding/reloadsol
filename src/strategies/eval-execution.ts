@@ -16,6 +16,50 @@ import type { CombinedScoreChain } from './combined-score'
 import type { McapTrackerStrategy, StrategyChain } from './types'
 import type { McapSnapshot } from '@/utils/mcap-tracker'
 
+/**
+ * `defaultIsOpen` answers "is this one mint already open?" and used to hydrate the ENTIRE mcap
+ * sim wallet — 6,302 records / 11 MB of JSONB — for every candidate it was asked about.
+ *
+ * Measured on prod: 15 calls in 8 minutes at ~7.8s each, and the repeated multi-megabyte
+ * allocations pushed V8 past its heap limit. "FATAL ERROR: Reached heap limit Allocation failed
+ * - JavaScript heap out of memory" killed the web process every ~90 seconds, and everything
+ * downstream of that death — boot-storm connection timeouts, EOFs on the SL/TP monitor, pool
+ * acquire failures, an unhealthy container — was a symptom of the restart, not a database fault.
+ *
+ * The open set is now hydrated once per strategy, bounded to that strategy's own cycles, and
+ * reused for the rest of the cycle. A successful open invalidates the entry, so a duplicate can
+ * never be admitted on stale state.
+ */
+const OPEN_MINT_TTL_MS = 60_000
+const openMintCache = new Map<string, { at: number; mints: Set<string> }>()
+
+function openMintCacheKey(wallet: string, strategyId: string): string {
+  return `${wallet}|${strategyId}`
+}
+
+function invalidateOpenMints(wallet: string, strategyId: string): void {
+  openMintCache.delete(openMintCacheKey(wallet, strategyId))
+}
+
+async function openMintsFor(wallet: string, strategyId: string): Promise<Set<string>> {
+  const key = openMintCacheKey(wallet, strategyId)
+  const hit = openMintCache.get(key)
+  if (hit && Date.now() - hit.at < OPEN_MINT_TTL_MS) return hit.mints
+
+  const { fetchTradingRecordsForWallet } = await import('./db')
+  const { getOpenMcapPositions } = await import('@/utils/mcap-sim-track')
+  // Per (strategy, mint) — the exact bound fetchTradingRecordsForWallet documents and validates.
+  const records = await fetchTradingRecordsForWallet(wallet, {
+    strategies: [strategyId],
+    sinceLastClose: true,
+  })
+  const mints = new Set(
+    getOpenMcapPositions(records, strategyId, 'sim').map((row) => row.mintAddress),
+  )
+  openMintCache.set(key, { at: Date.now(), mints })
+  return mints
+}
+
 export type PaperOpenContext = {
   chain: CombinedScoreChain
   strategy: McapTrackerStrategy
@@ -49,8 +93,9 @@ export class PaperExecutionAdapter implements ExecutionAdapter {
       return { ok: true, opened: false, error: 'already_closed' }
     }
     if (this.deps.openPaper) {
-      return this.deps.openPaper({
-        chain: decision.strategyId.endsWith('_rh') ? 'robinhood' : 'sol',
+      const chain: StrategyChain = decision.strategyId.endsWith('_rh') ? 'robinhood' : 'sol'
+      const opened = await this.deps.openPaper({
+        chain,
         strategy: {
           id: decision.strategyId,
           name: decision.strategyId,
@@ -81,6 +126,10 @@ export class PaperExecutionAdapter implements ExecutionAdapter {
         },
         decision,
       })
+      if (opened.ok && opened.opened) {
+        invalidateOpenMints(simWalletForChain(MCAP_TRACKER_SIM_WALLET, chain), decision.strategyId)
+      }
+      return opened
     }
     return defaultOpenPaper(decision)
   }
@@ -117,13 +166,9 @@ export function selectExecutionAdapter(
 }
 
 async function defaultIsOpen(mint: string, strategyId: string): Promise<boolean> {
-  const { fetchTradingRecordsForWallet } = await import('./db')
-  const { getOpenMcapPositions } = await import('@/utils/mcap-sim-track')
   const chain: StrategyChain = strategyId.endsWith('_rh') ? 'robinhood' : 'sol'
   const wallet = simWalletForChain(MCAP_TRACKER_SIM_WALLET, chain)
-  const records = await fetchTradingRecordsForWallet(wallet)
-  const open = getOpenMcapPositions(records, strategyId, 'sim')
-  return open.some((row) => row.mintAddress === mint)
+  return (await openMintsFor(wallet, strategyId)).has(mint)
 }
 
 async function defaultIsClosed(mint: string, strategyId: string): Promise<boolean> {
