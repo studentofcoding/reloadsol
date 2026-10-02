@@ -171,6 +171,54 @@ export async function releaseJobLock(jobName: string): Promise<void> {
   ])
 }
 
+/**
+ * Extend a lock this instance already holds.
+ *
+ * The TTL is the only backstop that works across hosts: `sweepOrphanedLocks` can prove a
+ * same-host owner is dead, but a container recreate gets a NEW hostname, so a lock left by the
+ * previous container is a foreign owner and has to be waited out. That made a deploy-killed sweep
+ * cost the whole TTL — and with a 15-minute cadence and a 600 s TTL, one death also skipped the
+ * next run.
+ *
+ * Renewing lets the TTL be short enough to be a good backstop rather than a cost: a live sweep keeps
+ * its own lock alive, and a dead one frees the job in one TTL. Guarded by `locked_by`, so a stale
+ * process can never extend a lock that a live one has taken over.
+ */
+export async function renewJobLock(
+  jobName: string,
+  ttlSeconds = DEFAULT_TTL_SEC,
+): Promise<boolean> {
+  if (isDbCircuitOpen()) return false
+  try {
+    const { rowCount } = await query(
+      `UPDATE bot_job_locks SET expires_at = $1 WHERE job_name = $2 AND locked_by = $3`,
+      [new Date(Date.now() + ttlSeconds * 1000).toISOString(), jobName, INSTANCE_ID],
+    )
+    return rowCount > 0
+  } catch (error) {
+    // Best effort: a failed renewal is not a failure of the work the lock protects. If the DB stays
+    // unreachable the lock simply expires and the next tick re-acquires it.
+    console.warn(`[bot-job-lock] renew failed for ${jobName}:`, formatDbConnectionError(error))
+    return false
+  }
+}
+
+/**
+ * Keep a held lock alive while `run` executes, then stop. Returns the timer so the caller can clear
+ * it; unref'd so a forgotten handle can never keep the process alive.
+ */
+export function startJobLockHeartbeat(
+  jobName: string,
+  ttlSeconds: number,
+  intervalSeconds: number,
+): NodeJS.Timeout {
+  const timer = setInterval(() => {
+    void renewJobLock(jobName, ttlSeconds)
+  }, Math.max(5, intervalSeconds) * 1000)
+  timer.unref?.()
+  return timer
+}
+
 /** Run a cron route body under a job lock; overlapping ticks get 409 `skipped`. */
 export async function withJobLock(
   jobName: string,

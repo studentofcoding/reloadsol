@@ -29,6 +29,7 @@ import {
   type RugSignalBar,
 } from '@/strategies/rug-signal'
 import { recordRugSignalShadow } from '@/strategies/rug-signal-shadow'
+import { finishCopierRun, startCopierRun } from '@/strategies/copier-runs'
 import {
   DEFAULT_WATCH_MAX_MINTS,
   intEnv,
@@ -62,7 +63,20 @@ const DEFAULT_MAX_STALENESS_MIN = 30
 const DEFAULT_CONCURRENCY = 8
 const DEFAULT_CADENCE_SEC = 900
 const CACHE_READ_CONCURRENCY = 16
-const JOB_LOCK_SECONDS = 600
+/**
+ * The job lock is a **lease**, not a stopwatch.
+ *
+ * A sweep takes ~5 minutes, so the old 600 s TTL was only 2× the work — and the orphan sweep cannot
+ * reclaim a lock whose owner was a *previous container*, because a recreate gets a new hostname and
+ * `sweepOrphanedLocks` deliberately only touches same-host owners (`bot-job-lock.ts`). A deploy-killed
+ * sweep therefore made the next tick wait out the entire TTL, which on a 15-minute cadence skipped a
+ * second run as well.
+ *
+ * A short TTL kept alive by a heartbeat makes that backstop cheap: dead within `LOCK_TTL`, alive for
+ * as long as the heartbeat runs. The TTL stays >2× the interval so a missed beat or two is survivable.
+ */
+const DEFAULT_LOCK_TTL_SEC = 180
+const DEFAULT_LOCK_HEARTBEAT_SEC = 60
 /** Prune a few times a day rather than on every sweep. */
 const PRUNE_EVERY_HOURS = 6
 /** How far back the 24h cache may legitimately reach (its own TTL, not the copy window). */
@@ -89,14 +103,27 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true, skipped: true, reason: 'kill switch' })
   }
 
-  const { acquireJobLock, releaseJobLock } = await import('@/utils/bot-job-lock')
-  const jobLock = await acquireJobLock('metrics_copier', JOB_LOCK_SECONDS)
+  const { acquireJobLock, releaseJobLock, startJobLockHeartbeat } = await import(
+    '@/utils/bot-job-lock'
+  )
+  const lockTtl = intEnv('METRICS_COPY_LOCK_TTL_SEC', DEFAULT_LOCK_TTL_SEC)
+  const jobLock = await acquireJobLock('metrics_copier', lockTtl)
   if (!jobLock.acquired) {
     return NextResponse.json(
       { success: false, skipped: true, reason: jobLock.reason },
       { status: 409 },
     )
   }
+  const heartbeat = startJobLockHeartbeat(
+    'metrics_copier',
+    lockTtl,
+    intEnv('METRICS_COPY_LOCK_HEARTBEAT_SEC', DEFAULT_LOCK_HEARTBEAT_SEC),
+  )
+
+  // Durable outcome record. A row that never leaves `running` is a sweep that was killed mid-flight,
+  // and no row at all is a trigger that never arrived — together they cover the two failure shapes
+  // that stdout-only logging hid for seven hours.
+  const runId = await startCopierRun('cron')
 
   try {
     const maxMints = intEnv('METRICS_COPY_MAX_MINTS', DEFAULT_WATCH_MAX_MINTS)
@@ -346,14 +373,25 @@ export async function POST(request: NextRequest) {
     // console.warn, not log.info: production strips info/log via removeConsole and this line is
     // the ramp evidence (blocks + coverage) that decides whether METRICS_COPY_RPS can go up.
     console.warn('[metrics-copier] sweep', summary)
+    await finishCopierRun(runId, 'completed', {
+      summary: summary as unknown as Record<string, unknown>,
+    })
     return NextResponse.json(summary)
   } catch (error) {
     log.error('error_handling', 'metrics copier failed', error as Error)
+    await finishCopierRun(runId, 'failed', {
+      reason: error instanceof Error ? error.message : 'Unknown error',
+    })
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 },
     )
   } finally {
+    clearInterval(heartbeat)
+    // Safety net for the early-return paths (nothing to fetch, printer skipped). Guarded by
+    // `outcome = 'running'`, so a run already closed above keeps its real verdict; a *killed* process
+    // never reaches here, which is exactly what leaves the `running` row that names the failure.
+    await finishCopierRun(runId, 'completed', { reason: 'finished without a summary' })
     await releaseJobLock('metrics_copier')
   }
 }

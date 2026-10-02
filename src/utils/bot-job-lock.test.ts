@@ -1,5 +1,20 @@
-import { describe, expect, it } from 'vitest'
-import { INSTANCE_ID, isOrphanedLock, parseLockOwner } from './bot-job-lock'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const { queryMock } = vi.hoisted(() => ({ queryMock: vi.fn() }))
+vi.mock('@/utils/db', () => ({ query: queryMock }))
+vi.mock('@/utils/db-health', () => ({
+  isDbCircuitOpen: () => false,
+  isDbQuotaOrTimeoutError: () => false,
+  formatDbConnectionError: (error: unknown) => String(error),
+}))
+
+import {
+  INSTANCE_ID,
+  isOrphanedLock,
+  parseLockOwner,
+  renewJobLock,
+  startJobLockHeartbeat,
+} from './bot-job-lock'
 
 const HOST = 'web-1'
 const alive = () => true
@@ -40,6 +55,66 @@ describe('parseLockOwner', () => {
     expect(parseLockOwner('web-1:4.5:1700000000000')).toBeNull()
     expect(parseLockOwner('web-1:42:')).toBeNull()
     expect(parseLockOwner(':42:1700000000000')).toBeNull()
+  })
+})
+
+/**
+ * The TTL is the only backstop that works across hosts (a recreate gets a new hostname, so the
+ * previous container's lock is a foreign owner the orphan sweep must not touch). Renewal is what
+ * lets that backstop be short enough to be cheap instead of costing a whole extra sweep.
+ */
+describe('renewJobLock', () => {
+  beforeEach(() => {
+    queryMock.mockReset()
+  })
+
+  it('extends only a lock this instance still owns', async () => {
+    queryMock.mockResolvedValue({ rows: [], rowCount: 1 })
+    await expect(renewJobLock('metrics_copier', 180)).resolves.toBe(true)
+
+    const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]]
+    expect(sql).toContain('UPDATE bot_job_locks')
+    // The guarded update is the safety property: a stale process can never extend a lock a live one
+    // has taken over.
+    expect(sql).toContain('locked_by = $3')
+    expect(params[1]).toBe('metrics_copier')
+    expect(params[2]).toBe(INSTANCE_ID)
+    const ttlMs = Date.parse(String(params[0])) - Date.now()
+    expect(ttlMs).toBeGreaterThan(170_000)
+    expect(ttlMs).toBeLessThanOrEqual(181_000)
+  })
+
+  it('reports false when the row is gone, rather than pretending it still holds it', async () => {
+    queryMock.mockResolvedValue({ rows: [], rowCount: 0 })
+    await expect(renewJobLock('metrics_copier', 180)).resolves.toBe(false)
+  })
+
+  it('never throws — a failed renewal must not fail the work the lock protects', async () => {
+    queryMock.mockRejectedValue(new Error('connection terminated'))
+    await expect(renewJobLock('metrics_copier', 180)).resolves.toBe(false)
+  })
+})
+
+describe('startJobLockHeartbeat', () => {
+  it('renews on the interval, and stops when cleared', async () => {
+    vi.useFakeTimers()
+    try {
+      queryMock.mockReset()
+      queryMock.mockResolvedValue({ rows: [], rowCount: 1 })
+      const timer = startJobLockHeartbeat('metrics_copier', 180, 60)
+
+      expect(queryMock).not.toHaveBeenCalled() // not at creation: the acquire already set the TTL
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(queryMock).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(120_000)
+      expect(queryMock).toHaveBeenCalledTimes(3)
+
+      clearInterval(timer)
+      await vi.advanceTimersByTimeAsync(180_000)
+      expect(queryMock).toHaveBeenCalledTimes(3) // a cleared heartbeat cannot outlive the sweep
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
