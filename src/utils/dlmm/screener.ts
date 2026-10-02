@@ -87,9 +87,10 @@ export async function runDlmmScreen(options?: { notify?: boolean }) {
   const screenedAt = new Date().toISOString();
   let raw: DlmmScreenCandidate[] | null = null;
   let fetchError = false;
+  let emptyScreen = false;
 
   try {
-    const pools = await fetchMeteoraPools({ limit: 100, sortBy: 'fee_tvl_ratio_24h:desc' });
+    const pools = await fetchMeteoraPools({ limit: 100, sortBy: 'tvl:desc' });
     raw = await screenFromPools(pools, screenedAt);
   } catch (error) {
     fetchError = true;
@@ -102,9 +103,13 @@ export async function runDlmmScreen(options?: { notify?: boolean }) {
   if (raw && raw.length > 0) {
     await cacheSet(LAST_GOOD_KEY, { raw, screenedAt } satisfies LastGoodSnapshot, LAST_GOOD_TTL_S);
   } else {
+    // An EMPTY screen is not a fetch error. The fetch succeeded and nothing cleared the floors — a
+    // different problem with a different fix. Conflating the two is what made 35 days of
+    // `candidateCount: 0` read as "meteora fetch error" and sent us looking at the wrong subsystem
+    // while the real cause was the sort order (see `fetchMeteoraPools`).
     const snap = await cacheGet<LastGoodSnapshot>(LAST_GOOD_KEY);
     raw = snap?.raw ?? [];
-    fetchError = true;
+    emptyScreen = true;
   }
 
   const snapAt = raw[0]?.screened_at ?? screenedAt;
@@ -112,16 +117,22 @@ export async function runDlmmScreen(options?: { notify?: boolean }) {
     lastOkAtMs: Date.parse(snapAt),
     fetchError,
   });
+  // Name the empty case for what it is. A reason of "meteora fetch error" over a working fetch is how
+  // this hid for 35 days.
+  const reasons = emptyScreen
+    ? [...confidence.reasons, 'screen returned no qualifying pools']
+    : confidence.reasons;
+
   const candidates = applySolDlmmConfidence(raw, confidence.score).map((c) => ({
     ...c,
     screened_at: screenedAt,
     chain: 'sol' as const,
-    features: { reasons: confidence.reasons, lagS: confidence.lagS, noTrade: confidence.noTrade },
+    features: { reasons, lagS: confidence.lagS, noTrade: confidence.noTrade },
   }));
 
   await saveCandidates(candidates);
 
-  if (options?.notify !== false && candidates.length > 0 && !fetchError) {
+  if (options?.notify !== false && candidates.length > 0 && !emptyScreen) {
     try {
       await sendDlmmScreenAlert(
         candidates.map((c) => ({
@@ -144,6 +155,6 @@ export async function runDlmmScreen(options?: { notify?: boolean }) {
     confidence: confidence.score,
     noTrade: confidence.noTrade,
     reasons: confidence.reasons,
-    stale: fetchError,
+    stale: fetchError || emptyScreen,
   };
 }
