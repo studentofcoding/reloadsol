@@ -3738,6 +3738,7 @@ function SocialCard({
         </label>
         <label className="text-gray-400 col-span-2">
           Top source
+          <SourceTag source={sources?.[`${strategy.id}.config.entry.topSource`]} />
           <input
             className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white"
             value={topSource}
@@ -3746,6 +3747,7 @@ function SocialCard({
         </label>
         <label className="text-gray-400 col-span-2">
           Require mention sources (30m, comma-separated; empty = FOMO-only)
+          <SourceTag source={sources?.[`${strategy.id}.config.entry.requireMentionSources`]} />
           <input
             className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white"
             value={requireMentionSources}
