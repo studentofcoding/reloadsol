@@ -198,13 +198,26 @@ of production showed why. Evidence, measured:
 copier_runs              6 of 12 runs never closed; the rest took a steady 356-363 s
 cron                     healthy — 1075 log lines / 40 min, OHLC + sl-tp firing on schedule
 cron, copier only        last invocation 18:16, then nothing for 85 minutes
-nginx (survives recreates)  "upstream prematurely closed connection" — 134 in 4 hours
-                            ~90% of those with no deploy anywhere near them
+the failure itself        "Post http://web:3000/api/metrics/copy?key=…: EOF"
 .env                     INTERVAL=900, KILL_SWITCH=0, TIMEOUT=480, RPS=2  (all correct)
+nginx                    134 "prematurely closed connection" in 4 h — every one of them a
+                         /api/trading/subscribe SSE stream closed by a browser leaving the sell
+                         page. Traffic noise, unrelated, and never the copier: the cron reaches
+                         web:3000 directly and does not pass through nginx at all.
 ```
 
-So the failures are **not** logic, not configuration, and not a slow sweep. The web process drops
-connections mid-request, which cuts a sweep off, and a cut-off sweep has consequences that compound.
+So the failures are **not** logic, not configuration, not a slow sweep — and not the web process dying.
+The cause was found in the code, not inferred: every cron call built `&http.Client{Timeout: …}` with
+**no transport**, so they all shared `http.DefaultTransport`, a **90-second** `IdleConnTimeout`, while
+Node drops an idle keep-alive connection after **5 seconds**. A pooled socket could therefore sit dead
+for 85 seconds, and because these are POSTs Go does not retry a stale connection — the request fails
+with `EOF` and the row is left `running`, since the route never returned through its handler. Fixed in
+`6786bbe` with a shared transport that expires idle connections at 3 s.
+
+**An earlier version of this SPEC said "the web process drops connections mid-request, 134 in 4 h" and
+built on it.** That reading was wrong: the 134 were SSE disconnects from the sell page, and the copier
+never touches nginx. It is corrected here rather than deleted because several later conclusions were
+shaped by the wrong number — including a claim that deploys were destabilising the process.
 
 **A cut sweep costs far more than a sweep.** Each EOF leaves a `running` row (by design — that is the
 signal), but it also appears to leave the copier's *cron entry* dead: after the 18:16 EOF, no attempt

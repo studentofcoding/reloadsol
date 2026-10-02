@@ -28,7 +28,9 @@ log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | tee -a "$LOG_FI
 
 # The table is created on first use by the app, so its absence is "not armed yet", not a failure.
 q() {
-  docker exec "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -tAF'|' -c "$1" 2>/dev/null
+  # stderr is deliberately NOT discarded: a failing query must not look like an empty one. Swallowing
+  # it here is why a missing `FROM copier_runs` went unseen and the watchdog reported a false negative.
+  docker exec "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -tAF'|' -c "$1"
 }
 
 if ! q "SELECT 1" >/dev/null 2>&1; then
@@ -41,18 +43,22 @@ if [ "$(q "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'co
   exit 1
 fi
 
-read -r LAST_COMPLETED COMPLETED FAILED STUCK ATTEMPTS <<<"$(
-  q "SELECT COALESCE((SELECT MAX(finished_at)::text FROM copier_runs WHERE outcome = 'completed'), 'never'),
+# One row, pipe-separated. Two details that broke every earlier attempt at this, both worth the comment:
+#
+#   * `IFS='|'` — a timestamp contains a space ("2026-10-02 17:46:07.16875+07"), so splitting on
+#     whitespace silently truncated it to the date and the age read as "since midnight".
+#   * the age is a **bare aggregate**, so this SELECT must carry `FROM copier_runs` of its own. Omitting
+#     it is not a subtle bug: Postgres cannot resolve `finished_at`, the statement errors, and the
+#     watchdog reads that as "no data" — a false negative.
+IFS='|' read -r AGE_MIN LAST_COMPLETED COMPLETED FAILED STUCK ATTEMPTS <<<"$(
+  q "SELECT COALESCE(FLOOR(EXTRACT(EPOCH FROM (NOW() - MAX(finished_at) FILTER (WHERE outcome = 'completed'))) / 60)::int::text, 'never'),
+            COALESCE((SELECT MAX(finished_at)::text FROM copier_runs WHERE outcome = 'completed'), 'never'),
             (SELECT COUNT(*) FROM copier_runs WHERE outcome = 'completed' AND started_at > NOW() - make_interval(mins => $WINDOW_MIN)),
             (SELECT COUNT(*) FROM copier_runs WHERE outcome = 'failed'    AND started_at > NOW() - make_interval(mins => $WINDOW_MIN)),
             (SELECT COUNT(*) FROM copier_runs WHERE outcome = 'running'   AND started_at < NOW() - make_interval(mins => $STUCK_MIN)),
-            (SELECT COUNT(*) FROM copier_runs WHERE started_at > NOW() - make_interval(mins => $WINDOW_MIN))" | tr '|' ' '
+            (SELECT COUNT(*) FROM copier_runs WHERE started_at > NOW() - make_interval(mins => $WINDOW_MIN))
+       FROM copier_runs"
 )"
-
-AGE_MIN=""
-if [ "$LAST_COMPLETED" != "never" ]; then
-  AGE_MIN="$(q "SELECT FLOOR(EXTRACT(EPOCH FROM (NOW() - TIMESTAMPTZ '$LAST_COMPLETED')) / 60)::int")"
-fi
 
 STATUS=0
 REASON=""
