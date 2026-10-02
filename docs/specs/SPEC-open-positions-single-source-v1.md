@@ -181,9 +181,15 @@ section got wrong.
    superset. Whether the *classification* should also be extracted is a separate, lower-value job —
    parked.
 4. ✅ **DONE (`07dbca6` + `9cf9a78`)** — `open-price-stream.ts` is the shared transport: ONE
-   `EventSource`, re-opened with the **union** of subscribers' mints (the bar's set and PnLTracker's
-   superset genuinely differ, so a single subscriber's set serves neither). Both surfaces now consume
-   it; `grep "new EventSource"` across the app returns exactly one hit — the module.
+   `EventSource` for open prices, re-opened with the **union** of subscribers' mints (the bar's set
+   and PnLTracker's superset genuinely differ, so a single subscriber's set serves neither). Both
+   surfaces now consume it.
+
+   **Correction to the `9cf9a78` commit message:** it claimed `grep "new EventSource"` across the app
+   returns exactly one hit. It returns **two** — the other is `trading-tracker.ts:779`, which opens
+   `/api/trading/subscribe` (trade events). That is a different endpoint serving a different purpose
+   and is not part of this work. The accurate claim is **one EventSource for open prices**; the app
+   still has two streams in total, which is correct.
 
    The bar gets near-realtime prices instead of a 15 s poll. PnLTracker's private `EventSource` and
    its 5 s `startPollFallback` are both gone; the react-query safety net at `:2009` still re-polls
