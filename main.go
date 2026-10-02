@@ -180,7 +180,7 @@ func (dl *DiscordLogger) sendToDiscord(message DiscordMessage) {
 		return
 	}
 	
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 10 * time.Second, Transport: cronTransport}
 	
 	resp, err := client.Post(dl.webhookURL, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
@@ -1993,7 +1993,7 @@ func (cs *CronService) persistWorkerRuntimeEvent(workerID, event, msg string) {
 		return
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 10 * time.Second, Transport: cronTransport}
 	req, err := http.NewRequest("POST", url, bytes.NewReader(data))
 	if err != nil {
 		return
@@ -2041,6 +2041,26 @@ func (cs *CronService) finishSimJob(label, workerID, resp string) bool {
 	return false
 }
 
+// Shared transport for every call the cron makes to the web app.
+//
+// The clients below set no transport, so they all used `http.DefaultTransport` — one process-global
+// connection pool with an `IdleConnTimeout` of **90 seconds**. Node closes an idle keep-alive
+// connection after its own default of **5 seconds**, so a pooled socket could sit dead for up to 85
+// seconds before being reused. These are POSTs, so Go does not retry a stale connection, and the
+// request fails immediately with `EOF` — which is exactly what the copier was reporting on roughly
+// half its runs, independent of load, with the process healthy.
+//
+// Expiring idle connections *below* the server's timeout removes the race. Pooling within a burst
+// (the several calls a single job makes back to back) still applies, which is the part worth keeping.
+var cronTransport = &http.Transport{
+	Proxy:                 http.ProxyFromEnvironment,
+	MaxIdleConns:          16,
+	MaxIdleConnsPerHost:   8,
+	IdleConnTimeout:       3 * time.Second,
+	TLSHandshakeTimeout:   10 * time.Second,
+	ExpectContinueTimeout: 1 * time.Second,
+}
+
 func (cs *CronService) makeRequest(method, url string, params map[string]string, timeoutSec ...int) (string, error) {
 	// Add query parameters
 	if len(params) > 0 {
@@ -2056,7 +2076,7 @@ func (cs *CronService) makeRequest(method, url string, params map[string]string,
 		timeout = time.Duration(timeoutSec[0]) * time.Second
 	}
 
-	client := &http.Client{Timeout: timeout}
+	client := &http.Client{Timeout: timeout, Transport: cronTransport}
 	
 	req, err := http.NewRequest(method, url, nil)
 	if err != nil {
