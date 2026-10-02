@@ -3094,6 +3094,15 @@ function SignalsCard({
   const q = strategy.config.query;
   const s = strategy.config.scoring;
   const e = strategy.config.execution;
+  // T4: at card scope, "equal to the code default" means *inherited* — this row never overrode the
+  // family default. Not in `SourceTag`: on the weights and shared-filter panels `defaults` is the
+  // correct word (a global value at stock), so the vocabulary is mapped where the scope is.
+  const src = (path: string) =>
+    sources?.[path] === "stored"
+      ? ("stored" as const)
+      : sources?.[path]
+        ? ("inherited" as const)
+        : undefined;
   const [minGrowth, setMinGrowth] = useState(String(q.minGrowth));
   const [recency, setRecency] = useState(String(q.recencyMinutes));
   const [limit, setLimit] = useState(String(q.limit));
@@ -3128,10 +3137,10 @@ function SignalsCard({
       </label>
       <Section title="Query">
         <FieldGrid>
-          <NumberField label="limit" value={limit} onChange={setLimit} step="1" source={sources?.[`${strategy.id}.config.query.limit`]} />
-          <NumberField label="recency (min)" value={recency} onChange={setRecency} step="1" source={sources?.[`${strategy.id}.config.query.recencyMinutes`]} />
-          <NumberField label="minGrowth" value={minGrowth} onChange={setMinGrowth} source={sources?.[`${strategy.id}.config.query.minGrowth`]} />
-          <NumberField label="maxAge (min)" value={maxAge} onChange={setMaxAge} step="1" source={sources?.[`${strategy.id}.config.query.maxAgeMinutes`]} />
+          <NumberField label="limit" value={limit} onChange={setLimit} step="1" source={src(`${strategy.id}.config.query.limit`)} />
+          <NumberField label="recency (min)" value={recency} onChange={setRecency} step="1" source={src(`${strategy.id}.config.query.recencyMinutes`)} />
+          <NumberField label="minGrowth" value={minGrowth} onChange={setMinGrowth} source={src(`${strategy.id}.config.query.minGrowth`)} />
+          <NumberField label="maxAge (min)" value={maxAge} onChange={setMaxAge} step="1" source={src(`${strategy.id}.config.query.maxAgeMinutes`)} />
           <CheckboxField
             label="includeStuck"
             checked={includeStuck}
@@ -3142,13 +3151,13 @@ function SignalsCard({
       </Section>
       <Section title="Entry">
         <FieldGrid>
-          <NumberField label="enter score ≥" value={enterFloor} onChange={setEnterFloor} colSpan={2} source={sources?.[`${strategy.id}.config.enterScoreFloor`]} />
+          <NumberField label="enter score ≥" value={enterFloor} onChange={setEnterFloor} colSpan={2} source={src(`${strategy.id}.config.enterScoreFloor`)} />
         </FieldGrid>
       </Section>
       <Section title="Execution">
         <FieldGrid>
-          <NumberField label="sim buy SOL" value={simBuy} onChange={setSimBuy} step="0.001" source={sources?.[`${strategy.id}.config.execution.simBuySol`]} />
-          <NumberField label="max open positions" value={maxOpen} onChange={setMaxOpen} step="1" source={sources?.[`${strategy.id}.config.execution.maxOpenPositions`]} />
+          <NumberField label="sim buy SOL" value={simBuy} onChange={setSimBuy} step="0.001" source={src(`${strategy.id}.config.execution.simBuySol`)} />
+          <NumberField label="max open positions" value={maxOpen} onChange={setMaxOpen} step="1" source={src(`${strategy.id}.config.execution.maxOpenPositions`)} />
         </FieldGrid>
       </Section>
       <Section title="Scoring">
