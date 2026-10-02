@@ -608,9 +608,6 @@ export async function addSLTPPosition(params: {
 async function getCurrentTokenPrices(
     positions: Array<{ token_address: string; chain?: string | null }>,
 ): Promise<Map<string, number>> {
-    // #region debug
-    const __priceT0 = Date.now()
-    // #endregion
     try {
         const byChain = new Map<string, string[]>()
         for (const position of positions) {
@@ -630,20 +627,9 @@ async function getCurrentTokenPrices(
             }
         }
 
-        // #region debug
-        const __perChain = Array.from(byChain.entries())
-            .map(([c, m]) => `${c}:${m.length}`)
-            .join(',')
-        console.warn(
-            `[sl-tp-debug] pricing=${Date.now() - __priceT0}ms mints=${positions.length} priced=${priceMap.size} chains=${__perChain}`,
-        )
-        // #endregion
         return priceMap
     } catch (error) {
         log.error('price_tracking', 'Failed to fetch token prices', error as Error)
-        // #region debug
-        console.warn(`[sl-tp-debug] pricing=${Date.now() - __priceT0}ms mints=${positions.length} THREW`)
-        // #endregion
         return new Map()
     }
 }
@@ -754,9 +740,6 @@ async function getWalletTokenMap(walletAddress: string): Promise<Map<string, { u
 
 // ✅ NEW: Reconcile active positions with actual wallet balances; deactivate if closed manually
 async function reconcileClosedPositions(positions: SLTPPosition[]): Promise<{ filteredPositions: SLTPPosition[]; pruned: number }> {
-    // #region debug
-    const __reconT0 = Date.now()
-    // #endregion
     if (!positions || positions.length === 0) return { filteredPositions: [], pruned: 0 }
 
     // Group by wallet
@@ -815,11 +798,6 @@ async function reconcileClosedPositions(positions: SLTPPosition[]): Promise<{ fi
         }
     }
 
-    // #region debug
-    console.warn(
-        `[sl-tp-debug] reconcile=${Date.now() - __reconT0}ms positions=${positions.length} kept=${keep.length} wallets=${byWallet.size} pruned=${pruned}`,
-    )
-    // #endregion
     return { filteredPositions: keep, pruned }
 }
 
@@ -1206,9 +1184,6 @@ export interface SLTPTrackingSummary {
 
 // ✅ NEW: Get comprehensive tracking summary
 export async function getSLTPTrackingSummary(): Promise<SLTPTrackingSummary> {
-    // #region debug
-    const __sumT0 = Date.now()
-    // #endregion
     try {
         // Get all active positions
         const { rows: activePositions } = await query<SLTPPosition>(
@@ -1247,11 +1222,6 @@ export async function getSLTPTrackingSummary(): Promise<SLTPTrackingSummary> {
             ...finishedPositions.map(p => p.wallet_address)
         ]).size
 
-        // #region debug
-        console.warn(
-            `[sl-tp-debug] summary=${Date.now() - __sumT0}ms active=${activePositions.length} finished24h=${finishedPositions.length}`,
-        )
-        // #endregion
         return {
             active_positions: activePositions,
             finished_positions: finishedPositions,

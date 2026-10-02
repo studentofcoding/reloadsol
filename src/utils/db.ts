@@ -43,6 +43,32 @@ export function getPool(): Pool {
   return pool;
 }
 
+/**
+ * A query that holds a pool client longer than this gets a log line. Env-tunable; set
+ * DB_SLOW_QUERY_MS=0 to silence it.
+ *
+ * This is permanent, not scaffolding. Two production incidents were invisible without it: a
+ * `sinceLastClose` read that took 120s to return 1,360 rows (an unhashable join the planner
+ * turned into a nested loop), and a per-position price write that fired ~160 concurrent queries
+ * per pass. Neither errored — they simply held clients until unrelated requests, including
+ * /api/strategies/outcomes, hit the 5s acquire timeout and failed. The pool is small (see
+ * POOL_MAX) and a slow query is indistinguishable from a broken one at the call site.
+ */
+const SLOW_QUERY_MS = parseInt(process.env.DB_SLOW_QUERY_MS || '5000', 10);
+
+/** Two stack frames naming the caller, so a slow query is attributable without a profiler. */
+function callerFrames(depth: number): string {
+  return (new Error().stack ?? '')
+    .split('\n')
+    .slice(2, 2 + depth)
+    .map((s) => s.trim().replace(/^at\s+/, ''))
+    .join(' <- ');
+}
+
+function oneLine(sql: string, max: number): string {
+  return sql.replace(/\s+/g, ' ').trim().slice(0, max);
+}
+
 export type QueryOptions = { bypassCircuit?: boolean };
 
 export async function query<T extends QueryResultRow = QueryResultRow>(
@@ -53,49 +79,33 @@ export async function query<T extends QueryResultRow = QueryResultRow>(
   if (!opts?.bypassCircuit && isDbCircuitOpen()) {
     throw new TypeError('Database circuit open (recent failures)');
   }
+  const startedAt = Date.now();
   try {
-    // #region debug
-    const __qT0 = Date.now();
-    // #endregion
     const result = await getPool().query<T>(sql, params);
-    // #region debug
-    // Names EVERY holder of a pool client, not just one path. The pool is 10 clients with a 5s
-    // acquire timeout, so the question is which queries occupy a client long enough that
-    // "timeout exceeded when trying to connect" fires for everyone else.
-    const __qMs = Date.now() - __qT0;
-    if (__qMs > 2000) {
-      const via = (new Error().stack ?? '')
-        .split('\n')
-        .slice(2, 6)
-        .map((s) => s.trim().replace(/^at\s+/, ''))
-        .join(' <- ');
-      console.warn(
-        `[q-debug] ms=${__qMs} rows=${result.rowCount ?? 0} sql=${sql.replace(/\s+/g, ' ').trim().slice(0, 80)} via=${via}`,
-      );
+    if (SLOW_QUERY_MS > 0) {
+      const ms = Date.now() - startedAt;
+      if (ms > SLOW_QUERY_MS) {
+        console.warn(
+          `[db-slow-query] ms=${ms} rows=${result.rowCount ?? 0} sql=${oneLine(sql, 90)} via=${callerFrames(4)}`,
+        );
+      }
     }
-    // #endregion
     recordDbSuccess();
     return { rows: result.rows, rowCount: result.rowCount ?? 0 };
   } catch (error) {
-    // #region debug
-    // The pool's own view at the moment of failure. `waitingCount` is the direct measure of
-    // saturation: how many callers were queued for a client when this one gave up. If it is
-    // high while totalCount sits at max, the pool is simply too small for the concurrency; if
-    // it is 0, the failure is not pool exhaustion at all and the message is misleading.
+    // The pool's own view at the moment of failure. waitingCount is the direct measure of
+    // saturation — how many callers were queued when this one gave up. High waitingCount at
+    // totalCount=max means too few clients for the concurrency; waitingCount=0 means
+    // "timeout exceeded when trying to connect" is NOT pool exhaustion and the message misleads
+    // (that was the case during the 155k-row read, where the pool was still growing from scratch).
     try {
       const p = getPool();
-      const via = (new Error().stack ?? '')
-        .split('\n')
-        .slice(2, 5)
-        .map((s) => s.trim().replace(/^at\s+/, ''))
-        .join(' <- ');
       console.warn(
-        `[q-debug] FAILED total=${p.totalCount} idle=${p.idleCount} waiting=${p.waitingCount} err=${error instanceof Error ? error.message : String(error)} sql=${sql.replace(/\s+/g, ' ').trim().slice(0, 60)} via=${via}`,
+        `[db-pool] FAILED total=${p.totalCount} idle=${p.idleCount} waiting=${p.waitingCount} err=${error instanceof Error ? error.message : String(error)} sql=${oneLine(sql, 60)} via=${callerFrames(3)}`,
       );
     } catch {
-      /* never let debug logging mask the real error */
+      /* never let logging mask the real error */
     }
-    // #endregion
     if (isDbConnectivityError(error)) {
       recordDbFailure();
     }
