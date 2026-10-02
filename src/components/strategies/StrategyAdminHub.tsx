@@ -2963,6 +2963,8 @@ function TrendingBotCard({
   sources?: Record<string, "stored" | "defaults">;
 }) {
   const f = strategy.filtering ?? { enabled: true };
+  // T4 step 2: a strategy that overrides nothing should look like it overrides nothing.
+  const overrides = Object.values(sources ?? {}).filter((v) => v === "stored").length;
   // T4: at card scope, "equal to the code default" means *inherited* — this row never overrode the
   // family default. Not in `SourceTag`: on the weights and shared-filter panels `defaults` is the
   // correct word, so the vocabulary is mapped where the scope is.
@@ -2997,6 +2999,18 @@ function TrendingBotCard({
           {isRunning ? "ACTIVE" : "inactive"}
         </span>
       </div>
+      {/* T4 step 2: the override count stated, not inferred from the absence of tags across the card. */}
+      <p className="text-[11px] mb-3">
+        {overrides === 0 ? (
+          <span className="text-gray-500">
+            no overrides — every field inherited from the family default
+          </span>
+        ) : (
+          <span className="text-amber-300/80">
+            {overrides} override{overrides === 1 ? "" : "s"} vs the family default
+          </span>
+        )}
+      </p>
       {allocation != null && (
         <p className="text-xs text-gray-500 mb-2">Allocation: {(allocation * 100).toFixed(0)}%</p>
       )}
@@ -3114,6 +3128,8 @@ function SignalsCard({
   const q = strategy.config.query;
   const s = strategy.config.scoring;
   const e = strategy.config.execution;
+  // T4 step 2: a strategy that overrides nothing should look like it overrides nothing.
+  const overrides = Object.values(sources ?? {}).filter((v) => v === "stored").length;
   // T4: at card scope, "equal to the code default" means *inherited* — this row never overrode the
   // family default. Not in `SourceTag`: on the weights and shared-filter panels `defaults` is the
   // correct word (a global value at stock), so the vocabulary is mapped where the scope is.
@@ -3151,6 +3167,18 @@ function SignalsCard({
     <div className="border border-gray-700 rounded-lg p-4 bg-gray-800">
       <h3 className="font-semibold text-white">{strategy.name}</h3>
       <p className="text-xs text-gray-500 mb-3">{strategy.id} · template {strategy.config.template}</p>
+      {/* T4 step 2: the override count stated, not inferred from the absence of tags across the card. */}
+      <p className="text-[11px] mb-3">
+        {overrides === 0 ? (
+          <span className="text-gray-500">
+            no overrides — every field inherited from the family default
+          </span>
+        ) : (
+          <span className="text-amber-300/80">
+            {overrides} override{overrides === 1 ? "" : "s"} vs the family default
+          </span>
+        )}
+      </p>
       <label className="text-xs text-gray-400 block mb-2">
         Execution mode{' '}
         <span className="font-mono text-[10px] uppercase tracking-wide text-gray-500">switch</span>
@@ -3304,6 +3332,8 @@ function McapTrackerCard({
   const e = strategy.config.execution;
   const x = strategy.config.exit;
   const en = strategy.config.entry;
+  // T4 step 2: a strategy that overrides nothing should look like it overrides nothing.
+  const overrides = Object.values(sources ?? {}).filter((v) => v === "stored").length;
   // T4: at card scope, "equal to the code default" means *inherited* — this row never overrode the
   // family default. Not in `SourceTag`: on the weights and shared-filter panels `defaults` is the
   // correct word, so the vocabulary is mapped where the scope is.
@@ -3336,6 +3366,18 @@ function McapTrackerCard({
       <h3 className="font-semibold text-white">{strategy.name}</h3>
       <p className="text-xs text-gray-500 mb-3">
         {strategy.id} · {entryTemplate}
+      </p>
+      {/* T4 step 2: the override count stated, not inferred from the absence of tags across the card. */}
+      <p className="text-[11px] mb-3">
+        {overrides === 0 ? (
+          <span className="text-gray-500">
+            no overrides — every field inherited from the family default
+          </span>
+        ) : (
+          <span className="text-amber-300/80">
+            {overrides} override{overrides === 1 ? "" : "s"} vs the family default
+          </span>
+        )}
       </p>
       <label className="text-xs text-gray-400 block mb-2">
         Execution mode{' '}
@@ -3971,6 +4013,8 @@ function DlmmCard({
   sources?: Record<string, "stored" | "defaults">;
 }) {
   const c = strategy.config;
+  // T4 step 2: a strategy that overrides nothing should look like it overrides nothing.
+  const overrides = Object.values(sources ?? {}).filter((v) => v === "stored").length;
   // T4: at card scope, "equal to the code default" means *inherited* — this row never overrode the
   // family default. Not in `SourceTag`: on the weights and shared-filter panels `defaults` is the
   // correct word, so the vocabulary is mapped where the scope is.
@@ -4003,6 +4047,18 @@ function DlmmCard({
   return (
     <div className="border border-gray-700 rounded-lg p-4 bg-gray-800 max-w-xl">
       <h3 className="font-semibold text-white mb-2">{strategy.name}</h3>
+      {/* T4 step 2: the override count stated, not inferred from the absence of tags across the card. */}
+      <p className="text-[11px] mb-3">
+        {overrides === 0 ? (
+          <span className="text-gray-500">
+            no overrides — every field inherited from the family default
+          </span>
+        ) : (
+          <span className="text-amber-300/80">
+            {overrides} override{overrides === 1 ? "" : "s"} vs the family default
+          </span>
+        )}
+      </p>
       <label className="text-xs text-gray-400 block mb-2">
         Execution mode{' '}
         <span className="font-mono text-[10px] uppercase tracking-wide text-gray-500">switch</span>
