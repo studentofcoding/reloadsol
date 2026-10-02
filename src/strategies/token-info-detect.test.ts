@@ -83,6 +83,9 @@ function rowFromParams(params: unknown[]): DbRow {
 
 describe('token_info_detect', () => {
   beforeEach(() => {
+    // These cases exercise write-once semantics with partial fixtures; the core-tile gate has its
+    // own file (token-info-detect-core-gate.test.ts).
+    process.env.TOKEN_INFO_LEDGER_CORE_GATE = 'off'
     stored = null
     vi.mocked(query).mockReset()
     vi.mocked(enqueueGmgnWebLedgerMints).mockReset()
@@ -333,6 +336,25 @@ describe('token_info_detect', () => {
     expect(markGmgnWebLedgerCaptured).not.toHaveBeenCalled()
     expect(stored?.detecting_strategy).toBe('gmgn_smartmoney_default')
     expect(stored?.top10_hold_pct).toBeCloseTo(25, 5)
+  })
+
+  it('never rejects, so callers can fire-and-forget it off the entry path', async () => {
+    // The pre-work (shadow-risk enqueue) used to sit outside the try, so a throw there escaped into
+    // the caller's `finally` and — in the trending cycle — skipped the job-lock release behind it.
+    vi.mocked(enqueueRiskShadow).mockImplementationOnce(() => {
+      throw new Error('queue exploded')
+    })
+    await expect(
+      captureTokenInfoDetectBatch([
+        {
+          chain: 'sol',
+          tokenAddress: MINT,
+          detectingStrategy: 'mcap_enter_first_seen',
+          source: 'mcap_first_seen',
+          detectedAt: DETECTED,
+        },
+      ]),
+    ).resolves.toBeUndefined()
   })
 
   it('does not invent a numeric soft threshold and leaves the live ban alone', () => {

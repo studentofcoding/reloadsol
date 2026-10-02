@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_OHLC_RUG_THRESHOLDS,
   evaluateOhlcRugRules,
+  isOhlcWindowStale,
+  ohlcNewestBarAgeSec,
+  resolveOhlcRugMaxBarAgeSec,
   resolveOhlcRugWindow,
   takeLastOhlcBars,
   type OhlcRugBar,
@@ -173,5 +176,89 @@ describe('evaluateOhlcRugRules', () => {
     const up = r.hits.find((h) => h.id === 'up_only_10')!
     expect(up.passed).toBe(false)
     expect(up.value).toBe(9)
+  })
+})
+
+describe('OHLC recency guard', () => {
+  const NOW = 1_800_000_000
+  const fresh = (count: number, lastAge = 30): OhlcRugBar[] =>
+    Array.from({ length: count }, (_, i) =>
+      bar(NOW - lastAge - (count - 1 - i) * 60, 1, 1, 1, 1),
+    )
+
+  it('resolveOhlcRugMaxBarAgeSec: default 180, env override, 0 disables, junk → default', () => {
+    expect(resolveOhlcRugMaxBarAgeSec({})).toBe(180)
+    expect(resolveOhlcRugMaxBarAgeSec({ OHLC_RUG_MAX_BAR_AGE_SEC: '90' })).toBe(90)
+    expect(resolveOhlcRugMaxBarAgeSec({ OHLC_RUG_MAX_BAR_AGE_SEC: '0' })).toBe(0)
+    expect(resolveOhlcRugMaxBarAgeSec({ OHLC_RUG_MAX_BAR_AGE_SEC: 'abc' })).toBe(180)
+    expect(resolveOhlcRugMaxBarAgeSec({ OHLC_RUG_MAX_BAR_AGE_SEC: '-5' })).toBe(180)
+  })
+
+  it('isOhlcWindowStale compares the newest bar to now', () => {
+    expect(isOhlcWindowStale(fresh(3, 30), NOW, 180)).toBe(false)
+    expect(isOhlcWindowStale(fresh(3, 181), NOW, 180)).toBe(true)
+    expect(isOhlcWindowStale(fresh(3, 9999), NOW, 0)).toBe(false)
+    expect(ohlcNewestBarAgeSec([], NOW)).toBeNull()
+  })
+
+  it('takeLastOhlcBars without opts never drops (as-of callers unchanged)', () => {
+    expect(takeLastOhlcBars(fresh(3, 99999), 10)).toHaveLength(3)
+  })
+
+  it('takeLastOhlcBars with maxAgeSec returns [] for a stale series', () => {
+    expect(takeLastOhlcBars(fresh(12, 600), 10, { nowSec: NOW, maxAgeSec: 180 })).toEqual([])
+    expect(takeLastOhlcBars(fresh(12, 30), 10, { nowSec: NOW, maxAgeSec: 180 })).toHaveLength(10)
+  })
+
+  it('stale canonical + no fallback → stale, not bars', () => {
+    const picked = resolveOhlcRugWindow({
+      cached: fresh(10, 3600),
+      cachedSource: 'gmgn-stale',
+      nowSec: NOW,
+      maxAgeSec: 180,
+    })
+    expect(picked).toEqual({ bars: [], source: 'stale' })
+  })
+
+  it('stale canonical is replaced by fresh own-1m under fallback', () => {
+    const picked = resolveOhlcRugWindow({
+      cached: fresh(10, 3600),
+      cachedSource: 'gmgn',
+      own: fresh(5, 20),
+      fallbackOwn1m: true,
+      nowSec: NOW,
+      maxAgeSec: 180,
+    })
+    expect(picked.source).toBe('own-1m')
+    expect(picked.bars).toHaveLength(5)
+  })
+
+  it('stale canonical and stale own-1m → stale', () => {
+    const picked = resolveOhlcRugWindow({
+      cached: fresh(10, 3600),
+      cachedSource: 'gmgn',
+      own: fresh(5, 3000),
+      fallbackOwn1m: true,
+      nowSec: NOW,
+      maxAgeSec: 180,
+    })
+    expect(picked).toEqual({ bars: [], source: 'stale' })
+  })
+
+  it('nothing at all → none (not stale)', () => {
+    expect(
+      resolveOhlcRugWindow({ cached: [], cachedSource: 'none', nowSec: NOW, maxAgeSec: 180 }),
+    ).toEqual({ bars: [], source: 'none' })
+  })
+
+  it('maxAgeSec 0 keeps the legacy behavior', () => {
+    const picked = resolveOhlcRugWindow({
+      cached: fresh(10, 3600),
+      cachedSource: 'gmgn',
+      nowSec: NOW,
+      maxAgeSec: 0,
+    })
+    expect(picked.source).toBe('gmgn')
+    expect(picked.bars).toHaveLength(10)
   })
 })

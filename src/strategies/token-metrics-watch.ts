@@ -8,7 +8,8 @@
  * The watch set is: mcap candidates in the tracking band + trending-tracker rows + mints with a
  * recent sim buy (a cheap proxy for "has an open position" — full open-cycle reconstruction is too
  * heavy for a 15s tick) + fresh FOMO mention mints (so a social open has its own series from the
- * first tick).
+ * first tick) + **recently detected mints** (`token_detect_snapshots`, concentration / freeview /
+ * social detects) so a detected mint keeps getting bars after detection and re-detects see ≥10.
  */
 
 import { query } from '@/utils/db'
@@ -16,9 +17,20 @@ import { query } from '@/utils/db'
 export const WATCH_RANGE_MIN = 30_000
 export const WATCH_RANGE_MAX = 2_000_000
 export const WATCH_SOCIAL_WINDOW_MIN = 30
+/** Recently-detected mints stay in the watch set this long (minutes). */
+export const WATCH_DETECT_WINDOW_MIN = 120
+/** Copier cap (candle calls are expensive — unchanged). */
 export const DEFAULT_WATCH_MAX_MINTS = 300
+/**
+ * Sampler cap (Jupiter spot batches of 50, ≈0.3 req/s at 500 mints against a 5 rps shared budget).
+ * The in-band candidate pool is ~24k mints, so a 300 cap rotated mints in and out within minutes
+ * (913 distinct mints got bars in one hour, most with a handful) and detects landed on <10 bars.
+ */
+export const DEFAULT_SAMPLER_MAX_MINTS = 500
+/** Hard ceiling on `OHLC_SAMPLE_MAX_MINTS` so a typo cannot hammer Jupiter / the DB. */
+export const SAMPLER_MAX_MINTS_CEILING = 1500
 
-/** Params: `$1` mcap min, `$2` mcap max, `$3` limit, `$4` social window (minutes). */
+/** Params: `$1` mcap min, `$2` mcap max, `$3` limit, `$4` social window (min), `$5` detect window (min). */
 export const WATCH_SQL = `
 WITH watch AS (
   SELECT token_address, last_updated_at AS seen_at
@@ -45,6 +57,11 @@ WITH watch AS (
      AND COALESCE(chain, 'sol') = 'sol'
      AND occurred_at > now() - make_interval(mins => $4::int)
    GROUP BY token_address
+  UNION ALL
+  SELECT token_address, max(detected_at) AS seen_at
+    FROM token_detect_snapshots
+   WHERE detected_at > now() - make_interval(mins => $5::int)
+   GROUP BY token_address
 )
 SELECT token_address
   FROM watch
@@ -64,6 +81,18 @@ export function intEnv(name: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback
 }
 
+/**
+ * Sampler cap from `OHLC_SAMPLE_MAX_MINTS` (default 500, clamped to `SAMPLER_MAX_MINTS_CEILING`).
+ */
+export function resolveSamplerMaxMints(): number {
+  return Math.min(intEnv('OHLC_SAMPLE_MAX_MINTS', DEFAULT_SAMPLER_MAX_MINTS), SAMPLER_MAX_MINTS_CEILING)
+}
+
+/** Detect-window minutes from `OHLC_SAMPLE_DETECT_WINDOW_MIN` (default 120). */
+export function resolveDetectWindowMin(): number {
+  return intEnv('OHLC_SAMPLE_DETECT_WINDOW_MIN', WATCH_DETECT_WINDOW_MIN)
+}
+
 /** Most-recently-seen watch mints first, capped. */
 export async function loadWatchMints(
   params: {
@@ -71,6 +100,7 @@ export async function loadWatchMints(
     rangeMin?: number
     rangeMax?: number
     socialWindowMin?: number
+    detectWindowMin?: number
   } = {},
 ): Promise<string[]> {
   const { rows } = await query<{ token_address: string }>(WATCH_SQL, [
@@ -78,6 +108,7 @@ export async function loadWatchMints(
     params.rangeMax ?? WATCH_RANGE_MAX,
     params.maxMints ?? DEFAULT_WATCH_MAX_MINTS,
     params.socialWindowMin ?? WATCH_SOCIAL_WINDOW_MIN,
+    params.detectWindowMin ?? WATCH_DETECT_WINDOW_MIN,
   ])
   return rows.map((r) => r.token_address).filter(Boolean)
 }

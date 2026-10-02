@@ -8,6 +8,7 @@ import {
   evaluateOhlcRugRules,
   OHLC_RUG_MAX_BARS,
   ohlcRugHitReasons,
+  resolveOhlcRugMaxBarAgeSec,
   resolveOhlcRugWindow,
   type OhlcRugBar,
   type OhlcRugEval,
@@ -80,13 +81,18 @@ export type DetectSnapshotRow = {
  * Last N 1m bars from the shared 24h cache (brain GET /ohlc when flag on).
  * Freeview passes `fallbackOwn1m` so an empty cache still reads `token_ohlc_bars`.
  * Entry shadow leaves the flag off and stays on the canonical series.
+ *
+ * Recency: bars whose newest candle is older than `maxAgeSec` (default
+ * `OHLC_RUG_MAX_BAR_AGE_SEC`, 180s; 0 disables) vs `nowSec` are not current, so
+ * the result is `{ bars: [], source: 'stale' }` rather than a dead chart scored live.
  */
 export async function fetchLastOhlcRugBars(
   tokenAddress: string,
   n = OHLC_RUG_MAX_BARS,
-  opts?: { fallbackOwn1m?: boolean },
+  opts?: { fallbackOwn1m?: boolean; nowSec?: number; maxAgeSec?: number },
 ): Promise<{ bars: OhlcRugBar[]; source: string }> {
   const fallbackOwn1m = opts?.fallbackOwn1m === true
+  const maxAgeSec = opts?.maxAgeSec ?? resolveOhlcRugMaxBarAgeSec()
   const [cached, ownCandles] = await Promise.all([
     getCachedTokenOhlc24h1m(tokenAddress),
     fallbackOwn1m ? loadOwn1mBars(tokenAddress) : Promise.resolve([]),
@@ -97,6 +103,8 @@ export async function fetchLastOhlcRugBars(
     own: tokenOhlcToRugBars(ownCandles),
     n,
     fallbackOwn1m,
+    nowSec: opts?.nowSec,
+    maxAgeSec,
   })
 }
 
@@ -135,7 +143,11 @@ export async function captureDetectSnapshot(params: {
   evalResult: OhlcRugEval
   reasons: string[]
 }> {
-  const { bars } = await fetchLastOhlcRugBars(params.tokenAddress)
+  // Own-1m fills an empty canonical series (same as Freeview), so a detect-time snapshot of a
+  // mint the 24h cache has not seen still has bars to evaluate.
+  const { bars } = await fetchLastOhlcRugBars(params.tokenAddress, OHLC_RUG_MAX_BARS, {
+    fallbackOwn1m: true,
+  })
   const evalResult = evaluateOhlcRugRules(bars)
   const snapshotId = await insertDetectSnapshot({
     tokenAddress: params.tokenAddress,
