@@ -182,6 +182,15 @@ type StrategiesResponse = {
     active: string[];
   };
   dlmm?: { effective: DlmmStrategy };
+  /**
+   * T7: per-family field provenance carried by `GET /api/strategies` —
+   * `sources.trending_bot["att.take_profit_levels.tp1_percentage"] === "stored" | "defaults"`.
+   * Paths are `id.field` because `diffSource` walks both sides keyed by strategy id.
+   *
+   * Optional because it is transported, not computed here: a payload from an older build must render
+   * exactly as before, not throw.
+   */
+  sources?: Record<string, Record<string, "stored" | "defaults">>;
 };
 
 type OutcomeRow = StrategyOutcomeRow;
@@ -377,15 +386,6 @@ type StrategyReportsData = {
   consensus: ConsensusResult | null;
   capital: PaperCapitalSummary[];
   timezone: string;
-  /**
-   * T7: per-family field provenance carried by `GET /api/strategies` —
-   * `sources.trending_bot["att.take_profit_pct"] === "stored" | "defaults"`.
-   *
-   * The hub fetches this payload itself (see the query at `:834`), so it is in scope everywhere the
-   * query data reaches and each editor can tag its fields with it. Optional because it is transported
-   * rather than computed here: a payload from an older build must render exactly as before, not throw.
-   */
-  sources?: Record<string, Record<string, "stored" | "defaults">>;
 };
 
 type WorkerRow = {
@@ -1299,6 +1299,7 @@ export default function StrategyAdminHub({
           effective={effective}
           active={active}
           allocation={data?.trending_bot?.allocation}
+          sources={data?.sources}
           signals={signals}
           mcapTracker={mcapTracker}
           gmgn={gmgn}
@@ -2929,6 +2930,7 @@ function TrendingBotCard({
   onSave,
   onPromote,
   promoteTargets,
+  sources,
 }: {
   strategy: TrendingBotStrategy;
   isRunning: boolean;
@@ -2937,6 +2939,8 @@ function TrendingBotCard({
   onSave: SaveStrategyFn;
   onPromote: (source: string, target: string, confirm: boolean) => void;
   promoteTargets: string[];
+  /** T7: this strategy's fields, `take_profit_levels.tp1_percentage -> stored | defaults`. */
+  sources?: Record<string, "stored" | "defaults">;
 }) {
   const f = strategy.filtering ?? { enabled: true };
   const [tp1, setTp1] = useState(String(strategy.take_profit_levels.tp1_percentage));
@@ -2973,9 +2977,28 @@ function TrendingBotCard({
       </label>
       <Section title="Execution">
         <FieldGrid>
-          <NumberField label="TP1 %" value={tp1} onChange={setTp1} />
-          <NumberField label="SL %" value={sl} onChange={setSl} />
-          <NumberField label="Buy SOL" value={buySol} onChange={setBuySol} colSpan={2} step="0.001" />
+          {/* T7: paths are `id.<field>`, nested where the type nests, because `diffSource` walks the
+              registry keyed by strategy id on both sides. */}
+          <NumberField
+            label="TP1 %"
+            value={tp1}
+            onChange={setTp1}
+            source={sources?.[`${strategy.id}.take_profit_levels.tp1_percentage`]}
+          />
+          <NumberField
+            label="SL %"
+            value={sl}
+            onChange={setSl}
+            source={sources?.[`${strategy.id}.stop_loss_percentage`]}
+          />
+          <NumberField
+            label="Buy SOL"
+            value={buySol}
+            onChange={setBuySol}
+            colSpan={2}
+            step="0.001"
+            source={sources?.[`${strategy.id}.buy_amount_sol`]}
+          />
         </FieldGrid>
       </Section>
       <TrendingBotFilterFields initial={f} buildRef={buildFilteringRef} />
@@ -3919,6 +3942,7 @@ function StrategyConfigTab({
   onPromote,
   onToast,
   focusDomain = "",
+  sources,
 }: {
   isRobinhood: boolean;
   effective: Record<string, TrendingBotStrategy>;
@@ -3934,6 +3958,8 @@ function StrategyConfigTab({
   onPromote: (source: string, target: string, confirm: boolean) => void;
   onToast: (kind: "success" | "error", title: string, detail?: string) => void;
   focusDomain?: string;
+  /** T7: `id.field -> stored | defaults`, straight from the strategies payload. */
+  sources?: StrategiesResponse["sources"];
 }) {
   useEffect(() => {
     if (!focusDomain) return;
@@ -3982,6 +4008,7 @@ function StrategyConfigTab({
             <TrendingBotCard
               key={`${s.id}-${s.is_active}-${s.buy_amount_sol}-${s.stop_loss_percentage}-${s.take_profit_levels.tp1_percentage}`}
               strategy={s}
+              sources={sources?.trending_bot}
               isRunning={active.includes(s.id)}
               allocation={allocation?.[s.id]}
               saving={saving === s.id}
