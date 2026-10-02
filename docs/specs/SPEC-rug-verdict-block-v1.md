@@ -214,11 +214,21 @@ not one lost measurement. **That amplification is the real price, and it is ours
 
 **Ranked, cheapest-and-highest-leverage first:**
 
-1. **Fix the entry's fragility (Go, ~10 lines).** An entry that dies at runtime and silently stops is
-   a defect independent of the web issue. Whichever mechanism removes it — an un-recovered panic in
-   the job goroutine, or a runtime re-bind that fails to re-add — the fix is the same: the job wrapper
-   must be unable to lose the entry, and the re-bind must not be the only thing standing between a
-   failure and an 85-minute silence. Turns "hours of nothing" into "one skipped run".
+1. **Fix the entry's fragility (Go).** Mechanism **narrowed by reading the code, not assumed**. The
+   cron is built as `cron.New(cron.WithParser(newStaggerParser(...)))` (`cron_stagger.go:97`) with
+   **no `cron.Recover` chain**, and the job body (`runMetricsCopy`, `main.go:1869`) is a short
+   `Begin → request → Fail / Skip / Success` sequence. So two hypotheses are **rejected**:
+   - *an un-recovered panic in the job* — robfig terminates on an unrecovered job panic, and the
+     process demonstrably stayed alive for 85 minutes with every other job firing;
+   - *configuration* — `INTERVAL=900`, `KILL_SWITCH=0`, `TIMEOUT=480` verified in place.
+
+   The surviving candidate is the **custom stagger parser's next-time computation**. The same file's
+   own comment warns about the case where it "would leave robfig with a Next that is never ahead of
+   now, and it would re-run the job" — a wedged `Next` stops **one** job while its differently-period'd
+   neighbours (15 s sampler, 60 s SL/TP, 120 s sims) keep firing, which is exactly the observed shape.
+   Fix accordingly: make the anchor handling unable to wedge, **and** add an independent re-bind (or a
+   staleness check that re-adds the entry) so a stalled job repairs itself instead of waiting for a
+   restart. A restart is a recovery, not a fix.
 2. **Take the sweep out of the deploys' blast radius.** A 6-minute batch job inside the user-facing
    app is killed by every recreate. Either run it from a **separate worker container on the same
    image** (its own lifecycle; dodges both the deploy kills and the web aborts) or make it
