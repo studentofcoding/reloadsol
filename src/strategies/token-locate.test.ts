@@ -207,6 +207,22 @@ describe('locateTokenByAddress', () => {
   })
 })
 
+describe('bot_trade_locks lookup', () => {
+  it('never filters on chain — the table has no chain column', async () => {
+    const evm = '0xabcdef0123456789abcdef0123456789abcdef01'
+    await locateTokenByAddress(evm, { chain: 'robinhood' })
+
+    const lockCalls = vi.mocked(query).mock.calls.filter((c) =>
+      String(c[0]).includes('bot_trade_locks'),
+    )
+    expect(lockCalls.length).toBeGreaterThan(0)
+    for (const c of lockCalls) {
+      expect(String(c[0])).not.toMatch(/chain/i)
+      expect((c[1] as unknown[]).length).toBe(1)
+    }
+  })
+})
+
 describe('tracked mcap presence honesty', () => {
   beforeEach(() => {
     vi.clearAllMocks()
