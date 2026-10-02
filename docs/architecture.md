@@ -309,7 +309,7 @@ Default `npm run docker:deploy` uses `--auto` from git diff.
 | **Jupiter Ultra Reclaim** | Close empty ATAs after sell |
 | **Jupiter trending API** | `datapi.jup.ag` + `api.jup.ag` fallback |
 | **Shyft RPC** | On-chain reads/writes via `/api/rpc` |
-| **GMGN iframe** | Charts on `/chart`, modals (no swap) |
+| **GMGN kline iframe — one component** | **`GmgnKlineChart`** renders every chart on the site: signals tabs, token-locate, strategies, ChartBuyModal, `/chart/[mint]`, and all four DLMM surfaces (`DlmmGeneralPoolsTable`, `LpTerminalPoolsTable`, `RhClmmLpSheet`, `HunterCandidateTabs`). The DLMM tables were the last hold-outs on `GmgnChartEmbed`, a near-identical wrapper — unified 2026-10-02. Host note: the embed is **`https://www.gmgn.cc/kline/<chain>/<mint>`** and `gmgn.cc` is the **only** host serving `/kline` — `gmgn.ai/kline/…` and `www.gmgn.ai/kline/…` both **404**, so don't "fix" the host by pointing it at the domain the token links use. |
 | **Solana Tracker Data API** | OHLCV for Freeview, strategy charts, Radar Telegram photos |
 | **Discord** | Bot alerts, cron operational logs |
 | **Telegram** | Radar ENTER lifecycle (photo + caption), optional DLMM alerts |
