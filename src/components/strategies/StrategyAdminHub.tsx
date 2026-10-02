@@ -2957,6 +2957,15 @@ function TrendingBotCard({
   sources?: Record<string, "stored" | "defaults">;
 }) {
   const f = strategy.filtering ?? { enabled: true };
+  // T4: at card scope, "equal to the code default" means *inherited* — this row never overrode the
+  // family default. Not in `SourceTag`: on the weights and shared-filter panels `defaults` is the
+  // correct word, so the vocabulary is mapped where the scope is.
+  const src = (path: string) =>
+    sources?.[path] === "stored"
+      ? ("stored" as const)
+      : sources?.[path]
+        ? ("inherited" as const)
+        : undefined;
   const [tp1, setTp1] = useState(String(strategy.take_profit_levels.tp1_percentage));
   const [sl, setSl] = useState(String(strategy.stop_loss_percentage));
   const [buySol, setBuySol] = useState(String(strategy.buy_amount_sol));
@@ -2997,13 +3006,13 @@ function TrendingBotCard({
             label="TP1 %"
             value={tp1}
             onChange={setTp1}
-            source={sources?.[`${strategy.id}.take_profit_levels.tp1_percentage`]}
+            source={src(`${strategy.id}.take_profit_levels.tp1_percentage`)}
           />
           <NumberField
             label="SL %"
             value={sl}
             onChange={setSl}
-            source={sources?.[`${strategy.id}.stop_loss_percentage`]}
+            source={src(`${strategy.id}.stop_loss_percentage`)}
           />
           <NumberField
             label="Buy SOL"
@@ -3011,7 +3020,7 @@ function TrendingBotCard({
             onChange={setBuySol}
             colSpan={2}
             step="0.001"
-            source={sources?.[`${strategy.id}.buy_amount_sol`]}
+            source={src(`${strategy.id}.buy_amount_sol`)}
           />
         </FieldGrid>
       </Section>
@@ -3908,6 +3917,15 @@ function DlmmCard({
   sources?: Record<string, "stored" | "defaults">;
 }) {
   const c = strategy.config;
+  // T4: at card scope, "equal to the code default" means *inherited* — this row never overrode the
+  // family default. Not in `SourceTag`: on the weights and shared-filter panels `defaults` is the
+  // correct word, so the vocabulary is mapped where the scope is.
+  const src = (path: string) =>
+    sources?.[path] === "stored"
+      ? ("stored" as const)
+      : sources?.[path]
+        ? ("inherited" as const)
+        : undefined;
   const exec = c.execution ?? {
     simDeploySol: 0.05,
     maxOpenPositions: 3,
@@ -3937,17 +3955,17 @@ function DlmmCard({
       </label>
       <Section title="Start conditions">
         <FieldGrid>
-          <NumberField label="min TVL" value={minTvl} onChange={setMinTvl} step="1" source={sources?.[`${strategy.id}.config.min_tvl`]} />
-          <NumberField label="min fee/TVL" value={minFeeTvl} onChange={setMinFeeTvl} source={sources?.[`${strategy.id}.config.min_fee_tvl`]} />
-          <NumberField label="min organic score" value={minOrganic} onChange={setMinOrganic} step="1" source={sources?.[`${strategy.id}.config.min_organic_score`]} />
-          <NumberField label="min holders" value={minHolders} onChange={setMinHolders} step="1" source={sources?.[`${strategy.id}.config.min_holders`]} />
+          <NumberField label="min TVL" value={minTvl} onChange={setMinTvl} step="1" source={src(`${strategy.id}.config.min_tvl`)} />
+          <NumberField label="min fee/TVL" value={minFeeTvl} onChange={setMinFeeTvl} source={src(`${strategy.id}.config.min_fee_tvl`)} />
+          <NumberField label="min organic score" value={minOrganic} onChange={setMinOrganic} step="1" source={src(`${strategy.id}.config.min_organic_score`)} />
+          <NumberField label="min holders" value={minHolders} onChange={setMinHolders} step="1" source={src(`${strategy.id}.config.min_holders`)} />
         </FieldGrid>
       </Section>
       <Section title="End conditions">
         <FieldGrid>
-          <NumberField label="take profit %" value={tp} onChange={setTp} source={sources?.[`${strategy.id}.config.take_profit_pct`]} />
-          <NumberField label="stop loss %" value={sl} onChange={setSl} source={sources?.[`${strategy.id}.config.stop_loss_pct`]} />
-          <NumberField label="OOR timeout (min)" value={oor} onChange={setOor} step="1" colSpan={2} source={sources?.[`${strategy.id}.config.oor_timeout_min`]} />
+          <NumberField label="take profit %" value={tp} onChange={setTp} source={src(`${strategy.id}.config.take_profit_pct`)} />
+          <NumberField label="stop loss %" value={sl} onChange={setSl} source={src(`${strategy.id}.config.stop_loss_pct`)} />
+          <NumberField label="OOR timeout (min)" value={oor} onChange={setOor} step="1" colSpan={2} source={src(`${strategy.id}.config.oor_timeout_min`)} />
         </FieldGrid>
       </Section>
       <Section title="Execution">
