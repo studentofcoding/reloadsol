@@ -23,9 +23,12 @@
 
 ### Still open
 
-- **Step 2** — point `PnLTracker`'s open section at `useOpenPositions`. Not started: it needs
-  PnLTracker's open path read end-to-end first (§7).
-- **Step 3** — retire the duplicate poll once there is one consumer.
+- **Step 2 (revised)** — the open path has now been read end-to-end, and the original Step 2 was
+  wrong: `openPositions` is a working record with six fields the hook does not return, three of which
+  the **bulk sell** path depends on. The formula half is done (shared `pctFromBaseline`); the
+  source-swap half is a view-model migration. See the revised Step 2 below before starting it.
+- **Step 3** — retire the duplicate poll. Now depends on the revised Step 2, and PnLTracker's SSE
+  stream means it needs a decision rather than a deletion.
 
 ---
 
@@ -93,15 +96,41 @@ one-poll grace in `visibleOpenBarPositions`, and `useIsClient` for the server/hy
 
 **Gate:** `tsc`, lint, build, and the bar renders identically. Nothing else moves in this step.
 
-### Step 2 — Point `PnLTracker`'s open section at the hook
+### Step 2 — REVISED: `openPositions` is a working record, not a display list
 
-Replace the inline open-section derivation and the inline pct with `useOpenPositions()`. Keep the
-component's existing JSX; only the source of `positions` / `priceChangePct` changes.
+**The original wording of this step was wrong, and reading the path end-to-end is what showed it.**
+It said "replace the inline derivation with `useOpenPositions()`; only the source of `positions`
+changes". That would break three live features.
 
-**Do not** touch the closed-position path, the share modal, or the outcome modal.
+`PnLTracker`'s `openPositions` state (`:179`) is not the hook's `OpenBarPosition[]`. It carries:
 
-**Gate:** counts match between the bar and PnLTracker's open section for the same wallet — that is the
-whole acceptance criterion, and it is checkable side by side in a browser.
+| extra field | consumer |
+|---|---|
+| `id` | bulk sell — `selectedTokens.has(pos.id)` (`:1307`, `:1327`) |
+| `isSimulation` | bulk sell — `positionsToSell.some(pos => !pos.isSimulation)` (`:1310`) |
+| `currentTokenPriceUsd` | bulk sell — `sellPriceUsd: position.currentTokenPriceUsd` (`:1348`) |
+| `pnlPercentage`, `currentUsdValue` | notifications (`:1604`), display |
+| `actualWalletBalance`, `walletTokenData` | `refreshWalletBalances` (`:1801`) |
+| `isLoadingPrice` | the per-position loading state |
+
+`useOpenPositions()` returns seven fields and none of those. Swapping the source would leave the sell
+button reading `undefined` for a price. So Step 2 is **a view-model migration**, not a source swap.
+
+**Revised Step 2:**
+1. **Done** (`9b70ba5` + this commit) — share the *formula*. `pctFromBaseline` replaces the inline
+   `((current - buy) / buy) * 100` at `:1848`. Verified equivalent: the guards above it
+   (`currentTokenPriceUsd > 0` at `:1841`, `buyPriceUsd > 0` at `:1847`) establish exactly the
+   positivity that is `pctFromBaseline`'s only null branch. Note `:1886` computes a *different*,
+   value-based percentage and is deliberately left alone.
+2. **Open** — widen the hook to carry the fields both surfaces need (`currentTokenPriceUsd` at
+   minimum; `id`/`isSimulation` are PnLTracker's own view-model concerns and should be *added by*
+   PnLTracker on top of the hook, not moved into it). Then `openPositions` becomes a thin mapping
+   from `useOpenPositions()` plus PnLTracker's own enrichment.
+3. **Open** — only after 2: retire the duplicate price poll (`:1902`, `:1942`) in favour of the
+   hook's react-query cache. PnLTracker additionally consumes an SSE stream the hook does not have,
+   so this needs its own decision rather than a straight deletion.
+
+**Gate:** unchanged — same wallet, same count, same percentage per mint, side by side in a browser.
 
 ### Step 3 — Retire the duplicate poll
 

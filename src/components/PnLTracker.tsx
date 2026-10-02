@@ -3,6 +3,7 @@
 import { OptimizedImage } from "@/components/OptimizedImage";
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useLocalStorageValue } from "@/hooks/useLocalStorageValue";
+import { pctFromBaseline } from "@/utils/watchlist/pct";
 import {
   TrackingRecord,
   fetchTokenPricesForTracking,
@@ -1845,10 +1846,13 @@ export default function PnLTracker() {
           }
 
           if (position.buyPriceUsd && position.buyPriceUsd > 0) {
+            // The same function the watchlist bar uses. This was an inline
+            // `((current - buy) / buy) * 100`, i.e. the same arithmetic written twice — the exact
+            // place where a rounding or null-handling change lands in one surface and not the other.
+            // Equivalent here by construction: the guards above already establish both inputs are
+            // positive, which is `pctFromBaseline`'s only null branch.
             const pnlPercentage =
-              ((currentTokenPriceUsd - position.buyPriceUsd) /
-                position.buyPriceUsd) *
-              100;
+              pctFromBaseline(position.buyPriceUsd, currentTokenPriceUsd) ?? 0;
             const initialUsdValue =
               nativeBoughtOf(position) * usdPerUnitOf(position);
             const priceMultiplier =
