@@ -134,22 +134,57 @@ Not "the same set computed twice". It is:
 
 #### The corrected direction
 
-Invert it: **the superset must own the derivation, and the bar must consume a filtered view of it**
-— not the other way round.
+**Investigated (2026-10-02, second pass). The "holdings-source fork" is not a fork.** Both surfaces
+reach the *same* function:
 
-1. Extract the **classification**, once: a module that takes `(records, holdingsByMint)` and returns
-   every open position tagged `real | sim | bot | external`, with its cost basis. `PnLTracker`'s
-   `:1012-1125` is the source of truth for that logic — move it, do not rewrite it.
-2. The bar renders the `real && priced` subset of that output. Its population must not change, so
-   the filter is the acceptance test.
-3. Unify the **holdings source** as a second, separate decision — `useWalletTokens` vs
-   `fetchSolWalletHoldings` is a real divergence and neither is obviously right.
-4. Unify the **price transport** to PnLTracker's shape (SSE + 5 s fallback), since it is the faster
-   of the two, and let the bar come off polling entirely.
+```
+                    fetchSolWalletHoldings(wallet, {enrichPrices})      (utils/sol-wallet-holdings.ts)
+                       Shyft all_tokens  →  Jupiter Portfolio fallback
+                          /                                  \
+    enrichPrices: true   /                                    \   enrichPrices: false
+                        /                                      \
+  useWalletTokens                                  PnLTracker :1055
+  (TanStack, staleTime 30s, shared                  (imperative, inside the
+   key, refetchFresh)                                async PnL recompute, uncached)
+```
 
-**Sequencing note:** 1 and 2 must be verified against the same wallet in a browser before 3 or 4 —
-the whole point of the exercise is that these populations are subtle, and the failure mode is
-silently dropping a category from one surface.
+`useWalletTokens`'s `fetchWalletTokens` (`useWalletTokens.ts:51`) calls `fetchSolWalletHoldings`
+directly. So this is **one source, two access paths**, and the only difference is caching:
+
+| | bar | `PnLTracker` |
+|---|---|---|
+| upstream | Shyft `all_tokens` → Jupiter fallback | identical |
+| cache | TanStack, `staleTime: 30_000`, one key per wallet, in-flight de-dup, `refetchFresh()` bypasses the proxy's 15 s cache | **none** — called imperatively on every PnL recompute |
+| `enrichPrices` | `true` (adds a `/api/tokens/prices` round trip) | `false` |
+
+So PnLTracker **re-fetches what the bar already has cached**, and a post-trade `refetchFresh()`
+reaches the bar but cannot reach PnLTracker's separate imperative call.
+
+**The population difference is a different thing and is intentional.** `PnLTracker` adds sim, bot
+and external categories *on top of* tracked cycles (`:1080-1117`); the bar renders a filtered view.
+That difference is by design and must not be flattened — which is what the previous version of this
+section got wrong.
+
+#### Revised plan
+
+1. ✅ Share the percentage formula (`19f59a1`).
+2. **Point `PnLTracker` at `useWalletTokens`** instead of its imperative
+   `fetchSolWalletHoldings` call at `:1055`. Same function underneath, so the data is identical;
+   the change is that there is now **one cache and one in-flight request** shared with the bar, and
+   the post-trade refresh reaches both. This is the actual "same question, two answers" defect.
+   *Open sub-question for discussion:* the hook passes `enrichPrices: true`, which PnLTracker does
+   not need (it has its own price path). Either add an option to skip enrichment on the shared
+   query, or accept the extra `/api/tokens/prices` load. **This is the one real trade-off.**
+3. **Do not** flatten the populations. The bar stays the filtered view; `PnLTracker` stays the
+   superset. Whether the *classification* should also be extracted is a separate, lower-value job —
+   parked.
+4. Price transport can later unify onto PnLTracker's shape (SSE + 5 s fallback, `:1963`) and let
+   the bar come off its 15 s poll. Depends on 2.
+
+**What changed my mind twice:** the first two versions of this section treated the two surfaces as
+one computation done twice. They are not. They share one holdings *source* and differ in
+*caching* — while their *populations* differ by category on purpose. Reading the other side is what
+showed it both times.
 
 **Gate:** unchanged — same wallet, and every category (real, sim, bot, external) present on
 PnLTracker with the same percentage, while the bar's visible list is byte-identical to today's.
