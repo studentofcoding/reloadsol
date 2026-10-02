@@ -4,6 +4,41 @@ Living notes for regime awareness and rule changes. Production DB: Docker Postgr
 
 Update after significant sim batches or when disabling a strategy.
 
+## Rug label — live numbers (2026-10-03)
+
+Supersedes the "Live right now" figures in the 2026-10-01 section below (2,639 shadow rows, 0 trips, max score
+65 / 80). Read-only against prod, 2026-10-03 ~02:30 +07; design in
+[SPEC-rug-verdict-block-v1.md](./specs/SPEC-rug-verdict-block-v1.md).
+
+| Measure | Value |
+|---|---|
+| `rug_signal_shadow` rows | **12,039** (≈11.5k at analysis time): 6,925 `no_bars`, 5,100 `pass`, **14 `would_rug`** |
+| `rug_verdicts` (one row per mint) | **1,100** — populated since 2026-10-02 17:26 +07 |
+| Labelled verdicts | **206** — 56 `rug` / 150 `safe` (base rate **27 %**) |
+| As-of OHLC coverage at verdict time | **39 %** vs the **60 %** gate |
+| Ranking quality | **AUC ≈ 0.66** |
+
+Precision / recall on the 206 labelled verdicts (flagged = score ≥ threshold):
+
+| Threshold | Flagged | Precision | Recall |
+|---|---|---|---|
+| **80 (shipped)** | **0** | n/a | 0 % |
+| 50 | 8 | 25 % | 4 % |
+| **40** | 31 | **55 %** | **30 %** |
+| **30** | 77 | **43 %** | **59 %** |
+| 20 | 142 | 32 % | 82 % |
+| 0 | 206 | 27 % | 100 % |
+
+**Reading it.** The scorer ranks above chance (AUC 0.66) but is **blind at its shipped threshold**: nothing in
+the labelled set reaches 80. 30–40 is where it carries information (precision 43–55 % against a 27 % base),
+but 206 labels span about nine hours — **one day**, so the "days must agree" acceptance rule cannot yet be
+tested. **Do not enforce**; `RUG_SIGNAL_MODE` stays `shadow`.
+
+**Binding constraint is input coverage (39 % vs 60 % gate), not the threshold.** Open fixes, none deployed:
+stale bars treated as current (#108), the scorer falling back to own-1m only at zero bars not below `minBars`
+(#109), and the OHLC sampler's 300-mint cap rotating past detected mints (#110). The next re-measure should
+follow those, with threshold 30–40 evaluated as a *shadow* flag first.
+
 ## Rug label — state of play (2026-10-01)
 
 The goal: **make the staircase / up-only ramp actually get labelled `rug`.** What is built now is the material
