@@ -5,10 +5,12 @@ import {
   usesGmgnWebTokenInfo,
 } from '@/utils/gmgn-web-multi'
 import { getGmgnTokenSnapshotCached } from '@/utils/gmgn-snapshot-cache'
+import { withInsidersFromTokenStat } from '@/strategies/token-info-insiders'
 import { enqueueRiskShadow } from '@/strategies/risk-shadow-queue'
 import { log } from '@/utils/unified-logger'
 import {
   buildGmgnTokenSnapshot,
+  missingCoreTiles,
   type GmgnTokenSnapshot,
 } from '@/strategies/gmgn-token-snapshot'
 
@@ -178,13 +180,26 @@ export async function insertTokenInfoDetectIfAbsent(params: {
   detectedAt: Date
   info: Record<string, unknown>
   security: Record<string, unknown>
-}): Promise<{ inserted: boolean; row: TokenInfoDetectRow | null }> {
+}): Promise<{ inserted: boolean; row: TokenInfoDetectRow | null; skipped?: 'partial_panel' }> {
   if (!panelPresent(params.info, params.security)) {
     return { inserted: false, row: null }
   }
   const address = params.tokenAddress.trim()
   if (!address) return { inserted: false, row: null }
   const snapshot = buildGmgnTokenSnapshot(params.info, params.security)
+  // Write-once means a partial panel is frozen forever. Refuse it so the next detect retries;
+  // `TOKEN_INFO_LEDGER_CORE_GATE=off` restores the old behavior.
+  if (process.env.TOKEN_INFO_LEDGER_CORE_GATE?.trim().toLowerCase() !== 'off') {
+    const missing = missingCoreTiles(snapshot)
+    if (missing.length > 0) {
+      log.warn('token_detection', 'token_info_detect skipped a partial panel', {
+        tokenAddress: address,
+        source: params.source,
+        missing,
+      })
+      return { inserted: false, row: null, skipped: 'partial_panel' }
+    }
+  }
   const { rows } = await query<TokenInfoDetectDbRow>(INSERT_SQL, [
     params.chain,
     address,
@@ -276,7 +291,7 @@ async function captureWeb(items: TokenInfoDetectCapture[]): Promise<void> {
       source: item.source,
       detectedAt: item.detectedAt ?? new Date(),
       info: row.info,
-      security: row.security,
+      security: await withInsidersFromTokenStat(item.tokenAddress, row.info, row.security),
     })
     if (result.inserted) await markGmgnWebLedgerCaptured(item.tokenAddress)
   }

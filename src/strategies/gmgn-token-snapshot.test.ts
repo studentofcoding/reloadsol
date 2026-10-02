@@ -24,3 +24,40 @@ describe('buildGmgnTokenSnapshot', () => {
     expect(snap.dexBoostLabel).toMatch(/^Boost/)
   })
 })
+
+describe('buildGmgnTokenSnapshot — ledger quality', () => {
+  it('insiders: OpenAPI suspected_insider_hold_rate wins when present', () => {
+    const snap = buildGmgnTokenSnapshot({}, { suspected_insider_hold_rate: 0.07, rat_trader_amount_rate: 0.5 })
+    expect(snap.insidersHoldPct).toBeCloseTo(7, 5)
+  })
+
+  it('insiders: falls back to the rat-trader share (web payload carries only that)', () => {
+    expect(buildGmgnTokenSnapshot({}, { rat_trader_amount_rate: 0.12 }).insidersHoldPct).toBeCloseTo(12, 5)
+    expect(
+      buildGmgnTokenSnapshot({ stat: { top_rat_trader_percentage: 0.03 } }, {}).insidersHoldPct,
+    ).toBeCloseTo(3, 5)
+  })
+
+  it('insiders: stays null when no source exists (never invented)', () => {
+    expect(buildGmgnTokenSnapshot({}, {}).insidersHoldPct).toBeNull()
+  })
+
+  it('dev hold: no source key → null, not 0', () => {
+    expect(buildGmgnTokenSnapshot({}, {}).devHoldPct).toBeNull()
+    expect(buildGmgnTokenSnapshot({}, { creator_balance_rate: null }).devHoldPct).toBeNull()
+    expect(buildGmgnTokenSnapshot({}, { creator_balance_rate: '' }).devHoldPct).toBeNull()
+  })
+
+  it('dev hold: a real 0 is kept, but a 0 that contradicts creator_hold is unknown', () => {
+    expect(buildGmgnTokenSnapshot({}, { creator_balance_rate: 0 }).devHoldPct).toBe(0)
+    expect(
+      buildGmgnTokenSnapshot({}, { creator_balance_rate: 0, creator_token_status: 'creator_close' }).devHoldPct,
+    ).toBe(0)
+    expect(
+      buildGmgnTokenSnapshot({}, { creator_balance_rate: 0, creator_token_status: 'creator_hold' }).devHoldPct,
+    ).toBeNull()
+    expect(
+      buildGmgnTokenSnapshot({}, { creator_balance_rate: 0.04, creator_token_status: 'creator_hold' }).devHoldPct,
+    ).toBeCloseTo(4, 5)
+  })
+})
