@@ -38,6 +38,7 @@ import OutcomeReviewModal, {
   OutcomePatternMlBadge,
   OutcomePotentialMlBadge,
 } from "@/components/strategies/OutcomeReviewModal";
+import { StrategyLifecycleGrid } from "@/components/strategies/StrategyLifecycleGrid";
 import CombinedScoreWeightsPanel from "@/components/strategies/CombinedScoreWeightsPanel";
 import EvalEnginePanel from "@/components/strategies/EvalEnginePanel";
 import SpinePanel from "@/components/strategies/SpinePanel";
@@ -873,6 +874,21 @@ export default function StrategyAdminHub({
   });
 
   /**
+   * T5: the strategies' `last_success_at` — latest closed outcome per id. A SEPARATE request so the main
+   * payload is unchanged; a failure just leaves trial/active unlabelled (retired needs no lookup).
+   */
+  const lifecycleQuery = useQuery<Record<string, string> | null>({
+    queryKey: [...strategyAdminQueryKey, "lifecycle"],
+    queryFn: async () => {
+      const res = await fetch("/api/strategies/lifecycle");
+      const json = await res.json();
+      return json.success ? (json.last_outcome_at as Record<string, string>) : null;
+    },
+    enabled: showConfig,
+    staleTime: 60_000,
+  });
+
+  /**
    * Reports (breakdown + coverage + consensus bootstrap + capital) are a SEPARATE
    * request on purpose: a cold recompute takes seconds, and folding it into the
    * blocking query above made the whole closed view look like it never loaded.
@@ -1317,6 +1333,7 @@ export default function StrategyAdminHub({
           active={active}
           allocation={data?.trending_bot?.allocation}
           sources={data?.sources}
+          lastOutcomeAt={lifecycleQuery.data ?? null}
           signals={signals}
           mcapTracker={mcapTracker}
           gmgn={gmgn}
@@ -4216,6 +4233,7 @@ function StrategyConfigTab({
   onToast,
   focusDomain = "",
   sources,
+  lastOutcomeAt = null,
 }: {
   isRobinhood: boolean;
   effective: Record<string, TrendingBotStrategy>;
@@ -4233,6 +4251,8 @@ function StrategyConfigTab({
   focusDomain?: string;
   /** T7: `id.field -> stored | defaults`, straight from the strategies payload. */
   sources?: StrategiesResponse["sources"];
+  /** T5: latest closed outcome per strategy id (`/api/strategies/lifecycle`); null while unknown. */
+  lastOutcomeAt?: Record<string, string> | null;
 }) {
   useEffect(() => {
     if (!focusDomain) return;
@@ -4283,8 +4303,10 @@ function StrategyConfigTab({
         <p className="text-gray-400 text-sm mb-4">
           Active: {active.join(", ") || "none"} · Pre-filter uses union of active bands.
         </p>
-        <div className="grid gap-4 md:grid-cols-2">
-          {Object.values(effective).map((s) => (
+        <StrategyLifecycleGrid
+          items={Object.values(effective)}
+          lastOutcomeAt={lastOutcomeAt}
+          renderCard={(s) => (
             <TrendingBotCard
               key={`${s.id}-${s.is_active}-${s.buy_amount_sol}-${s.stop_loss_percentage}-${s.take_profit_levels.tp1_percentage}`}
               strategy={s}
@@ -4296,8 +4318,8 @@ function StrategyConfigTab({
               onPromote={onPromote}
               promoteTargets={Object.keys(effective).filter((id) => id !== s.id)}
             />
-          ))}
-        </div>
+          )}
+        />
       </section>
       ) : collapsed(
         "trending_bot",
@@ -4318,8 +4340,10 @@ function StrategyConfigTab({
           {DEFAULT_SIGNALS_SCORING.stopLossPenalty} · sell &gt;100{" "}
           {DEFAULT_SIGNALS_SCORING.sellOver100LatePenalty}
         </FamilyDefaultRow>
-        <div className="grid gap-4 md:grid-cols-2">
-          {signals.map((s) => (
+        <StrategyLifecycleGrid
+          items={signals}
+          lastOutcomeAt={lastOutcomeAt}
+          renderCard={(s) => (
             <SignalsCard
               key={s.id}
               strategy={s}
@@ -4327,8 +4351,8 @@ function StrategyConfigTab({
               saving={saving === s.id}
               onSave={onSave}
             />
-          ))}
-        </div>
+          )}
+        />
         <Link href="/dev/signals" className="text-blue-400 text-sm underline mt-3 inline-block">
           Open Signals hub (manual live buys)
         </Link>
@@ -4351,8 +4375,10 @@ function StrategyConfigTab({
           SL {DEFAULT_MCAP_TRACKER_EXIT.stopLossPct}% · TP {DEFAULT_MCAP_TRACKER_EXIT.takeProfitPct}% · hold{" "}
           {DEFAULT_MCAP_TRACKER_EXIT.maxHoldHours}h
         </FamilyDefaultRow>
-        <div className="grid gap-4 md:grid-cols-2">
-          {mcapTracker.map((s) => (
+        <StrategyLifecycleGrid
+          items={mcapTracker}
+          lastOutcomeAt={lastOutcomeAt}
+          renderCard={(s) => (
             <McapTrackerCard
               key={s.id}
               strategy={s}
@@ -4360,8 +4386,8 @@ function StrategyConfigTab({
               saving={saving === s.id}
               onSave={onSave}
             />
-          ))}
-        </div>
+          )}
+        />
         <Link
           href="/dev/signals?tab=tracker"
           prefetch
@@ -4404,8 +4430,10 @@ function StrategyConfigTab({
           SL {DEFAULT_GMGN_EXIT.stopLossPct}% · TP {DEFAULT_GMGN_EXIT.takeProfitPct}% · hold{" "}
           {DEFAULT_GMGN_EXIT.maxHoldHours}h
         </FamilyDefaultRow>
-        <div className="grid gap-4 md:grid-cols-2">
-          {gmgn.map((s) => (
+        <StrategyLifecycleGrid
+          items={gmgn}
+          lastOutcomeAt={lastOutcomeAt}
+          renderCard={(s) => (
             <GmgnCard
               key={`${s.id}-${s.is_active}-${s.execution_mode}-${s.config.radar?.stickyPumpPct}-${s.config.radar?.dumpBanPct}-${s.config.radar?.comeback?.allowSimReopen}-${s.config.radar?.telegram?.singleThread}-${s.config.radar?.telegram?.minMcapUsd}`}
               strategy={s}
@@ -4413,8 +4441,8 @@ function StrategyConfigTab({
               saving={saving === s.id}
               onSave={onSave}
             />
-          ))}
-        </div>
+          )}
+        />
       </section>
       ) : collapsed(
         "gmgn",
@@ -4445,8 +4473,10 @@ function StrategyConfigTab({
           )}
         </p>
         {social.length > 0 ? (
-          <div className="grid gap-4 md:grid-cols-2">
-            {social.map((s) => (
+          <StrategyLifecycleGrid
+            items={social}
+            lastOutcomeAt={lastOutcomeAt}
+            renderCard={(s) => (
               <SocialCard
                 key={`${s.id}-${s.is_active}-${s.execution_mode}-${s.config.entry.minMentions30m}`}
                 strategy={s}
@@ -4454,8 +4484,8 @@ function StrategyConfigTab({
                 saving={saving === s.id}
                 onSave={onSave}
               />
-            ))}
-          </div>
+            )}
+          />
         ) : null}
       </section>
       ) : collapsed(
