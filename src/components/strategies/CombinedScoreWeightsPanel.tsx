@@ -21,11 +21,20 @@ type Props = {
   onNotify?: (kind: 'success' | 'error', title: string, detail?: string) => void
 }
 
+/**
+ * The weights that compose the **freeview combined score**.
+ *
+ * T6 of SPEC-config-taxonomy, because this list is where the rug confusion starts: `ohlcPattern` is a
+ * *component weight* of this score, not the detector's threshold. Two different mechanisms answer to
+ * "rug" in this codebase — the entry-gate `ohlc_rug_*` features (snapshotted at score time, attached to
+ * entry records) and the detector behind `rug_verdicts` (one verdict per token on a 10-minute block).
+ * The knobs that actually drive rug decisions are not here; they are `RUG_SIG_*` on `/dev/rug-signal`.
+ */
 const FIELDS: { key: keyof CombinedScoreWeights; label: string; optional?: boolean }[] = [
   { key: 'principal', label: 'Principal (mcap first_seen / at_80)' },
   { key: 'adjusterPresence', label: 'Adjuster presence' },
   { key: 'jaccard', label: 'Jaccard overlap' },
-  { key: 'ohlcPattern', label: 'OHLC rug patterns' },
+  { key: 'ohlcPattern', label: 'OHLC rug patterns (freeview combined score only)' },
   { key: 'ml', label: 'ML closed-loop (optional)', optional: true },
 ]
 
