@@ -57,16 +57,30 @@ describe('fetchTradingRecordsForWallet bounds', () => {
     const text = String(sql)
     // The last-close CTE, the join that applies it, and no time window at all.
     expect(text).toContain('last_close AS')
-    expect(text).toContain(`close_position' = 'true'`)
-    expect(text).toContain('t.timestamp >= coalesce(lc.ts, to_timestamp(0))')
+    // Extracted in `scoped` and filtered as a column — same predicate, hashable form.
+    expect(text).toContain(`t.data->>'close_position' AS closed`)
+    expect(text).toContain(`closed = 'true'`)
+    expect(text).toContain(`op = 'sell'`)
+    // The epoch fallback, unchanged: a (strategy, mint) with no recorded close keeps every row,
+    // so a still-open position cannot read as closed.
+    expect(text).toContain('s.timestamp >= coalesce(lc.ts, to_timestamp(0))')
     expect(text).not.toContain('make_interval')
-    expect(text).toContain('ORDER BY t.timestamp ASC')
+    expect(text).toContain('ORDER BY s.timestamp ASC')
     // Keyed on the strategy as well: a close by ONE strategy must not truncate another
     // strategy's still-open cycle on the same mint. The per-mint key did exactly that and
     // changed the reconstructed open set for 4 of the 7 active mcap strategies.
-    expect(text).toContain(`data->>'bot_strategy' AS strategy`)
-    expect(text).toContain(`lc.strategy = t.data->>'bot_strategy'`)
+    expect(text).toContain(`t.data->>'bot_strategy' AS strategy`)
     expect(text).toContain('GROUP BY 1, 2')
+    // The join must be on the COLUMNS extracted in `scoped`, never on the JSONB expressions:
+    // joining on the expressions is unhashable, so the planner picked a Nested Loop over a
+    // Materialize and re-read the CTE once per trading row — 110,031,740 join-filter rejections
+    // and 120,096ms for 1,360 rows on the 155k-row wallet. Pinning the hashable form is the
+    // whole point of this test.
+    expect(text).toContain('WITH scoped AS')
+    expect(text).toContain('lc.strategy = s.strategy')
+    expect(text).toContain('lc.mint = s.mint')
+    expect(text).not.toContain(`lc.strategy = t.data->>'bot_strategy'`)
+    expect(text).not.toContain(`ON lc.mint = t.data->`)
     expect(params).toEqual(['trending-bot-sim-rh', ['att_rh']])
   })
 })
@@ -81,7 +95,7 @@ describe('buildOpenMcapSimReportPositions record window', () => {
       .filter((s) => s.includes('FROM trading_records'))
     expect(reads).toHaveLength(1)
     expect(reads[0]).toContain('last_close AS')
-    expect(reads[0]).toContain(`lc.strategy = t.data->>'bot_strategy'`)
+    expect(reads[0]).toContain('lc.strategy = s.strategy')
   })
 })
 

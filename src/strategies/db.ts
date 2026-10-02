@@ -3277,29 +3277,49 @@ export async function fetchTradingRecordsForWallet(
     // with the wider key stay exact.
     if (opts?.sinceLastClose) {
       const strategyCondition = opts.strategies?.length
-        ? `AND data->>'bot_strategy' = ANY($2::text[])`
+        ? `AND t.data->>'bot_strategy' = ANY($2::text[])`
         : ''
       const strategyValues = opts.strategies?.length ? [opts.strategies] : []
+      // Shape matters here, not just semantics. Written as a CTE joined directly onto
+      // `trading_records`, the planner estimated `last_close` at rows=1 and chose a Nested Loop
+      // over a Materialize — re-reading the 1,350-row CTE once per trading row:
+      //
+      //   Nested Loop Left Join  actual time=2282ms..120,096ms   rows=1360
+      //     Rows Removed by Join Filter: 110,031,740
+      //     -> Materialize  rows=711  loops=155,022
+      //     -> Parallel Seq Scan on trading_records  Sort Method: external merge Disk: 64MB+46MB+46MB
+      //
+      // That is 120s to return 1,360 rows. Joining on the JSONB expressions makes the key
+      // unhashable, so extracting (strategy, mint) once into `scoped` lets it hash-join instead.
+      // The epoch fallback and the (strategy, mint) key are unchanged — an INNER JOIN would drop
+      // never-closed keys and make still-open positions vanish. Differential-checked on prod
+      // against the previous query on one snapshot, both wallets: identical id sets
+      // (trending-bot-sim-rh 1369/1369, mcap-tracker-sim 2609/2609, 0 rows differing either way).
+      // 120,096ms -> 861ms, and the sort is now a 1.2MB quicksort instead of disk spills.
       const { rows } = await query<{ data: import('@/utils/trading-tracker').TrackingRecord }>(
-        `WITH last_close AS (
-           SELECT data->>'bot_strategy' AS strategy,
-                  data->'tokens'->0->>'mintAddress' AS mint,
-                  max(timestamp) AS ts
-             FROM trading_records
-            WHERE wallet_address = $1
-              AND data->>'operationType' = 'sell'
-              AND data->>'close_position' = 'true'
+        `WITH scoped AS (
+           SELECT t.id, t.timestamp,
+                  t.data->>'bot_strategy' AS strategy,
+                  t.data->'tokens'->0->>'mintAddress' AS mint,
+                  t.data->>'operationType' AS op,
+                  t.data->>'close_position' AS closed
+             FROM trading_records t
+            WHERE t.wallet_address = $1
               ${strategyCondition}
+         ),
+         last_close AS (
+           SELECT strategy, mint, max(timestamp) AS ts
+             FROM scoped
+            WHERE op = 'sell' AND closed = 'true'
             GROUP BY 1, 2
          )
          SELECT t.data FROM trading_records t
+           JOIN scoped s ON s.id = t.id
            LEFT JOIN last_close lc
-             ON lc.mint = t.data->'tokens'->0->>'mintAddress'
-            AND lc.strategy = t.data->>'bot_strategy'
-          WHERE t.wallet_address = $1
-            ${strategyCondition.replace('data->>', 't.data->>')}
-            AND t.timestamp >= coalesce(lc.ts, to_timestamp(0))
-          ORDER BY t.timestamp ASC`,
+             ON lc.mint = s.mint
+            AND lc.strategy = s.strategy
+          WHERE s.timestamp >= coalesce(lc.ts, to_timestamp(0))
+          ORDER BY s.timestamp ASC`,
         [walletAddress, ...strategyValues],
       )
       // #region debug
