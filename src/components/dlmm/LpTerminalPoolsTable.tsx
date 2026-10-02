@@ -5,7 +5,7 @@ import { useLpTerminalPools } from '@/hooks/useLpTerminalPools'
 import RhUniv2LpSheet from '@/components/dlmm/RhUniv2LpSheet'
 import RhClmmLpSheet from '@/components/dlmm/RhClmmLpSheet'
 import DlmmFastSwapModal from '@/components/dlmm/DlmmFastSwapModal'
-import GmgnChartEmbed from '@/components/signals/shared/GmgnChartEmbed'
+import GmgnKlineChart from '@/components/GmgnKlineChart'
 import { formatApr, formatUsd } from '@/utils/dlmm/format'
 import {
   isRhUniv2QuotePool,
@@ -517,13 +517,13 @@ export default function LpTerminalPoolsTable() {
                       <tr className="border-b border-gray-900 bg-gray-950/40">
                         <td colSpan={10} className="px-3 py-3">
                           <div className="relative h-[280px] w-full">
-                            <GmgnChartEmbed
-                              tokenAddress={tokenAddress}
+                            <GmgnKlineChart
+                              tokenMint={tokenAddress}
+                              symbol={row.pair}
                               chain="robinhood"
                               interval="5"
                               className="w-full h-full"
-                              height="280px"
-                              title={`GMGN · ${row.pair}`}
+                              height={280}
                             />
                           </div>
                         </td>

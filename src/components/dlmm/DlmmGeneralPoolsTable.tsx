@@ -4,7 +4,7 @@ import { Fragment, useDeferredValue, useMemo, useState } from 'react'
 import type { DisplayCandidate } from '@/components/dlmm/HunterCandidateTabs'
 import type { EnrichedPool } from '@/hooks/useDlmmPools'
 import DlmmFastSwapModal from '@/components/dlmm/DlmmFastSwapModal'
-import GmgnChartEmbed from '@/components/signals/shared/GmgnChartEmbed'
+import GmgnKlineChart from '@/components/GmgnKlineChart'
 import { formatApr, formatUsd } from '@/utils/dlmm/format'
 import { getPoolChartMint } from '@/utils/gmgn'
 import {
@@ -376,13 +376,13 @@ export default function DlmmGeneralPoolsTable({
                       <tr className="border-b border-gray-900 bg-gray-950/40">
                         <td colSpan={8} className="px-3 py-3">
                           <div className="relative h-[280px] w-full">
-                            <GmgnChartEmbed
-                              tokenAddress={row.chartMint}
+                            <GmgnKlineChart
+                              tokenMint={row.chartMint}
+                              symbol={row.pair}
                               chain="sol"
                               interval="5"
                               className="w-full h-full"
-                              height="280px"
-                              title={`GMGN · ${row.pair}`}
+                              height={280}
                             />
                           </div>
                         </td>

@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import type { Address } from 'viem'
 import { useRhEvmWallet } from '@/hooks/useRhEvmWallet'
 import { useCreateRhClmmMark } from '@/hooks/useRhClmmPositions'
-import GmgnChartEmbed from '@/components/signals/shared/GmgnChartEmbed'
+import GmgnKlineChart from '@/components/GmgnKlineChart'
 import {
   mintPool,
   previewMintPool,
@@ -252,13 +252,13 @@ function RhClmmLpSheetBody({
             </div>
             {tokenAddress ? (
               <div className="h-[180px] w-full rounded overflow-hidden border border-gray-800">
-                <GmgnChartEmbed
-                  tokenAddress={tokenAddress}
+                <GmgnKlineChart
+                  tokenMint={tokenAddress}
+                  symbol={tokenSymbol || 'token'}
                   chain="robinhood"
                   interval="5"
                   className="w-full h-full"
-                  height="180px"
-                  title={`GMGN · ${tokenSymbol || 'token'}`}
+                  height={180}
                 />
               </div>
             ) : (
