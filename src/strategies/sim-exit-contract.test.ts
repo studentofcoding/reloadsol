@@ -83,6 +83,18 @@ describe('registerSimExitContract — the contract every open stamps', () => {
     )
   })
 
+  it('PASSES THE BACKSTOP THROUGH, which it used to drop on the floor', async () => {
+    // `SimExitThresholds` has always carried `maxHoldHours` and every strategy config resolves one,
+    // but `addSLTPPosition` accepted no such parameter — so the value was type-checked, resolved,
+    // and thrown away. `checkSLTPTriggers` therefore had nothing to give the evaluator, `max_hold`
+    // could not fire, and a position that never crossed its stop or its target never closed at all.
+    await registerSimExitContract(base)
+
+    expect(addSLTPPosition).toHaveBeenCalledWith(
+      expect.objectContaining({ maxHoldHours: 48 }),
+    )
+  })
+
   it('refuses to register without a usable entry price, rather than inventing one', async () => {
     // Existing behaviour, kept: fabricating a price would fabricate trigger data.
     expect(await registerSimExitContract({ ...base, entryPriceUsd: 0 })).toBeNull()

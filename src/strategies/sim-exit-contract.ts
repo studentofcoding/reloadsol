@@ -142,6 +142,10 @@ export async function registerSimExitContract(params: {
       referenceValue: params.referenceValue ?? entryPriceUsd,
       exitBasis: basis,
       chain: params.chain,
+      // The backstop, which this function has always RECEIVED and never passed on. `addSLTPPosition`
+      // took no such parameter, so the value was typed, resolved by every caller, and silently
+      // dropped — which is why a position that never crossed its stop or target never closed.
+      maxHoldHours: thresholds.maxHoldHours,
       // A `bot` row reads ONLY tp1/2/3_percentage in checkSLTPTriggers, and take_profit_percentage
       // is read only by the `manual` branch. Registering the TP as TP1 is what makes it fire at
       // all: without it `take_profit_percentage` is a field the worker never evaluates, which is

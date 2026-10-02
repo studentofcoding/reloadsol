@@ -81,6 +81,13 @@ export interface SLTPPosition {
      */
     close_reason?: string | null
     closed_at?: string | null
+    /**
+     * Force-close after this many hours (S5). NULL means no backstop is configured, which is a
+     * position that can stay open indefinitely. Stamped at open from the strategy's effective exit;
+     * before 59-sl-tp-max-hold.sql it was accepted by the type and then dropped, so no position
+     * could time out at all.
+     */
+    max_hold_hours?: number | null
     // TP levels for bot positions
     tp1_percentage?: number
     tp1_sell_percentage?: number
@@ -98,7 +105,7 @@ export interface SLTPTriggerResult {
     triggered: boolean
     // `max_age` is separate from `max_hold_time`: two backstops that reported the same trigger could
     // not be told apart in the row, which is what made S5's backstop share uncomputable.
-    trigger_type: 'stop_loss' | 'take_profit_1' | 'take_profit_2' | 'take_profit_3' | 'max_hold_time' | 'max_age'
+    trigger_type: 'stop_loss' | 'take_profit_1' | 'take_profit_2' | 'take_profit_3' | 'max_hold_time' | 'max_age' | 'label_rugged'
     sell_percentage: number
     current_price: number
     trigger_price: number
@@ -472,6 +479,12 @@ export async function addSLTPPosition(params: {
     exitBasis?: 'price' | 'mcap'
     /** The chain the position is on. The worker prices Sim burns and Robinhood differently. */
     chain?: string
+    /**
+     * The max-hold backstop (S5), in hours. Carried here because the worker reads it off the row; a
+     * position opened without one has no backstop and can stay open indefinitely, which is why the
+     * exit contract stamps it rather than leaving it to a caller to remember.
+     */
+    maxHoldHours?: number
     // Bot-specific TP levels
     tp1Percentage?: number
     tp1SellPercentage?: number
@@ -494,6 +507,7 @@ export async function addSLTPPosition(params: {
             referenceValue,
             exitBasis,
             chain,
+            maxHoldHours,
             tp1Percentage,
             tp1SellPercentage,
             tp2Percentage,
@@ -521,6 +535,7 @@ export async function addSLTPPosition(params: {
             reference_value: referenceValue ?? entryPrice,
             exit_basis: exitBasis ?? 'price',
             chain: chain ?? 'sol',
+            max_hold_hours: maxHoldHours ?? null,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
             is_active: true,
@@ -546,10 +561,10 @@ export async function addSLTPPosition(params: {
                tp3_percentage, tp3_enabled,
                tp1_executed, tp2_executed, tp3_executed, sl_executed,
                is_simulation,
-               reference_kind, reference_value, exit_basis, chain
+               reference_kind, reference_value, exit_basis, chain, max_hold_hours
              ) VALUES (
                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-               $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29
+               $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30
              ) RETURNING id`,
             [
                 position.wallet_address,
@@ -581,6 +596,7 @@ export async function addSLTPPosition(params: {
                 position.reference_value ?? position.entry_price,
                 position.exit_basis ?? 'price',
                 position.chain ?? 'sol',
+                position.max_hold_hours ?? null,
             ],
         )
 
@@ -677,7 +693,11 @@ async function persistCurrentPrices(
 }
 
 // Function to check SL/TP triggers for a position
-function checkSLTPTriggers(position: SLTPPosition, currentPrice: number): SLTPTriggerResult {
+function checkSLTPTriggers(
+    position: SLTPPosition,
+    currentPrice: number,
+    opts: { stale?: boolean; rugged?: boolean } = {},
+): SLTPTriggerResult {
     // The decision itself lives in `evaluateExit` (S2), so the worker, the sims and the live path
     // all resolve a trigger the same way. This function is the row -> decision adapter.
     const isStop = position.sl_executed === true
@@ -699,6 +719,18 @@ function checkSLTPTriggers(position: SLTPPosition, currentPrice: number): SLTPTr
             tp3Executed: position.tp3_executed,
         },
         entryAt: position.created_at,
+        // The backstop, read off the row. It was never passed before, so `max_hold` / `max_age`
+        // could not fire and a position that never crossed its stop or target stayed open forever.
+        maxHoldHours: position.max_hold_hours,
+        // Both resolved by the caller: this stays a pure adapter. `stale` is what turns an
+        // unevaluable position into a REPORTED one rather than a silent skip (S4); `rugged` closes
+        // a known rug regardless of where the price sits.
+        stale: opts.stale,
+        rugged: opts.rugged,
+        // NOTE: `maxAgeHours` is still not passed, and there is no column or config for it — so
+        // `max_age` remains unreachable while `max_hold` now fires. The two were interchangeable
+        // before (`max_age` was the mcap family's version of the same idea), so one live backstop is
+        // the honest state rather than two flags where only one can ever be set.
     })
 
     const gainPercentage = decision.pnlPct ?? 0
@@ -1017,6 +1049,16 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
                 updateData.tp3_executed = true
                 updateData.is_active = false
                 break
+            // These three close the position but are deliberately NOT filed under a ladder flag.
+            // The flags say WHICH trigger fired, and a rug or a backstop is not a take-profit — the
+            // old code marked every non-stop close as `tp1_executed`, which is exactly how a
+            // backstop ended up in the take-profit bucket. `close_reason` carries why; the flags
+            // stay honest about what.
+            case 'label_rugged':
+            case 'max_age':
+            case 'max_hold_time':
+                updateData.is_active = false
+                break
         }
 
         // The reason, decided before the UPDATE so the row carries it in the same statement as the
@@ -1310,7 +1352,44 @@ export async function getSLTPTrackingSummary(windowHours = 24): Promise<SLTPTrac
     }
 }
 
-// ✅ MODIFIED: Enhanced monitoring function that can return summary data
+/** `${chain}:${mint}` — a mint can exist on more than one chain, so the key carries both. */
+function ruggedKey(chain: string | null | undefined, mint: string): string {
+    return `${chain || 'sol'}:${mint}`
+}
+
+function isRugged(rugged: Set<string>, position: SLTPPosition): boolean {
+    return rugged.has(ruggedKey(position.chain, position.token_address))
+}
+
+/**
+ * The pass's known-rug mints, in ONE batched read.
+ *
+ * Fail-open in the strict sense: every failure path returns an empty set, so the evaluator falls
+ * back to the price path exactly as it would without this input. A rug lookup must never be able to
+ * block an exit — it can only ever ADD a reason to close.
+ */
+async function getRuggedMints(positions: SLTPPosition[]): Promise<Set<string>> {
+    const mints = Array.from(new Set(positions.map((p) => p.token_address).filter(Boolean)))
+    if (mints.length === 0) return new Set()
+    const chains = Array.from(new Set(positions.map((p) => p.chain || 'sol')))
+    try {
+        const { rows } = await query<{ chain: string; token_address: string }>(
+            `SELECT chain, token_address FROM token_mcap_tracking
+              WHERE label = 'rugged'
+                AND chain = ANY($1::text[])
+                AND token_address = ANY($2::text[])`,
+            [chains, mints],
+        )
+        return new Set(rows.map((r) => ruggedKey(r.chain, r.token_address)))
+    } catch (error) {
+        log.warn('price_tracking', 'Rug label lookup failed; exiting on price alone (fail-open)', {
+            positions: positions.length,
+            error: error instanceof Error ? error.message : String(error),
+        })
+        return new Set()
+    }
+}
+
 export async function monitorSLTPPositions(returnSummary: boolean = false): Promise<SLTPTrackingSummary | void> {
     try {
         // Get all active positions
@@ -1347,20 +1426,41 @@ export async function monitorSLTPPositions(returnSummary: boolean = false): Prom
 
         await persistCurrentPrices(filteredPositions, currentPrices)
 
+        // The pass's rug set, one batched read resolved before the loop so nothing inside it does
+        // per-position I/O. Fail-open by construction (see getRuggedMints).
+        const ruggedMints = await getRuggedMints(filteredPositions)
+
+        // Per-pass counters. `stale` is the one that matters: it used to be invisible, because a
+        // position with no readable price was dropped before it could be counted.
+        let staleCount = 0
+        let ruggedCount = 0
+
         // Check each position for triggers
         const triggerPromises = filteredPositions.map(async (position) => {
             const currentPrice = currentPrices.get(position.token_address)
+            const rugged = isRugged(ruggedMints, position)
 
             if (!currentPrice) {
-                log.warn('price_tracking', 'No price data for token', {
+                // NOT a silent skip. A position with no readable price is unevaluable, and that has
+                // to be REPORTED rather than dropped — S4: never a hold we cannot see. The decision
+                // still runs (with `stale`), which is what puts it in the pass's count and in the
+                // log; what it returns is `stale`, not a close.
+                staleCount += 1
+                const staleResult = checkSLTPTriggers(position, 0, { stale: true, rugged })
+                log.warn('price_tracking', 'No price data for token — reported STALE, not skipped', {
+                    positionId: position.id,
                     tokenAddress: position.token_address,
-                    tokenSymbol: position.token_symbol
+                    tokenSymbol: position.token_symbol,
+                    rugged,
+                    decision: staleResult.reason,
                 })
                 return
             }
 
+            if (rugged) ruggedCount += 1
+
             // Check for triggers
-            const triggerResult = checkSLTPTriggers(position, currentPrice)
+            const triggerResult = checkSLTPTriggers(position, currentPrice, { rugged })
 
             if (triggerResult.triggered) {
                 log.info('deviation_alert', 'SL/TP trigger detected', {
@@ -1397,6 +1497,14 @@ export async function monitorSLTPPositions(returnSummary: boolean = false): Prom
         })
 
         await Promise.all(triggerPromises)
+
+        // Always reported, even at zero. A count that only appears when non-zero is a count nobody
+        // notices is missing, and `stale` is precisely the state that used to be invisible.
+        log.info('price_tracking', 'Pass exit evaluation summary', {
+            positions: filteredPositions.length,
+            stale: staleCount,
+            rugged: ruggedCount,
+        })
 
         // Return summary if requested
         if (returnSummary) {
@@ -1447,20 +1555,41 @@ export async function runSLTPMonitorAndSummarize(): Promise<SLTPTrackingSummary>
 
         await persistCurrentPrices(filteredPositions, currentPrices)
 
+        // The pass's rug set, one batched read resolved before the loop so nothing inside it does
+        // per-position I/O. Fail-open by construction (see getRuggedMints).
+        const ruggedMints = await getRuggedMints(filteredPositions)
+
+        // Per-pass counters. `stale` is the one that matters: it used to be invisible, because a
+        // position with no readable price was dropped before it could be counted.
+        let staleCount = 0
+        let ruggedCount = 0
+
         // Check each position for triggers
         const triggerPromises = filteredPositions.map(async (position) => {
             const currentPrice = currentPrices.get(position.token_address)
+            const rugged = isRugged(ruggedMints, position)
 
             if (!currentPrice) {
-                log.warn('price_tracking', 'No price data for token', {
+                // NOT a silent skip. A position with no readable price is unevaluable, and that has
+                // to be REPORTED rather than dropped — S4: never a hold we cannot see. The decision
+                // still runs (with `stale`), which is what puts it in the pass's count and in the
+                // log; what it returns is `stale`, not a close.
+                staleCount += 1
+                const staleResult = checkSLTPTriggers(position, 0, { stale: true, rugged })
+                log.warn('price_tracking', 'No price data for token — reported STALE, not skipped', {
+                    positionId: position.id,
                     tokenAddress: position.token_address,
-                    tokenSymbol: position.token_symbol
+                    tokenSymbol: position.token_symbol,
+                    rugged,
+                    decision: staleResult.reason,
                 })
                 return
             }
 
+            if (rugged) ruggedCount += 1
+
             // Check for triggers
-            const triggerResult = checkSLTPTriggers(position, currentPrice)
+            const triggerResult = checkSLTPTriggers(position, currentPrice, { rugged })
 
             if (triggerResult.triggered) {
                 log.info('deviation_alert', 'SL/TP trigger detected', {
@@ -1497,6 +1626,14 @@ export async function runSLTPMonitorAndSummarize(): Promise<SLTPTrackingSummary>
         })
 
         await Promise.all(triggerPromises)
+
+        // Always reported, even at zero. A count that only appears when non-zero is a count nobody
+        // notices is missing, and `stale` is precisely the state that used to be invisible.
+        log.info('price_tracking', 'Pass exit evaluation summary', {
+            positions: filteredPositions.length,
+            stale: staleCount,
+            rugged: ruggedCount,
+        })
 
         // Return summary
         return await getSLTPTrackingSummary()

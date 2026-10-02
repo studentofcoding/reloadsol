@@ -163,6 +163,46 @@ describe('the persisted close reason', () => {
     expect(PERSISTED_CLOSE_REASONS).toContain('unknown')
     expect(PERSISTED_CLOSE_REASONS).toContain(toPersistedCloseReason('anything at all'))
   })
+})
+
+describe('the close vocabulary, the rug close, and an unreadable input', () => {
+  it('closes a rugged token before the thresholds are consulted', () => {
+    // A rug is not a threshold event — the threshold it would cross is the one that never comes
+    // back. Here the price is ABOVE entry and still well inside the stop and target, so nothing but
+    // the rug label can be what closes it.
+    expect(priceExit({ live: 1.05, rugged: true })).toMatchObject({
+      close: true,
+      reason: 'label_rugged',
+      triggerType: 'label_rugged',
+      sellPercentage: 100,
+    })
+    // And it beats a stop that would otherwise have fired, because it is the truer reason.
+    expect(priceExit({ live: 0.5, rugged: true }).reason).toBe('label_rugged')
+  })
+
+  it('does not invent a rug close for a normal position', () => {
+    expect(priceExit({ live: 1.05, rugged: false }).close).toBe(false)
+    expect(priceExit({ live: 1.05 }).close).toBe(false)
+  })
+
+  it('reports STALE when the input could not be read, even though that arrives as a zero', () => {
+    // This is the ordering that matters. A value that could not be read arrives as a missing/zero
+    // `live`, so checking the positive-value guard FIRST reported it as an ordinary `hold` — a hold
+    // nobody can see, which is precisely what S4 forbids.
+    expect(priceExit({ live: 0, stale: true })).toMatchObject({ close: false, reason: 'stale' })
+    expect(priceExit({ live: Number.NaN, stale: true }).reason).toBe('stale')
+    // Unchanged when nothing claims staleness: a missing value is still an ordinary hold.
+    expect(priceExit({ live: 0 }).reason).toBe('hold')
+  })
+
+  it('counts a rugged token that cannot be priced as STALE, not as a rug close', () => {
+    // Closing needs a price to close AT. An unpriced rug stays open and is reported, rather than
+    // being closed at a number nobody read.
+    expect(priceExit({ live: 0, rugged: true, stale: true })).toMatchObject({
+      close: false,
+      reason: 'stale',
+    })
+  })
 
   it('cannot drift from the CHECK in the migration', () => {
     // The column's CHECK enumerates the same set. If a writer emits a value the migration forbids,

@@ -39,6 +39,7 @@ export type ExitDecision = {
     | 'take_profit_3'
     | 'max_hold_time'
     | 'max_age'
+    | 'label_rugged'
     | null
   /** Partial sell, when the fired trigger is a ladder step. 100 otherwise. */
   sellPercentage: number
@@ -71,6 +72,15 @@ export type EvaluateExitInput = {
   maxHoldHours?: number | null
   /** True when the live value is older than the configured age bound — fail closed (S4). */
   stale?: boolean
+  /**
+   * True when the token is known-rug. Closes regardless of where the price sits, because a rug is
+   * not a threshold event — the threshold it would cross is the one that never comes back.
+   *
+   * The caller resolves this and passes it in, which keeps this function pure. A read that fails
+   * must pass `false` (fail-open): the price path then decides, exactly as it would without this
+   * input, so a rug lookup that times out can never block an exit.
+   */
+  rugged?: boolean
   nowMs?: number
   /** A hold longer than this is the last-resort backstop, counted as a health metric (S5). */
   maxAgeHours?: number | null
@@ -99,14 +109,33 @@ function positive(v: number | null | undefined): v is number {
 export function evaluateExit(input: EvaluateExitInput): ExitDecision {
   const basisUsed: ExitBasis = input.referenceKind === 'mcap' ? 'mcap' : 'price'
 
-  if (!positive(input.referenceValue) || !positive(input.live)) {
-    return { ...HOLD, basisUsed }
-  }
+  // Stale FIRST, above the value guards. `stale` means "no usable input", and a value that could not
+  // be read arrives as a missing/zero `live` — so checking the guards first reported the missing
+  // price as an ordinary `hold`, which is exactly the silent hold S4 forbids. Reported, and never
+  // valued from the stale number.
   if (input.stale) {
     return { ...HOLD, reason: 'stale', basisUsed }
   }
+  if (!positive(input.referenceValue) || !positive(input.live)) {
+    return { ...HOLD, basisUsed }
+  }
 
   const gainPct = ((input.live - input.referenceValue) / input.referenceValue) * 100
+
+  // Rugged, before the thresholds. It is deliberately below the two positive-value guards above:
+  // closing needs a price to close AT, so an unpriced rugged token reports `stale` instead, which
+  // is visible and counted. Where a price exists, a rug close records the real loss rather than
+  // waiting for the stop to catch a price that may never print.
+  if (input.rugged) {
+    return {
+      close: true,
+      reason: 'label_rugged',
+      pnlPct: gainPct,
+      basisUsed,
+      triggerType: 'label_rugged',
+      sellPercentage: 100,
+    }
+  }
 
   // Stop loss. The stored threshold is negative; a positive one would sit above the entry and fire
   // on the first tick, so the comparison is made against the signed value as stored.

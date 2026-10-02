@@ -17,6 +17,7 @@ export type SlTpTriggerType =
     | 'take_profit_3'
     | 'max_hold_time'
     | 'max_age'
+    | 'label_rugged'
 
 interface NotificationData {
     operationType?: 'buy' | 'sell' | 'close'

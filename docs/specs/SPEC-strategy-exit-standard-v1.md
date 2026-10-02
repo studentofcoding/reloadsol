@@ -382,10 +382,10 @@ the routing test already asserts.
 
 | # | Must hold | State | Handling | Test |
 |---|---|---|---|---|
-| **B1** | live read, **never** a cache | **open** | G4: cached `mcap_growth_percent`, stale 18–481 min | a cached value can never be returned |
-| **B2** | staleness → `stale`, never a silent `hold` | **open** | `EXIT_MAX_INPUT_AGE_SEC=180` exists but is **not enforced** | stale input ⇒ `reason:'stale'` |
+| **B1** | live read, **never** a cache | **in** | G4: cached `mcap_growth_percent`, stale 18–481 min | a cached value can never be returned |
+| **B2** | staleness → `stale`, never a silent `hold` | **in** | `EXIT_MAX_INPUT_AGE_SEC=180` exists but is **not enforced** | stale input ⇒ `reason:'stale'` |
 | **B3** | entry reference = the **impact-included fill** (S10) | **open** | helper exists (`execution-model.ts:162`), runs **only at close** | `reference_value == computeBuyFill().effectivePrice` |
-| **B4** | `0` / negative / NaN never reaches a comparison | **open** | needs a guard at the evaluator boundary | each bad value ⇒ `hold`, never a close |
+| **B4** | `0` / negative / NaN never reaches a comparison | **in** | needs a guard at the evaluator boundary | each bad value ⇒ `hold`, never a close |
 | **B5** | for `mcap`, staleness is measured in **mcap time** | **open** | wall-clock is meaningless for a tracker row | an old mcap ⇒ `stale` |
 
 ### C. The decision (S2, S3)
@@ -395,7 +395,7 @@ the routing test already asserts.
 | **C1** | one evaluator, closed reason set | **in** | `exit-evaluator.ts` | golden cases per reason |
 | **C2** | **the reason is persisted** | **in** | **there is no `close_reason` column** — and `strategy_outcomes.status` only holds `won`/`lost`/`breakeven`, so the reason is nowhere | reason round-trips row → back |
 | **C3** | a backstop is distinguishable from a stop-loss | **in** | every close sets `sl_executed` or `tp1_executed`; **0 of 420 rows have no flag**, so `max_age`/`max_hold` are recorded as `sl_executed = true` | `max_age` close ⇒ `sl_executed = false` |
-| **C4** | basis is read from the row, not the route | **partial** | 4 families yes; `search_mcap_*` NULL | the evaluator never sees a route |
+| **C4** | basis is read from the row, not the route | **in** | 4 families yes; `search_mcap_*` NULL | the evaluator never sees a route |
 
 ### D. The writer (S6, S9)
 
