@@ -2867,8 +2867,14 @@ function TrendingBotFilterFields({
     checkManualTradingHistory: checkManualHistory,
   });
 
+  // T2's rule, applied where it matters most. `registry.ts:50-52` says it plainly: "nothing in the
+  // trending_bot chain reads `filtering` today — `passesConditions` reads `strategy.conditions` …
+  // turning a knob here currently changes nothing." So this block is **inert**: T7 tagged its fields
+  // with their provenance, and those tags are accurate, but no decision consumes the values. A control
+  // that does nothing must not look like one that does — the point of the taxonomy — and until now the
+  // only place this was written down was a comment in another file.
   return (
-    <Section title="Filtering">
+    <Section title="Filtering — INERT: nothing reads these today (the entry gate uses `conditions`)">
       <FieldGrid>
         <CheckboxField
           label="Filtering enabled"
