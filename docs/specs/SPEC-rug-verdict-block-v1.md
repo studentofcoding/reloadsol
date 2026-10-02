@@ -53,7 +53,7 @@ entirely.
 
 ```
 token_metrics_history      12,987 rows / 4,393 mints   2026-09-15 → 2026-10-02   89% with volume
-  minutes per mint         60+: 3,829 mints             <5: 564 mints            (nothing between)
+  held minutes per mint    <5: 2,383 | 5–9: 659 | 10–29: 428 | 30–59: 131 | 60+: 355
 rug_signal_shadow           4,104 rows / 2,350 mints   2 days   mcap 97% · liquidity 87% · symbol 48%
   decisions                 pass 2,141 rows / 699 mints
                             no_bars 1,961 / 1,731 mints ← 74% of mints are unjudged
@@ -63,8 +63,12 @@ token_rug_list              7,989 rows
 ml/artifacts                pattern-gate only — no rug model exists
 ```
 
-The bimodality is a property of the writer, not the tokens: a successful copy writes the full 501-bar
-window, so a mint either has 60+ minutes or effectively none.
+**Count held minutes, not array slots.** An earlier pass of this document used
+`SUM(array_length(c_min, 1))` and reported 3,829 mints with 60+ minutes — roughly **10× the truth**.
+That expression counts NULL slots, and `NULL` in these arrays means *not observed*, never a minute:
+a minute counts only when its close is finite and positive. On the honest basis, **355 mints hold 60+
+minutes and 914 hold a complete 10-minute block** — which is the same rule the scorer's own code
+documents, and the same rule this SPEC's clock (`firstHeldMinute`) implements.
 
 ### P1 — ages under the real schedule
 
@@ -72,10 +76,11 @@ window, so a mint either has 60+ minutes or effectively none.
 age at first evaluation      0–5 min  43 | 5–10  35 | 10–15 21 | 15–30 15 | 30–60 12 | 1–3h 22
                              3–24h 28 | 1d+ 185 | negative 49        (410 mints joined)
 caught inside first 10 min   78 / 410  = 19%      ← under the *broken* cadence
-buildable block              of the 127 mints caught ≤10 min, 125 have ≥10 recorded minutes (98%)
+buildable block              of the 130 mints caught ≤10 min, 107 hold ≥10 real minutes (82%)
 ```
 
-So the block is buildable in practice (98%), and the catch rate is a scheduling artefact, not a data
+So the block is buildable for most caught mints (82%, and that figure is on the *held*-minute basis —
+the earlier 98% counted NULL slots), and the catch rate is a scheduling artefact, not a data
 one. Anchoring the clock to our first held minute makes the verdict due whenever ten minutes exist —
 the cadence then only affects **latency**, never whether a token is judged.
 

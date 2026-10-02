@@ -58,6 +58,12 @@ export type CalibrationRun = {
   tripRate: number
   /** Which path produced each trip — a core-pair trip is a different claim from a score trip. */
   tripsByPath: { score: number; core: number }
+  /**
+   * The same observations under both bar bases — T2's gate. `judged` is the number that matters:
+   * ten 1m bars is two 5m bars, so the 5m basis reports `no_bars` (an unknown, not a low score)
+   * where the 1m block can score. Both are reported so the switch is measurable, not a cliff.
+   */
+  bases: { fiveM: { judged: number; trips: number }; oneM: { judged: number; trips: number } }
   /** The shape pair (`staircase + liquidity`) across the population, against its own threshold. */
   core: { avg: number; max: number }
   best: { score: number; mint: string } | null
@@ -226,6 +232,7 @@ export async function replayRugSignal(params: {
       trips: 0,
       tripRate: 0,
       tripsByPath: { score: 0, core: 0 },
+      bases: { fiveM: { judged: 0, trips: 0 }, oneM: { judged: 0, trips: 0 } },
       core: { avg: 0, max: 0 },
       best: null,
       scoreHistogram: [],
@@ -274,6 +281,9 @@ export async function replayRugSignal(params: {
   let tripsByCore = 0
   const coreValues: number[] = []
   let best: { score: number; mint: string } | null = null
+  let judgedFiveM = 0
+  let judgedOneM = 0
+  let tripsOneM = 0
   let crossCheckChecked = 0
   let crossCheckMismatches = 0
 
@@ -295,6 +305,18 @@ export async function replayRugSignal(params: {
       { bars1m: bars, mcap, liquidityUsd, ageHours: null },
       thresholds,
     )
+
+    // The same row under the block basis, reported beside the 5m result so the two are comparable on
+    // real observations rather than a leap of faith. `judged` is the number that moves: ten 1m bars
+    // is two 5m bars, so the 5m basis calls a fresh token `no_bars` where the block can score it.
+    const block = evaluateRugSignalFrom1m(
+      { bars1m: bars, mcap, liquidityUsd, ageHours: null },
+      thresholds,
+      { basis: '1m' },
+    )
+    if (result.judged) judgedFiveM++
+    if (block.judged) judgedOneM++
+    if (block.isRug) tripsOneM++
 
     if (!scoringTouched && point.breakdown) {
       crossCheckChecked++
@@ -356,6 +378,10 @@ export async function replayRugSignal(params: {
     trips,
     tripRate: scores.length > 0 ? trips / scores.length : 0,
     tripsByPath: { score: tripsByScore, core: tripsByCore },
+    bases: {
+      fiveM: { judged: judgedFiveM, trips },
+      oneM: { judged: judgedOneM, trips: tripsOneM },
+    },
     core: {
       avg: coreValues.length > 0 ? coreValues.reduce((s, v) => s + v, 0) / coreValues.length : 0,
       max: coreValues.length > 0 ? Math.max(...coreValues) : 0,
