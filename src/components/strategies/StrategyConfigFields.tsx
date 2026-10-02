@@ -65,6 +65,65 @@ const SOURCE_STYLE: Record<FieldSource, string> = {
   inherited: 'text-gray-400',
 }
 
+/**
+ * T4 step 2 (second half) of SPEC-config-taxonomy: a strategy card shows only the fields it actually
+ * overrides, and the family defaults it merely inherits sit behind one toggle. The scope is a *card*, so
+ * the weights and shared-filter panels are not wrapped by it and render exactly as they did before.
+ */
+const CardFieldScope = React.createContext<{ revealed: boolean } | null>(null)
+
+export function CardFieldReveal({
+  sources,
+  children,
+}: {
+  /** This strategy's own `id.field -> stored | defaults`, already sliced from its family's map. */
+  sources?: Record<string, 'stored' | 'defaults'>
+  children: React.ReactNode
+}) {
+  const [revealed, setRevealed] = React.useState(false)
+  const inherited = Object.values(sources ?? {}).filter((v) => v === 'defaults').length
+  return (
+    <CardFieldScope.Provider value={{ revealed }}>
+      {inherited > 0 && (
+        <button
+          type="button"
+          onClick={() => setRevealed((v) => !v)}
+          className="text-[11px] text-blue-400 underline mb-3 block"
+        >
+          {revealed ? `hide inherited (${inherited})` : `show inherited (${inherited})`}
+        </button>
+      )}
+      {children}
+    </CardFieldScope.Provider>
+  )
+}
+
+/** Inherited greyed, overrides bold — only inside a card. Outside one the label is unchanged. */
+function fieldTone(scope: { revealed: boolean } | null, source?: FieldSource): string {
+  if (!scope) return 'text-gray-400'
+  if (source === 'inherited') return 'text-gray-600'
+  if (source === 'stored') return 'font-semibold text-gray-100'
+  return 'text-gray-400'
+}
+
+/**
+ * A `Section` that disappears when the strategy overrode none of it, so an unoverridden block leaves no
+ * empty titled shell behind. The card's reveal toggle brings it back, greyed.
+ */
+export function CardSection({
+  title,
+  overridden,
+  children,
+}: {
+  title: string
+  overridden: boolean
+  children: React.ReactNode
+}) {
+  const scope = React.useContext(CardFieldScope)
+  if (scope && !overridden && !scope.revealed) return null
+  return <Section title={title}>{children}</Section>
+}
+
 export function SourceTag({ source }: { source?: FieldSource }) {
   if (!source) return null
   return (
@@ -89,8 +148,10 @@ export function NumberField({
   step?: string
   source?: FieldSource
 }) {
+  const scope = React.useContext(CardFieldScope)
+  if (scope && source === 'inherited' && !scope.revealed) return null
   return (
-    <label className={`text-gray-400 ${colSpan === 2 ? "col-span-2" : ""}`}>
+    <label className={`${fieldTone(scope, source)} ${colSpan === 2 ? "col-span-2" : ""}`}>
       {label}
       <SourceTag source={source} />
       <input
@@ -117,9 +178,11 @@ export function CheckboxField({
   colSpan?: 1 | 2
   source?: FieldSource
 }) {
+  const scope = React.useContext(CardFieldScope)
+  if (scope && source === 'inherited' && !scope.revealed) return null
   return (
     <label
-      className={`text-gray-400 flex items-center gap-2 ${colSpan === 2 ? "col-span-2" : ""}`}
+      className={`${fieldTone(scope, source)} flex items-center gap-2 ${colSpan === 2 ? "col-span-2" : ""}`}
     >
       <input
         type="checkbox"

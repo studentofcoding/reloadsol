@@ -21,6 +21,8 @@ import {
   Section,
   FieldGrid,
   FamilyDefaultRow,
+  CardFieldReveal,
+  CardSection,
   NumberField,
   CheckboxField,
   SourceTag,
@@ -3152,6 +3154,12 @@ function SignalsCard({
       : sources?.[path]
         ? ("inherited" as const)
         : undefined;
+  // T4 step 2: did this strategy override anything under `path`? Gates whether the section shows at all
+  // before the card's "show inherited" toggle is flipped.
+  const overrode = (path: string) =>
+    Object.entries(sources ?? {}).some(
+      ([k, v]) => k.startsWith(`${strategy.id}.${path}`) && v === "stored",
+    );
   const [minGrowth, setMinGrowth] = useState(String(q.minGrowth));
   const [recency, setRecency] = useState(String(q.recencyMinutes));
   const [limit, setLimit] = useState(String(q.limit));
@@ -3197,7 +3205,8 @@ function SignalsCard({
         <span className="font-mono text-[10px] uppercase tracking-wide text-gray-500">switch</span>
         <ExecutionModeSelect value={execMode} onChange={setExecMode} />
       </label>
-      <Section title="Query">
+      <CardFieldReveal sources={sources}>
+      <CardSection title="Query" overridden={overrode("config.query")}>
         <FieldGrid>
           <NumberField label="limit" value={limit} onChange={setLimit} step="1" source={src(`${strategy.id}.config.query.limit`)} />
           <NumberField label="recency (min)" value={recency} onChange={setRecency} step="1" source={src(`${strategy.id}.config.query.recencyMinutes`)} />
@@ -3208,32 +3217,34 @@ function SignalsCard({
             checked={includeStuck}
             onChange={setIncludeStuck}
             colSpan={2}
+            source={src(`${strategy.id}.config.query.includeStuck`)}
           />
         </FieldGrid>
-      </Section>
-      <Section title="Entry">
+      </CardSection>
+      <CardSection title="Entry" overridden={overrode("config.enterScoreFloor")}>
         <FieldGrid>
           <NumberField label="enter score ≥" value={enterFloor} onChange={setEnterFloor} colSpan={2} source={src(`${strategy.id}.config.enterScoreFloor`)} />
         </FieldGrid>
-      </Section>
-      <Section title="Execution">
+      </CardSection>
+      <CardSection title="Execution" overridden={overrode("config.execution")}>
         <FieldGrid>
           <NumberField label="sim buy SOL" value={simBuy} onChange={setSimBuy} step="0.001" source={src(`${strategy.id}.config.execution.simBuySol`)} />
           <NumberField label="max open positions" value={maxOpen} onChange={setMaxOpen} step="1" source={src(`${strategy.id}.config.execution.maxOpenPositions`)} />
         </FieldGrid>
-      </Section>
-      <Section title="Scoring — family default (editing adds a per-strategy override)">
+      </CardSection>
+      <CardSection title="Scoring — family default (editing adds a per-strategy override)" overridden={overrode("config.scoring")}>
         <FieldGrid>
-          <NumberField label="milestone80" value={milestone80} onChange={setMilestone80} step="1" />
-          <NumberField label="milestone120" value={milestone120} onChange={setMilestone120} step="1" />
-          <NumberField label="milestone200" value={milestone200} onChange={setMilestone200} step="1" />
-          <NumberField label="stuckPenalty" value={stuckPenalty} onChange={setStuckPenalty} step="1" />
-          <NumberField label="stopLossPenalty" value={stopLossPenalty} onChange={setStopLossPenalty} step="1" />
+          <NumberField label="milestone80" value={milestone80} onChange={setMilestone80} step="1" source={src(`${strategy.id}.config.scoring.milestone80`)} />
+          <NumberField label="milestone120" value={milestone120} onChange={setMilestone120} step="1" source={src(`${strategy.id}.config.scoring.milestone120`)} />
+          <NumberField label="milestone200" value={milestone200} onChange={setMilestone200} step="1" source={src(`${strategy.id}.config.scoring.milestone200`)} />
+          <NumberField label="stuckPenalty" value={stuckPenalty} onChange={setStuckPenalty} step="1" source={src(`${strategy.id}.config.scoring.stuckPenalty`)} />
+          <NumberField label="stopLossPenalty" value={stopLossPenalty} onChange={setStopLossPenalty} step="1" source={src(`${strategy.id}.config.scoring.stopLossPenalty`)} />
           <NumberField
             label="sellOver100LatePenalty"
             value={sellOver100LatePenalty}
             onChange={setSellOver100LatePenalty}
             step="1"
+            source={src(`${strategy.id}.config.scoring.sellOver100LatePenalty`)}
           />
         </FieldGrid>
         <button
@@ -3250,24 +3261,28 @@ function SignalsCard({
               value={recencyBoostMax}
               onChange={setRecencyBoostMax}
               step="1"
+              source={src(`${strategy.id}.config.scoring.recencyBoostMax`)}
             />
-            <NumberField label="speedTo80Fast" value={speedFast} onChange={setSpeedFast} step="1" />
+            <NumberField label="speedTo80Fast" value={speedFast} onChange={setSpeedFast} step="1" source={src(`${strategy.id}.config.scoring.speedTo80Fast`)} />
             <NumberField
               label="speedTo80Medium"
               value={speedMedium}
               onChange={setSpeedMedium}
               step="1"
+              source={src(`${strategy.id}.config.scoring.speedTo80Medium`)}
             />
-            <NumberField label="speedTo80Slow" value={speedSlow} onChange={setSpeedSlow} step="1" />
+            <NumberField label="speedTo80Slow" value={speedSlow} onChange={setSpeedSlow} step="1" source={src(`${strategy.id}.config.scoring.speedTo80Slow`)} />
             <NumberField
               label="inTrackingRange"
               value={inTrackingRange}
               onChange={setInTrackingRange}
               step="1"
+              source={src(`${strategy.id}.config.scoring.inTrackingRange`)}
             />
           </FieldGrid>
         )}
-      </Section>
+      </CardSection>
+      </CardFieldReveal>
       <div className="flex gap-2">
         <button
           type="button"
@@ -3356,6 +3371,10 @@ function McapTrackerCard({
       : sources?.[path]
         ? ("inherited" as const)
         : undefined;
+  const overrode = (path: string) =>
+    Object.entries(sources ?? {}).some(
+      ([k, v]) => k.startsWith(`${strategy.id}.${path}`) && v === "stored",
+    );
   const [entryTemplate, setEntryTemplate] = useState(strategy.config.entryTemplate);
   const [recency, setRecency] = useState(String(q.recencyMinutes));
   const [limit, setLimit] = useState(String(q.limit ?? 300));
@@ -3410,33 +3429,35 @@ function McapTrackerCard({
           <option value="milestone_80">milestone_80</option>
         </select>
       </label>
-      <Section title="Query">
+      <CardFieldReveal sources={sources}>
+      <CardSection title="Query" overridden={overrode("config.query")}>
         <FieldGrid>
           <NumberField label="recency (min)" value={recency} onChange={setRecency} step="1" source={src(`${strategy.id}.config.query.recencyMinutes`)} />
           <NumberField label="limit" value={limit} onChange={setLimit} step="1" source={src(`${strategy.id}.config.query.limit`)} />
         </FieldGrid>
-      </Section>
-      <Section title="Execution">
+      </CardSection>
+      <CardSection title="Execution" overridden={overrode("config.execution")}>
         <FieldGrid>
           <NumberField label="sim buy SOL" value={simBuy} onChange={setSimBuy} step="0.001" source={src(`${strategy.id}.config.execution.simBuySol`)} />
           <NumberField label="max open" value={maxOpen} onChange={setMaxOpen} step="1" source={src(`${strategy.id}.config.execution.maxOpenPositions`)} />
         </FieldGrid>
-      </Section>
-      <Section title="Exit — family default (editing adds a per-strategy override)">
+      </CardSection>
+      <CardSection title="Exit — family default (editing adds a per-strategy override)" overridden={overrode("config.exit")}>
         <FieldGrid>
           <NumberField label="stop loss %" value={stopLoss} onChange={setStopLoss} step="1" source={src(`${strategy.id}.config.exit.stopLossPct`)} />
           <NumberField label="take profit %" value={takeProfit} onChange={setTakeProfit} step="1" source={src(`${strategy.id}.config.exit.takeProfitPct`)} />
           <NumberField label="max hold (h)" value={maxHold} onChange={setMaxHold} step="1" source={src(`${strategy.id}.config.exit.maxHoldHours`)} />
         </FieldGrid>
-      </Section>
-      <Section title="Entry filters">
+      </CardSection>
+      <CardSection title="Entry filters" overridden={overrode("config.entry")}>
         <FieldGrid>
           <NumberField label="mcap min" value={mcapMin} onChange={setMcapMin} step="1000" source={src(`${strategy.id}.config.entry.mcapMin`)} />
           <NumberField label="mcap max" value={mcapMax} onChange={setMcapMax} step="1000" source={src(`${strategy.id}.config.entry.mcapMax`)} />
-          <NumberField label="organic min" value={organicMin} onChange={setOrganicMin} step="1" />
-          <NumberField label="holders max %" value={holdersMax} onChange={setHoldersMax} step="1" />
+          <NumberField label="organic min" value={organicMin} onChange={setOrganicMin} step="1" source={src(`${strategy.id}.config.entry.organicScoreMin`)} />
+          <NumberField label="holders max %" value={holdersMax} onChange={setHoldersMax} step="1" source={src(`${strategy.id}.config.entry.topHoldersPctMax`)} />
         </FieldGrid>
-      </Section>
+      </CardSection>
+      </CardFieldReveal>
       <div className="flex gap-2 mt-2">
         <button
           type="button"
@@ -3519,6 +3540,10 @@ function GmgnCard({
       : sources?.[path]
         ? ("inherited" as const)
         : undefined;
+  const overrode = (path: string) =>
+    Object.entries(sources ?? {}).some(
+      ([k, v]) => k.startsWith(`${strategy.id}.${path}`) && v === "stored",
+    );
   const s = strategy.config.security;
   const e = strategy.config.execution;
   const x = strategy.config.exit;
@@ -3598,7 +3623,8 @@ function GmgnCard({
           <option value="both">both</option>
         </select>
       </label>
-      <Section title="Discovery">
+      <CardFieldReveal sources={sources}>
+      <CardSection title="Discovery" overridden={overrode("config.discovery")}>
         <FieldGrid>
           {/* T7: `config.discovery.*` because the gmgn registry is keyed by id and the strategy nests
               its knobs under `config`. */}
@@ -3631,101 +3657,113 @@ function GmgnCard({
             source={src(`${strategy.id}.config.discovery.clusterMinWallets`)}
           />
         </FieldGrid>
-      </Section>
-      <Section title="Security gate — family default (editing adds a per-strategy override)">
+      </CardSection>
+      <CardSection title="Security gate — family default (editing adds a per-strategy override)" overridden={overrode("config.security")}>
         <FieldGrid>
-          <NumberField label="min smart wallets" value={minSmart} onChange={setMinSmart} step="1" />
-          <NumberField label="max top-10 rate" value={maxTop10} onChange={setMaxTop10} step="0.01" />
-          <NumberField label="min liquidity USD" value={minLiq} onChange={setMinLiq} step="1000" />
-          <NumberField label="max candidates/tick" value={maxCandidates} onChange={setMaxCandidates} step="1" />
+          <NumberField label="min smart wallets" value={minSmart} onChange={setMinSmart} step="1" source={src(`${strategy.id}.config.security.minSmartWallets`)} />
+          <NumberField label="max top-10 rate" value={maxTop10} onChange={setMaxTop10} step="0.01" source={src(`${strategy.id}.config.security.maxTop10HolderRate`)} />
+          <NumberField label="min liquidity USD" value={minLiq} onChange={setMinLiq} step="1000" source={src(`${strategy.id}.config.security.minLiquidityUsd`)} />
+          <NumberField label="max candidates/tick" value={maxCandidates} onChange={setMaxCandidates} step="1" source={src(`${strategy.id}.config.security.maxCandidatesPerTick`)} />
         </FieldGrid>
-      </Section>
-      <Section title="Execution">
+      </CardSection>
+      <CardSection title="Execution" overridden={overrode("config.execution")}>
         <FieldGrid>
-          <NumberField label="sim buy SOL" value={simBuy} onChange={setSimBuy} step="0.001" />
-          <NumberField label="max open" value={maxOpen} onChange={setMaxOpen} step="1" />
+          <NumberField label="sim buy SOL" value={simBuy} onChange={setSimBuy} step="0.001" source={src(`${strategy.id}.config.execution.simBuySol`)} />
+          <NumberField label="max open" value={maxOpen} onChange={setMaxOpen} step="1" source={src(`${strategy.id}.config.execution.maxOpenPositions`)} />
         </FieldGrid>
-      </Section>
-      <Section title="Exit — family default (editing adds a per-strategy override)">
+      </CardSection>
+      <CardSection title="Exit — family default (editing adds a per-strategy override)" overridden={overrode("config.exit")}>
         <FieldGrid>
-          <NumberField label="stop loss %" value={stopLoss} onChange={setStopLoss} step="1" />
-          <NumberField label="take profit %" value={takeProfit} onChange={setTakeProfit} step="1" />
-          <NumberField label="max hold (h)" value={maxHold} onChange={setMaxHold} step="1" />
+          <NumberField label="stop loss %" value={stopLoss} onChange={setStopLoss} step="1" source={src(`${strategy.id}.config.exit.stopLossPct`)} />
+          <NumberField label="take profit %" value={takeProfit} onChange={setTakeProfit} step="1" source={src(`${strategy.id}.config.exit.takeProfitPct`)} />
+          <NumberField label="max hold (h)" value={maxHold} onChange={setMaxHold} step="1" source={src(`${strategy.id}.config.exit.maxHoldHours`)} />
         </FieldGrid>
-      </Section>
+      </CardSection>
       {/* T4 step 2, first structural fact made visible: radar is *family* level. `r` falls back to
           `DEFAULT_GMGN_RADAR`, so every gmgn card without an override renders identical numbers here —
           which is exactly the duplication the census counted (GmgnStrategyConfig 32 fields against
           GmgnRadarConfig 8), and why this block is the first candidate for one shared family row.
           Editing it still edits this strategy only; what you are looking at is the family default. */}
-      <Section title="Radar — family default (editing adds a per-strategy override)">
+      <CardSection title="Radar — family default (editing adds a per-strategy override)" overridden={overrode("config.radar")}>
         <FieldGrid>
           <NumberField
             label="sticky pump %"
             value={stickyPumpPct}
             onChange={setStickyPumpPct}
             step="1"
+            source={src(`${strategy.id}.config.radar.stickyPumpPct`)}
           />
-          <NumberField label="dump ban %" value={dumpBanPct} onChange={setDumpBanPct} step="1" />
+          <NumberField label="dump ban %" value={dumpBanPct} onChange={setDumpBanPct} step="1" source={src(`${strategy.id}.config.radar.dumpBanPct`)} />
           <NumberField
             label="sticky TTL (min)"
             value={stickyTtlMinutes}
             onChange={setStickyTtlMinutes}
             step="1"
+            source={src(`${strategy.id}.config.radar.stickyTtlMinutes`)}
           />
           <NumberField
             label="ENTER override score ≥"
             value={enterOverrideMinScore}
             onChange={setEnterOverrideMinScore}
             step="1"
+            source={src(`${strategy.id}.config.radar.enterOverrideMinScore`)}
           />
           <CheckboxField
             label="comeback enabled"
             checked={comebackEnabled}
             onChange={setComebackEnabled}
+            source={src(`${strategy.id}.config.radar.comeback.enabled`)}
           />
           <CheckboxField
             label="Telegram single thread"
             checked={singleThread}
             onChange={setSingleThread}
+            source={src(`${strategy.id}.config.radar.telegram.singleThread`)}
           />
           <NumberField
             label="Telegram min mcap $"
             value={minTelegramMcapUsd}
             onChange={setMinTelegramMcapUsd}
             step="1000"
+            source={src(`${strategy.id}.config.radar.telegram.minMcapUsd`)}
           />
-          <NumberField label="drawdown %" value={drawdownPct} onChange={setDrawdownPct} step="1" />
+          <NumberField label="drawdown %" value={drawdownPct} onChange={setDrawdownPct} step="1" source={src(`${strategy.id}.config.radar.comeback.drawdownPct`)} />
           <NumberField
             label="trough mcap max"
             value={troughMcapMax}
             onChange={setTroughMcapMax}
             step="1000"
+            source={src(`${strategy.id}.config.radar.comeback.troughMcapMax`)}
           />
           <NumberField
             label="recover multiple"
             value={recoverMultiple}
             onChange={setRecoverMultiple}
             step="0.1"
+            source={src(`${strategy.id}.config.radar.comeback.recoverMultiple`)}
           />
           <NumberField
             label="min radar score"
             value={minRadarScore}
             onChange={setMinRadarScore}
             step="1"
+            source={src(`${strategy.id}.config.radar.comeback.minRadarScore`)}
           />
           <CheckboxField
             label="unban on comeback"
             checked={unbanOnComeback}
             onChange={setUnbanOnComeback}
+            source={src(`${strategy.id}.config.radar.comeback.unbanOnComeback`)}
           />
           <CheckboxField
             label="sim reopen on comeback"
             checked={allowSimReopen}
             onChange={setAllowSimReopen}
+            source={src(`${strategy.id}.config.radar.comeback.allowSimReopen`)}
           />
         </FieldGrid>
-      </Section>
+      </CardSection>
+      </CardFieldReveal>
       <div className="flex gap-2 mt-2">
         <button
           type="button"
@@ -4204,6 +4242,16 @@ function StrategyConfigTab({
   }, [focusDomain]);
 
   const show = (domain: string) => !focusDomain || focusDomain === domain;
+  // T4 step 2: `sources.<family>` is the whole family's diff, keyed `<id>.<path>`. A card's override
+  // count and its inherited/override split must be *this* strategy's keys, so slice before handing it
+  // over — otherwise every card in a family shows the family-wide total.
+  const own = (
+    all: Record<string, "stored" | "defaults"> | undefined,
+    id: string,
+  ): Record<string, "stored" | "defaults"> | undefined =>
+    all
+      ? Object.fromEntries(Object.entries(all).filter(([k]) => k.startsWith(`${id}.`)))
+      : undefined;
   const collapsed = (domain: string, summary: string, title: string) => (
     <section
       id={`algo-config-${domain}`}
@@ -4240,7 +4288,7 @@ function StrategyConfigTab({
             <TrendingBotCard
               key={`${s.id}-${s.is_active}-${s.buy_amount_sol}-${s.stop_loss_percentage}-${s.take_profit_levels.tp1_percentage}`}
               strategy={s}
-              sources={sources?.trending_bot}
+              sources={own(sources?.trending_bot, s.id)}
               isRunning={active.includes(s.id)}
               allocation={allocation?.[s.id]}
               saving={saving === s.id}
@@ -4275,7 +4323,7 @@ function StrategyConfigTab({
             <SignalsCard
               key={s.id}
               strategy={s}
-              sources={sources?.signals}
+              sources={own(sources?.signals, s.id)}
               saving={saving === s.id}
               onSave={onSave}
             />
@@ -4308,7 +4356,7 @@ function StrategyConfigTab({
             <McapTrackerCard
               key={s.id}
               strategy={s}
-              sources={sources?.mcap_tracker}
+              sources={own(sources?.mcap_tracker, s.id)}
               saving={saving === s.id}
               onSave={onSave}
             />
@@ -4361,7 +4409,7 @@ function StrategyConfigTab({
             <GmgnCard
               key={`${s.id}-${s.is_active}-${s.execution_mode}-${s.config.radar?.stickyPumpPct}-${s.config.radar?.dumpBanPct}-${s.config.radar?.comeback?.allowSimReopen}-${s.config.radar?.telegram?.singleThread}-${s.config.radar?.telegram?.minMcapUsd}`}
               strategy={s}
-              sources={sources?.gmgn}
+              sources={own(sources?.gmgn, s.id)}
               saving={saving === s.id}
               onSave={onSave}
             />
@@ -4402,7 +4450,7 @@ function StrategyConfigTab({
               <SocialCard
                 key={`${s.id}-${s.is_active}-${s.execution_mode}-${s.config.entry.minMentions30m}`}
                 strategy={s}
-                sources={sources?.social}
+                sources={own(sources?.social, s.id)}
                 saving={saving === s.id}
                 onSave={onSave}
               />
