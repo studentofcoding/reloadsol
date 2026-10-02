@@ -4,7 +4,7 @@ import { OptimizedImage } from "@/components/OptimizedImage";
 import React, { useEffect, useState, useRef, useMemo } from 'react'
 import ChartOverview from './ChartOverview'
 import TokenSkeleton from './TokenSkeleton'
-import { fetchAxiomTokenInfo, getRiskIndicators, formatRiskDisplay, calculateFeeToMarketCapRatio } from '@/utils/axiom'
+import { fetchTokenRiskData, getRiskIndicators, formatRiskDisplay, calculateFeeToMarketCapRatio } from '@/utils/token-risk'
 import RiskAnalysis from './RiskAnalysis'
 import {
   TokenStatsGrid,
@@ -45,7 +45,7 @@ interface TrendingToken {
   first_mcap?: number
 }
 
-interface AxiomTokenInfo {
+interface TokenRiskInfo {
   numHolders: number
   numBotUsers: number
   top10HoldersPercent: number
@@ -91,8 +91,8 @@ export default function TrendingTokens({
   const [selectedTokenAddress, setSelectedTokenAddress] = useState<string | null>(null)
   const [isChartOpen, setIsChartOpen] = useState<boolean>(false)
   const [isMobile, setIsMobile] = useState(false)
-  const [axiomData, setAxiomData] = useState<Map<string, { data: AxiomTokenInfo; risk: RiskIndicators }>>(new Map())
-  const [loadingAxiom, setLoadingAxiom] = useState<Set<string>>(new Set())
+  const [riskData, setRiskData] = useState<Map<string, { data: TokenRiskInfo; risk: RiskIndicators }>>(new Map())
+  const [loadingRisk, setLoadingRisk] = useState<Set<string>>(new Set())
 
   // Fetch complete token data
   const fetchInFlightRef = useRef(false)
@@ -318,30 +318,30 @@ export default function TrendingTokens({
     onSelectToken(token.token_address)
   }
 
-  // Fetch Axiom data for a token
-  const fetchAxiomData = async (tokenAddress: string) => {
-    console.log('Fetching Axiom data for:', tokenAddress)
-    if (loadingAxiom.has(tokenAddress) || axiomData.has(tokenAddress)) return
+  // Fetch TokenRisk data for a token
+  const fetchRiskData = async (tokenAddress: string) => {
+    console.log('Fetching TokenRisk data for:', tokenAddress)
+    if (loadingRisk.has(tokenAddress) || riskData.has(tokenAddress)) return
     
-    setLoadingAxiom(prev => new Set(prev).add(tokenAddress))
+    setLoadingRisk(prev => new Set(prev).add(tokenAddress))
     
     try {
-      const result = await fetchAxiomTokenInfo(tokenAddress)
+      const result = await fetchTokenRiskData(tokenAddress)
       if (result.success && result.data) {
         // Find the token to get its market cap for fee analysis
         const token = trendingTokens.find(t => t.token_address === tokenAddress)
         const marketCap = token?.mcap || 0
         const risk = getRiskIndicators(result.data, marketCap)
-        setAxiomData(prev => new Map(prev).set(tokenAddress, { data: result.data!, risk }))
+        setRiskData(prev => new Map(prev).set(tokenAddress, { data: result.data!, risk }))
       } else if (result.requiresAuth) {
         // Handle authentication error gracefully
-        console.warn('Axiom API requires authentication - risk data unavailable')
+        console.warn('TokenRisk API requires authentication - risk data unavailable')
         // You could show a tooltip or notification here
       }
     } catch (error) {
-      console.error(`Failed to fetch Axiom data for ${tokenAddress}:`, error)
+      console.error(`Failed to fetch TokenRisk data for ${tokenAddress}:`, error)
     } finally {
-      setLoadingAxiom(prev => {
+      setLoadingRisk(prev => {
         const newSet = new Set(prev)
         newSet.delete(tokenAddress)
         return newSet
@@ -548,7 +548,7 @@ export default function TrendingTokens({
                   )}
                 </div>
 
-                {/* Axiom Risk Indicators */}
+                {/* TokenRisk Risk Indicators */}
                 {/* // In the token render section, replace the risk display with: */}
                 <div className="mt-2 pt-2 border-t border-gray-700">
                   <RiskAnalysis

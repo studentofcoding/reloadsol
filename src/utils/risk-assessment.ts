@@ -1,4 +1,4 @@
-import { fetchAxiomTokenInfo, getRiskIndicators, calculateFeeToMarketCapRatio } from './axiom'
+import { fetchTokenRiskData, getRiskIndicators, calculateFeeToMarketCapRatio } from './token-risk'
 import { fetchTokenMetadataFromJupiter } from '@/utils/jupiter-metadata'
 
 // Types for risk assessment
@@ -24,12 +24,12 @@ export interface TokenData {
 export interface RiskAssessmentResult {
   riskLevel: 'LOW' | 'MED' | 'HIGH'
   riskIndicators?: RiskIndicators
-  assessmentMethod: 'axiom' | 'organic_volatility' | 'basic' | 'jupiter_metadata'
+  assessmentMethod: 'token_risk' | 'organic_volatility' | 'basic' | 'jupiter_metadata'
   organicScore?: number
   volatility?: number
   error?: string
-  // Add detailed Axiom data for Discord formatting
-  axiomData?: {
+  // Add detailed TokenRisk data for Discord formatting
+  riskData?: {
     insidersHoldPercent: number
     bundlersHoldPercent: number
     snipersHoldPercent: number
@@ -52,7 +52,7 @@ export interface RiskAssessmentOptions {
 }
 
 /**
- * Comprehensive token risk assessment with Jupiter-first bonding check and Axiom gating
+ * Comprehensive token risk assessment with Jupiter-first bonding check and TokenRisk gating
  * 
  * @param token - Token data including address, symbol, market cap, price, and optional metrics
  * @param options - Configuration options for the assessment
@@ -104,7 +104,7 @@ export async function assessTokenRisk(
 
   const bondingCurve = typeof jupMeta?.bondingCurve === 'number' ? jupMeta.bondingCurve : null
 
-  // If bondingCurve is not 100 (i.e., not fully graduated), skip Axiom and use Jupiter's organicScore and audit data
+  // If bondingCurve is not 100 (i.e., not fully graduated), skip TokenRisk and use Jupiter's organicScore and audit data
   if (bondingCurve === null || bondingCurve !== 100) {
     const organicScore = typeof jupMeta?.organicScore === 'number' ? jupMeta.organicScore : (token.organic_score ?? null)
     const topHoldersPercentage = typeof jupMeta?.audit?.topHoldersPercentage === 'number' ? jupMeta.audit.topHoldersPercentage : null
@@ -139,28 +139,28 @@ export async function assessTokenRisk(
     }
   }
 
-  // Primary assessment: Try Axiom API with timeout (only if bondingCurve === 100)
+  // Primary assessment: Try TokenRisk API with timeout (only if bondingCurve === 100)
   try {
     if (enableLogging) {
-      console.log(`📊 Attempting Axiom API assessment for ${token.token_symbol}`)
+      console.log(`📊 Attempting TokenRisk API assessment for ${token.token_symbol}`)
     }
 
-    const axiomResult = await Promise.race([
-      fetchAxiomTokenInfo(token.token_address),
+    const riskResult = await Promise.race([
+      fetchTokenRiskData(token.token_address),
       new Promise<{ success: false; error: string }>((_, reject) =>
-        setTimeout(() => reject(new Error('Axiom API timeout')), timeoutMs)
+        setTimeout(() => reject(new Error('TokenRisk API timeout')), timeoutMs)
       )
     ])
 
-    if (axiomResult.success && axiomResult.data) {
-      const riskIndicators = getRiskIndicators(axiomResult.data, token.mcap)
+    if (riskResult.success && riskResult.data) {
+      const riskIndicators = getRiskIndicators(riskResult.data, token.mcap)
       const riskLevel = riskIndicators.overallRisk === 'MEDIUM' ? 'MED' : riskIndicators.overallRisk
 
       // Calculate fee to market cap ratio
-      const feeAnalysis = calculateFeeToMarketCapRatio(axiomResult.data.totalPairFeesPaid, token.mcap)
+      const feeAnalysis = calculateFeeToMarketCapRatio(riskResult.data.totalPairFeesPaid, token.mcap)
 
       if (enableLogging) {
-        console.log(`✅ Axiom risk assessment for ${token.token_symbol}: ${riskLevel}`, {
+        console.log(`✅ TokenRisk risk assessment for ${token.token_symbol}: ${riskLevel}`, {
           insider: riskIndicators.insiderRisk,
           bundler: riskIndicators.bundlerRisk,
           concentration: riskIndicators.concentrationRisk,
@@ -171,24 +171,24 @@ export async function assessTokenRisk(
       return {
         riskLevel,
         riskIndicators,
-        assessmentMethod: 'axiom',
-        axiomData: {
-          insidersHoldPercent: axiomResult.data.insidersHoldPercent,
-          bundlersHoldPercent: axiomResult.data.bundlersHoldPercent,
-          snipersHoldPercent: axiomResult.data.snipersHoldPercent,
-          top10HoldersPercent: axiomResult.data.top10HoldersPercent,
-          totalPairFeesPaid: axiomResult.data.totalPairFeesPaid,
+        assessmentMethod: 'token_risk',
+        riskData: {
+          insidersHoldPercent: riskResult.data.insidersHoldPercent,
+          bundlersHoldPercent: riskResult.data.bundlersHoldPercent,
+          snipersHoldPercent: riskResult.data.snipersHoldPercent,
+          top10HoldersPercent: riskResult.data.top10HoldersPercent,
+          totalPairFeesPaid: riskResult.data.totalPairFeesPaid,
           feeToMcapRatio: feeAnalysis.ratio
         }
       }
     } else {
       if (enableLogging) {
-        console.log(`⚠️ Axiom API failed for ${token.token_symbol}: ${axiomResult.error || 'Unknown error'}`)
+        console.log(`⚠️ TokenRisk API failed for ${token.token_symbol}: ${riskResult.error || 'Unknown error'}`)
       }
     }
   } catch (error) {
     if (enableLogging) {
-      console.log(`⚠️ Axiom API timeout/error for ${token.token_symbol}:`, error instanceof Error ? error.message : 'Unknown error')
+      console.log(`⚠️ TokenRisk API timeout/error for ${token.token_symbol}:`, error instanceof Error ? error.message : 'Unknown error')
     }
   }
 
@@ -297,16 +297,16 @@ export function formatRiskForDiscord(token: TokenData, riskResult: RiskAssessmen
 }
 
 /**
- * Format detailed risk assessment result for Discord messages with Axiom or Jupiter metrics
+ * Format detailed risk assessment result for Discord messages with TokenRisk or Jupiter metrics
  * 
  * @param token - Token data
  * @param riskResult - Risk assessment result
  * @returns Formatted string for Discord message with detailed metrics
  */
 export function formatDetailedRiskForDiscord(token: TokenData, riskResult: RiskAssessmentResult): string {
-  // If we have Axiom data, show detailed metrics
-  if (riskResult.axiomData) {
-    const { insidersHoldPercent, bundlersHoldPercent, snipersHoldPercent, top10HoldersPercent, feeToMcapRatio } = riskResult.axiomData
+  // If we have TokenRisk data, show detailed metrics
+  if (riskResult.riskData) {
+    const { insidersHoldPercent, bundlersHoldPercent, snipersHoldPercent, top10HoldersPercent, feeToMcapRatio } = riskResult.riskData
     return `I:${insidersHoldPercent.toFixed(1)}% B:${bundlersHoldPercent.toFixed(1)}% S:${snipersHoldPercent.toFixed(1)}% T10:${top10HoldersPercent.toFixed(1)}% F/Mcap:${feeToMcapRatio.toFixed(2)}`
   }
 

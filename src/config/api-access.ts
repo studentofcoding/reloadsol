@@ -9,7 +9,7 @@ export const PUBLIC_API_PREFIXES = [
   '/api/providers',
   '/api/trade/health',
   '/api/trade/pools-test',
-  '/api/axiom',
+  '/api/gmgn/token-snapshot',
   '/api/logs',
 ] as const;
 

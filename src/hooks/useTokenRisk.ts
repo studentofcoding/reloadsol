@@ -11,11 +11,11 @@ export type TokenRiskChain = 'sol' | 'robinhood'
  * (`gmgn-snapshot-cache.ts`) behind the GMGN priority lanes — so this adds no new upstream and
  * no new budget (`docs/GMGN_RATE_BUDGET.md`, "cache first, single-flight everywhere").
  *
- * It replaced Axiom, which was dead rather than merely flaky: the route carried hardcoded auth
+ * It replaced TokenRisk, which was dead rather than merely flaky: the route carried hardcoded auth
  * cookies whose access token expired 2025-07-18, so every Sol call 503'd and the risk panel had
  * been falling back for over a year. GMGN returns the same six fields plus honeypot and
  * concentration, and `mapGmgnSnapshotToRisk` — already in use for Robinhood — yields the exact
- * `{ axiomData, risk }` shape these components read.
+ * `{ riskData, risk }` shape these components read.
  */
 async function fetchGmgnRisk(
   chain: TokenRiskChain,

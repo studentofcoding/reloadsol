@@ -1,6 +1,6 @@
 import { fetchTokenMetadataFromJupiter } from '@/utils/jupiter-metadata'
 
-export interface AxiomTokenInfo {
+export interface TokenRiskInfo {
   numHolders: number
   numBotUsers: number
   top10HoldersPercent: number
@@ -21,9 +21,9 @@ export interface RiskIndicators {
   overallRisk: 'LOW' | 'MEDIUM' | 'HIGH'
 }
 
-interface AxiomResponse {
+interface TokenRiskResponse {
   success: boolean
-  data?: AxiomTokenInfo
+  data?: TokenRiskInfo
   error?: string
   requiresAuth?: boolean
   pairNotFound?: boolean
@@ -31,9 +31,9 @@ interface AxiomResponse {
   unavailable?: boolean
 }
 
-// Cache for Axiom API responses. Failures are cached too (shorter TTL) so a mint
+// Cache for TokenRisk API responses. Failures are cached too (shorter TTL) so a mint
 // that cannot be resolved is not re-fetched on every poll.
-const axiomCache = new Map<string, { response: AxiomResponse; timestamp: number }>()
+const riskCache = new Map<string, { response: TokenRiskResponse; timestamp: number }>()
 const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes cache
 const NEGATIVE_CACHE_DURATION = 2 * 60 * 1000 // 2 minutes for failures
 
@@ -45,7 +45,7 @@ function logFailureOnce(mintAddress: string, message: string): void {
   const last = loggedFailures.get(mintAddress) ?? 0
   if (Date.now() - last < NEGATIVE_CACHE_DURATION) return
   loggedFailures.set(mintAddress, Date.now())
-  console.warn(`[axiom] risk data unavailable for ${mintAddress}: ${message}`)
+  console.warn(`[token-risk] risk data unavailable for ${mintAddress}: ${message}`)
 }
 
 function getApiBaseUrl(): string {
@@ -53,7 +53,7 @@ function getApiBaseUrl(): string {
   return process.env.API_HOST || process.env.NEXT_PUBLIC_API_HOST || 'http://localhost:3000'
 }
 
-export async function fetchAxiomTokenInfo(mintAddress: string): Promise<AxiomResponse> {
+export async function fetchTokenRiskData(mintAddress: string): Promise<TokenRiskResponse> {
   // Delegates to the GMGN token-snapshot route, the same source the Robinhood path already used.
   // The direct client is gone on purpose: api.axiom.trade carried hardcoded auth cookies whose
   // access token expired 2025-07-18, so every call 503'd for over a year. GMGN returns the same
@@ -152,8 +152,8 @@ export function calculateFeeToMarketCapRatio(feesPaid: number, marketCap: number
   return { ratio, organicScore, feeRisk, isOrganic }
 }
 
-// Helper function to get risk indicators based on Axiom data
-export function getRiskIndicators(data: AxiomTokenInfo, marketCap?: number): RiskIndicators {
+// Helper function to get risk indicators based on TokenRisk data
+export function getRiskIndicators(data: TokenRiskInfo, marketCap?: number): RiskIndicators {
   const indicators = {
     insiderRisk: (data.insidersHoldPercent > 10 ? 'HIGH' : data.insidersHoldPercent > 5 ? 'MEDIUM' : 'LOW') as 'LOW' | 'MEDIUM' | 'HIGH',
     bundlerRisk: (data.bundlersHoldPercent > 5 ? 'HIGH' : data.bundlersHoldPercent > 2 ? 'MEDIUM' : 'LOW') as 'LOW' | 'MEDIUM' | 'HIGH',

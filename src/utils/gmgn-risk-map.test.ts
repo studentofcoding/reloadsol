@@ -17,7 +17,7 @@ describe('mapGmgnSnapshotToRisk', () => {
   })
 
   it('flags high top10 concentration', () => {
-    const { risk, axiomData } = mapGmgnSnapshotToRisk({
+    const { risk, riskData } = mapGmgnSnapshotToRisk({
       snapshot: {
         top10HoldPct: 65,
         insidersHoldPct: 1,
@@ -28,16 +28,16 @@ describe('mapGmgnSnapshotToRisk', () => {
       },
       marketCap: 500_000,
     })
-    expect(axiomData.top10HoldersPercent).toBe(65)
-    expect(axiomData.numHolders).toBe(1200)
+    expect(riskData.top10HoldersPercent).toBe(65)
+    expect(riskData.numHolders).toBe(1200)
     expect(risk.concentrationRisk).toBe('HIGH')
   })
 
   // GMGN returns `insidersHoldPct: null` for real Sol mints (measured on two live candidates),
-  // and RiskAnalysis renders these with `.toFixed(1)`. Before Sol was repointed off Axiom, a null
+  // and RiskAnalysis renders these with `.toFixed(1)`. Before Sol was repointed off TokenRisk, a null
   // here would have thrown during render — the mapper's pct() is what makes the field safe.
   it('coerces GMGN nulls to finite numbers, so the risk panel cannot throw on render', () => {
-    const { axiomData } = mapGmgnSnapshotToRisk({
+    const { riskData } = mapGmgnSnapshotToRisk({
       snapshot: {
         top10HoldPct: 23.36,
         insidersHoldPct: null,
@@ -57,10 +57,10 @@ describe('mapGmgnSnapshotToRisk', () => {
       'numHolders',
       'totalPairFeesPaid',
     ] as const) {
-      expect(Number.isFinite(axiomData[field]), `${field} must be finite`).toBe(true)
+      expect(Number.isFinite(riskData[field]), `${field} must be finite`).toBe(true)
     }
-    expect(axiomData.insidersHoldPercent).toBe(0)
+    expect(riskData.insidersHoldPercent).toBe(0)
     // The literal render path from RiskAnalysis.
-    expect(`${axiomData.insidersHoldPercent.toFixed(1)}%`).toBe('0.0%')
+    expect(`${riskData.insidersHoldPercent.toFixed(1)}%`).toBe('0.0%')
   })
 })

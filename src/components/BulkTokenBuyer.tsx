@@ -73,11 +73,11 @@ import ConfirmTransportSelect from "./ConfirmTransportSelect";
 import { useTradingData } from "./TradingDataProvider";
 import { usePostBuyRefresh } from "@/hooks/usePostBuyRefresh";
 import {
-  fetchAxiomTokenInfo,
+  fetchTokenRiskData,
   getRiskIndicators,
   formatRiskDisplay,
   calculateFeeToMarketCapRatio,
-} from "@/utils/axiom";
+} from "@/utils/token-risk";
 import { fetchTokenPricesForTracking } from "@/utils/trading-tracker";
 import GmgnKlineChart from "@/components/GmgnKlineChart";
 import {
@@ -482,10 +482,10 @@ export default function BulkTokenBuyer() {
   });
 
   // Risk analysis state
-  const [axiomData, setAxiomData] = useState<
+  const [riskData, setRiskData] = useState<
     Map<string, { data: any; risk: any; pairNotFound?: boolean }>
   >(new Map());
-  const [loadingAxiom, setLoadingAxiom] = useState<Set<string>>(new Set());
+  const [loadingRisk, setLoadingRisk] = useState<Set<string>>(new Set());
   const [showRiskAnalysis, setShowRiskAnalysis] = useState<boolean>(false);
 
   // Parse and validate mint addresses (chain-aware)
@@ -1792,31 +1792,31 @@ export default function BulkTokenBuyer() {
 
   const feeRates = getAllFeeRates();
 
-  // Fetch Axiom data for a token
-  const fetchAxiomData = async (tokenAddress: string) => {
-    if (loadingAxiom.has(tokenAddress) || axiomData.has(tokenAddress)) return;
+  // Fetch TokenRisk data for a token
+  const fetchRiskData = async (tokenAddress: string) => {
+    if (loadingRisk.has(tokenAddress) || riskData.has(tokenAddress)) return;
 
-    setLoadingAxiom((prev) => new Set(prev).add(tokenAddress));
+    setLoadingRisk((prev) => new Set(prev).add(tokenAddress));
 
     try {
-      const result = await fetchAxiomTokenInfo(tokenAddress);
+      const result = await fetchTokenRiskData(tokenAddress);
       if (result.success && result.data) {
         // Find the token to get its market cap for fee analysis
         const token = mergedTokenList.find((t) => t.address === tokenAddress);
         const marketCap = token?.mcap || 0;
         const risk = getRiskIndicators(result.data, marketCap);
-        setAxiomData((prev) =>
+        setRiskData((prev) =>
           new Map(prev).set(tokenAddress, { data: result.data!, risk }),
         );
       } else if (result.requiresAuth) {
         console.warn(
-          "Axiom API requires authentication - risk data unavailable",
+          "TokenRisk API requires authentication - risk data unavailable",
         );
       } else if (result.pairNotFound) {
         console.warn(
-          `Token ${tokenAddress} not found in Axiom database - no risk data available`,
+          `Token ${tokenAddress} not found in TokenRisk database - no risk data available`,
         );
-        setAxiomData((prev) =>
+        setRiskData((prev) =>
           new Map(prev).set(tokenAddress, {
             data: null,
             risk: null,
@@ -1825,9 +1825,9 @@ export default function BulkTokenBuyer() {
         );
       }
     } catch (error) {
-      console.error(`Failed to fetch Axiom data for ${tokenAddress}:`, error);
+      console.error(`Failed to fetch TokenRisk data for ${tokenAddress}:`, error);
     } finally {
-      setLoadingAxiom((prev) => {
+      setLoadingRisk((prev) => {
         const newSet = new Set(prev);
         newSet.delete(tokenAddress);
         return newSet;
@@ -1840,7 +1840,7 @@ export default function BulkTokenBuyer() {
     if (validMints.length === 0) return;
 
     setShowRiskAnalysis(true);
-    const promises = validMints.map((mint) => fetchAxiomData(mint));
+    const promises = validMints.map((mint) => fetchRiskData(mint));
     await Promise.all(promises);
   };
 
@@ -2568,13 +2568,13 @@ export default function BulkTokenBuyer() {
                         onClick={fetchAllRiskData}
                         disabled={validMints.every(
                           (mint) =>
-                            axiomData.has(mint) || loadingAxiom.has(mint),
+                            riskData.has(mint) || loadingRisk.has(mint),
                         )}
                         className="text-xs bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white px-3 py-1 rounded-md transition-colors"
                       >
                         {validMints.every(
                           (mint) =>
-                            axiomData.has(mint) || loadingAxiom.has(mint),
+                            riskData.has(mint) || loadingRisk.has(mint),
                         )
                           ? "Analysis Complete"
                           : "Analyze All Tokens"}
@@ -2587,8 +2587,8 @@ export default function BulkTokenBuyer() {
                           const tokenInfo = mergedTokenList.find(
                             (t) => t.address === mint,
                           );
-                          const axiomInfo = axiomData.get(mint);
-                          const isLoading = loadingAxiom.has(mint);
+                          const tokenRiskInfo = riskData.get(mint);
+                          const isLoading = loadingRisk.has(mint);
 
                           return (
                             <div
@@ -2608,10 +2608,10 @@ export default function BulkTokenBuyer() {
                                     {tokenInfo?.symbol || "Unknown"}
                                   </span>
                                 </div>
-                                {!axiomInfo && !isLoading && (
+                                {!tokenRiskInfo && !isLoading && (
                                   <button
                                     type="button"
-                                    onClick={() => fetchAxiomData(mint)}
+                                    onClick={() => fetchRiskData(mint)}
                                     className="text-xs bg-gray-700 hover:bg-gray-600 text-white px-2 py-1 rounded"
                                   >
                                     Analyze
@@ -2624,16 +2624,16 @@ export default function BulkTokenBuyer() {
                                   <div className="w-4 h-4 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
                                   <span className="text-xs">Analyzing...</span>
                                 </div>
-                              ) : axiomInfo?.pairNotFound ? (
+                              ) : tokenRiskInfo?.pairNotFound ? (
                                 <div className="text-xs text-gray-400">
                                   Token not found in risk database
                                 </div>
-                              ) : axiomInfo?.data ? (
+                              ) : tokenRiskInfo?.data ? (
                                 <RiskAnalysis
                                   tokenAddress={mint}
                                   marketCap={tokenInfo?.mcap || 0}
-                                  axiomData={axiomInfo.data}
-                                  riskData={axiomInfo.risk}
+                                  riskData={tokenRiskInfo.data}
+                                  riskIndicators={tokenRiskInfo.risk}
                                 />
                               ) : (
                                 <div className="text-xs text-gray-400">

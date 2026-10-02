@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { NextRequest, connection } from 'next/server'
 import { JupiterBaseAsset, JupiterPool, JupiterResponse, TokenCache, TransformedToken } from '@/types'
-import { fetchAxiomTokenInfo, getRiskIndicators, calculateFeeToMarketCapRatio } from '@/utils/axiom'
+import { fetchTokenRiskData, getRiskIndicators, calculateFeeToMarketCapRatio } from '@/utils/token-risk'
 import { assessTokenRisk, formatDetailedRiskForDiscord, getRiskEmoji } from '@/utils/risk-assessment'
 import { trackTokenMcap, getMcapDisplayString, isInTrackingRange, bulkTrackTokenMcaps } from '@/utils/mcap-tracker'
 import { formatAppDateTimeWithZone } from '@/utils/datetime'
@@ -552,7 +552,7 @@ async function sendDiscordNotification(
           }))
         })),
         messageSize: JSON.stringify(message).length,
-        hasAxiomErrors: error?.message?.includes('Axiom') || false
+        hasRiskErrors: error?.message?.includes('TokenRisk') || false
       });
 
       // Log the raw message structure for debugging

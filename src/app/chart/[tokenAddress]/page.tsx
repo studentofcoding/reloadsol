@@ -10,7 +10,7 @@ import { connectedSellPath } from "@/config/route-network";
 import { useRpc } from "@/contexts/RpcContext";
 import { useWalletTokens } from "@/hooks/useWalletTokens";
 import { useChartTokenInfo } from "@/hooks/useChartTokenInfo";
-import { useAxiomRisk } from "@/hooks/useAxiomRisk";
+import { useTokenRisk } from "@/hooks/useTokenRisk";
 import UniversalWalletButton from "@/components/UniversalWalletButton";
 import RiskAnalysis from "@/components/RiskAnalysis";
 import TradeProviderBar from "@/components/TradeProviderBar";
@@ -146,35 +146,38 @@ export default function ChartPage() {
 
   const isLoadingPositions = allTokens.length === 0 && tokensIsPending;
 
-  const axiomQuery = useAxiomRisk(
+  // The one risk hook (was `useAxiomRisk`, whose source had 503'd for 441 days). Note the argument
+  // order differs from the old hook: chain comes third, enabled fourth.
+  const riskQuery = useTokenRisk(
     validTokenAddress ?? "",
     tokenInfo?.marketCap ?? 0,
+    "sol",
     !!validTokenAddress && (tokenInfo?.marketCap ?? 0) > 0,
   );
 
   const riskInfo = useMemo((): RiskInfo | null => {
-    if (!axiomQuery.data) return null;
-    const axiomData = axiomQuery.data.axiomData;
+    if (!riskQuery.data) return null;
+    const riskData = riskQuery.data.riskData;
     let organicScore = 100;
-    if (axiomData.insidersHoldPercent > 15) organicScore -= 25;
-    else if (axiomData.insidersHoldPercent > 8) organicScore -= 15;
-    if (axiomData.bundlersHoldPercent > 10) organicScore -= 20;
-    else if (axiomData.bundlersHoldPercent > 5) organicScore -= 10;
-    if (axiomData.snipersHoldPercent > 8) organicScore -= 15;
-    else if (axiomData.snipersHoldPercent > 4) organicScore -= 8;
-    if (axiomData.top10HoldersPercent > 60) organicScore -= 20;
-    else if (axiomData.top10HoldersPercent > 40) organicScore -= 10;
+    if (riskData.insidersHoldPercent > 15) organicScore -= 25;
+    else if (riskData.insidersHoldPercent > 8) organicScore -= 15;
+    if (riskData.bundlersHoldPercent > 10) organicScore -= 20;
+    else if (riskData.bundlersHoldPercent > 5) organicScore -= 10;
+    if (riskData.snipersHoldPercent > 8) organicScore -= 15;
+    else if (riskData.snipersHoldPercent > 4) organicScore -= 8;
+    if (riskData.top10HoldersPercent > 60) organicScore -= 20;
+    else if (riskData.top10HoldersPercent > 40) organicScore -= 10;
     const overallRisk =
       organicScore >= 70 ? "LOW" : organicScore >= 40 ? "MEDIUM" : "HIGH";
     return {
       overallRisk,
       organicScore: Math.max(0, organicScore),
-      insidersHoldPercent: axiomData.insidersHoldPercent,
-      bundlersHoldPercent: axiomData.bundlersHoldPercent,
-      snipersHoldPercent: axiomData.snipersHoldPercent,
-      top10HoldersPercent: axiomData.top10HoldersPercent,
+      insidersHoldPercent: riskData.insidersHoldPercent,
+      bundlersHoldPercent: riskData.bundlersHoldPercent,
+      snipersHoldPercent: riskData.snipersHoldPercent,
+      top10HoldersPercent: riskData.top10HoldersPercent,
     };
-  }, [axiomQuery.data]);
+  }, [riskQuery.data]);
 
   const gmgnChartUrl = getGmgnKlineUrl(tokenAddress, {
     interval: "5",
@@ -468,7 +471,7 @@ export default function ChartPage() {
             <span className="text-white font-mono text-xs">{tokenAddress}</span>
           </p>
           <p className="text-gray-500 text-xs mt-1">
-            Chart powered by GMGN.cc • Risk analysis by Axiom
+            Chart powered by GMGN.cc • Risk analysis by GMGN
           </p>
         </div>
       </div>
