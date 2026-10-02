@@ -18,8 +18,17 @@ from growth4 import (
     LABEL_COLUMNS,
     ohlc_feature_columns,
 )
-from predict_growth4 import load_model, predict_probs
-from train_growth4 import train_growth4
+from unittest import mock
+
+import export_growth4_data
+from export_growth4_data import pg_env_from_url, psql_copy
+from predict_growth4 import load_model, predict_probs, vector_from_row
+from train_growth4 import (
+    _class_weight_map,
+    carve_valid,
+    time_split,
+    train_growth4,
+)
 
 
 def synthetic_raw() -> pd.DataFrame:
@@ -127,6 +136,111 @@ class Growth4HarnessTest(unittest.TestCase):
             self.assertEqual(set(probs), set(GROWTH4_CLASS_NAMES))
             self.assertAlmostEqual(sum(probs.values()), 1.0, places=5)
             self.assertIn(predicted, GROWTH4_CLASS_NAMES)
+
+
+def _frame(classes: list[int]) -> pd.DataFrame:
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    return pd.DataFrame(
+        {
+            "first_seen_at": [(start + timedelta(hours=i)).isoformat() for i in range(len(classes))],
+            "growth_class": classes,
+        }
+    )
+
+
+class Growth4DefectTest(unittest.TestCase):
+    def test_time_split_is_not_label_aware(self) -> None:
+        # Moonbag (3) only in the early rows: a label-aware split would walk the
+        # cut back to put a 3 in test. A pure time split must not.
+        classes = [3, 3] + [0, 1, 2] * 18
+        train, test = time_split(_frame(classes), 0.2)
+        self.assertEqual(len(train) + len(test), len(classes))
+        self.assertEqual(len(test), len(classes) - int(len(classes) * 0.8))
+        self.assertNotIn(3, set(test["growth_class"]))
+        self.assertLessEqual(
+            pd.to_datetime(train["first_seen_at"], utc=True).max(),
+            pd.to_datetime(test["first_seen_at"], utc=True).min(),
+        )
+
+    def test_time_split_requires_first_seen_at(self) -> None:
+        with self.assertRaises(SystemExit):
+            time_split(pd.DataFrame({"growth_class": [0, 1, 2, 3]}), 0.25)
+
+    def test_carve_valid_fails_loudly_when_train_too_small(self) -> None:
+        with self.assertRaises(SystemExit):
+            carve_valid(_frame([0, 1, 2, 3] * 4))  # 16 rows
+        train, valid = carve_valid(_frame([0, 1, 2, 3] * 5))  # 20 rows
+        self.assertGreater(len(valid), 0)
+        self.assertEqual(len(train) + len(valid), 20)
+        self.assertEqual(set(train.index) & set(valid.index), set())
+
+    def test_valid_weights_use_train_class_weights(self) -> None:
+        y = pd.Series([0] * 6 + [1] * 2 + [2] + [3])
+        weights = _class_weight_map(y)
+        self.assertAlmostEqual(weights[0], 10 / (4 * 6))
+        self.assertAlmostEqual(weights[3], 10 / (4 * 1))
+        captured: dict[str, object] = {}
+        real_dataset = __import__("lightgbm").Dataset
+
+        def spy(*args, **kwargs):
+            captured.setdefault("weights", []).append(kwargs.get("weight"))
+            return real_dataset(*args, **kwargs)
+
+        frame, _ = build_growth4_frame(synthetic_raw(), with_ohlc=False)
+        cols = list(ENTRY_FEATURE_COLUMNS)
+        with mock.patch("train_growth4.lgb.Dataset", side_effect=spy):
+            train_growth4(frame, cols, 0.2, 40, num_boost_round=5)
+        train_w, valid_w = captured["weights"]
+        self.assertIsNotNone(train_w)
+        self.assertIsNotNone(valid_w)
+
+    def test_predict_sets_missing_flags_for_absent_entry_features(self) -> None:
+        cols = list(ENTRY_FEATURE_COLUMNS)
+        vec = dict(zip(cols, vector_from_row({"log_first_mcap": 11.0}, cols)[0], strict=True))
+        self.assertEqual(vec["log_first_mcap"], 11.0)
+        for col in ("organic_score", "top_holders_pct", "log_volume_5m"):
+            self.assertEqual(vec[col], 0.0)
+        for flag in ("organic_score_missing", "top_holders_pct_missing", "volume_5m_missing"):
+            self.assertEqual(vec[flag], 1.0)
+        # NaN counts as missing; present values clear the flag.
+        full = {
+            "log_first_mcap": 11.0,
+            "organic_score": 50,
+            "top_holders_pct": float("nan"),
+            "log_volume_5m": 6.0,
+        }
+        vec = dict(zip(cols, vector_from_row(full, cols)[0], strict=True))
+        self.assertEqual(vec["organic_score_missing"], 0.0)
+        self.assertEqual(vec["top_holders_pct_missing"], 1.0)
+        self.assertEqual(vec["volume_5m_missing"], 0.0)
+        self.assertEqual(vec["log_volume_5m"], 6.0)
+
+    def test_psql_copy_keeps_url_and_password_out_of_argv(self) -> None:
+        url = "postgres://appuser:s3cr%40t@db.example:5433/reload?sslmode=require"
+        env = pg_env_from_url(url, base={})
+        self.assertEqual(env["PGPASSWORD"], "s3cr@t")
+        self.assertEqual(env["PGUSER"], "appuser")
+        self.assertEqual(env["PGHOST"], "db.example")
+        self.assertEqual(env["PGPORT"], "5433")
+        self.assertEqual(env["PGDATABASE"], "reload")
+        self.assertEqual(env["PGSSLMODE"], "require")
+        with self.assertRaises(SystemExit):
+            pg_env_from_url(url + "&options=-c%20x", base={})
+
+        calls: list[tuple[list[str], dict[str, str]]] = []
+
+        def fake_run(argv, **kwargs):
+            calls.append((list(argv), kwargs["env"]))
+            return mock.Mock(returncode=0, stdout="a,b\n", stderr="")
+
+        with mock.patch.object(export_growth4_data.shutil, "which", return_value="/usr/bin/psql"), \
+                mock.patch.object(export_growth4_data.subprocess, "run", side_effect=fake_run):
+            psql_copy(url, "COPY (SELECT 1) TO STDOUT")
+        argv, run_env = calls[0]
+        joined = " ".join(argv)
+        self.assertNotIn("s3cr", joined)
+        self.assertNotIn("postgres://", joined)
+        self.assertEqual(run_env["PGPASSWORD"], "s3cr@t")
 
 
 if __name__ == "__main__":

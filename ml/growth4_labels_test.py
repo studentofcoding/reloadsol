@@ -17,6 +17,7 @@ from growth4 import (
     ohlc_window_features,
     pattern_shadow_class_from_growth,
     probs_from_row,
+    resolve_feature_columns,
 )
 
 
@@ -72,6 +73,19 @@ class Growth4LabelTest(unittest.TestCase):
 
     def test_label_columns_are_not_entry_features(self) -> None:
         self.assertEqual(set(ENTRY_FEATURE_COLUMNS) & set(LABEL_COLUMNS), set())
+
+    def test_ohlc_features_refused_without_override_and_auto_is_entry(self) -> None:
+        from growth4 import all_feature_columns
+
+        cols = all_feature_columns()
+        # auto must never pull label-time OHLC, even when bars are present.
+        self.assertEqual(resolve_feature_columns("auto", cols, True), list(ENTRY_FEATURE_COLUMNS))
+        self.assertEqual(resolve_feature_columns("entry", cols, True), list(ENTRY_FEATURE_COLUMNS))
+        for mode in ("ohlc", "all"):
+            with self.assertRaises(SystemExit):
+                resolve_feature_columns(mode, cols, True)
+        chosen = resolve_feature_columns("all", cols, True, allow_label_time_ohlc=True)
+        self.assertEqual(chosen, all_feature_columns())
 
     def test_shadow_log_names_four_probs(self) -> None:
         probs = probs_from_row([0.1, 0.2, 0.3, 0.4])

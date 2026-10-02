@@ -35,8 +35,12 @@ from growth4 import (
     PLACEHOLDER_PER_CLASS_F1,
     PLACEHOLDER_TRAIN_N,
     TINY_CLASS_SUPPORT,
+    ohlc_feature_columns,
+    LEAKY_OHLC_CLOCKS,
     resolve_feature_columns,
 )
+
+LEAKY_OHLC_BLOCKER = "ohlc_features_label_time_leakage"
 
 READY_BLOCKERS_ALWAYS = (
     "lead_time_not_evaluated",
@@ -60,41 +64,54 @@ def _json_safe(value: object) -> object:
 
 
 def time_split(df: pd.DataFrame, test_ratio: float) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Time-ordered holdout. Walks back so each class appears in test when possible."""
+    """Pure time-ordered holdout: the latest ``test_ratio`` rows are test.
+
+    The cut depends only on row order by ``first_seen_at``, never on labels, so
+    the holdout is not tuned to contain every class. A class absent from test
+    shows up as ``support: 0`` in the metrics.
+    """
+    if "first_seen_at" not in df.columns:
+        raise SystemExit("time_split needs first_seen_at — re-export with export_growth4_data.py")
+    if not 0 < test_ratio < 1:
+        raise SystemExit(f"--test-ratio must be between 0 and 1, got {test_ratio}")
     ordered = df.copy()
-    if "first_seen_at" in ordered.columns:
-        ordered["_sort_ts"] = pd.to_datetime(ordered["first_seen_at"], utc=True, errors="coerce")
-        ordered = ordered.sort_values("_sort_ts", kind="mergesort", na_position="first")
-        ordered = ordered.drop(columns="_sort_ts")
-    ordered = ordered.reset_index(drop=True)
+    ordered["_sort_ts"] = pd.to_datetime(ordered["first_seen_at"], utc=True, errors="coerce")
+    ordered = ordered.sort_values("_sort_ts", kind="mergesort", na_position="first")
+    ordered = ordered.drop(columns="_sort_ts").reset_index(drop=True)
     n = len(ordered)
-    split_idx = max(1, int(n * (1 - test_ratio)))
-    if split_idx >= n:
-        split_idx = n - 1
-    floor = max(1, n // 2)
-    while split_idx > floor:
-        test_slice = ordered.iloc[split_idx:]
-        if all(int((test_slice["growth_class"] == c).sum()) >= 1 for c in GROWTH4_CLASS_INDEX.values()):
-            break
-        split_idx -= 1
+    split_idx = min(max(1, int(n * (1 - test_ratio))), n - 1)
     return ordered.iloc[:split_idx].reset_index(drop=True), ordered.iloc[split_idx:].reset_index(drop=True)
 
 
+MIN_TRAIN_ROWS_FOR_VALID = 20
+
+
 def carve_valid(train_df: pd.DataFrame, valid_ratio: float = 0.2) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Validation tail of the train split. Early stopping must not watch test."""
-    if len(train_df) < 20:
-        return train_df, train_df
-    split_idx = max(1, int(len(train_df) * (1 - valid_ratio)))
-    if split_idx >= len(train_df):
-        split_idx = len(train_df) - 1
+    """Validation tail of the train split. Early stopping must not watch test.
+
+    Fails loudly when the train split is too small to hold out a separate
+    validation tail; validating on training rows would make early stopping
+    meaningless.
+    """
+    if len(train_df) < MIN_TRAIN_ROWS_FOR_VALID:
+        raise SystemExit(
+            f"Train split has {len(train_df)} rows; need at least {MIN_TRAIN_ROWS_FOR_VALID} "
+            "to carve a separate validation tail. Export more rows or lower --test-ratio."
+        )
+    split_idx = min(max(1, int(len(train_df) * (1 - valid_ratio))), len(train_df) - 1)
     return train_df.iloc[:split_idx], train_df.iloc[split_idx:]
 
 
-def _inverse_freq_weights(y: pd.Series) -> np.ndarray:
+def _class_weight_map(y: pd.Series) -> dict[int, float]:
+    """Inverse-frequency weight per class, from ``y`` (the train split)."""
     counts = y.value_counts()
     n_classes = max(int(counts.shape[0]), 1)
     n = float(len(y))
-    return y.map(lambda c: n / (n_classes * float(counts[c]))).to_numpy(dtype=float)
+    return {int(c): n / (n_classes * float(k)) for c, k in counts.items()}
+
+
+def _weights_for(y: pd.Series, class_weights: dict[int, float]) -> np.ndarray:
+    return y.map(lambda c: class_weights[int(c)]).to_numpy(dtype=float)
 
 
 def export_onnx(model: lgb.Booster, output_path: Path, num_features: int) -> bool:
@@ -168,6 +185,7 @@ def train_growth4(
     test_ratio: float,
     min_rows: int,
     num_boost_round: int = 300,
+    leaky_ohlc: bool = False,
 ) -> tuple[lgb.Booster, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
     if "growth_class" not in df.columns:
         raise SystemExit("Missing growth_class — re-export with export_growth4_data.py")
@@ -194,7 +212,11 @@ def train_growth4(
     y_valid = valid_df["growth_class"].astype(int)
     x_test = test_df[feature_columns]
     y_test = test_df["growth_class"].astype(int)
-    weights = _inverse_freq_weights(y_train)
+    # Same train-derived class weights for the early-stopping valid set, so the
+    # stopping metric optimises what the weighted train loss optimises.
+    class_weights = _class_weight_map(y_train)
+    weights = _weights_for(y_train, class_weights)
+    valid_weights = _weights_for(y_valid, class_weights)
 
     train_set = lgb.Dataset(
         x_train,
@@ -205,6 +227,7 @@ def train_growth4(
     valid_set = lgb.Dataset(
         x_valid,
         label=y_valid,
+        weight=valid_weights,
         feature_name=feature_columns,
         reference=train_set,
     )
@@ -251,6 +274,8 @@ def train_growth4(
         for i, name in enumerate(GROWTH4_CLASS_NAMES)
     }
     bars = placeholder_report(macro_f1, per_class, len(train_df), len(test_df))
+    if leaky_ohlc:
+        bars["ready_blockers"].append(LEAKY_OHLC_BLOCKER)
     meta_extra = {
         "model_type": "multiclass",
         "stage": "growth4-ohlc",
@@ -263,10 +288,12 @@ def train_growth4(
         "class_names": list(GROWTH4_CLASS_NAMES),
         "class_counts": _named_counts(df["growth_class"]),
         "serve_mode": "shadow",
+        "ohlc_label_time_leakage": leaky_ohlc,
         "wired_to_paper_size": False,
         "binary_pattern_shadow": "ml/export_pattern_data.py + ml/train_pattern.py unchanged",
         "training": {
             "sample_weight": "inverse_frequency",
+            "valid_sample_weight": "inverse_frequency (train class weights)",
             "early_stopping_metric": "multi_logloss",
             "test_untouched_by_early_stopping": True,
         },
@@ -305,16 +332,30 @@ def main() -> None:
     parser.add_argument("--min-rows", type=int, default=MIN_GROWTH4_ROWS)
     parser.add_argument(
         "--features",
-        choices=["auto", "entry", "ohlc", "all"],
-        default="auto",
-        help="auto: entry+OHLC when any row has bars, else entry",
+        choices=["entry", "auto", "ohlc", "all"],
+        default="entry",
+        help=(
+            "entry (default; auto is an alias). ohlc/all use bars captured at label "
+            "time, which leak the target, and need --allow-label-time-ohlc"
+        ),
+    )
+    parser.add_argument(
+        "--allow-label-time-ohlc",
+        action="store_true",
+        help="Diagnostic only: allow ohlc/all features. Marks the artifact leaky.",
     )
     parser.add_argument("--rounds", type=int, default=300)
     args = parser.parse_args()
 
     df = load_table(args.input)
     ohlc_present = "ohlc_n" in df.columns and bool((pd.to_numeric(df["ohlc_n"], errors="coerce").fillna(0) > 0).any())
-    feature_columns = resolve_feature_columns(args.features, list(df.columns), ohlc_present)
+    feature_columns = resolve_feature_columns(
+        args.features, list(df.columns), ohlc_present, args.allow_label_time_ohlc
+    )
+    uses_ohlc = any(c in ohlc_feature_columns() for c in feature_columns)
+    if uses_ohlc and "ohlc_clock" in df.columns:
+        clocks = set(df["ohlc_clock"].dropna().astype(str)) & LEAKY_OHLC_CLOCKS
+        print(f"WARNING: OHLC features with clock {sorted(clocks)} leak the label (diagnostic run).")
     print(f"Features ({args.features} → {len(feature_columns)} cols), ohlc_rows_present={ohlc_present}")
 
     booster, train_df, valid_df, test_df, meta_extra = train_growth4(
@@ -323,6 +364,7 @@ def main() -> None:
         args.test_ratio,
         args.min_rows,
         num_boost_round=args.rounds,
+        leaky_ohlc=uses_ohlc,
     )
 
     importance = booster.feature_importance(importance_type="gain")

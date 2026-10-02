@@ -236,10 +236,31 @@ def empty_ohlc_features() -> dict[str, float]:
     return ohlc_window_features([])
 
 
-def resolve_feature_columns(mode: str, columns: list[str], ohlc_present: bool) -> list[str]:
-    """``auto`` uses OHLC + entry when any exported row has bars, else entry."""
+# OHLC bars in the export come from signal_ohlc_labels, captured at label/detect
+# time, i.e. after the outcome window the label measures. Training on them leaks
+# the target. Only ``entry`` is safe until bars are rebuilt as-of first_seen.
+LEAKY_OHLC_CLOCKS: frozenset[str] = frozenset({"label_capture"})
+
+
+def resolve_feature_columns(
+    mode: str,
+    columns: list[str],
+    ohlc_present: bool,
+    allow_label_time_ohlc: bool = False,
+) -> list[str]:
+    """Pick model inputs.
+
+    ``auto`` is ``entry`` (never OHLC): label-time bars leak the target.
+    ``ohlc`` / ``all`` refuse to run unless ``allow_label_time_ohlc`` is set
+    (diagnostic only; the result is marked leaky in model.meta.json).
+    """
     if mode == "auto":
-        mode = "all" if ohlc_present else "entry"
+        mode = "entry"
+    if mode in {"ohlc", "all"} and not allow_label_time_ohlc:
+        raise SystemExit(
+            f"--features {mode} uses OHLC bars captured at label time (target leakage). "
+            "Use --features entry, or pass --allow-label-time-ohlc for a diagnostic run only."
+        )
     if mode == "entry":
         chosen = list(ENTRY_FEATURE_COLUMNS)
     elif mode == "ohlc":

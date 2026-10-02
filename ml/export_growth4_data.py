@@ -121,17 +121,58 @@ def resolve_database_url(explicit: str | None = None) -> str:
 
 def _redact(message: str, url: str) -> str:
     if url and url in message:
-        return message.replace(url, "DATABASE_URL")
+        message = message.replace(url, "DATABASE_URL")
+    password = urllib.parse.urlsplit(url).password if url else None
+    if password:
+        message = message.replace(urllib.parse.unquote(password), "***")
     return message
+
+
+# libpq URL query params we forward as PG* env vars. Anything else is refused
+# rather than silently dropped.
+_PG_QUERY_ENV = {
+    "sslmode": "PGSSLMODE",
+    "sslrootcert": "PGSSLROOTCERT",
+    "sslcert": "PGSSLCERT",
+    "sslkey": "PGSSLKEY",
+    "application_name": "PGAPPNAME",
+    "connect_timeout": "PGCONNECT_TIMEOUT",
+}
+
+
+def pg_env_from_url(database_url: str, base: dict[str, str] | None = None) -> dict[str, str]:
+    """Connection settings as PG* env vars, so the URL and password never appear
+    in psql's argv (visible in ``ps`` and shell history)."""
+    parsed = urllib.parse.urlsplit(database_url)
+    if parsed.scheme not in {"postgres", "postgresql"}:
+        raise SystemExit("DATABASE_URL must be a postgres:// or postgresql:// URL")
+    env = dict(os.environ if base is None else base)
+    env.setdefault("PGCONNECT_TIMEOUT", "15")
+    if parsed.hostname:
+        env["PGHOST"] = parsed.hostname
+    if parsed.port:
+        env["PGPORT"] = str(parsed.port)
+    if parsed.username:
+        env["PGUSER"] = urllib.parse.unquote(parsed.username)
+    if parsed.password:
+        env["PGPASSWORD"] = urllib.parse.unquote(parsed.password)
+    dbname = urllib.parse.unquote(parsed.path.lstrip("/"))
+    if dbname:
+        env["PGDATABASE"] = dbname
+    for key, values in urllib.parse.parse_qs(parsed.query).items():
+        target = _PG_QUERY_ENV.get(key)
+        if target is None:
+            raise SystemExit(f"Unsupported DATABASE_URL query parameter {key!r}")
+        env[target] = values[-1]
+    return env
 
 
 def psql_copy(database_url: str, sql: str) -> str:
     if shutil.which("psql") is None:
         raise SystemExit("psql not found — install the Postgres client, or pass --source csv")
-    env = os.environ.copy()
-    env.setdefault("PGCONNECT_TIMEOUT", "15")
+    env = pg_env_from_url(database_url)
     proc = subprocess.run(
-        ["psql", database_url, "-q", "-v", "ON_ERROR_STOP=1", "-c", sql],
+        ["psql", "-q", "-v", "ON_ERROR_STOP=1", "-c", sql],
         capture_output=True,
         text=True,
         check=False,

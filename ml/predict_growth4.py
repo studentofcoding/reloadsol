@@ -23,7 +23,9 @@ import numpy as np
 import pandas as pd
 
 from growth4 import (
+    ENTRY_FEATURE_COLUMNS,
     GROWTH4_CLASS_NAMES,
+    entry_features_from_row,
     format_shadow_log,
     probs_from_row,
 )
@@ -48,14 +50,23 @@ def load_model(artifact_dir: Path) -> tuple[lgb.Booster, list[str]]:
 
 
 def vector_from_row(row: dict[str, Any], feature_columns: list[str]) -> np.ndarray:
+    """One feature vector. Entry columns go through the same
+    ``entry_features_from_row`` the exporter used, so a missing organic score,
+    holder share, or volume is 0.0 *and* its ``*_missing`` flag is 1.0. Any
+    other column (OHLC) that is absent or non-finite is 0.0 (``ohlc_n`` = 0 is
+    its own flag).
+    """
+    entry = entry_features_from_row(row)
     values: list[float] = []
     for col in feature_columns:
-        raw = row.get(col, 0.0)
+        if col in ENTRY_FEATURE_COLUMNS:
+            values.append(entry[col])
+            continue
         try:
-            num = float(raw)
+            num = float(row.get(col, 0.0))
         except (TypeError, ValueError):
             num = 0.0
-        if num != num:  # NaN
+        if not np.isfinite(num):
             num = 0.0
         values.append(num)
     return np.asarray([values], dtype=float)
