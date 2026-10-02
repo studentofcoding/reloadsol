@@ -3,6 +3,7 @@
 import { OptimizedImage } from "@/components/OptimizedImage";
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useLocalStorageValue } from "@/hooks/useLocalStorageValue";
+import { useWalletTokens } from "@/hooks/useWalletTokens";
 import { pctFromBaseline } from "@/utils/watchlist/pct";
 import {
   TrackingRecord,
@@ -176,6 +177,23 @@ export default function PnLTracker() {
   const { records, trackOperation, isLoadingRecords, recordsError } =
     useTradingData();
   const rhWalletTokens = useRhWalletTokens();
+
+  // The SHARED Sol holdings entry — the same TanStack cache the watchlist bar, the buy flows and
+  // /sell already read.
+  //
+  // This replaces a second, uncached `fetchSolWalletHoldings` call inside the PnL recompute (see
+  // the Sol branch below). It was the same function over the same upstream — Shyft `all_tokens`
+  // with a Jupiter fallback — so the data was identical, but with no cache: every recompute
+  // re-fetched what the bar was already holding, and a post-trade `refetchFresh()` reached the bar
+  // and not this panel. Reading the shared entry instead costs nothing, because the request has
+  // already been made for the whole app.
+  const solHoldings = useWalletTokens({
+    connection,
+    publicKey,
+    walletAddress,
+    enabled: !isRobinhood,
+  });
+  const solHoldingTokens = solHoldings.allTokens;
   const [pnlRecords, setPnlRecords] = useState<PnLRecord[]>([]);
   const [openPositions, setOpenPositions] = useState<OpenPosition[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -1049,8 +1067,13 @@ export default function PnLTracker() {
                 rhWalletTokens.tokens.length > 0
                   ? rhWalletTokens.tokens
                   : (await rhWalletTokens.refetch()).data?.tokens ?? [];
+            } else if (solHoldingTokens.length > 0) {
+              // The shared cached entry (see `solHoldings` above). Same list the bar renders, so
+              // the panel and the bar cannot disagree about what is held.
+              walletTokens = solHoldingTokens;
             } else {
-              // Prefer cached Shyft all_tokens (same as /sell); Jupiter then RPC.
+              // Cache cold: the first recompute before the hook has resolved, or an error path.
+              // The direct fetch (Shyft → Jupiter) and its RPC fallback are unchanged.
               try {
                 const holdings = await fetchSolWalletHoldings(
                   publicKey!.toString(),
@@ -1160,7 +1183,7 @@ export default function PnLTracker() {
     } finally {
       setIsLoading(false);
     }
-  }, [walletAddress, records, solPriceUsd, connection, publicKey, isRobinhood, nativeUnit, rhWalletTokens]);
+  }, [walletAddress, records, solPriceUsd, connection, publicKey, isRobinhood, nativeUnit, rhWalletTokens, solHoldingTokens]);
 
   const recordsKey = useMemo(
     () => records.map((r) => `${r.id}:${r.timestamp}`).join("|"),
