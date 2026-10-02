@@ -3,9 +3,19 @@
 **Status:** **Implemented for S8/S9/S10** (the mechanism); S1–S7 (the valuation/decision rules) remain
 the to-spec recommendation. S8/S9/S10 shipped in the exit-standard work: `db/init/57-sl-tp-exit-contract.sql`
 adds the contract columns, `registerSimExitContract` is the single registration path for all five spine
-callers, the per-family closers were deleted (the mcap route's manage phase is gone, not disabled), and
-the 60s `sltp_monitor` worker owns every exit. See `CHANGELOG.md [Unreleased]` — "one exit evaluator, one
+callers, the per-family closers were deleted (the mcap route's manage phase is gone, not disabled), and the
+60s `sltp_monitor` worker owns every exit. See `CHANGELOG.md [Unreleased]` — "one exit evaluator, one
 exit worker, and one entry price".
+
+**Status corrected 2026-10-02 against live production** — three claims in this file no longer matched the
+data, and the register in §8 replaces them:
+
+| This file said | Production says |
+|---|---|
+| "8 of 9 now register at open" | **4 of 9 stamp a complete contract.** 3 register partially (`search_mcap_*`: 538 rows, **28 contracted = 5%**), and **2 have no rows at all** — `att_rh`, which is the **most active strategy by outcomes (417 in 7d)**, and `social_only_fomo_gt7` |
+| Gate 4: coverage is "3 of 9" | 6 of 9 have *any* row; **4 of 9 are contracted**; the gate remains 9 of 9 |
+| Gate 5: "the worker has never fired a TP" (`SL: 211, TP1: 0`) | **TP1 now fires** — lifetime closes are **398 SL / 22 TP1**. TP2/TP3 remain **0**, and that is correct: see §8 G-f |
+
 **Date:** 2026-10-01 (status updated 2026-10-02)
 **Provenance:** the debug trace of 2026-10-01 (`scripts/replay-stop-sweep.mjs --slippage`, prod reads) ·
 [SPEC-exit-optimization-v1.md](./SPEC-exit-optimization-v1.md) (P4/P5) · [12-proposal-register.html](../../docs/diagrams/12-proposal-register.html)
@@ -286,3 +296,122 @@ Two consequences worth naming:
    strategies' own PnL uses it.
 3. **The three TP variants share an exit input.** Post-S1 they will still share an entry, so they remain one
    economic bet at three exit settings — the register's "count uncorrelated bets" point (P8) still stands.
+
+## 8. Coverage register
+
+Every property this system must hold, each with its state **as measured on production 2026-10-02**, the
+concrete handling, and the test that pins it. Reading: **in** = implemented and verified live · **partial** ·
+**open** = not implemented.
+
+### 8.0 The measured baseline
+
+Counting the contract columns (`reference_kind`, `reference_value`, `exit_basis`) that S8 adds:
+
+| stratum | rows | contracted | |
+|---|---|---|---|
+| Active positions | 162 | **13** | **92% carry no contract** |
+| Lifetime rows | 582 | 72 | 12% |
+| `exit_basis` values ever written | — | `price` only | **`mcap` has never been written, 0 rows** |
+| Closed rows | 420 | — | 398 `sl_executed`, 22 `tp1_executed`, **0 tp2/tp3, 0 with no flag** |
+
+Per strategy — this is the table that replaces "8 of 9":
+
+| strategy | outcomes 7d | sl_tp rows | contracted | |
+|---|---|---|---|---|
+| `att_rh` | **417** | **0** | 0 | most active strategy; no rows at all |
+| `search_mcap_first_seen_sl_30_tp200_h48` | 347 | 169 | 5 | |
+| `search_mcap_first_seen_sl_30_tp150_h48` | 339 | 205 | 22 | |
+| `search_mcap_first_seen_sl_30_tp300_h48` | 317 | 164 | 1 | |
+| `mcap_enter_at_80` | 170 | 27 | **27** | complete |
+| `mcap_enter_first_seen` | 108 | 10 | **10** | complete |
+| `gmgn_sm_kol_combined` | 60 | 2 | **2** | complete |
+| `gmgn_kol_momentum` | 49 | 4 | **4** | complete |
+| `social_only_fomo_gt7` | 27 | **0** | 0 | no rows |
+
+The contracting that works is on the **smallest** families; the largest and most active are the ones missing
+it. Where a contract *is* stamped it is correct — per-trade values (−10.44%, −31.33%, +14.33%, +286.64%),
+so the cl/brain adjustment does reach the row.
+
+### A. The contract — what an open must stamp (S8)
+
+| # | Must hold | State | Handling | Test |
+|---|---|---|---|---|
+| **A1** | `reference_value` stamped at open | **partial** | 13/162 active | a row missing it is rejected |
+| **A2** | `reference_kind` ∈ {`price`,`mcap`} | **partial** | CHECK constraint exists | constraint test |
+| **A3** | `exit_basis` matches `reference_kind` | **partial** | both NULL or both set in all 72 | assert they agree |
+| **A4** | thresholds are the **effective** (cl/brain) ones, not the strategy base | **in** | verified in the 72 | a base-equal value fails the test |
+| **A5** | an open that cannot build a contract **fails loudly** | **open** | today it inserts NULL — this is why 149 phantom rows exist | open-without-thresholds throws |
+
+### B. The valuation — what an exit is measured against (S1, S4, S10)
+
+| # | Must hold | State | Handling | Test |
+|---|---|---|---|---|
+| **B1** | live read, **never** a cache | **open** | G4: cached `mcap_growth_percent`, stale 18–481 min | a cached value can never be returned |
+| **B2** | staleness → `stale`, never a silent `hold` | **open** | `EXIT_MAX_INPUT_AGE_SEC=180` exists but is **not enforced** | stale input ⇒ `reason:'stale'` |
+| **B3** | entry reference = the **impact-included fill** (S10) | **open** | helper exists (`execution-model.ts:162`), runs **only at close** | `reference_value == computeBuyFill().effectivePrice` |
+| **B4** | `0` / negative / NaN never reaches a comparison | **open** | needs a guard at the evaluator boundary | each bad value ⇒ `hold`, never a close |
+| **B5** | for `mcap`, staleness is measured in **mcap time** | **open** | wall-clock is meaningless for a tracker row | an old mcap ⇒ `stale` |
+
+### C. The decision (S2, S3)
+
+| # | Must hold | State | Handling | Test |
+|---|---|---|---|---|
+| **C1** | one evaluator, closed reason set | **in** | `exit-evaluator.ts` | golden cases per reason |
+| **C2** | **the reason is persisted** | **open** | **there is no `close_reason` column** — and `strategy_outcomes.status` only holds `won`/`lost`/`breakeven`, so the reason is nowhere | reason round-trips row → back |
+| **C3** | a backstop is distinguishable from a stop-loss | **open** | every close sets `sl_executed` or `tp1_executed`; **0 of 420 rows have no flag**, so `max_age`/`max_hold` are recorded as `sl_executed = true` | `max_age` close ⇒ `sl_executed = false` |
+| **C4** | basis is read from the row, not the route | **partial** | 4 families yes; `search_mcap_*` NULL | the evaluator never sees a route |
+
+### D. The writer (S6, S9)
+
+| # | Must hold | State | Handling | Test |
+|---|---|---|---|---|
+| **D1** | one writer owns every exit | **partial** | family closers deleted (`8ae590a`), but `att_rh` — the most active strategy — has no rows and still exits through its own RH ladder | a second closer cannot write |
+| **D2** | a **skipped** pass is recorded | **open** | `Worker runtime persist HTTP 400 (sltp_monitor/skipped)` — skips are invisible, so "how often did the sole closer not run" is unanswerable | skip ⇒ persisted, not a 400 |
+| **D3** | a **timed-out** pass has defined recovery | **open** | observed 14:55:07; whether rows closed before it died is unrecorded | a killed pass leaves no half-closed row |
+| **D4** | a paper row **cannot** reach `executeSellOrder` | **in** | `isSimulatedPosition` + hardcoded `isSimulated:false` | **the isolation test, gate 6** |
+| **D5** | a paper close writes the outcome; the mirror retires **only on success** | **in** | `closeSimulatedPositionFromWorker` | failed close stays open and retries |
+| **D6** | no row is left half-closed on write failure | **open** | | a thrown write leaves `is_active=true` |
+
+### E. Coverage (S7)
+
+| # | Must hold | State | Handling | Test |
+|---|---|---|---|---|
+| **E1** | every strategy's open path reaches the evaluator, **asserted** | **open** | 4 of 9 contracted | the registry test — gate 4, target 9 of 9 |
+| **E2** | `att_rh`'s absence is **asserted as deliberate** | **open** | it resolves no `effective_exit` at open | a named exception, not a silent hole |
+| **E3** | chain is per-row, not hardcoded `sol` | **in** | `getCurrentTokenPrices` groups by the row's `chain` | a `robinhood` row is not priced on Solana |
+
+### F. Observability
+
+| # | Must hold | State | Handling | Test |
+|---|---|---|---|---|
+| **F1** | backstop share is computable | **open** | blocked by C3 | the metric returns a number |
+| **F2** | `stale` is counted | **open** | blocked by C2 | |
+| **F3** | skipped passes are counted | **open** | blocked by D2 | |
+| **F4** | `EXIT_BACKSTOP_ALERT_PCT` (10) alerts | **open** | env documented, no alert wired | crossing it fires |
+| **F5** | both bases reported until they converge | **open** | gate 2 | an unvalidated `pnl_pct` is labelled |
+
+### G. Edge cases
+
+| # | Case | State | Handling | Test |
+|---|---|---|---|---|
+| **G-a** | a pass **severed by a web recreate** (the EOF burst) | **open** | every deploy is a window with no exits — and it is the sole closer | a killed pass is recoverable and counted |
+| **G-b** | the worker **down entirely** | **open** | nothing exits; the dashboard shows a stale badge only | an alert, not a badge |
+| **G-c** | a position that **can never be priced** | **open** | must go `stale`, be counted, and not sit open forever | a permanently unpriceable row is surfaced |
+| **G-d** | **legacy uncontracted rows** (149 active, 510 lifetime) | **open** | they need an explicit disposition: backfill, close, or mark uncloseable-by-policy. Today they are open and invisible | the disposition is asserted |
+| **G-e** | the four categories (real/sim/bot/external) | **partial** | the worker currently sees `Manual: 0, Bot: 162` | the manual path is exercised |
+| **G-f** | **partial exits / the TP ladder** | **resolved, but see the caveat** | `tp1_sell_percentage` has **never been < 100** and `active_after_tp1 = 0`, so **TP1 always closes in full and TP2/TP3 are unreachable by construction**. The 0s are therefore *correct*, not a bug — but a 3-tier ladder that only ever uses tier 1 is indistinguishable from a single TP. **Decide: wire the ladder or drop the columns** | a partial TP leaves the row active; a full TP does not |
+| **G-g** | `label_rugged` path | **in** | reason in the closed set | a rugged label closes |
+| **G-h** | two backstops, `max_age` **and** `max_hold` | **open** | neither persisted (C3) | each is distinguishable |
+
+### 8.9 Build order
+
+1. **C2 + C3** — persist the close reason. Additive and nullable, the same shape as the S8 migration, so it
+   cannot break the live stop path. Nothing else is measurable until a backstop stops masquerading as a
+   stop-loss; it also unblocks S5, F1 and G-h.
+2. **A5 + A1** — fail loudly on an incomplete contract, then contract `search_mcap_*` (538 rows, 5%). Also
+   give the 149 legacy rows an explicit disposition (G-d).
+3. **D1 + D2 + D3** — `att_rh` (the most active strategy) has no rows, and pass skips/recovery are unrecorded
+   — which matters more now that the worker is the **only** closer.
+4. **B1 + B2** — the live valuation and `stale`, where the recorded-vs-real gap actually lives.
+5. **G-f** — decide the ladder: wire it or delete it.
+
