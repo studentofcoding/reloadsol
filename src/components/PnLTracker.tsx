@@ -2,6 +2,7 @@
 
 import { OptimizedImage } from "@/components/OptimizedImage";
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { useLocalStorageValue } from "@/hooks/useLocalStorageValue";
 import {
   TrackingRecord,
   fetchTokenPricesForTracking,
@@ -255,17 +256,33 @@ export default function PnLTracker() {
   const [selectedToken, setSelectedToken] = useState<string>("");
 
   // ✅ NEW: Notification state
-  // HYDRATION: these five preferences initialise to their DEFAULTS, and the stored value is applied
-  // in the `restorePnlPrefs` effect below.
   //
-  // They used to be lazy `useState(() => localStorage.getItem(...))` initialisers, which run during
-  // the client's HYDRATION render as well as later ones. The server has no `localStorage`, so it
-  // rendered the defaults while the client's first paint rendered the stored values — server HTML
-  // != client HTML, i.e. React #418 (the `args[]=HTML` in the console). Anything read from a
-  // client-only store must be applied after hydration, not during it.
-  const [notificationsEnabled, setNotificationsEnabled] = useState<boolean>(false);
+  // HYDRATION: these are DERIVED from a `localStorage` store rather than initialised into state.
+  // A lazy `useState(() => localStorage.getItem(...))` initialiser also runs during the client's
+  // HYDRATION render, so the server rendered the fallback while the first client paint rendered the
+  // stored value — server HTML != client HTML, i.e. React #418 (`args[]=HTML` in the console).
+  // `useLocalStorageValue` is built on `useSyncExternalStore`, so the server snapshot is the
+  // fallback and the client snapshot is the stored value, and React reconciles them properly. That
+  // is also why there is no restoring effect any more: nothing needs to be applied after hydration
+  // when the value is read correctly in the first place.
+  const [notificationsEnabledRaw, setNotificationsEnabledRaw] =
+    useLocalStorageValue('pnl-notifications-enabled', 'false');
+  const notificationsEnabled = notificationsEnabledRaw === 'true';
+  const setNotificationsEnabled = useCallback(
+    (next: boolean) => setNotificationsEnabledRaw(next ? 'true' : 'false'),
+    [setNotificationsEnabledRaw],
+  );
   const notificationPermission = useNotificationPermission();
-  const [notificationThreshold, setNotificationThreshold] = useState<number>(50);
+  const [notificationThresholdRaw, setNotificationThresholdRaw] =
+    useLocalStorageValue('pnl-notification-threshold', '50');
+  const notificationThreshold = useMemo(() => {
+    const parsed = parseFloat(notificationThresholdRaw);
+    return Number.isFinite(parsed) ? parsed : 50;
+  }, [notificationThresholdRaw]);
+  const setNotificationThreshold = useCallback(
+    (next: number) => setNotificationThresholdRaw(String(next)),
+    [setNotificationThresholdRaw],
+  );
   const [notifiedTokens, setNotifiedTokens] = useState<Set<string>>(new Set());
 
   // ✅ NEW: Use the modular PnL sharing system
@@ -285,9 +302,18 @@ export default function PnLTracker() {
   const [isClosingAccounts, setIsClosingAccounts] = useState(false);
   const [sortMode, setSortMode] = useState<TradeListSortMode>("date_desc");
 
-  // Hint message state
-  const [showClosedPositionsHint, setShowClosedPositionsHint] =
-    useState<boolean>(true);
+  // Hint message state. The stored key is the DISMISSED flag, so the derived value is inverted.
+  //
+  // This read `closedPositionsHintDismissed` while the dismiss handler wrote
+  // `pnl-closed-positions-hint-dismissed` — two different keys, so dismissing never persisted and
+  // the hint returned on every load. One key now, and its setter is what writes it.
+  const [closedHintDismissedRaw, setClosedHintDismissedRaw] =
+    useLocalStorageValue('closedPositionsHintDismissed', 'false');
+  const showClosedPositionsHint = closedHintDismissedRaw !== 'true';
+  const setShowClosedPositionsHint = useCallback(
+    (next: boolean) => setClosedHintDismissedRaw(next ? 'false' : 'true'),
+    [setClosedHintDismissedRaw],
+  );
 
   // Sell quote state
   const [sellQuotes, setSellQuotes] = useState<Map<string, SwapQuote>>(
@@ -303,35 +329,52 @@ export default function PnLTracker() {
   const [isBotSyncActive, setIsBotSyncActive] = useState<boolean>(false);
 
   // ✅ NEW: P&L amount visibility state
-  const [hiddenPnLAmounts, setHiddenPnLAmounts] = useState<Set<string>>(
-    new Set(),
+  const [hiddenPnLAmountsRaw, setHiddenPnLAmountsRaw] = useLocalStorageValue(
+    'hidden-pnl-amounts',
+    '[]',
+  );
+  const hiddenPnLAmounts = useMemo(() => {
+    try {
+      return new Set<string>(JSON.parse(hiddenPnLAmountsRaw) as string[]);
+    } catch {
+      // A malformed stored value means "nothing hidden" — it must not take the panel down.
+      return new Set<string>();
+    }
+  }, [hiddenPnLAmountsRaw]);
+  // Keeps the call sites' functional-update form (`setHiddenPnLAmounts(prev => …)`) working while
+  // the store, not the call site, owns the write.
+  const setHiddenPnLAmounts = useCallback(
+    (next: Set<string> | ((prev: Set<string>) => Set<string>)) => {
+      setHiddenPnLAmountsRaw((prevRaw) => {
+        let prev: Set<string>;
+        try {
+          prev = new Set<string>(JSON.parse(prevRaw) as string[]);
+        } catch {
+          prev = new Set<string>();
+        }
+        const value = typeof next === 'function' ? next(prev) : next;
+        return JSON.stringify(Array.from(value));
+      });
+    },
+    [setHiddenPnLAmountsRaw],
   );
 
   // ✅ NEW: Global P&L visibility state
-  const [globalPnLHidden, setGlobalPnLHidden] = useState<boolean>(false);
-
-  // Apply the stored P&L preferences AFTER hydration. This is the counterpart to the default
-  // initialisers above: the effect runs once the client's first render already matches the
-  // server's, so restoring the stored values here cannot cause a mismatch.
-  useEffect(() => {
-    try {
-      setNotificationsEnabled(
-        localStorage.getItem("pnl-notifications-enabled") === "true",
-      );
-      const threshold = localStorage.getItem("pnl-notification-threshold");
-      if (threshold) setNotificationThreshold(parseFloat(threshold));
-      setShowClosedPositionsHint(
-        localStorage.getItem("closedPositionsHintDismissed") !== "true",
-      );
-      const hidden = localStorage.getItem("hidden-pnl-amounts");
-      if (hidden) setHiddenPnLAmounts(new Set(JSON.parse(hidden)));
-      setGlobalPnLHidden(
-        localStorage.getItem("global-pnl-hidden") === "true",
-      );
-    } catch {
-      // A malformed stored value must not take the panel down; the defaults already rendered.
-    }
-  }, []);
+  const [globalPnLHiddenRaw, setGlobalPnLHiddenRaw] = useLocalStorageValue(
+    'global-pnl-hidden',
+    'false',
+  );
+  const globalPnLHidden = globalPnLHiddenRaw === 'true';
+  const setGlobalPnLHidden = useCallback(
+    (next: boolean | ((prev: boolean) => boolean)) => {
+      setGlobalPnLHiddenRaw((prevRaw) => {
+        const prev = prevRaw === 'true';
+        const value = typeof next === 'function' ? next(prev) : next;
+        return value ? 'true' : 'false';
+      });
+    },
+    [setGlobalPnLHiddenRaw],
+  );
 
   // ✅ NEW: Multi-select and drag functionality state
   const [selectedTokens, setSelectedTokens] = useState<Set<string>>(new Set());
@@ -424,7 +467,6 @@ export default function PnLTracker() {
   // Handler to dismiss the hint message
   const handleDismissHint = useCallback(() => {
     setShowClosedPositionsHint(false);
-    localStorage.setItem("pnl-closed-positions-hint-dismissed", "true");
   }, []);
 
   // Add this function for opening charts
@@ -469,7 +511,6 @@ export default function PnLTracker() {
 
       if (hasPermission) {
         setNotificationsEnabled(true);
-        localStorage.setItem("pnl-notifications-enabled", "true");
         console.log("✅ PnL notifications enabled successfully");
 
         // Test notification
@@ -497,7 +538,6 @@ export default function PnLTracker() {
     } else {
       // Disabling notifications
       setNotificationsEnabled(false);
-      localStorage.setItem("pnl-notifications-enabled", "false");
       setNotifiedTokens(new Set()); // Clear notified tokens when disabling
       console.log("🔕 PnL notifications disabled");
     }
@@ -578,11 +618,6 @@ export default function PnLTracker() {
         } else {
           newSet.add(tokenId);
         }
-        // Save to localStorage
-        localStorage.setItem(
-          "hidden-pnl-amounts",
-          JSON.stringify(Array.from(newSet)),
-        );
         return newSet;
       });
     },
@@ -592,9 +627,7 @@ export default function PnLTracker() {
   // ✅ NEW: Toggle global P&L visibility
   const toggleGlobalPnLVisibility = useCallback(() => {
     setGlobalPnLHidden((prev) => {
-      const newValue = !prev;
-      localStorage.setItem("global-pnl-hidden", newValue.toString());
-      return newValue;
+      return !prev;
     });
   }, []);
 
