@@ -226,7 +226,7 @@ async function runSimTrack(request: NextRequest) {
         requiredMentionMints,
       })
 
-      await captureTokenInfoDetectBatch(
+      void captureTokenInfoDetectBatch(
         eligible.map((candidate) => ({
           chain: SOCIAL_CHAIN,
           tokenAddress: candidate.tokenAddress,

@@ -353,7 +353,7 @@ export async function gateGmgnCandidates(params: {
     })
   }
   } finally {
-    await captureTokenInfoDetectBatch(tokenInfoCaptures)
+    void captureTokenInfoDetectBatch(tokenInfoCaptures)
   }
 
   return gated

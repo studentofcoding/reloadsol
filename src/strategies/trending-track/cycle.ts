@@ -1894,8 +1894,11 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
       timestamp: new Date().toISOString()
     }, { status: 500 })
   } finally {
-    await captureTokenInfoDetectBatch(tokenInfoCaptures)
+    // Release the lock FIRST and never await the capture: it queues behind GMGN's rate gate
+    // (0.9 rps, 2 POSTs per 8-mint chunk) and, on the OpenAPI path, one serial snapshot per mint, so
+    // awaiting it held `trending_track` and the HTTP response for however long GMGN took.
     await releaseJobLock('trending_track')
+    void captureTokenInfoDetectBatch(tokenInfoCaptures)
   }
 }
 

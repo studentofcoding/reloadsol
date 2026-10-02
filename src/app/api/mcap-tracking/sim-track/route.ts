@@ -734,7 +734,7 @@ async function runSimTrack(request: NextRequest) {
               closedOutcomeKeys,
             ) == null,
         )
-        await captureTokenInfoDetectBatch(
+        void captureTokenInfoDetectBatch(
           selected.map((snapshot) => ({
             chain: 'sol' as const,
             tokenAddress: snapshot.token_address,
