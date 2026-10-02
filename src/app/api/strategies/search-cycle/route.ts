@@ -8,7 +8,8 @@ import {
 import type { StrategyDomain } from '@/strategies/types'
 
 function secret(): string {
-  return process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending'
+  // No committed fallback: an unset secret rejects every key (isAuthorizedRequest needs a non-empty match).
+  return process.env.TRENDING_TRACKER_SECRET ?? ''
 }
 
 function parseDomain(raw: string | null): StrategyDomain | 'all' {

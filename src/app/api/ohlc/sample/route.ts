@@ -2,6 +2,7 @@ import { NextRequest, NextResponse, connection } from 'next/server'
 import { query } from '@/utils/db'
 import { getUsdPrices } from '@/utils/usd-prices'
 import { log } from '@/utils/unified-logger'
+import { hasTrendingTrackerSecret } from '@/utils/api-auth'
 import {
   WATCH_RANGE_MAX,
   WATCH_RANGE_MIN,
@@ -30,13 +31,9 @@ import {
 
 const DEFAULT_RETENTION_HOURS = 48
 
+/** TRENDING_TRACKER_SECRET only; fails closed when it is unset (no committed fallback). */
 function isServiceAuthorized(request: NextRequest): boolean {
-  const { searchParams } = new URL(request.url)
-  const key = searchParams.get('key')
-  const expected = process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending'
-  if (key && key === expected) return true
-  const auth = request.headers.get('authorization')
-  return auth === `Bearer ${expected}`
+  return hasTrendingTrackerSecret(request)
 }
 
 const UPSERT_SQL = `

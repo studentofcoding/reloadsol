@@ -37,6 +37,15 @@ function hasMatchingSecret(req: NextRequest, expected?: string | null): boolean 
   return false;
 }
 
+/**
+ * Only TRENDING_TRACKER_SECRET (`?key=` or `Authorization: Bearer`), constant-time.
+ * Fails closed when the env is unset: there is no committed fallback secret.
+ * Narrower than isServiceAuthorizedRequest (no DLMM/notification/PNL secrets, no dlmm password).
+ */
+export function hasTrendingTrackerSecret(req: NextRequest): boolean {
+  return hasMatchingSecret(req, process.env.TRENDING_TRACKER_SECRET);
+}
+
 /** Cron jobs, webhooks, and bearer-protected maintenance endpoints. */
 export function isServiceAuthorizedRequest(req: NextRequest): boolean {
   const pathname = req.nextUrl.pathname;
