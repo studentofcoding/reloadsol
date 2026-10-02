@@ -7,14 +7,30 @@ import {
   getSLTPTrackingSummary
 } from '@/utils/sl-tp-tracker'
 import { log } from '@/utils/unified-logger'
+import { timingSafeEqual } from 'node:crypto'
 
+function safeEqual(a: string, b: string): boolean {
+  const x = Buffer.from(a)
+  const y = Buffer.from(b)
+  return x.length === y.length && timingSafeEqual(x, y)
+}
+
+/**
+ * Fail CLOSED. The previous form fell back to a literal that is committed to this (public) repo
+ * when TRENDING_TRACKER_SECRET was unset, so a mis-set env turned the money-path routes below into
+ * "anyone who read the source". No secret configured = nobody is authorised.
+ */
 function isServiceAuthorized(request: NextRequest): boolean {
-  const { searchParams } = new URL(request.url)
-  const key = searchParams.get('key')
-  const expected = process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending'
-  if (key && key === expected) return true
+  const expected = process.env.TRENDING_TRACKER_SECRET?.trim()
+  if (!expected) return false
+  const key = new URL(request.url).searchParams.get('key')
+  if (key && safeEqual(key, expected)) return true
   const auth = request.headers.get('authorization')
-  return auth === `Bearer ${expected}`
+  return auth != null && safeEqual(auth, `Bearer ${expected}`)
+}
+
+function unauthorized(): NextResponse {
+  return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 }
 
 // GET - Monitor all active SL/TP positions
@@ -25,6 +41,10 @@ export async function GET(request: NextRequest) {
     const action = searchParams.get('action')
     const wallet = searchParams.get('wallet')
     const mode = searchParams.get('mode') // optional: 'summary' | 'monitor'
+
+    // /api/sl-tp-monitor sits in no wallet/dev tier (src/config/api-access.ts), so the edge treats it
+    // as `open`: every verb below was reachable without credentials. Auth is therefore enforced here.
+    if (!isServiceAuthorized(request)) return unauthorized()
 
     if (action === 'sync' && wallet) {
       // Sync existing open positions for a specific wallet
@@ -48,10 +68,6 @@ export async function GET(request: NextRequest) {
     }
 
     // Default action: run monitoring and return comprehensive summary (cron)
-    if (!isServiceAuthorized(request)) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
     const { acquireJobLock, releaseJobLock } = await import('@/utils/bot-job-lock')
     const jobLock = await acquireJobLock('sltp_monitor', 120)
     if (!jobLock.acquired) {
@@ -106,6 +122,7 @@ export async function GET(request: NextRequest) {
 
 // POST - Add new SL/TP position
 export async function POST(request: NextRequest) {
+  if (!isServiceAuthorized(request)) return unauthorized()
   try {
     const body = await request.json()
     
@@ -129,9 +146,13 @@ export async function POST(request: NextRequest) {
 
 // DELETE - Clean up old positions
 export async function DELETE(request: NextRequest) {
+  if (!isServiceAuthorized(request)) return unauthorized()
   try {
     const { searchParams } = new URL(request.url)
-    const daysOld = parseInt(searchParams.get('days') || '30')
+    // NaN would make `setDate(NaN)` an Invalid Date and the cleanup a no-op or an error; negative
+    // would push the cutoff into the future and delete every inactive row. Clamp to >= 1 day.
+    const parsedDays = parseInt(searchParams.get('days') || '30', 10)
+    const daysOld = Number.isFinite(parsedDays) ? Math.max(1, parsedDays) : 30
     
     await cleanupOldSLTPPositions(daysOld)
     

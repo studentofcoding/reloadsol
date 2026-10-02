@@ -238,6 +238,16 @@ describe('fetchGmgnWebMultiTokenInfo', () => {
     )
   })
 
+  it('never sends the proxy secret to the public gmgn.ai default host', async () => {
+    delete process.env.GMGN_WEB_HOST
+    process.env.GMGN_WEB_PROXY_SECRET = 'test-proxy-secret'
+    await fetchGmgnWebMultiTokenInfo([MINT_A])
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit
+    const headers = init.headers as Record<string, string>
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('https://gmgn.ai/')
+    expect(headers['X-Gmgn-Proxy-Secret']).toBeUndefined()
+  })
+
   it('coalesces an overlapping in-flight set onto one call per mint', async () => {
     let release!: () => void
     const block = new Promise<void>((resolve) => {

@@ -9,7 +9,9 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	neturl "net/url"
 	"os"
+	"regexp"
 	"runtime"
 	"strings"
 	"strconv"
@@ -1686,8 +1688,11 @@ func (cs *CronService) runDLMMScreen() {
     cs.workers.Begin("dlmm_screen")
     cs.logger.Info("🌊 Running DLMM screen...")
     url := fmt.Sprintf("%s/api/dlmm/screen", cs.config.APIBaseURL)
+    // The route authorises against DLMM_SCREEN_SECRET (src/utils/dlmm/config.ts `screenSecret`), which is
+    // a different env var from the DLMM_MANAGE_SECRET every other DLMM job sends. If the two ever differ the
+    // screener answers 401 on every tick and /dev/dlmm quietly shows month-old candidates.
     resp, err := cs.makeRequest("POST", url, map[string]string{
-        "key": cs.config.DLMMSecret,
+        "key": getEnv("DLMM_SCREEN_SECRET", cs.config.DLMMSecret),
     })
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ DLMM screen failed: %v", err))
@@ -2141,12 +2146,23 @@ var cronTransport = &http.Transport{
 	ExpectContinueTimeout: 1 * time.Second,
 }
 
+// secretQueryRe matches credential-bearing query parameters. Several call sites build `?key=<secret>`
+// into the URL themselves, so the full URL is a secret and must never reach a log line or an error
+// string — those strings are persisted (cron_worker_runtime.last_error) and served by
+// /api/workers/runtime.
+var secretQueryRe = regexp.MustCompile(`([?&](?:key|password|token|secret)=)[^&\s"]*`)
+
+func redactSecrets(s string) string {
+	return secretQueryRe.ReplaceAllString(s, "${1}REDACTED")
+}
+
 func (cs *CronService) makeRequest(method, url string, params map[string]string, timeoutSec ...int) (string, error) {
 	// Add query parameters
 	if len(params) > 0 {
 		url += "?"
 		for key, value := range params {
-			url += fmt.Sprintf("%s=%s&", key, value)
+			// Escaped: a secret containing & + or % would otherwise corrupt the query or smuggle a parameter.
+			url += fmt.Sprintf("%s=%s&", neturl.QueryEscape(key), neturl.QueryEscape(value))
 		}
 		url = url[:len(url)-1] // Remove trailing &
 	}
@@ -2177,11 +2193,12 @@ func (cs *CronService) makeRequest(method, url string, params map[string]string,
         req.Header.Set("Authorization", "Bearer "+cs.config.TrendingSecret)
     }
 
-	cs.logger.Info(fmt.Sprintf("Making %s request to %s", method, url))
+	cs.logger.Info(fmt.Sprintf("Making %s request to %s", method, redactSecrets(url)))
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("request failed: %w", err)
+		// net/http's *url.Error embeds the full URL, query string included.
+		return "", fmt.Errorf("request failed: %s", redactSecrets(err.Error()))
 	}
 	defer resp.Body.Close()
 
