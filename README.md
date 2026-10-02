@@ -266,25 +266,26 @@ Chart fetches (`GET {origin}/chart/{token}`, response `oclhv`) use `SOLANATRACKE
 
 ### `trading_records` read bound
 
-`fetchTradingRecordsForWallet` is floored at `TRADING_RECORDS_MAX_AGE_DAYS` (default **4**). Before it,
-a wallet read with no window pulled the entire history — `trading_records` is 164,382 rows / 270 MB and
-**one wallet holds 155,054 of them** — which saturated the connection pool (`[db-pool] idle=0`,
-connections dying with "Connection terminated unexpectedly"), slowed the SL/TP pass past its 120s client
-timeout, and cost roughly three quarters of the exit throughput. A 4-day floor reads **1.09%** of the
-table and takes the offending wallet from 155,054 rows to 92.
+`fetchTradingRecordsForWallet` has an **optional** age floor, `TRADING_RECORDS_MAX_AGE_DAYS`, which is
+**off by default (`0`)**. It was first shipped defaulting to 4 days to stop a wallet read pulling its whole
+history — `trading_records` is 164,382 rows / 270 MB and **one wallet holds 155,054 of them**, which
+saturated the connection pool. That cost is now handled by the index added in `f6b3665` (unbounded read:
+~12 ms on `mcap-tracker-sim`, ~620 ms on the 155k-row wallet, against 120 s before it).
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TRADING_RECORDS_MAX_AGE_DAYS` | `4` | Hard floor on any `trading_records` read. `sinceDays` can only **tighten** it. `0` disables it (old behaviour, old cost). |
+| `TRADING_RECORDS_MAX_AGE_DAYS` | `0` (off) | Optional hard floor on any `trading_records` read. `sinceDays` can only **tighten** it. **Do not set it to a non-zero value in production** until the long-lived reconstructed cycles are reconciled. |
 
-**This is only safe while every OPEN position is younger than the window.** A position older than the
-floor has no rows inside it, so the reconstruction sees no history and a **live** position reads as
-absent — silently, with nothing in the logs. `db.ts:3250` records the one time it happened (an open
-`att_rh` position at 10 days, 29/09).
+**A non-zero floor is unsafe for the RECONSTRUCTION.** The worker's own positions (`sl_tp_positions`) are
+young, but the sim reconstructs "open" cycles from `trading_records` buys with no later close, and those
+were measured at **84 / 92 / 83 days** (`mcap-tracker-sim` / `signals-strategy-sim` / `gmgn-sim`). A 4-day
+window erases them, `getOpenMcapPositions` reports them closed, and the sim **re-opens a duplicate** —
+silently, with nothing in the logs. That is why the default is `0`: a fresh deploy must not be able to
+reintroduce it by omitting a variable. See `docs/specs/SPEC-trading-records-index-and-window-v1.md`.
 
-`check-sltp-closer-freshness.sh` asserts the margin on every tick and alerts at 80% of the window,
-because this is the one invariant the bound depends on. It reads the same variable, so changing one
-without the other cannot leave the guard wrong.
+`check-sltp-closer-freshness.sh` only asserts the position-age margin when the floor is non-zero
+(alerting at 80% of the window). It reads the same variable and defaults to `0`, so with the floor off
+the check is skipped rather than alerting on every tick.
 
 ### Robinhood sim levers
 

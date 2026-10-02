@@ -3268,13 +3268,24 @@ export async function getStrategyDomainHeartbeats(params?: {
  * margin separately, because a floor exceeding the oldest open position would silently stop
  * reconstructing a live position.
  *
- * Env-tunable; delete the variable to return to the default. 0 disables the floor entirely, which
- * restores the old behaviour and the old cost.
+ * Env-tunable; delete the variable to return to the default, which is **0 — off**. It was shipped as
+ * 4 by `75d5478` and had to be disabled within the hour: 4 days is safe for a position the WORKER
+ * manages (`sl_tp_positions`, oldest 68.5 h) but not for the RECONSTRUCTION, which reads
+ * `trading_records` and derives "open" cycles from buys with no later close. Those were measured at
+ * 83–92 days (`mcap-tracker-sim` 84, `signals-strategy-sim` 92, `gmgn-sim` 83), so a 4-day window
+ * erases them, `getOpenMcapPositions` reports "closed", and the sim **re-opens a duplicate** —
+ * silently. The default is therefore 0: a fresh deploy must not be able to reintroduce that by
+ * omitting a variable. See docs/specs/SPEC-trading-records-index-and-window-v1.md, and the sibling
+ * SPEC-trading-records-read-cost-v1.md whose Task 1 (reconcile those cycles) is the prerequisite for
+ * any non-zero value.
+ *
+ * `0` is also correct on its own merits now: the index added in `f6b3665` makes the unbounded read
+ * ~12 ms on `mcap-tracker-sim` and 620 ms on the 155k-row wallet, against 120 s before it.
  */
 function tradingRecordsMaxAgeDays(): number {
   const raw = Number(process.env.TRADING_RECORDS_MAX_AGE_DAYS)
   if (Number.isFinite(raw) && raw >= 0) return raw
-  return 4
+  return 0
 }
 
 export async function fetchTradingRecordsForWallet(
@@ -3386,9 +3397,10 @@ export async function fetchTradingRecordsForWallet(
       conditions.push(`timestamp >= NOW() - make_interval(days => $${values.length}::int)`)
     }
 
-    // The floor, always. `sinceDays` can only TIGHTEN this — a caller asking for 1 day gets 1 day,
-    // and a caller asking for nothing gets the default rather than the whole wallet. `maxAgeDays <= 0`
-    // disables it, which is the old behaviour.
+    // The floor, when configured. `sinceDays` can only TIGHTEN it — a caller asking for 1 day gets 1 day.
+    // The default is 0 (OFF): with no `TRADING_RECORDS_MAX_AGE_DAYS` set a caller asking for nothing gets
+    // the whole wallet, which the `trading_records` index from f6b3665 makes cheap. A non-zero value
+    // is opt-in and must not be set until the 83–92-day reconstructed cycles are reconciled.
     const maxAgeDays = tradingRecordsMaxAgeDays()
     if (maxAgeDays > 0) {
       values.push(maxAgeDays)
