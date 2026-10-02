@@ -142,18 +142,25 @@ export function useOpenPositions() {
   // the poll rather than replacing it: `pricesQuery` stays exactly as it was, so if the stream dies
   // the safety net is still there and the worst case is the old cadence, never a missing price.
   const [streamPrices, setStreamPrices] = useState<Record<string, number>>({});
-  const streamMints = useMemo(
-    () => candidates.map((p) => p.mintAddress),
+  // Keyed on the mint SET, not the array: `candidates` is rebuilt whenever records or holdings
+  // change, and an array dependency would resubscribe (and, via the refcount dropping to zero,
+  // reconnect) more often than the set actually changes.
+  const streamMintsKey = useMemo(
+    () =>
+      candidates
+        .map((p) => p.mintAddress)
+        .sort()
+        .join(','),
     [candidates],
   );
   useEffect(() => {
-    if (!enabled || streamMints.length === 0) return;
-    return subscribeOpenPrices(streamMints, (mint, price) => {
+    if (!enabled || !streamMintsKey) return;
+    return subscribeOpenPrices(streamMintsKey.split(',').filter(Boolean), (mint, price) => {
       setStreamPrices((prev) =>
         prev[mint] === price ? prev : { ...prev, [mint]: price },
       );
     });
-  }, [enabled, streamMints]);
+  }, [enabled, streamMintsKey]);
 
   // Stream wins over poll: it is strictly fresher, and the poll can only ever be a lagging copy of
   // the same server-side cache. Merging rather than replacing keeps every mint the stream has not

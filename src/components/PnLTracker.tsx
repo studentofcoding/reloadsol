@@ -5,6 +5,7 @@ import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useLocalStorageValue } from "@/hooks/useLocalStorageValue";
 import { useWalletTokens } from "@/hooks/useWalletTokens";
 import { pctFromBaseline } from "@/utils/watchlist/pct";
+import { subscribeOpenPrices } from "@/utils/open-price-stream";
 import {
   TrackingRecord,
   fetchTokenPricesForTracking,
@@ -1982,57 +1983,28 @@ export default function PnLTracker() {
     }
   }, [openMintsKey, applyOpenPrices, network]);
 
-  // Redis pub/sub → SSE for near-realtime open-card prices
+  // Live open-card prices now ride the app-wide stream (utils/open-price-stream.ts) instead of a
+  // private EventSource, so this panel's mints and the watchlist bar's mints share ONE connection
+  // covering the union. The old per-component `startPollFallback` (5s) is gone with it: the
+  // react-query safety net below already re-polls at 15s unconditionally, so the SSE-dead case is
+  // still covered — at 15s rather than 5s — without a second timer.
+  //
+  // The handler goes through a ref on purpose. `applyOpenPrices` is a useCallback, and depending on
+  // it directly would tear down and re-open the subscription whenever its identity changed.
+  const applyOpenPricesRef = React.useRef(applyOpenPrices);
+  useEffect(() => {
+    applyOpenPricesRef.current = applyOpenPrices;
+  }, [applyOpenPrices]);
+
+  // Keyed on the mint SET, not the array: `openPositions` is replaced on every price tick, so an
+  // array dependency would resubscribe continuously.
   useEffect(() => {
     if (!openMintsKey) return;
-
-    let es: EventSource | null = null;
-    let pollId: ReturnType<typeof setInterval> | null = null;
-    let closed = false;
-
-    const startPollFallback = () => {
-      if (pollId || closed) return;
-      pollId = setInterval(() => {
-        void refreshOpenPositionPrices();
-      }, 5_000);
-    };
-
-    try {
-      es = new EventSource(
-        `/api/prices/open/stream?mints=${encodeURIComponent(openMintsKey)}`,
-      );
-      es.onmessage = (ev) => {
-        try {
-          const payload = JSON.parse(ev.data) as {
-            mint?: string;
-            price?: number;
-          };
-          if (
-            typeof payload.mint === "string" &&
-            typeof payload.price === "number" &&
-            payload.price > 0
-          ) {
-            applyOpenPrices({ [payload.mint]: payload.price }, false);
-          }
-        } catch {
-          // ignore bad events
-        }
-      };
-      es.onerror = () => {
-        es?.close();
-        es = null;
-        startPollFallback();
-      };
-    } catch {
-      startPollFallback();
-    }
-
-    return () => {
-      closed = true;
-      es?.close();
-      if (pollId) clearInterval(pollId);
-    };
-  }, [openMintsKey, applyOpenPrices, refreshOpenPositionPrices]);
+    const mints = openMintsKey.split(",").filter(Boolean);
+    return subscribeOpenPrices(mints, (mint, price) => {
+      applyOpenPricesRef.current({ [mint]: price }, false);
+    });
+  }, [openMintsKey]);
 
   useQuery({
     queryKey: ["pnl-open-prices", openMintsKey, solPriceUsd],
