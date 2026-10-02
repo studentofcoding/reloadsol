@@ -30,27 +30,39 @@ import { fileURLToPath } from 'node:url'
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const TYPES = 'src/strategies/types.ts'
 
-/** Exported config types and their top-level field names, read from the source. */
+/** Exported config types and their field names, including one level of nested block. */
 function configFields() {
   const src = readFileSync(resolve(ROOT, TYPES), 'utf8')
   const lines = src.split('\n')
   const out = []
   let current = null
+  let parent = null
   for (const line of lines) {
     const open = line.match(/^export (?:type|interface) ([A-Za-z]*Config[A-Za-z]*)\b/)
     if (open) {
       current = { name: open[1], fields: [] }
       out.push(current)
+      parent = null
       continue
     }
     if (current) {
       // A top-level declaration ends the block; two-space indentation is a field of it.
       if (/^(export |const |function )/.test(line)) {
         current = null
+        parent = null
         continue
       }
       const field = line.match(/^\s{2}([a-zA-Z_][A-Za-z0-9_]*)\s*[?:]/)
-      if (field) current.fields.push(field[1])
+      if (field) {
+        current.fields.push({ name: field[1], nested: false })
+        // Most config types keep their sub-blocks as `parent: { … }`; remember it so the next four-
+        // space run is reported as `parent.child` rather than as another top-level field. Heuristic,
+        // and labelled as one — a union spread across lines would read as a parent that has none.
+        parent = line.includes('{') && !line.includes('}') ? field[1] : null
+        continue
+      }
+      const nested = line.match(/^\s{4}([a-zA-Z_][A-Za-z0-9_]*)\s*[?:]/)
+      if (nested && parent) current.fields.push({ name: `${parent}.${nested[1]}`, nested: true })
     }
   }
   return out
@@ -79,11 +91,21 @@ function main() {
   const types = configFields()
   const rows = []
   for (const t of types) {
-    for (const field of t.fields) {
-      const files = references(field)
-      const appFiles = files.filter((f) => !isUi(f))
+    for (const f of t.fields) {
+      // A nested field is grepped on its leaf name, then attributed to its parent — `mcapMin` is what
+      // the code reads; `filter.mcapMin` is only how the type spells it.
+      const leaf = f.name.includes('.') ? f.name.split('.').pop() : f.name
+      const files = references(leaf)
+      const appFiles = files.filter((fi) => !isUi(fi))
       const bucket = appFiles.length > 0 ? 'READ' : files.length > 0 ? 'UI_ONLY' : 'NO_READER'
-      rows.push({ type: t.name, field, bucket, app: appFiles.length, ui: files.filter(isUi).length })
+      rows.push({
+        type: t.name,
+        field: f.name,
+        nested: f.nested,
+        bucket,
+        app: appFiles.length,
+        ui: files.filter(isUi).length,
+      })
     }
   }
 
