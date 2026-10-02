@@ -217,7 +217,10 @@ function AlgoTesterHubContent() {
       <AlgoTesterFilterStrip
         query={query}
         strategyOptions={strategyOptions}
-        showSimulated={query.tab !== "config"}
+        // T3: Health is evidence, not trades — the Noul panel fetches its own data and ignores these
+        // filters. `query.tab !== "config"` handed it the simulated toggle anyway, which rendered a
+        // control nothing consumes, on a tab built to remove exactly that kind of thing.
+        showSimulated={query.tab === "open" || query.tab === "closed"}
         showToken={query.tab === "open" || query.tab === "closed"}
         onPatch={patchQuery}
       />
