@@ -354,6 +354,8 @@ Process: [`main.go`](../main.go) — container `reloadsol-cron`, port **8080** (
 
 **Docker deploy:** frontend-only changes should use `npm run docker:deploy:web` — cron container is not rebuilt or restarted.
 
+**Cron intervals are tuned by env, and the service says so.** The intended cadence of every interval job lives in one table, `intervalSpecs` in [`cron_intervals.go`](../cron_intervals.go), pinned by `cron_intervals_test.go`. At startup the cron logs `cron intervals (effective / default)` with each deviation flagged and sends a Discord warning; an unusable value (`abc`, `-5`, or `0` on a job that cannot be disabled) is logged as an `ERROR … IGNORED` and the default is used — it is never swallowed silently. `SLTP_MONITOR_INTERVAL` above 300 s is logged as an error (the sole position closer). The only intentional 900 s default is `METRICS_COPY_INTERVAL`; any other 900 you see in the Workers table is an env override, not a code default.
+
 ### Env vars (common)
 
 | Variable | Default | Worker |
@@ -362,8 +364,8 @@ Process: [`main.go`](../main.go) — container `reloadsol-cron`, port **8080** (
 | `TRENDING_TRACKER_SECRET` | — | Auth for trending/signals/mcap sim |
 | `SIGNALS_SIM_INTERVAL` | 120 | signals sim-track |
 | `SIGNAL_REFRESH_INTERVAL` | 60 | signals refresh |
-| `MCAP_TRACKER_SIM_OPEN_INTERVAL` | 15 (prod sets 900) | mcap tracker sim open (`phase=open`) |
-| `MCAP_TRACKER_SIM_INTERVAL` | 120 (prod sets 900) | mcap tracker sim manage (`phase=manage`) |
+| `MCAP_TRACKER_SIM_OPEN_INTERVAL` | 15 | **schedules nothing** — the open phase runs inside the `phase=all` job at `MCAP_TRACKER_SIM_INTERVAL` |
+| `MCAP_TRACKER_SIM_INTERVAL` | 120 | mcap tracker sim (`phase=all`: open + manage) |
 | `SOCIAL_ROLLUP_INTERVAL` | 300 | social rollup + 24h patterns |
 | `SOCIAL_SIM_INTERVAL` | 900 (prod) | social sim-track (FOMO burst open) |
 | `SOCIAL_BURST_WINDOW_MIN` | 30 | FOMO burst window read from `social_token_events` |
