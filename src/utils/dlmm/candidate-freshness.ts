@@ -1,8 +1,20 @@
 /**
  * Freshness gate for the DLMM candidate list.
  *
- * Measured 2026-10-02: `dlmm_candidates` held **2 rows, newest 2026-08-28** — 35 days old — because the
- * screener had no cron entry and had not run since. The page chose its source with
+ * Measured 2026-10-02: `dlmm_candidates` held **2 rows, newest 2026-08-28** — 35 days old.
+ *
+ * CORRECTED: an earlier version of this note said the screener "had no cron entry". **That was wrong** —
+ * the Go cron runs it every 15 minutes (`DLMM_SCREEN_INTERVAL=900`, registered at `main.go:672`). It ran,
+ * and returned **zero** candidates every time, because `fetchMeteoraPools` sorted by
+ * `fee_tvl_ratio_24h:desc` — which ranks into dust pools whose ratio is huge only because the denominator
+ * is ~0, so every one failed the screener's `min_tvl` floor. The screen also reported that as
+ * `"meteora fetch error"` over a fetch that was working, which is why the cause went unnoticed. The
+ * sort, the pagination and the misleading reason are all fixed (`meteora.ts`, `screener.ts`).
+ *
+ * This gate is still the right fix for THIS surface: the API reported `"stale": true` honestly for five
+ * weeks and only the UI ignored it. It protects against the next dead screener, whatever kills it.
+ *
+ * The page chose its source with
  * `if (candidates.length > 0)`, which tests **presence, not freshness**, so a dead screener silently
  * degraded the surface to one stale row instead of showing the live pool list. A stale value was wearing
  * the clothes of a current one.

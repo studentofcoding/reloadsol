@@ -73,10 +73,13 @@ export default function DlmmDashboardPage() {
   );
 
   const generalCandidates: DisplayCandidate[] = useMemo(() => {
-    // Presence is not freshness. Measured 2026-10-02: the screener had no cron entry and had not run for
-    // 35 days, so `candidates.length > 0` was true over stale rows and this surface showed one August
-    // candidate instead of the live pool list. Fall through to the pools whenever the screened set is
-    // older than the window — a stale value must not wear the clothes of a current one.
+    // Presence is not freshness. Measured 2026-10-02: the newest candidate was 35 days old, so
+    // `candidates.length > 0` was true over stale rows and this surface showed one August candidate
+    // instead of the live pool list. (The screener was NOT unscheduled — it ran every 15 minutes and
+    // returned zero, because `fetchMeteoraPools` sorted by fee/TVL and ranked into dust pools. That
+    // sort is now fixed; this gate guards the surface for whatever kills the screener next.)
+    // Fall through to the pools whenever the screened set is older than the window — a stale value must
+    // not wear the clothes of a current one.
     if (candidatesAreFresh(candidates, Date.now())) {
       return candidates.map((c) => {
         const pool = pools.find((p) => p.address === c.pool_address);
