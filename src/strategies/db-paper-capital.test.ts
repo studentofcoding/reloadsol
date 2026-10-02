@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/utils/db', () => ({
   query: vi.fn(),
@@ -6,6 +6,7 @@ vi.mock('@/utils/db', () => ({
 }))
 
 import { query } from '@/utils/db'
+import { resetWalletRecordsCacheForTests } from '@/utils/wallet-records-cache'
 import {
   buildOpenMcapSimReportPositions,
   fetchTradingRecordsForWallet,
@@ -16,8 +17,19 @@ const mockQuery = vi.mocked(query)
 
 describe('fetchTradingRecordsForWallet bounds', () => {
   beforeEach(() => {
+    // `fetchTradingRecordsForWallet` memoises per (wallet, opts) for 60s, and the key does not include
+    // the floor. A test that re-reads a wallet an earlier test (or an earlier read in the same test)
+    // already read gets the cached [] and never reaches `query` — `mock.calls[0]` is then undefined.
+    resetWalletRecordsCacheForTests()
+    // Hermetic: the default floor (4 days) is what these tests pin, so they must not inherit
+    // TRADING_RECORDS_MAX_AGE_DAYS from the runner's shell or .env (the VPS sets it to 0).
+    vi.stubEnv('TRADING_RECORDS_MAX_AGE_DAYS', undefined)
     mockQuery.mockReset()
     mockQuery.mockResolvedValue({ rows: [], rowCount: 0 } as never)
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
   })
 
   it('stays unbounded by WINDOW when no opts are given, but floored by max age', async () => {
