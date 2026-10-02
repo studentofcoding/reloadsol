@@ -202,9 +202,14 @@ export async function fetchJupiterSwapQuote(
       body && typeof body === 'object'
         ? (body as { error?: string; errorMessage?: string })
         : {}
+    // 422 is the status the route emits *only* for a venue refusal (`venueRefused` on the server side).
+    // The flag itself cannot cross the HTTP boundary, so it is reconstructed here — without this the
+    // browser reads a refusal as a generic fault, `prepareDeskSwap` misses it, and we fall back to Lite,
+    // which cannot simulate and would build a transaction the wallet cannot pay for.
     throw new JupiterSwapQuoteError(
       err.errorMessage || err.error || `Jupiter quote HTTP ${response.status}`,
       response.status,
+      response.status === 422 ? { venueRefused: true } : undefined,
     )
   }
 
