@@ -3451,6 +3451,9 @@ function GmgnCard({
   sources?: Record<string, "stored" | "defaults">;
 }) {
   const d = strategy.config.discovery;
+  // T4 step 2: the property that makes today's duplication visible as emptiness — a strategy that
+  // overrides nothing should look like it overrides nothing, not like a full page of numbers.
+  const overrides = Object.values(sources ?? {}).filter((v) => v === "stored").length;
   // T4: on a strategy card, "equal to the code default" *is* "inherited" — this row never overrode the
   // family default. Deliberately not inside `SourceTag`: on the weights and shared-filter panels
   // `defaults` is the right word (a global value sitting at stock), and only on a per-strategy card does
@@ -3507,6 +3510,19 @@ function GmgnCard({
       <h3 className="font-semibold text-white">{strategy.name}</h3>
       <p className="text-xs text-gray-500 mb-3">
         {strategy.id} · {source}
+      </p>
+      {/* T4 step 2: what the card actually says about this row, as one line instead of implied by the
+          absence of tags across forty fields. */}
+      <p className="text-[11px] mb-3">
+        {overrides === 0 ? (
+          <span className="text-gray-500">
+            no overrides — every field inherited from the family default
+          </span>
+        ) : (
+          <span className="text-amber-300/80">
+            {overrides} override{overrides === 1 ? "" : "s"} vs the family default
+          </span>
+        )}
       </p>
       <label className="text-xs text-gray-400 block mb-2">
         Execution mode{' '}
