@@ -718,7 +718,9 @@ async function persistCurrentPrices(
 }
 
 // Function to check SL/TP triggers for a position
-function checkSLTPTriggers(
+// Exported for its own test: it is the row -> decision adapter, and the one place a row's fields are
+// translated into the evaluator's inputs.
+export function checkSLTPTriggers(
     position: SLTPPosition,
     currentPrice: number,
     opts: { stale?: boolean; rugged?: boolean } = {},
@@ -1539,6 +1541,16 @@ export async function monitorSLTPPositions(returnSummary: boolean = false): Prom
                         domain: closeResult.domain,
                         closed: closeResult.closed,
                     })
+                    if (closeResult.alreadyClosed) {
+                        // A pass killed between the outcome write and the mirror update leaves exactly
+                        // this. Reported rather than silent, because it means the previous pass did
+                        // not finish — the mirror is retired and nothing else is written.
+                        log.warn('deviation_alert', 'Already closed — retiring the mirror only', {
+                            positionId: position.id,
+                            tokenSymbol: position.token_symbol,
+                            triggerType: triggerResult.trigger_type,
+                        })
+                    }
                     if (closeResult.closed) {
                         await markSimulatedPositionClosed(position, triggerResult)
                     }
@@ -1668,6 +1680,16 @@ export async function runSLTPMonitorAndSummarize(): Promise<SLTPTrackingSummary>
                         domain: closeResult.domain,
                         closed: closeResult.closed,
                     })
+                    if (closeResult.alreadyClosed) {
+                        // A pass killed between the outcome write and the mirror update leaves exactly
+                        // this. Reported rather than silent, because it means the previous pass did
+                        // not finish — the mirror is retired and nothing else is written.
+                        log.warn('deviation_alert', 'Already closed — retiring the mirror only', {
+                            positionId: position.id,
+                            tokenSymbol: position.token_symbol,
+                            triggerType: triggerResult.trigger_type,
+                        })
+                    }
                     if (closeResult.closed) {
                         await markSimulatedPositionClosed(position, triggerResult)
                     }

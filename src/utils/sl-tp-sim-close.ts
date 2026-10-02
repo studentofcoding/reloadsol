@@ -20,6 +20,7 @@ import {
   closeReasonForTrigger,
 } from '@/strategies/close-strategy-sim-position'
 import type { StrategyChain } from '@/strategies/types'
+import { queryOne } from '@/utils/db'
 
 export type SimCloseDomain = 'mcap' | 'signals' | 'gmgn' | 'social'
 
@@ -44,6 +45,52 @@ export type SimCloseOutcome = {
   /** True when a close was written; false when the family is unrecognised or no cycle was found. */
   closed: boolean
   domain: SimCloseDomain | null
+  /**
+   * True when nothing was written because this trade had already closed — the caller should retire
+   * the mirror and stop. Distinct from `closed: true`, which means this call wrote the close.
+   */
+  alreadyClosed?: boolean
+}
+
+/**
+ * Has this trade already been closed?
+ *
+ * The worker retires the mirror LAST (`markSimulatedPositionClosed` runs after the closer returns),
+ * so a pass killed between the outcome write and the mirror update leaves a row that is still
+ * `is_active = true` with its outcome already written. The next tick re-evaluates it and would close
+ * it again, writing a SECOND sell record for one trade — and the sim's ledger is built from those
+ * records, so a duplicate invents a trade that never happened.
+ *
+ * Keyed on the FULL identity the outcome table is already unique on
+ * (`db/init/45-strategy-outcomes-identity.sql`). Never the mint alone: the same mint traded twice is
+ * two different trades — `att_rh` has one mint at 1,610 closes — so a mint-keyed check would silently
+ * skip every re-entry.
+ *
+ * Fail-open. If the check itself fails, this returns false and the close proceeds: a guard on the
+ * close path must never be the reason a position stays open.
+ */
+async function outcomeAlreadyExists(params: {
+  chain: string
+  strategyId: string
+  mint: string
+  entryAt: string | null | undefined
+}): Promise<boolean> {
+  if (!params.entryAt) return false
+  try {
+    const row = await queryOne<{ id: string }>(
+      `SELECT id FROM strategy_outcomes
+        WHERE chain = $1 AND strategy_id = $2 AND token_address = $3 AND entry_at = $4
+        LIMIT 1`,
+      [params.chain, params.strategyId, params.mint, params.entryAt],
+    )
+    return row != null
+  } catch (error) {
+    console.warn(
+      '[sl-tp-sim-close] closed-outcome check failed; closing anyway:',
+      error instanceof Error ? error.message : error,
+    )
+    return false
+  }
 }
 
 /**
@@ -68,6 +115,20 @@ export async function closeSimulatedPositionFromWorker(params: {
   const closeReason = closeReasonForTrigger(params.triggerType)
   const sellPriceUsd =
     params.currentPrice > 0 ? params.currentPrice : undefined
+
+  // Re-runnable by construction: if this trade already closed, retire the mirror (the caller does
+  // that when `closed` is true) and write nothing else. See outcomeAlreadyExists for why the check
+  // is keyed on the full identity and why it fails open.
+  if (
+    await outcomeAlreadyExists({
+      chain,
+      strategyId,
+      mint: position.token_address,
+      entryAt: position.created_at,
+    })
+  ) {
+    return { closed: true, domain, alreadyClosed: true }
+  }
 
   try {
     if (domain === 'mcap') {

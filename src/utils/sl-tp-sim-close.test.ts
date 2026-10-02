@@ -1,5 +1,12 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SLTPPosition } from './sl-tp-tracker'
+
+// Calls are cleared between tests; implementations are not (`clearAllMocks`, not `resetAllMocks`),
+// so the module mocks below keep working and only the call history resets. Without this, a
+// `not.toHaveBeenCalled()` assertion passes or fails depending on test order.
+beforeEach(() => {
+  vi.clearAllMocks()
+})
 
 // The real swap path. If a paper close ever reaches it, that is a real trade on a paper trigger —
 // the one failure this whole design exists to make impossible.
@@ -18,6 +25,10 @@ vi.mock('@/strategies/close-strategy-sim-position', async (importOriginal) => {
     closeMcapStrategySimPositions: vi.fn(async () => ({ closed: 1, failed: [] })),
   }
 })
+
+// The idempotency guard reads `strategy_outcomes`. Mocked by default to "not closed" so the existing
+// cases keep exercising the close path; the guard's own tests override it.
+vi.mock('@/utils/db', () => ({ query: vi.fn(async () => ({ rows: [] })), queryOne: vi.fn(async () => null) }))
 
 const { simCloseDomainForStrategy, closeSimulatedPositionFromWorker } = await import(
   './sl-tp-sim-close'
@@ -160,5 +171,77 @@ describe('closeReasonForTrigger', () => {
 
   it('falls back to deactivation for an unrecognised trigger', () => {
     expect(closeReasonForTrigger('something_new')).toBe('strategy_deactivated')
+  })
+})
+
+/**
+ * The re-close guard. The worker retires the mirror LAST, so a pass killed between the outcome write
+ * and the mirror update leaves a row that is still active with its outcome already written — and the
+ * next tick would close it a second time, inventing a trade in the sim's ledger.
+ */
+describe('a trade that already closed cannot close twice', () => {
+  it('writes NOTHING and reports alreadyClosed, so the caller retires the mirror', async () => {
+    const { queryOne } = await import('@/utils/db')
+    vi.mocked(queryOne).mockResolvedValueOnce({ id: 'outcome-1' } as never)
+
+    const result = await closeSimulatedPositionFromWorker({
+      position: paperPosition({ strategy_id: 'gmgn_sm_kol_combined' }),
+      triggerType: 'take_profit_1',
+      currentPrice: 3.1,
+    })
+
+    // `closed: true` so the caller retires the mirror — that IS the repair. But the closer was never
+    // reached, so there is no second sell record.
+    expect(result).toMatchObject({ closed: true, domain: 'gmgn', alreadyClosed: true })
+    expect(closers.closePriceStrategySimPosition).not.toHaveBeenCalled()
+  })
+
+  it('closes normally when the outcome does not exist', async () => {
+    const result = await closeSimulatedPositionFromWorker({
+      position: paperPosition({ strategy_id: 'gmgn_sm_kol_combined' }),
+      triggerType: 'take_profit_1',
+      currentPrice: 3.1,
+    })
+
+    expect(result).toMatchObject({ closed: true, domain: 'gmgn' })
+    expect(result.alreadyClosed).toBeUndefined()
+    expect(closers.closePriceStrategySimPosition).toHaveBeenCalled()
+  })
+
+  it('keys on the FULL identity, not the mint alone', async () => {
+    // The same mint traded twice is two different trades — att_rh has one mint at 1,610 closes. A
+    // mint-keyed check would silently skip every re-entry, which is a missed exit, not a saved one.
+    const { queryOne } = await import('@/utils/db')
+    vi.mocked(queryOne).mockResolvedValueOnce(null as never)
+
+    const position = paperPosition({ strategy_id: 'gmgn_sm_kol_combined' })
+    await closeSimulatedPositionFromWorker({ position, triggerType: 'take_profit_1', currentPrice: 3.1 })
+
+    const [sql, params] = vi.mocked(queryOne).mock.calls.at(-1)!
+    expect(String(sql)).toContain('chain = $1')
+    expect(String(sql)).toContain('strategy_id = $2')
+    expect(String(sql)).toContain('token_address = $3')
+    expect(String(sql)).toContain('entry_at = $4')
+    expect(params).toEqual([
+      'sol',
+      'gmgn_sm_kol_combined',
+      position.token_address,
+      position.created_at,
+    ])
+  })
+
+  it('FAILS OPEN — a broken check must never be why a position stays open', async () => {
+    const { queryOne } = await import('@/utils/db')
+    vi.mocked(queryOne).mockRejectedValueOnce(new Error('db unavailable'))
+
+    const result = await closeSimulatedPositionFromWorker({
+      position: paperPosition({ strategy_id: 'gmgn_sm_kol_combined' }),
+      triggerType: 'stop_loss',
+      currentPrice: 0.6,
+    })
+
+    expect(result.closed).toBe(true)
+    expect(result.alreadyClosed).toBeUndefined()
+    expect(closers.closePriceStrategySimPosition).toHaveBeenCalled()
   })
 })
