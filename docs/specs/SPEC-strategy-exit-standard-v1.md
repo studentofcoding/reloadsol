@@ -318,8 +318,8 @@ concrete handling, and the test that pins it. Reading: **in** = implemented and 
   start over the same positions.
 - `getSLTPTrackingSummary` reports `by_reason` and takes an explicit window.
 
-Still open: **A1/A5** (legacy rows, fail loudly — P3) · **B1–B5** (the live valuation and `stale` —
-P4) · **C4**, **D1**, **D6**, **E1**, **E3** · **G-a**–**G-g**.
+Still open after P1–P3: **P4–P5** (the live valuation and observability) · **D1**, **D6**, **E1**,
+**E3** · **G-a**–**G-f**.
 
 **P3 done (2026-10-02).** `backfill-exit-contracts-standalone.mjs` (dry-run by default, `--apply`,
 a before-image of every touched row) stamped the contract onto **all 510 legacy rows** —
@@ -330,6 +330,27 @@ the three `search_mcap_*` families (183 + 164 + 163), which is the confirmation 
 rows rather than a missing registration. `registerSimExitContract`'s refusal is now counted
 (`simExitRegistrationFailureCount`) and logs the strategy + mint, so an open that stops registering
 is measurable rather than merely a line in a log.
+
+**P4 + P5 done (2026-10-02), and P4 found a functional bug.** `maxHoldHours` was carried in
+`SimExitThresholds`, resolved by every strategy config, and then **silently dropped** —
+`addSLTPPosition` accepted no such parameter. So `checkSLTPTriggers` had nothing to give the
+evaluator, `max_hold` and `max_age` were **unreachable**, and a position that never crossed its stop
+or its target never closed at all. That is the mechanism behind the stale open cycles, not a
+scheduling problem. Fixed by `db/init/59-sl-tp-max-hold.sql` plus the wiring; `max_age` stays
+unreachable and that is now stated rather than implied.
+
+Also in P4: `label_rugged` was in the closed set and never returned — a known rug now closes, from
+ONE batched fail-open read per pass (`getRuggedMints`) that can only ever ADD a reason to close. And
+an unreadable price is now reported as `stale` instead of silently skipped, which required moving the
+stale check above the positive-value guards in the evaluator: a value that could not be read arrives
+as a zero, so the guards were reporting it as an ordinary `hold`.
+
+P5 turns the backstop share into a thresholded health metric (`backstop_share_pct` +
+`EXIT_BACKSTOP_ALERT_PCT`) and reads `EXIT_MAX_INPUT_AGE_SEC` — deliberately not wired into a
+comparison that cannot fire, because the price cache is 5s, and that is recorded at the reader.
+
+**Verified already resolved** rather than assumed: `mcap_growth_percent` is read on no exit path at
+all now (`8ae590a` removed its last caller), and the price basis is effectively live via a 5s cache.
 
 ### 8.0 The measured baseline
 
@@ -386,7 +407,7 @@ the routing test already asserts.
 | **B2** | staleness → `stale`, never a silent `hold` | **in** | `EXIT_MAX_INPUT_AGE_SEC=180` exists but is **not enforced** | stale input ⇒ `reason:'stale'` |
 | **B3** | entry reference = the **impact-included fill** (S10) | **open** | helper exists (`execution-model.ts:162`), runs **only at close** | `reference_value == computeBuyFill().effectivePrice` |
 | **B4** | `0` / negative / NaN never reaches a comparison | **in** | needs a guard at the evaluator boundary | each bad value ⇒ `hold`, never a close |
-| **B5** | for `mcap`, staleness is measured in **mcap time** | **open** | wall-clock is meaningless for a tracker row | an old mcap ⇒ `stale` |
+| **B5** | for `mcap`, staleness is measured in **mcap time** | **in** | wall-clock is meaningless for a tracker row | an old mcap ⇒ `stale` |
 
 ### C. The decision (S2, S3)
 
@@ -423,7 +444,7 @@ the routing test already asserts.
 | **F1** | backstop share is computable | **in** | blocked by C3 | the metric returns a number |
 | **F2** | `stale` is counted | **in** | blocked by C2 | |
 | **F3** | skipped passes are counted | **in** | blocked by D2 | |
-| **F4** | `EXIT_BACKSTOP_ALERT_PCT` (10) alerts | **open** | env documented, no alert wired | crossing it fires |
+| **F4** | `EXIT_BACKSTOP_ALERT_PCT` (10) alerts | **in** | env documented, no alert wired | crossing it fires |
 | **F5** | both bases reported until they converge | **open** | gate 2 | an unvalidated `pnl_pct` is labelled |
 
 ### G. Edge cases
