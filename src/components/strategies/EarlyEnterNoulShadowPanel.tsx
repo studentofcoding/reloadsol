@@ -1104,6 +1104,16 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
           </p>
         </div>
 
+        {/* T2, third case: a predicate that is false on every rendered row cannot distinguish one row
+            from another. Say it once, rather than painting N grey chips that read as N individual
+            rejections — the same vacuity the agreement rate above can have. */}
+        {funnelRows.length > 0 && funnelRows.every((r) => !r.specWouldPass) ? (
+          <p className="mb-2 text-xs text-amber-200/90 bg-amber-950/40 border border-amber-900/60 rounded-md px-3 py-2">
+            spec_would_pass is <span className="font-semibold">false on all {funnelRows.length}</span> rows
+            in this sample — the column discriminates nothing here.
+          </p>
+        ) : null}
+
         {funnelRows.length === 0 ? (
           <p className="text-gray-500 text-sm">
             No shadowed tokens for this filter.
