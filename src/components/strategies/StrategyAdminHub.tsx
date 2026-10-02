@@ -15,6 +15,8 @@ import type {
   StrategyOutcomeRow,
 } from "@/strategies/types";
 import { formatAppDateTime } from "@/utils/datetime";
+import { diffSource } from "@/strategies/config-source";
+import { DEFAULT_FILTER_CONFIG } from "@/strategies/registry";
 import {
   Section,
   FieldGrid,
@@ -2794,6 +2796,11 @@ function TrendingBotFilterFields({
   buildRef: React.MutableRefObject<() => TokenFilterConfig>;
 }) {
   const [filterEnabled, setFilterEnabled] = useState(initial.enabled ?? true);
+  // T7: the shared filters are the one family that is not a registry — but both sides are here, so the
+  // provenance is computed in place rather than threaded. `initial` is what is in force; the code's own
+  // declaration of the defaults is imported. A field equal to the default says `defaults`, which on
+  // this block is the interesting case: it means nobody has overridden it.
+  const sources = diffSource(initial, DEFAULT_FILTER_CONFIG);
   const [mcapMin, setMcapMin] = useState(
     initial.mcap?.min != null ? String(initial.mcap.min) : "",
   );
@@ -2863,42 +2870,49 @@ function TrendingBotFilterFields({
           onChange={setFilterEnabled}
           colSpan={2}
         />
-        <NumberField label="MCap min" value={mcapMin} onChange={setMcapMin} />
-        <NumberField label="MCap max" value={mcapMax} onChange={setMcapMax} />
+        <NumberField label="MCap min" value={mcapMin} onChange={setMcapMin} source={sources?.["mcap.min"]} />
+        <NumberField label="MCap max" value={mcapMax} onChange={setMcapMax} source={sources?.["mcap.max"]} />
         <NumberField
           label="5m change min %"
           value={pc5mMin}
           onChange={setPc5mMin}
+          source={sources?.["priceChange5m.min"]}
         />
         <NumberField
           label="5m change max %"
           value={pc5mMax}
           onChange={setPc5mMax}
+          source={sources?.["priceChange5m.max"]}
         />
         <NumberField
           label="1h change min %"
           value={pc1hMin}
           onChange={setPc1hMin}
+          source={sources?.["priceChange1h.min"]}
         />
         <NumberField
           label="1h change max %"
           value={pc1hMax}
           onChange={setPc1hMax}
+          source={sources?.["priceChange1h.max"]}
         />
         <NumberField
           label="6h change min %"
           value={pc6hMin}
           onChange={setPc6hMin}
+          source={sources?.["priceChange6h.min"]}
         />
         <NumberField
           label="6h change max %"
           value={pc6hMax}
           onChange={setPc6hMax}
+          source={sources?.["priceChange6h.max"]}
         />
         <NumberField
           label="Organic score min"
           value={organicMin}
           onChange={setOrganicMin}
+          source={sources?.["organicScore.min"]}
         />
         <NumberField
           label="Top holders max %"
