@@ -3660,10 +3660,13 @@ function SocialCard({
   strategy,
   saving,
   onSave,
+  sources,
 }: {
   strategy: SocialStrategy;
   saving: boolean;
   onSave: (id: string, patch: Record<string, unknown>) => void;
+  /** T7: this strategy's fields, `config.entry.minMentions30m -> stored | defaults`. */
+  sources?: Record<string, "stored" | "defaults">;
 }) {
   const entry = strategy.config.entry;
   const e = strategy.config.execution;
@@ -3843,10 +3846,12 @@ function DlmmCard({
   strategy,
   saving,
   onSave,
+  sources,
 }: {
   strategy: DlmmStrategy;
   saving: boolean;
   onSave: (id: string, patch: Record<string, unknown>) => void;
+  sources?: Record<string, "stored" | "defaults">;
 }) {
   const c = strategy.config;
   const exec = c.execution ?? {
@@ -3878,17 +3883,17 @@ function DlmmCard({
       </label>
       <Section title="Start conditions">
         <FieldGrid>
-          <NumberField label="min TVL" value={minTvl} onChange={setMinTvl} step="1" />
-          <NumberField label="min fee/TVL" value={minFeeTvl} onChange={setMinFeeTvl} />
-          <NumberField label="min organic score" value={minOrganic} onChange={setMinOrganic} step="1" />
-          <NumberField label="min holders" value={minHolders} onChange={setMinHolders} step="1" />
+          <NumberField label="min TVL" value={minTvl} onChange={setMinTvl} step="1" source={sources?.[`${strategy.id}.config.min_tvl`]} />
+          <NumberField label="min fee/TVL" value={minFeeTvl} onChange={setMinFeeTvl} source={sources?.[`${strategy.id}.config.min_fee_tvl`]} />
+          <NumberField label="min organic score" value={minOrganic} onChange={setMinOrganic} step="1" source={sources?.[`${strategy.id}.config.min_organic_score`]} />
+          <NumberField label="min holders" value={minHolders} onChange={setMinHolders} step="1" source={sources?.[`${strategy.id}.config.min_holders`]} />
         </FieldGrid>
       </Section>
       <Section title="End conditions">
         <FieldGrid>
-          <NumberField label="take profit %" value={tp} onChange={setTp} />
-          <NumberField label="stop loss %" value={sl} onChange={setSl} />
-          <NumberField label="OOR timeout (min)" value={oor} onChange={setOor} step="1" colSpan={2} />
+          <NumberField label="take profit %" value={tp} onChange={setTp} source={sources?.[`${strategy.id}.config.take_profit_pct`]} />
+          <NumberField label="stop loss %" value={sl} onChange={setSl} source={sources?.[`${strategy.id}.config.stop_loss_pct`]} />
+          <NumberField label="OOR timeout (min)" value={oor} onChange={setOor} step="1" colSpan={2} source={sources?.[`${strategy.id}.config.oor_timeout_min`]} />
         </FieldGrid>
       </Section>
       <Section title="Execution">
@@ -4157,6 +4162,7 @@ function StrategyConfigTab({
               <SocialCard
                 key={`${s.id}-${s.is_active}-${s.execution_mode}-${s.config.entry.minMentions30m}`}
                 strategy={s}
+                sources={sources?.social}
                 saving={saving === s.id}
                 onSave={onSave}
               />
@@ -4187,6 +4193,7 @@ function StrategyConfigTab({
             {dlmm && (
               <DlmmCard
                 strategy={dlmm}
+                sources={sources?.dlmm}
                 saving={saving === dlmm.id}
                 onSave={onSave}
               />
