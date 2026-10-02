@@ -17,6 +17,31 @@ import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
 import { closeSimulatedPositionFromWorker } from '@/utils/sl-tp-sim-close'
 import { evaluateExit, toPersistedCloseReason } from '@/utils/exit-evaluator'
 
+/**
+ * The backstop share above which the exit system is considered broken (S5).
+ *
+ * `max_hold` / `max_age` firing means the primary exit did NOT fire. That should be ~0, not a
+ * percentage — the default of 10 is a tripwire, not a target. Env-tunable so it can be tightened
+ * without a deploy once the real distribution is known.
+ */
+function getExitBackstopAlertPct(): number {
+    const raw = Number(process.env.EXIT_BACKSTOP_ALERT_PCT)
+    return Number.isFinite(raw) && raw >= 0 ? raw : 10
+}
+
+/**
+ * The age past which a live value is too old to decide on (S4).
+ *
+ * NOTE: deliberately NOT wired into a comparison that cannot fire. `getOpenPositionPrices` serves
+ * from a Redis cache with a 5s TTL, so a `price` basis value is never older than five seconds —
+ * far inside any sane bound. Reading it here keeps the key honest rather than decorative, so a
+ * future slower source has one place to honour instead of a dead guard that looks like a check.
+ */
+export function getExitMaxInputAgeSec(): number {
+    const raw = Number(process.env.EXIT_MAX_INPUT_AGE_SEC)
+    return Number.isFinite(raw) && raw > 0 ? raw : 180
+}
+
 /** Cached Shyft all_tokens, then Jupiter, then RPC token accounts. */
 async function fetchSlTpWalletTokens(
   walletAddress: string,
@@ -1271,6 +1296,13 @@ export interface SLTPTrackingSummary {
          * position appears in more than one of its buckets. Compute the backstop share from here.
          */
         by_reason: Record<string, number>
+        /**
+         * `max_hold` + `max_age` as a share of closes that carry a reason (S5). A health metric: it
+         * measures how often the primary exit failed to fire, so it should be ~0.
+         */
+        backstop_share_pct: number
+        /** The value `backstop_share_pct` is compared against before it logs a warning. */
+        backstop_alert_pct: number
         /** The window `total_finished` counts over. Was silently 24h. */
         window_hours: number
         total_tracked_tokens: number
@@ -1325,6 +1357,25 @@ export async function getSLTPTrackingSummary(windowHours = 24): Promise<SLTPTrac
             byReason[reason] = (byReason[reason] ?? 0) + 1
         }
 
+        // S5: the backstop share is a HEALTH METRIC, not a statistic. `max_hold` firing means the
+        // primary exit did not. It should be ~0, so it is computed against a closed-set
+        // denominator (rows that actually carry a reason) and compared to an alerting threshold
+        // rather than just printed.
+        const reasonKnown = finishedPositions.filter((p) => p.close_reason != null).length
+        const backstopCloses = (byReason.max_hold ?? 0) + (byReason.max_age ?? 0)
+        const backstopSharePct =
+            reasonKnown > 0 ? (backstopCloses / reasonKnown) * 100 : 0
+        const backstopAlertPct = getExitBackstopAlertPct()
+        if (reasonKnown > 0 && backstopSharePct > backstopAlertPct) {
+            log.warn('price_tracking', 'Backstop share above threshold — primary exits are not firing', {
+                backstopSharePct: Number(backstopSharePct.toFixed(1)),
+                thresholdPct: backstopAlertPct,
+                backstopCloses,
+                reasonKnown,
+                windowHours,
+            })
+        }
+
         const uniqueWallets = new Set([
             ...activePositions.map(p => p.wallet_address),
             ...finishedPositions.map(p => p.wallet_address)
@@ -1339,6 +1390,8 @@ export async function getSLTPTrackingSummary(windowHours = 24): Promise<SLTPTrac
                 active_by_type: activeByType,
                 finished_by_trigger: finishedByTrigger,
                 by_reason: byReason,
+                backstop_share_pct: Number(backstopSharePct.toFixed(2)),
+                backstop_alert_pct: backstopAlertPct,
                 window_hours: windowHours,
                 total_tracked_tokens: activePositions.length + finishedPositions.length,
                 unique_wallets: uniqueWallets

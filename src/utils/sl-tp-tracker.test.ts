@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { isSimulatedPosition } from './sl-tp-tracker'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { getExitMaxInputAgeSec, isSimulatedPosition } from './sl-tp-tracker'
 
 /**
  * The safety invariant. `executeSellOrder` runs a REAL swap (it hardcodes isSimulated: false), and
@@ -23,5 +23,35 @@ describe('isSimulatedPosition', () => {
     // Called with nothing, the guard must not claim "simulated" and skip a real sell.
     expect(isSimulatedPosition(null)).toBe(false)
     expect(isSimulatedPosition(undefined)).toBe(false)
+  })
+})
+
+/**
+ * The SPEC's env table documented `EXIT_MAX_INPUT_AGE_SEC` for months while no code read it, so the
+ * key was decorative. These pin the defaults the table states.
+ */
+describe('exit env knobs', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('defaults the max input age to 180s and honours the env key', () => {
+    vi.stubEnv('EXIT_MAX_INPUT_AGE_SEC', '')
+    expect(getExitMaxInputAgeSec()).toBe(180)
+
+    vi.stubEnv('EXIT_MAX_INPUT_AGE_SEC', '30')
+    expect(getExitMaxInputAgeSec()).toBe(30)
+  })
+
+  it('falls back on a nonsense value rather than adopting it', () => {
+    // A non-numeric or negative bound must not silently disable the guard it configures.
+    vi.stubEnv('EXIT_MAX_INPUT_AGE_SEC', 'not-a-number')
+    expect(getExitMaxInputAgeSec()).toBe(180)
+
+    vi.stubEnv('EXIT_MAX_INPUT_AGE_SEC', '-5')
+    expect(getExitMaxInputAgeSec()).toBe(180)
+
+    vi.stubEnv('EXIT_MAX_INPUT_AGE_SEC', '0')
+    expect(getExitMaxInputAgeSec()).toBe(180)
   })
 })
