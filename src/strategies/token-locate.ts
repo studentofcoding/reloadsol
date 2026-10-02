@@ -419,10 +419,11 @@ export async function locateTokenByAddress(
   const outcomesParams: unknown[] = chain ? [lookup, chain] : [lookup]
   const groupsWhere = chain ? `token_address = $1 AND chain = $2` : `token_address = $1`
   const groupsParams: unknown[] = chain ? [lookup, chain] : [lookup]
-  const locksWhere = chain
-    ? `token_address = $1 AND expires_at > NOW() AND chain = $2`
-    : `token_address = $1 AND expires_at > NOW()`
-  const locksParams: unknown[] = chain ? [lookup, chain] : [lookup]
+  // `bot_trade_locks` has NO `chain` column (token_address, strategy_id, locked_at, expires_at — see
+  // db/init/02-schema.sql), so a chain filter here raised `column "chain" does not exist` on every
+  // chain-scoped locate and `safeQuery` swallowed it into an empty lock list. Address-keyed only.
+  const locksWhere = `token_address = $1 AND expires_at > NOW()`
+  const locksParams: unknown[] = [lookup]
 
   const mcapWhere = chain ? `token_address = $1 AND chain = $2` : `token_address = $1`
   const mcapParams: unknown[] = chain ? [lookup, chain] : [lookup]
