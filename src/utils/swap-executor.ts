@@ -557,8 +557,12 @@ async function rpcSendFallback(
   connection: Connection,
 ): Promise<string> {
   await waitForRpcRateLimit();
+  // Preflight ON: we broadcast this one, so the RPC re-simulates at the moment of send. The batch guard
+  // (`dropRevertingPreparedSwaps`) simulates every leg up front, but with legs 1-2 s apart the last leg
+  // is sent seconds after it was checked — a measured case landed as `6025` on chain and burned its fee.
+  // Rejecting here instead keeps the leg retryable and costs nothing: it would have failed anyway.
   return connection.sendTransaction(signedTx, {
-    skipPreflight: true,
+    skipPreflight: false,
     maxRetries: 2,
   });
 }
@@ -610,7 +614,7 @@ export async function sendBatchViaShyftRpc(
         jsonrpc: "2.0",
         id,
         method: "sendTransaction",
-        params: [payload, { encoding: "base64", skipPreflight: true, maxRetries: 2 }],
+        params: [payload, { encoding: "base64", skipPreflight: false, maxRetries: 2 }],
       }),
     });
     const body = (await response.json()) as { result?: unknown; error?: unknown };
@@ -618,6 +622,12 @@ export async function sendBatchViaShyftRpc(
     const reason = JSON.stringify(body?.error ?? body);
     // A throttle is worth waiting out on this lane; anything else is the caller's fallback to handle.
     if (/rate ?limit/i.test(reason)) throw new Error(reason);
+    // Preflight rejections land here. Say so plainly — a leg dropped for a stale quote is a different
+    // story from one that reached chain and failed, and the user should not have to guess which.
+    if (/preflight|simulation|would fail|insufficient/i.test(reason)) {
+      console.warn("[swap] shyft batch rpc preflight rejected (dropped before landing):", reason.slice(0, 140));
+      return null;
+    }
     console.warn("[swap] shyft batch rpc send rejected:", reason.slice(0, 140));
     return null;
   };
