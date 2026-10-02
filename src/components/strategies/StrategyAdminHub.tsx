@@ -3248,10 +3248,13 @@ function McapTrackerCard({
   strategy,
   saving,
   onSave,
+  sources,
 }: {
   strategy: McapTrackerStrategy;
   saving: boolean;
   onSave: (id: string, patch: Record<string, unknown>) => void;
+  /** T7: this strategy's fields, `config.exit.stopLossPct -> stored | defaults`. */
+  sources?: Record<string, "stored" | "defaults">;
 }) {
   const q = strategy.config.query;
   const e = strategy.config.execution;
@@ -3300,27 +3303,27 @@ function McapTrackerCard({
       </label>
       <Section title="Query">
         <FieldGrid>
-          <NumberField label="recency (min)" value={recency} onChange={setRecency} step="1" />
-          <NumberField label="limit" value={limit} onChange={setLimit} step="1" />
+          <NumberField label="recency (min)" value={recency} onChange={setRecency} step="1" source={sources?.[`${strategy.id}.config.query.recencyMinutes`]} />
+          <NumberField label="limit" value={limit} onChange={setLimit} step="1" source={sources?.[`${strategy.id}.config.query.limit`]} />
         </FieldGrid>
       </Section>
       <Section title="Execution">
         <FieldGrid>
-          <NumberField label="sim buy SOL" value={simBuy} onChange={setSimBuy} step="0.001" />
-          <NumberField label="max open" value={maxOpen} onChange={setMaxOpen} step="1" />
+          <NumberField label="sim buy SOL" value={simBuy} onChange={setSimBuy} step="0.001" source={sources?.[`${strategy.id}.config.execution.simBuySol`]} />
+          <NumberField label="max open" value={maxOpen} onChange={setMaxOpen} step="1" source={sources?.[`${strategy.id}.config.execution.maxOpenPositions`]} />
         </FieldGrid>
       </Section>
       <Section title="Exit">
         <FieldGrid>
-          <NumberField label="stop loss %" value={stopLoss} onChange={setStopLoss} step="1" />
-          <NumberField label="take profit %" value={takeProfit} onChange={setTakeProfit} step="1" />
-          <NumberField label="max hold (h)" value={maxHold} onChange={setMaxHold} step="1" />
+          <NumberField label="stop loss %" value={stopLoss} onChange={setStopLoss} step="1" source={sources?.[`${strategy.id}.config.exit.stopLossPct`]} />
+          <NumberField label="take profit %" value={takeProfit} onChange={setTakeProfit} step="1" source={sources?.[`${strategy.id}.config.exit.takeProfitPct`]} />
+          <NumberField label="max hold (h)" value={maxHold} onChange={setMaxHold} step="1" source={sources?.[`${strategy.id}.config.exit.maxHoldHours`]} />
         </FieldGrid>
       </Section>
       <Section title="Entry filters">
         <FieldGrid>
-          <NumberField label="mcap min" value={mcapMin} onChange={setMcapMin} step="1000" />
-          <NumberField label="mcap max" value={mcapMax} onChange={setMcapMax} step="1000" />
+          <NumberField label="mcap min" value={mcapMin} onChange={setMcapMin} step="1000" source={sources?.[`${strategy.id}.config.entry.mcapMin`]} />
+          <NumberField label="mcap max" value={mcapMax} onChange={setMcapMax} step="1000" source={sources?.[`${strategy.id}.config.entry.mcapMax`]} />
           <NumberField label="organic min" value={organicMin} onChange={setOrganicMin} step="1" />
           <NumberField label="holders max %" value={holdersMax} onChange={setHoldersMax} step="1" />
         </FieldGrid>
@@ -4094,6 +4097,7 @@ function StrategyConfigTab({
             <McapTrackerCard
               key={s.id}
               strategy={s}
+              sources={sources?.mcap_tracker}
               saving={saving === s.id}
               onSave={onSave}
             />
