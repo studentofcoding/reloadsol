@@ -34,7 +34,14 @@ Reject Solana discovery/entry candidates that are **rug-likely at the product de
 - **Bubblemaps** cluster / decentralization fields (concentration-quality), and
 - **Jupiter organic membership** (wash / legitimacy), plus Jupiter **audit** as the alternate wash-leg fail,
 
-with **existing** GMGN / Axiom / concentration-ban / ML risk.
+with **existing** GMGN / concentration-ban / ML risk.
+
+> **Note (2026-10-02):** this SPEC's earlier drafts said "GMGN / **Axiom**". Axiom was removed
+> outright (`00713ad`) — the route, the hook and the allow-list entry are gone, and `utils/axiom.ts`
+> is now `utils/token-risk.ts`. What survives from it is the **fee heuristic**
+> (`calculateFeeToMarketCapRatio`), which is still live and still needs the distinct log name
+> `fee_organic_score` in the field table below. Read every remaining "Axiom" mention in this file
+> as "that fee heuristic", not as a live provider.
 
 Operationalization of “≥80% rug” for v1 is **not** a calibrated `P(rug)` model. It is the **AND conjunction** in §5, biased toward **rug recall** (higher false positives OK). Post-ship measurement of realized rug-catch is §11.
 
