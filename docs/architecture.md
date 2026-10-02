@@ -305,7 +305,7 @@ Default `npm run docker:deploy` uses `--auto` from git diff.
 | **Solana Tracker Raptor** | Arbitrage swaps (`maxHops` set) + the shared quote engine's `estimate` lane, and status polling for Raptor-built txs. Hops are per pair (`src/utils/raptor-hops.ts`) |
 | **Jupiter Swap V2 / Jupiter Lite** | Desk (directional) quote + prepare everywhere; Lite only when V2 fails |
 | **Shyft all_tokens** | Wallet token list (cached; Jupiter Portfolio fallback) |
-| **Shyft send_many_txns** | Batch broadcast of already-signed Solana txs |
+| **Shyft RPC `sendTransaction`** | Batch broadcast of already-signed Solana txs, **serialised** behind `BATCH_SEND_MIN_INTERVAL_MS`; the browser reaches it via `POST /api/shyft/transaction/send_rpc` (the env is server-only). `send_many_txns` is the fallback — measured 417 / 1-of-3 / 61 s against this lane's 3-of-3 / 163 ms |
 | **Jupiter Ultra Reclaim** | Close empty ATAs after sell |
 | **Jupiter trending API** | `datapi.jup.ag` + `api.jup.ag` fallback |
 | **Shyft RPC** | On-chain reads/writes via `/api/rpc` |

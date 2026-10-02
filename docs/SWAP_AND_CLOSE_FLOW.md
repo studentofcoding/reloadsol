@@ -7,7 +7,7 @@ This document summarizes how bulk swaps and token account closures work across t
 | Layer | Service | Files |
 |-------|---------|-------|
 | Wallet tokens | Shyft `all_tokens` (cached), Jupiter Portfolio fallback | `useWalletTokens.ts`, `sol-wallet-holdings.ts`, `shyft-wallet.ts` |
-| Multi-tx send | Shyft `send_many_txns` (RPC fallback per tx) | `swap-executor.ts`, `shyft-transaction.ts` |
+| Multi-tx send | **Shyft RPC `sendTransaction`, serialised** (`BATCH_SEND_MIN_INTERVAL_MS`, default 1000); reached from the browser through `POST /api/shyft/transaction/send_rpc`. `send_many_txns` is the fallback, not the primary | `swap-executor.ts`, `src/app/api/shyft/transaction/send_rpc/route.ts` |
 | Swaps (desk) | **Jupiter Swap V2 `/order`**, falling back to **Jupiter Lite** only when V2 fails; impact-gated; that provider prepares | `swap-executor.ts`, `swap-quote-pick.ts`, `jupiter-swap-quote.ts`, `jupiter-lite-swap.ts` |
 | Swaps (arb) | **Raptor** with a hops override (`maxHops` set) | `swap-executor.ts`, `solanatracker-raptor.ts` |
 | RPC | Same-origin `/api/rpc` proxy (fallback send only) | `RpcContext.tsx`, `/api/rpc/route.ts` |
@@ -122,7 +122,9 @@ Per [Solana Tracker Swap API](https://docs.solanatracker.io/guides/swap-api):
 1. **Prepare** — `POST /quote-and-swap` (via `/api/solanatracker/swap`) with `userPublicKey`, mints, amount, slippage, platform fee
 2. **Sign** — wallet signs returned `swapTransaction` (base64 v0 tx)
 3. **Submit** — **our own RPC**, not Raptor's. `submitSignedSwap` tries Shyft, then falls back to
-   `connection.sendTransaction` (`skipPreflight: true`, `maxRetries: 2`). Raptor's `POST /send-transaction`
+   `connection.sendTransaction` (`skipPreflight: true`, `maxRetries: 2`) — single-swap path only;
+   the **batch** landing sets `skipPreflight: false` so the RPC re-simulates at send time (see
+   `SPEC-batch-swap-lane-v1.md` §"Post-ship"). Raptor's `POST /send-transaction`
    is **kept in the tree but not used** (§3 of the routing SPEC, locked 2026-10-01): it answered `200`
    **plus a signature** for transactions that never reached the chain (0/3 then 0/4 reproduced), and
    `sendRaptorTransaction` has **no caller** — audited 2026-10-01 (T13). Wiring it up would mean verifying
