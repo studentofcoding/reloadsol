@@ -22,6 +22,7 @@ import {
   FieldGrid,
   NumberField,
   CheckboxField,
+  SourceTag,
   formatFilterSummary,
   parseOptionalFloat,
 } from "@/components/strategies/StrategyConfigFields";
@@ -3719,6 +3720,7 @@ function SocialCard({
       <div className="grid grid-cols-2 gap-2 text-xs">
         <label className="text-gray-400">
           Min mentions 30m
+          <SourceTag source={sources?.[`${strategy.id}.config.entry.minMentions30m`]} />
           <input
             className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white"
             value={minMentions}
@@ -3727,6 +3729,7 @@ function SocialCard({
         </label>
         <label className="text-gray-400">
           Max candidates/tick
+          <SourceTag source={sources?.[`${strategy.id}.config.entry.maxCandidatesPerTick`]} />
           <input
             className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white"
             value={maxCandidates}
@@ -3765,6 +3768,7 @@ function SocialCard({
         </label>
         <label className="text-gray-400">
           Sim buy SOL
+          <SourceTag source={sources?.[`${strategy.id}.config.execution.simBuySol`]} />
           <input
             className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white"
             value={simBuy}
@@ -3773,6 +3777,7 @@ function SocialCard({
         </label>
         <label className="text-gray-400">
           Max open
+          <SourceTag source={sources?.[`${strategy.id}.config.execution.maxOpenPositions`]} />
           <input
             className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white"
             value={maxOpen}
