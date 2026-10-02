@@ -29,6 +29,7 @@ type ShadowEntry = {
   id: string
   createdAt: string
   tokenAddress: string
+  symbol: string | null
   score: number | null
   decision: string
   barsSource: string
@@ -137,19 +138,16 @@ export default function RugSignalPanel() {
   const [mintBusy, setMintBusy] = useState(false)
   const [labelBusy, setLabelBusy] = useState(false)
   const [labelNote, setLabelNote] = useState<string | null>(null)
+  const [shadowPage, setShadowPage] = useState(0)
+  const [shadowLimit, setShadowLimit] = useState(25)
+  const [shadowSort, setShadowSort] = useState<'created_at' | 'score'>('created_at')
+  const [shadowDir, setShadowDir] = useState<'desc' | 'asc'>('desc')
+  const [shadowDecision, setShadowDecision] = useState<'all' | 'pass' | 'would_rug' | 'no_bars'>('all')
+  const [shadowTotal, setShadowTotal] = useState(0)
 
   const load = useCallback(async () => {
     try {
-      const [shadowRes, runsRes] = await Promise.all([
-        fetch('/api/rug-signal/shadow?limit=40', { credentials: 'include' }),
-        fetch('/api/rug-signal/calibration?limit=8', { credentials: 'include' }),
-      ])
-      const shadow = await shadowRes.json()
-      const stored = await runsRes.json()
-      if (shadow?.success) {
-        setEntries(shadow.entries ?? [])
-        setSummary(shadow.summary ?? null)
-      }
+      const stored = await (await fetch('/api/rug-signal/calibration?limit=8', { credentials: 'include' })).json()
       if (stored?.success) {
         setRuns(stored.runs ?? [])
         const latest = (stored.runs ?? [])[0]?.summary ?? null
@@ -158,6 +156,52 @@ export default function RugSignalPanel() {
     } catch (e) {
       setError(e instanceof Error ? e.message : 'load failed')
     }
+  }, [])
+
+  /**
+   * The soak log is paged and sorted **server-side**: there are thousands of rows, the reader clamps
+   * `limit`, and sorting only the page you already have would sort the wrong set.
+   */
+  const loadShadow = useCallback(async () => {
+    try {
+      const params = new URLSearchParams({
+        limit: String(shadowLimit),
+        offset: String(shadowPage * shadowLimit),
+        orderBy: shadowSort,
+        dir: shadowDir,
+      })
+      if (shadowDecision !== 'all') params.set('decision', shadowDecision)
+      const res = await fetch(`/api/rug-signal/shadow?${params.toString()}`, { credentials: 'include' })
+      const body = await res.json()
+      if (!body?.success) throw new Error(body?.error ?? `HTTP ${res.status}`)
+      setEntries((body.entries ?? []) as ShadowEntry[])
+      setSummary(body.summary ?? null)
+      setShadowTotal(Number(body.total ?? 0))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'shadow load failed')
+    }
+  }, [shadowLimit, shadowPage, shadowSort, shadowDir, shadowDecision])
+
+  useEffect(() => {
+    void loadShadow()
+  }, [loadShadow])
+
+  const pageCount = Math.max(1, Math.ceil(shadowTotal / shadowLimit))
+
+  const sortMark = (column: 'created_at' | 'score') =>
+    shadowSort === column ? (shadowDir === 'desc' ? ' ↓' : ' ↑') : ''
+
+  const toggleSort = useCallback((column: 'created_at' | 'score') => {
+    setShadowPage(0)
+    setShadowSort((current) => {
+      if (current === column) {
+        setShadowDir((d) => (d === 'desc' ? 'asc' : 'desc'))
+        return current
+      }
+      // A new column starts on the useful end: newest first, highest score first.
+      setShadowDir('desc')
+      return column
+    })
   }, [])
 
   useEffect(() => {
@@ -770,44 +814,124 @@ export default function RugSignalPanel() {
 
       {/* ---- the soak ---- */}
       <section className={card}>
-        <h2 className="mb-1 text-lg font-semibold text-white">The soak</h2>
-        <p className="mb-3 text-sm text-gray-400">
-          {summary
-            ? `${summary.rows} rows · ${Object.entries(summary.byDecision)
-                .map(([k, v]) => `${k} ${v}`)
-                .join(' · ')}`
-            : 'loading…'}
-          {summary?.newest ? ` · newest ${summary.newest.slice(0, 19)}` : ''}
-        </p>
+        <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-lg font-semibold text-white">The soak</h2>
+          <span className="text-xs text-gray-500">
+            {summary
+              ? `${summary.rows} rows · ${Object.entries(summary.byDecision)
+                  .map(([k, v]) => `${k} ${v}`)
+                  .join(' · ')}`
+              : 'loading…'}
+            {summary?.newest ? ` · newest ${summary.newest.slice(0, 19)}` : ''}
+          </span>
+        </div>
         <p className="mb-3 text-xs text-gray-500">
           Only <span className="text-gray-300">pass</span> and{' '}
           <span className="text-gray-300">would_rug</span> are judged verdicts;{' '}
           <span className="text-gray-300">no_bars</span> means the scorer had too few bars to judge — an
-          unknown, never counted as a negative.
+          unknown, never counted as a negative. Paging and sorting run server-side, so the order is of
+          the whole log rather than of the page being viewed.
         </p>
+
+        <div className="mb-3 flex flex-wrap items-center gap-3 text-xs text-gray-400">
+          <label className="flex items-center gap-1">
+            decision
+            <select
+              value={shadowDecision}
+              onChange={(e) => {
+                setShadowPage(0)
+                setShadowDecision(e.target.value as typeof shadowDecision)
+              }}
+              className="rounded border border-gray-700 bg-gray-950 px-1 py-0.5 text-gray-200"
+            >
+              <option value="all">all</option>
+              <option value="would_rug">would_rug</option>
+              <option value="pass">pass</option>
+              <option value="no_bars">no_bars</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-1">
+            rows
+            <select
+              value={shadowLimit}
+              onChange={(e) => {
+                setShadowPage(0)
+                setShadowLimit(Number(e.target.value))
+              }}
+              className="rounded border border-gray-700 bg-gray-950 px-1 py-0.5 text-gray-200"
+            >
+              {[25, 50, 100].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShadowPage((p) => Math.max(0, p - 1))}
+              disabled={shadowPage === 0}
+              className="rounded border border-gray-700 px-2 py-0.5 text-gray-300 disabled:opacity-40"
+            >
+              prev
+            </button>
+            <span className="text-gray-300">
+              page {shadowPage + 1} / {pageCount}
+            </span>
+            <button
+              type="button"
+              onClick={() => setShadowPage((p) => Math.min(pageCount - 1, p + 1))}
+              disabled={shadowPage + 1 >= pageCount}
+              className="rounded border border-gray-700 px-2 py-0.5 text-gray-300 disabled:opacity-40"
+            >
+              next
+            </button>
+            <span className="text-gray-500">{shadowTotal} matching</span>
+          </span>
+        </div>
+
         <table className="w-full text-sm">
           <thead>
             <tr>
-              <th className={th}>when</th>
-              <th className={th}>mint</th>
-              <th className={th}>score</th>
+              <th className={th}>
+                <button
+                  type="button"
+                  onClick={() => toggleSort('created_at')}
+                  className="uppercase tracking-wide hover:text-white"
+                >
+                  when{sortMark('created_at')}
+                </button>
+              </th>
+              <th className={th}>symbol</th>
+              <th className={th}>
+                <button
+                  type="button"
+                  onClick={() => toggleSort('score')}
+                  className="uppercase tracking-wide hover:text-white"
+                >
+                  score{sortMark('score')}
+                </button>
+              </th>
               <th className={th}>decision</th>
               <th className={th}>bars</th>
               <th className={th}>breakdown</th>
             </tr>
           </thead>
           <tbody>
-            {entries.slice(0, 25).map((e) => (
+            {entries.map((e) => (
               <tr key={e.id} className="border-t border-gray-800">
-                <td className={`${td} font-mono text-xs`}>{e.createdAt.slice(11, 19)}</td>
-                <td className={`${td} font-mono text-xs`}>
+                <td className={`${td} font-mono text-xs`} title={e.createdAt}>
+                  {e.createdAt.slice(11, 19)}
+                </td>
+                <td className={td}>
                   <button
                     type="button"
                     onClick={() => void loadToken(e.tokenAddress)}
-                    title="load this mint in the chart below"
-                    className="text-gray-300 underline decoration-dotted hover:text-white"
+                    title={`${e.tokenAddress} — load in the chart below`}
+                    className="max-w-[12rem] truncate text-left text-gray-200 underline decoration-dotted hover:text-white"
                   >
-                    {e.tokenAddress.slice(0, 8)}…
+                    {e.symbol?.trim() || `${e.tokenAddress.slice(0, 6)}…`}
                   </button>
                 </td>
                 <td className={`${td} ${e.score != null && e.score >= 80 ? 'text-lime-400' : 'text-white'}`}>

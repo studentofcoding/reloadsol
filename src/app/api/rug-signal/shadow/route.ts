@@ -28,12 +28,19 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const limitRaw = Number(searchParams.get('limit'))
-    const { entries, summary } = await loadRugSignalShadow({
+    const offsetRaw = Number(searchParams.get('offset'))
+    const orderBy = searchParams.get('orderBy')
+    const direction = searchParams.get('dir')
+    const { entries, summary, total } = await loadRugSignalShadow({
       limit: Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 100,
+      offset: Number.isFinite(offsetRaw) && offsetRaw > 0 ? offsetRaw : 0,
       tokenAddress: searchParams.get('token'),
       decision: searchParams.get('decision'),
+      // The reader whitelists these; anything unrecognised falls back to newest-first.
+      orderBy: orderBy === 'score' || orderBy === 'created_at' ? orderBy : null,
+      direction: direction === 'asc' || direction === 'desc' ? direction : null,
     })
-    return NextResponse.json({ success: true, summary, entries })
+    return NextResponse.json({ success: true, summary, entries, total })
   } catch (error) {
     log.error('error_handling', 'rug-signal shadow read failed', error as Error)
     return NextResponse.json(

@@ -142,28 +142,52 @@ export type RugSignalShadowSummary = {
   newest: string | null
 }
 
+/** Sort keys the reader accepts. Anything else falls back to `created_at`. */
+export type RugSignalShadowOrder = 'created_at' | 'score'
+
+/**
+ * Column whitelist. An `ORDER BY` identifier cannot be parameterised, so it is interpolated — which
+ * means only these exact strings may ever reach the SQL, never caller-supplied text.
+ */
+const ORDER_COLUMNS: Record<RugSignalShadowOrder, string> = {
+  created_at: 'created_at',
+  score: 'score',
+}
+
 /**
  * Reader. `limit` is clamped: this is an observation log and a full scan is never what a caller wants.
  * Optionally filtered to one token, which is how a single verdict gets traced after the fact.
+ *
+ * Paged and sortable for the dev page, which is looking at thousands of rows. `total` is the count
+ * matching the *filters*, not the whole log, so the pager cannot overstate what it is walking.
  */
 export async function loadRugSignalShadow(params: {
   limit?: number
+  offset?: number
   tokenAddress?: string | null
   decision?: string | null
-} = {}): Promise<{ entries: RugSignalShadowEntry[]; summary: RugSignalShadowSummary }> {
+  orderBy?: RugSignalShadowOrder | null
+  direction?: 'asc' | 'desc' | null
+} = {}): Promise<{ entries: RugSignalShadowEntry[]; summary: RugSignalShadowSummary; total: number }> {
   const limit = Math.min(Math.max(1, Math.floor(params.limit ?? 100)), 1000)
+  const offset = Math.max(0, Math.floor(params.offset ?? 0))
   const where: string[] = []
-  const values: unknown[] = []
+  const filters: unknown[] = []
   if (params.tokenAddress) {
-    values.push(params.tokenAddress)
-    where.push(`token_address = $${values.length}`)
+    filters.push(params.tokenAddress)
+    where.push(`token_address = $${filters.length}`)
   }
   if (params.decision) {
-    values.push(params.decision)
-    where.push(`decision = $${values.length}`)
+    filters.push(params.decision)
+    where.push(`decision = $${filters.length}`)
   }
   const clause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''
-  values.push(limit)
+  const column = ORDER_COLUMNS[params.orderBy ?? 'created_at'] ?? 'created_at'
+  const direction = params.direction === 'asc' ? 'ASC' : 'DESC'
+  // `NULLS LAST` keeps unscored rows out of the top of a score sort rather than treating a missing
+  // score as the lowest score; `id` breaks ties so a page boundary cannot repeat or skip a row.
+  const order = `ORDER BY ${column} ${direction} NULLS LAST, created_at DESC, id DESC`
+  const values = [...filters, limit, offset]
 
   const { rows } = await query<{
     id: string
@@ -188,14 +212,19 @@ export async function loadRugSignalShadow(params: {
             liquidity_usd, source
        FROM rug_signal_shadow
        ${clause}
-      ORDER BY created_at DESC
-      LIMIT $${values.length}`,
+       ${order}
+      LIMIT $${values.length - 1} OFFSET $${values.length}`,
     values,
   )
 
   const { rows: counts } = await query<{ decision: string; n: string; newest: string | null }>(
     `SELECT decision, COUNT(*)::text AS n, MAX(created_at)::text AS newest
        FROM rug_signal_shadow GROUP BY decision`,
+  )
+
+  const { rows: totals } = await query<{ n: string }>(
+    `SELECT COUNT(*)::text AS n FROM rug_signal_shadow ${clause}`,
+    filters,
   )
 
   return {
@@ -225,5 +254,6 @@ export async function loadRugSignalShadow(params: {
         null,
       ),
     },
+    total: Number(totals[0]?.n ?? 0),
   }
 }
