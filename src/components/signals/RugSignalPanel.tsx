@@ -144,6 +144,22 @@ export default function RugSignalPanel() {
   const [shadowDir, setShadowDir] = useState<'desc' | 'asc'>('desc')
   const [shadowDecision, setShadowDecision] = useState<'all' | 'pass' | 'would_rug' | 'no_bars'>('all')
   const [shadowTotal, setShadowTotal] = useState(0)
+  const [verdicts, setVerdicts] = useState<
+    Array<{
+      tokenAddress: string
+      symbol: string | null
+      verdictAt: string
+      minutesUsed: number
+      score: number | null
+      decision: string
+    }>
+  >([])
+  const [verdictHealth, setVerdictHealth] = useState<{
+    total: number
+    fullBlocks: number
+    byDecision: Record<string, number>
+    newest: string | null
+  } | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -177,6 +193,16 @@ export default function RugSignalPanel() {
       setEntries((body.entries ?? []) as ShadowEntry[])
       setSummary(body.summary ?? null)
       setShadowTotal(Number(body.total ?? 0))
+
+      // T5 — the verdicts are the *per-token* corpus: one row per mint, on its own 10-minute block.
+      // The soak log beside them re-judges the same token every sweep, which is why the per-row rate
+      // and the per-mint rate disagree; here they cannot.
+      const verdictRes = await fetch('/api/rug-signal/verdicts?limit=50', { credentials: 'include' })
+      const verdictBody = await verdictRes.json()
+      if (verdictBody?.success) {
+        setVerdicts(verdictBody.verdicts ?? [])
+        setVerdictHealth(verdictBody.health ?? null)
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'shadow load failed')
     }
@@ -810,6 +836,68 @@ export default function RugSignalPanel() {
           {labelNote ? <span className="text-xs text-gray-400">{labelNote}</span> : null}
         </div>
         <RugSignalChart bars={tokenBars} markers={tokenMarkers} label={tokenLabel} />
+      </section>
+
+      {/* ---- the verdicts: one per token ---- */}
+      <section className={card}>
+        <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-lg font-semibold text-white">Verdicts — one per token</h2>
+          <span className="text-xs text-gray-500">
+            {verdictHealth
+              ? `${verdictHealth.total} verdicts · ${verdictHealth.fullBlocks} with a full ${10}-minute block` +
+                (verdictHealth.newest ? ` · newest ${verdictHealth.newest.slice(0, 19)}` : '')
+              : 'loading…'}
+          </span>
+        </div>
+        <p className="mb-3 max-w-4xl text-xs text-gray-500">
+          Each mint is judged <span className="text-gray-300">once</span>, at its own first <em>held</em>{' '}
+          minute + 10, on the 1m block basis — the clock and the block are built from the same minutes, so
+          they cannot disagree. One verdict per token is enforced by the table&apos;s primary key, not by a
+          guard. The soak log below is the other thing: it re-judges the same token every sweep, which is
+          why its per-row rate and the per-mint rate disagree, and why this table exists.
+        </p>
+        <table className="w-full text-sm">
+          <thead>
+            <tr>
+              <th className={th}>when</th>
+              <th className={th}>symbol</th>
+              <th className={th}>block</th>
+              <th className={th}>score</th>
+              <th className={th}>decision</th>
+            </tr>
+          </thead>
+          <tbody>
+            {verdicts.slice(0, 25).map((v) => (
+              <tr key={`${v.tokenAddress}-${v.verdictAt}`} className="border-t border-gray-800">
+                <td className={`${td} font-mono text-xs`}>{v.verdictAt.slice(11, 19)}</td>
+                <td className={td}>
+                  <button
+                    type="button"
+                    onClick={() => void loadToken(v.tokenAddress)}
+                    title={`${v.tokenAddress} — load in the chart`}
+                    className="max-w-[12rem] truncate text-left text-gray-200 underline decoration-dotted hover:text-white"
+                  >
+                    {v.symbol?.trim() || `${v.tokenAddress.slice(0, 6)}…`}
+                  </button>
+                </td>
+                <td className={`${td} text-xs ${v.minutesUsed >= 10 ? 'text-gray-300' : 'text-amber-400'}`}>
+                  {v.minutesUsed}m{v.minutesUsed >= 10 ? '' : ' (short)'}
+                </td>
+                <td className={`${td} ${v.score != null && v.score >= 80 ? 'text-lime-400' : 'text-white'}`}>
+                  {v.score ?? '—'}
+                </td>
+                <td className={td}>{v.decision}</td>
+              </tr>
+            ))}
+            {verdicts.length === 0 && (
+              <tr>
+                <td className={`${td} text-gray-500`} colSpan={5}>
+                  no verdicts yet — they are written by the copier sweep, one per token
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </section>
 
       {/* ---- the soak ---- */}
