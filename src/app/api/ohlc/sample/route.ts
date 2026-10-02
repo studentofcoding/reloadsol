@@ -3,12 +3,13 @@ import { query } from '@/utils/db'
 import { getUsdPrices } from '@/utils/usd-prices'
 import { log } from '@/utils/unified-logger'
 import {
-  DEFAULT_WATCH_MAX_MINTS,
   WATCH_RANGE_MAX,
   WATCH_RANGE_MIN,
   WATCH_SOCIAL_WINDOW_MIN,
   intEnv,
   loadWatchMints,
+  resolveDetectWindowMin,
+  resolveSamplerMaxMints,
 } from '@/strategies/token-metrics-watch'
 
 /**
@@ -27,7 +28,6 @@ import {
  * path serves it). Upgrade path: give the sampler a candle call per watch mint.
  */
 
-const DEFAULT_MAX_MINTS = DEFAULT_WATCH_MAX_MINTS
 const DEFAULT_RETENTION_HOURS = 48
 
 function isServiceAuthorized(request: NextRequest): boolean {
@@ -68,7 +68,8 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const maxMints = intEnv('OHLC_SAMPLE_MAX_MINTS', DEFAULT_MAX_MINTS)
+    const maxMints = resolveSamplerMaxMints()
+    const detectWindowMin = resolveDetectWindowMin()
     const retentionHours = intEnv('OHLC_BARS_RETENTION_HOURS', DEFAULT_RETENTION_HOURS)
     const socialWindowMin = intEnv(
       'OHLC_SAMPLE_SOCIAL_WINDOW_MIN',
@@ -80,6 +81,7 @@ export async function POST(request: NextRequest) {
       rangeMin: WATCH_RANGE_MIN,
       rangeMax: WATCH_RANGE_MAX,
       socialWindowMin,
+      detectWindowMin,
     })
 
     let priced: Array<[string, number]> = []
@@ -105,6 +107,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       watch: mints.length,
+      max_mints: maxMints,
+      detect_window_min: detectWindowMin,
       priced: priced.length,
       pruned: rowCount ?? 0,
       retention_hours: retentionHours,
