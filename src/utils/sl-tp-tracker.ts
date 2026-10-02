@@ -16,6 +16,7 @@ import { getOpenPositionPrices } from '@/utils/open-position-prices'
 import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
 import { closeSimulatedPositionFromWorker } from '@/utils/sl-tp-sim-close'
 import { evaluateExit, toPersistedCloseReason } from '@/utils/exit-evaluator'
+import { evaluateSltpPassHealth, SltpPassUnhealthyError } from '@/utils/sl-tp-pass-health'
 
 /**
  * The backstop share above which the exit system is considered broken (S5).
@@ -657,31 +658,38 @@ export async function addSLTPPosition(params: {
  */
 async function getCurrentTokenPrices(
     positions: Array<{ token_address: string; chain?: string | null }>,
-): Promise<Map<string, number>> {
-    try {
-        const byChain = new Map<string, string[]>()
-        for (const position of positions) {
-            const chain = position.chain === 'robinhood' ? 'robinhood' : 'sol'
-            const mints = byChain.get(chain) ?? []
-            mints.push(position.token_address)
-            byChain.set(chain, mints)
-        }
+): Promise<{ prices: Map<string, number>; failedChains: string[] }> {
+    const priceMap = new Map<string, number>()
+    const failedChains: string[] = []
+    const byChain = new Map<string, string[]>()
+    for (const position of positions) {
+        const chain = position.chain === 'robinhood' ? 'robinhood' : 'sol'
+        const mints = byChain.get(chain) ?? []
+        mints.push(position.token_address)
+        byChain.set(chain, mints)
+    }
 
-        const priceMap = new Map<string, number>()
-        for (const [chain, mints] of Array.from(byChain.entries())) {
+    for (const [chain, mints] of Array.from(byChain.entries())) {
+        try {
             const prices = await getOpenPositionPrices(mints, chain as GmgnTradeChain)
             for (const [address, price] of Object.entries(prices)) {
                 if (typeof price === 'number' && price > 0) {
                     priceMap.set(address, price)
                 }
             }
+        } catch (error) {
+            // Still degrades to "unpriced" (the loop reports STALE and the backstops run), but the
+            // failure is RECORDED and returned so the pass can fail loudly instead of reading as a
+            // success — a swallowed error here is how a price outage looked like a healthy closer.
+            failedChains.push(chain)
+            log.error('price_tracking', 'Failed to fetch token prices', error as Error, {
+                chain,
+                mints: mints.length,
+            })
         }
-
-        return priceMap
-    } catch (error) {
-        log.error('price_tracking', 'Failed to fetch token prices', error as Error)
-        return new Map()
     }
+
+    return { prices: priceMap, failedChains }
 }
 
 /**
@@ -788,6 +796,46 @@ export function checkSLTPTriggers(
             : decision.reason === 'stale'
               ? 'No triggers met (stale input)'
               : 'No triggers met',
+    }
+}
+
+/** The triggers that need only a clock or a rug label, never a live price. */
+const UNPRICED_BACKSTOP_TRIGGERS = new Set<SLTPTriggerResult['trigger_type']>([
+    'label_rugged',
+    'max_hold_time',
+    'max_age',
+])
+
+/**
+ * Exit decision for a position with NO readable price this pass.
+ *
+ * A live price is what stop-loss and take-profit are measured against, so those must never fire from
+ * a stale number. `maxHoldHours` and a rug label are different: they are true regardless of price and
+ * only need *a* price to book the close at. That price is the last one persisted on the row
+ * (`current_price`, refreshed every priced pass). Returns the close to take, or `null` when nothing
+ * backstop-level fires or the row has never held a usable price (it then stays reported STALE).
+ */
+export function resolveUnpricedBackstop(
+    position: SLTPPosition,
+    rugged: boolean,
+): SLTPTriggerResult | null {
+    const last = position.current_price
+    if (!(typeof last === 'number' && Number.isFinite(last) && last > 0)) return null
+    // Thresholds off: with the last price already past a stop/target, SL/TP would shadow the
+    // backstop (evaluateExit checks them first) and a due max-hold would stay open.
+    const backstopOnly = {
+        ...position,
+        stop_loss_percentage: null,
+        take_profit_percentage: null,
+        tp1_percentage: null,
+        tp2_percentage: null,
+        tp3_percentage: null,
+    } as unknown as SLTPPosition
+    const result = checkSLTPTriggers(backstopOnly, last, { rugged })
+    if (!result.triggered || !UNPRICED_BACKSTOP_TRIGGERS.has(result.trigger_type)) return null
+    return {
+        ...result,
+        reason: `${result.reason} [unpriced: closed on last known price]`,
     }
 }
 
@@ -1477,7 +1525,7 @@ export async function monitorSLTPPositions(returnSummary: boolean = false): Prom
         log.info('price_tracking', 'Monitoring SL/TP positions', { count: filteredPositions.length })
 
         // Get current prices for all tokens
-        const currentPrices = await getCurrentTokenPrices(filteredPositions)
+        const { prices: currentPrices, failedChains } = await getCurrentTokenPrices(filteredPositions)
 
         await persistCurrentPrices(filteredPositions, currentPrices)
 
@@ -1493,8 +1541,9 @@ export async function monitorSLTPPositions(returnSummary: boolean = false): Prom
 
         // Check each position for triggers
         const triggerPromises = filteredPositions.map(async (position) => {
-            const currentPrice = currentPrices.get(position.token_address)
+            let currentPrice = currentPrices.get(position.token_address)
             const rugged = isRugged(ruggedMints, position)
+            let backstopResult: SLTPTriggerResult | null = null
 
             if (!currentPrice) {
                 // NOT a silent skip. A position with no readable price is unevaluable, and that has
@@ -1510,13 +1559,24 @@ export async function monitorSLTPPositions(returnSummary: boolean = false): Prom
                     rugged,
                     decision: staleResult.reason,
                 })
-                return
+                // The backstops (rugged / max-hold) do not need a live price, only a price to book
+                // the close at. Without this an unpriced position could never age out or retire on a
+                // rug label — the one state the stale count made visible but nothing resolved.
+                backstopResult = resolveUnpricedBackstop(position, rugged)
+                if (!backstopResult) return
+                currentPrice = backstopResult.current_price
+                log.warn('price_tracking', 'Unpriced position closed by backstop on last known price', {
+                    positionId: position.id,
+                    tokenSymbol: position.token_symbol,
+                    triggerType: backstopResult.trigger_type,
+                    lastPrice: currentPrice,
+                })
             }
 
             if (rugged) ruggedCount += 1
 
             // Check for triggers
-            const triggerResult = checkSLTPTriggers(position, currentPrice, { rugged })
+            const triggerResult = backstopResult ?? checkSLTPTriggers(position, currentPrice, { rugged })
 
             if (triggerResult.triggered) {
                 log.info('deviation_alert', 'SL/TP trigger detected', {
@@ -1542,6 +1602,11 @@ export async function monitorSLTPPositions(returnSummary: boolean = false): Prom
                         domain: closeResult.domain,
                         closed: closeResult.closed,
                     })
+                    if (closeResult.claimedElsewhere) {
+                        // Another pass is closing this position right now. Neither a shadow nor a
+                        // failure: skip without counting, and let that pass retire the mirror.
+                        return
+                    }
                     if (!closeResult.closed) {
                         // No closer owns this family, so this is a SHADOW: the worker evaluated the
                         // position, the trigger fired, and it declines to act. That is how a strategy
@@ -1589,12 +1654,31 @@ export async function monitorSLTPPositions(returnSummary: boolean = false): Prom
             shadow: shadowCount,
         })
 
+        // The pass did its work (backstops, closes). If it could not price its book, it is still not
+        // a success: fail it so the route answers 500, the worker records the error instead of a
+        // `last_success_at`, and the freshness watchdog sees the outage.
+        const health = evaluateSltpPassHealth({
+            positions: filteredPositions.length,
+            stale: staleCount,
+            failedChains,
+        })
+        if (!health.ok) {
+            log.error('price_tracking', 'SL/TP pass unhealthy — price outage', new Error(health.reason ?? 'unhealthy'), {
+                positions: filteredPositions.length,
+                stale: staleCount,
+                staleRatio: health.staleRatio,
+                failedChains,
+            })
+            throw new SltpPassUnhealthyError(health.reason ?? 'unhealthy', health.staleRatio)
+        }
+
         // Return summary if requested
         if (returnSummary) {
             return await getSLTPTrackingSummary()
         }
 
     } catch (error) {
+        if (error instanceof SltpPassUnhealthyError) throw error
         log.error('error_handling', 'Error monitoring SL/TP positions', error as Error)
         if (returnSummary) {
             // Return summary even on error for cronjob visibility
@@ -1634,7 +1718,7 @@ export async function runSLTPMonitorAndSummarize(): Promise<SLTPTrackingSummary>
         log.info('price_tracking', 'Monitoring SL/TP positions', { count: filteredPositions.length })
 
         // Get current prices for all tokens
-        const currentPrices = await getCurrentTokenPrices(filteredPositions)
+        const { prices: currentPrices, failedChains } = await getCurrentTokenPrices(filteredPositions)
 
         await persistCurrentPrices(filteredPositions, currentPrices)
 
@@ -1650,8 +1734,9 @@ export async function runSLTPMonitorAndSummarize(): Promise<SLTPTrackingSummary>
 
         // Check each position for triggers
         const triggerPromises = filteredPositions.map(async (position) => {
-            const currentPrice = currentPrices.get(position.token_address)
+            let currentPrice = currentPrices.get(position.token_address)
             const rugged = isRugged(ruggedMints, position)
+            let backstopResult: SLTPTriggerResult | null = null
 
             if (!currentPrice) {
                 // NOT a silent skip. A position with no readable price is unevaluable, and that has
@@ -1667,13 +1752,24 @@ export async function runSLTPMonitorAndSummarize(): Promise<SLTPTrackingSummary>
                     rugged,
                     decision: staleResult.reason,
                 })
-                return
+                // The backstops (rugged / max-hold) do not need a live price, only a price to book
+                // the close at. Without this an unpriced position could never age out or retire on a
+                // rug label — the one state the stale count made visible but nothing resolved.
+                backstopResult = resolveUnpricedBackstop(position, rugged)
+                if (!backstopResult) return
+                currentPrice = backstopResult.current_price
+                log.warn('price_tracking', 'Unpriced position closed by backstop on last known price', {
+                    positionId: position.id,
+                    tokenSymbol: position.token_symbol,
+                    triggerType: backstopResult.trigger_type,
+                    lastPrice: currentPrice,
+                })
             }
 
             if (rugged) ruggedCount += 1
 
             // Check for triggers
-            const triggerResult = checkSLTPTriggers(position, currentPrice, { rugged })
+            const triggerResult = backstopResult ?? checkSLTPTriggers(position, currentPrice, { rugged })
 
             if (triggerResult.triggered) {
                 log.info('deviation_alert', 'SL/TP trigger detected', {
@@ -1699,6 +1795,11 @@ export async function runSLTPMonitorAndSummarize(): Promise<SLTPTrackingSummary>
                         domain: closeResult.domain,
                         closed: closeResult.closed,
                     })
+                    if (closeResult.claimedElsewhere) {
+                        // Another pass is closing this position right now. Neither a shadow nor a
+                        // failure: skip without counting, and let that pass retire the mirror.
+                        return
+                    }
                     if (!closeResult.closed) {
                         // No closer owns this family, so this is a SHADOW: the worker evaluated the
                         // position, the trigger fired, and it declines to act. That is how a strategy
@@ -1746,10 +1847,29 @@ export async function runSLTPMonitorAndSummarize(): Promise<SLTPTrackingSummary>
             shadow: shadowCount,
         })
 
+        // The pass did its work (backstops, closes). If it could not price its book, it is still not
+        // a success: fail it so the route answers 500, the worker records the error instead of a
+        // `last_success_at`, and the freshness watchdog sees the outage.
+        const health = evaluateSltpPassHealth({
+            positions: filteredPositions.length,
+            stale: staleCount,
+            failedChains,
+        })
+        if (!health.ok) {
+            log.error('price_tracking', 'SL/TP pass unhealthy — price outage', new Error(health.reason ?? 'unhealthy'), {
+                positions: filteredPositions.length,
+                stale: staleCount,
+                staleRatio: health.staleRatio,
+                failedChains,
+            })
+            throw new SltpPassUnhealthyError(health.reason ?? 'unhealthy', health.staleRatio)
+        }
+
         // Return summary
         return await getSLTPTrackingSummary()
 
     } catch (error) {
+        if (error instanceof SltpPassUnhealthyError) throw error
         log.error('error_handling', 'Error monitoring SL/TP positions', error as Error)
         // Try to return summary even on failure
         try {

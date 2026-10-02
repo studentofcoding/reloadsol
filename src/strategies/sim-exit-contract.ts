@@ -184,3 +184,46 @@ export async function registerSimExitContract(params: {
     )
   }
 }
+
+/**
+ * Retire a paper position's `sl_tp_positions` mirror: `is_active = false`, `close_reason = 'removed'`.
+ *
+ * For families with no closer (`att_rh` runs its own `decideRhTrendingExit` ladder; the worker only
+ * evaluates its mirror in SHADOW). Without this the mirror outlives the trade it shadows: the row
+ * stays active forever, the worker re-evaluates it every pass, and a mint that is closed and
+ * re-entered accumulates several active rows. Matches every ACTIVE simulated row for the
+ * (wallet, strategy, mint) tuple, so duplicates retire together. Never throws — it runs on a close
+ * path, and a failed retire only leaves a shadow row that the next pass retries.
+ *
+ * Returns the number of rows retired.
+ */
+export async function retireSimExitContract(params: {
+  walletAddress: string
+  strategyId: string
+  mintAddress: string
+  chain?: string
+}): Promise<number> {
+  try {
+    const { query } = await import('@/utils/db')
+    const now = new Date().toISOString()
+    const res = await query(
+      `UPDATE sl_tp_positions
+          SET is_active = false, close_reason = 'removed', closed_at = $4, updated_at = $4
+        WHERE wallet_address = $1
+          AND strategy_id = $2
+          AND token_address = $3
+          AND is_simulation = true
+          AND is_active = true
+          AND COALESCE(chain, 'sol') = $5`,
+      [params.walletAddress, params.strategyId, params.mintAddress, now, params.chain ?? 'sol'],
+    )
+    return res.rowCount ?? 0
+  } catch (error) {
+    console.warn(
+      `[sim-exit-contract] mirror NOT retired — strategy=${params.strategyId} mint=${params.mintAddress}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    )
+    return 0
+  }
+}

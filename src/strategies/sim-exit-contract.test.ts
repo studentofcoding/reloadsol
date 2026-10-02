@@ -169,3 +169,46 @@ describe('impactedEntryPriceUsd — the price S10 says the stop is measured from
     expect(filled).toBeGreaterThanOrEqual(spot)
   })
 })
+
+describe('retireSimExitContract — shadow mirror retirement', () => {
+  it('deactivates every active simulated row for the (wallet, strategy, mint) tuple as removed', async () => {
+    vi.resetModules()
+    const query = vi.fn(async () => ({ rows: [], rowCount: 2 }))
+    vi.doMock('@/utils/db', () => ({ query }))
+    vi.doMock('@/utils/sl-tp-tracker', () => ({ addSLTPPosition: vi.fn() }))
+    const { retireSimExitContract } = await import('./sim-exit-contract')
+
+    const n = await retireSimExitContract({
+      walletAddress: 'trending-bot-rh-sim',
+      strategyId: 'att_rh',
+      mintAddress: 'MintX',
+      chain: 'robinhood',
+    })
+    expect(n).toBe(2)
+    const [sql, params] = query.mock.calls[0] as unknown as [string, unknown[]]
+    expect(sql).toContain("is_active = false, close_reason = 'removed'")
+    expect(sql).toContain('is_simulation = true')
+    expect(sql).toContain('is_active = true')
+    expect(params[0]).toBe('trending-bot-rh-sim')
+    expect(params[1]).toBe('att_rh')
+    expect(params[2]).toBe('MintX')
+    expect(params[4]).toBe('robinhood')
+  })
+
+  it('never throws — a failed retire returns 0', async () => {
+    vi.resetModules()
+    vi.doMock('@/utils/db', () => ({
+      query: vi.fn(async () => {
+        throw new Error('db down')
+      }),
+    }))
+    vi.doMock('@/utils/sl-tp-tracker', () => ({ addSLTPPosition: vi.fn() }))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const { retireSimExitContract } = await import('./sim-exit-contract')
+    await expect(
+      retireSimExitContract({ walletAddress: 'w', strategyId: 's', mintAddress: 'm' }),
+    ).resolves.toBe(0)
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
+  })
+})

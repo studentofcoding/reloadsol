@@ -75,11 +75,14 @@ fi
 # One row, pipe-separated. `IFS='|'` because a timestamp contains a space
 # ("2026-10-02 17:46:07.16875+07"), so splitting on whitespace truncates it and the age reads as
 # "since midnight" — the bug that made an earlier version of the copier watchdog blind.
-IFS='|' read -r AGE_MIN LAST_SUCCESS LAST_ERROR LAST_SKIP <<<"$(
+IFS='|' read -r AGE_MIN LAST_SUCCESS LAST_ERROR LAST_SKIP LAST_ERROR_MSG <<<"$(
   q "SELECT COALESCE(FLOOR(EXTRACT(EPOCH FROM (NOW() - last_success_at)) / 60)::int::text, 'never'),
             COALESCE(last_success_at::text, 'never'),
             COALESCE(last_error_at::text, 'never'),
-            COALESCE(last_skipped_at::text, 'never')
+            COALESCE(last_skipped_at::text, 'never'),
+            COALESCE(NULLIF(regexp_replace(regexp_replace(left(last_error_msg, 160),
+              '(key|secret|token|auth)=[^&[:space:]\"]+', '\\1=REDACTED', 'gi'),
+              '[\\n\\r|]+', ' ', 'g'), ''), 'none')
        FROM cron_worker_runtime
       WHERE worker_id = '$WATCHDOG_NAME'"
 )"
@@ -119,7 +122,12 @@ if [ -n "${OLDEST_H:-}" ] && [ "${OLDEST_H%.*}" -ge "${WARN_AT_HOURS%.*}" ] 2>/d
   REASON="${REASON:+$REASON; }${WINDOW_REASON}"
 fi
 
-SUMMARY="last success: ${LAST_SUCCESS}${AGE_MIN:+ (${AGE_MIN}m ago)} | last error: ${LAST_ERROR} | last skip: ${LAST_SKIP} | oldest open: ${OLDEST_H:-?}h (${OLDEST_SYM:-?}) vs ${WINDOW_DAYS}d window"
+# The message is truncated and has `key=`/`secret=`/`token=` query values redacted BEFORE it is logged or
+# sent to Telegram: the Go worker's own error text embeds the full request URL, including the cron secret.
+# `last error msg` names the cause when passes FAIL rather than stop: since the price-outage guard a
+# pass that cannot price its book answers 500 ("SL/TP pass unhealthy: ..."), so last_success_at stops
+# advancing and this line says why, instead of the closer looking merely quiet.
+SUMMARY="last success: ${LAST_SUCCESS}${AGE_MIN:+ (${AGE_MIN}m ago)} | last error: ${LAST_ERROR} | last error msg: ${LAST_ERROR_MSG:-none} | last skip: ${LAST_SKIP} | oldest open: ${OLDEST_H:-?}h (${OLDEST_SYM:-?}) vs ${WINDOW_DAYS}d window"
 
 if [ -z "$REASON" ]; then
   log "OK ${SUMMARY}"
