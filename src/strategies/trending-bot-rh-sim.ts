@@ -13,7 +13,7 @@ import {
 } from '@/utils/brain-regime-risk'
 import { fetchTradingRecordsForWallet } from './db'
 import { decideRhTrendingExit } from './exit-ladder'
-import { registerSimExitContract } from './sim-exit-contract'
+import { registerSimExitContract, retireSimExitContract } from './sim-exit-contract'
 import { getActiveStrategiesWithState } from './load-strategy'
 import { loadClosedTrendingOutcomes, recordTrendingBotOutcome } from './outcomes'
 import { RH_MAX_OPEN_POSITIONS_DEFAULT } from './registry'
@@ -385,6 +385,13 @@ async function buySim(params: {
   //
   // Enforcing is a later step: it means giving `att_rh` a closer domain, and it waits until this
   // comparison agrees.
+  // A re-entered mint must not leave the previous cycle's mirror active beside the new one.
+  await retireSimExitContract({
+    walletAddress: SIM_WALLET,
+    strategyId: strategy.id,
+    mintAddress: token.token_address,
+    chain: CHAIN,
+  })
   await registerSimExitContract({
     chain: CHAIN,
     walletAddress: SIM_WALLET,
@@ -481,6 +488,14 @@ export async function runTrendingBotRhSimCycle(): Promise<RhTrendingSimResult[]>
 
       if (decision.action === 'close') {
         closed++
+        // att_rh closes on its own ladder; retire the shadow mirror so the worker stops
+        // re-evaluating a position that no longer exists.
+        await retireSimExitContract({
+          walletAddress: SIM_WALLET,
+          strategyId,
+          mintAddress: pos.mintAddress,
+          chain: CHAIN,
+        })
         openMints.delete(pos.mintAddress)
         // `blocked` was built from outcomes that existed BEFORE this close, so without
         // this the mint is reopened by the candidate loop below within the same cycle —
