@@ -50,6 +50,7 @@ import { useRugList } from "@/hooks/useRugList";
 import { TrackerSocialLinks } from "@/components/signals/TrackerSocialLinks";
 import { useTokenPresence } from "@/hooks/useTokenPresence";
 import { parseAddresses } from "@/components/signals/shared/parseAddresses";
+import { TRACKER_AUTO_PRIORITY_FEE } from '@/utils/tracker-market-swap'
 
 type SectionType = "watching" | "rising" | "rugged" | "mcap_tracker";
 
@@ -937,7 +938,7 @@ function ChartsContent() {
         outputMint: TOKENS.SOL,
         amount: balanceRaw,
         slippageBps: 200,
-        priorityFeeLamports: 30000,
+        priorityFeeLamports: TRACKER_AUTO_PRIORITY_FEE,
         connection,
         signTransaction: async (tx) => {
           const [signed] = await signAllTransactions!([tx]);

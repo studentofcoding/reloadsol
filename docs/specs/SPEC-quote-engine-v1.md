@@ -1,6 +1,6 @@
 # SPEC — One Solana quote engine, and every trade layer derives from it v1
 
-**Status:** implemented (2026-10-01) — steps 1–4 shipped and live on prod; step 5 partly. See §4 for the per-step status and what is deliberately left open.
+**Status:** implemented (2026-10-01) — steps 1–4 shipped and live on prod; step 5 partly. See §4 for the per-step status and what is deliberately left open. **§10 (2026-10-02)** records the post-ship assessment, two retractions, and the one fix it produced.
 **Date:** 2026-10-01
 **Surface:** `src/utils/quote-engine.ts` (new), `src/hooks/useQuote.ts` (new), `src/components/BulkTokenSeller.tsx`, `src/components/BulkTokenBuyer.tsx`, `src/components/signals/*`, `src/components/PnLTracker.tsx`
 **Lane:** Solana trade surfaces only (bulk buy, bulk sell, signals, PnL, DLMM fast swap)
@@ -163,3 +163,81 @@ what makes this safe to leave heuristic rather than exhaustive.
    call, and that the Jupiter gate is untouched by display traffic.
 4. Live: a buy and a sell still confirm, and the displayed estimate still matches what the executor
    reports as `outAmount` within the expected router difference.
+
+---
+
+## 10. Post-ship assessment (2026-10-02)
+
+A read of the trade engine after the batch fixes (`79a59c1`, `256f047`) to answer *"what could we improve,
+or is it already good"*. Each finding carries its evidence class, and two of the author's own claims from
+this pass are recorded as **retracted** rather than quietly dropped.
+
+### 10.1 Scorecard
+
+| # | finding | verdict | outcome |
+|---|---|---|---|
+| 1 | "engine half-adopted — `useQuotes` has 0 consumers, buyer reports a raw integer" | **wrong, false premise** | nothing to do — already done (§10.2) |
+| 2 | 4 sites hardcode `priorityFeeLamports: 30000`, bypassing the shared fee policy | **real — fixed here** | routed through `TRACKER_AUTO_PRIORITY_FEE` |
+| 3 | `skipPreflight: true` leaves the pre-send simulation net empty | **real, latent** | open — a decision, not a default |
+| 4 | the arb hop helper is pair-blind while its sibling is marked *do not call* | **real, contained** | open — mitigated by a separate env key |
+
+### 10.2 Retractions — recorded, not dropped
+
+**Finding 1 was wrong in every part.** It claimed the hook was dead code with 7 raw paths remaining, and
+that the buyer rendered an unformatted raw smallest-unit integer (`~{solPrefetchOut[mint]}`). Verified
+against source on 2026-10-02:
+
+- `useQuotes` **is** consumed — `BulkTokenBuyer.tsx:23` (import) and `:571` (call). The "0 consumers"
+  count came from a malformed `grep` pattern (basic `grep` without `-E` cannot express the alternation
+  that was intended). **The counter was broken, not the code.**
+- The estimate **is** formatted — `formatTokenAmount(quote.outAmount, quote.outDecimals, 4)` at `:590`,
+  fed by `buyEstimateByMint` from the engine. A repo-wide search for an unformatted `{…outAmount}` render
+  returns **nothing**.
+- `solPrefetchOut` **does not exist** in the file. The described badge was not there.
+
+The lesson: a count produced by a search tool is evidence only once the *query* is verified. This one was
+not, and it inverted the conclusion. Step 3 of the migration was already complete.
+
+**The comparison written a turn earlier was also wrong in direction.** It argued the simulator's
+`SIM_PRIORITY_FEE_QUOTE = 0.00003` might understate the real tip by 100× against the 3,000,000 cap. The
+constant is exactly the value the swap path hardcodes (`30000` at four call sites at the time), so the sim
+was derived from the code's own number. Measured across 19 real transactions: min 12,000 · **median
+20,000** · max 80,000 — the sim is mildly **conservative**, overstating by ~10,000 lamports/tx. The three
+3,000,000 outliers were the author's own probe script passing the cap explicitly as a *number*, which maps
+to `broadcastFeeType=exactFee` and therefore charges the cap exactly; they are not app behaviour. The cap
+is a ceiling, never a spend.
+
+### 10.3 Finding 2 — what the four sites actually were
+
+Not a style gap. A number maps to `exactFee` (charge exactly this) while the resolver's object form maps to
+`priorityFeeLamports` + `broadcastFeeType=maxCap` (pay the venue's estimate, never above the ceiling). So
+the four sites were fixed **and behaviourally different** from the nine that used the policy. All ten now
+resolve through one place, so a `SWAP_PRIORITY_FEE_LAMPORTS` override and the 0.003 SOL cap apply
+uniformly. Verified: `priorityFeeLamports: 30000` occurrences in `src/` = **0**.
+
+### 10.4 Still open, ranked
+
+1. **`skipPreflight: true` on the send path** (`swap-executor.ts:517, 527, 561, 613`). Deliberate — the
+   simulate-then-send guard added today *is* the simulation. The exposure is a state change between that
+   simulation and the send, which nothing catches. Before `79a59c1` the bulk **sell** path had neither net,
+   which is exactly how two token→token sells reached chain as failures. Worth an explicit decision.
+2. **The arb hop helper.** `getRaptorMaxHops()` carries a *"do not call this to build a quote"* warning;
+   `getRaptorMaxHopsArbitrage()` is called to build quotes at three sites (`sol-arb/execute.ts:52,157`,
+   `sol-arb/quote.ts:85`) with no such warning. Blast radius is contained by its **own env key**
+   (`RAPTOR_MAX_HOPS_ARBITRAGE`), so the desk fix cannot widen it, and SOL-arb pairs touch SOL where one hop
+   is right. But the *class* of bug is latent if arb ever routes token→token: the pair-blind value would
+   break it identically. The guard covers one function and not the other.
+3. **The two landing lanes in a mixed batch.** Raptor-built legs land via Shyft, Jupiter-built legs via
+   `/execute`. Correct, but pacing and rate tuning govern only one half.
+4. **Stale comments** in `swap-quote-parallel.ts` (its own docstring says Raptor is not queried) and
+   `BulkTokenSeller.tsx:455`.
+
+### 10.5 What is already good — and should not be re-litigated
+
+- **Fan-out cancelled on measurement** — +5.0 bps mean / 0 median for 2.59× the swap time. Reopening it
+  needs **>25 bps median over ≥100 priced pairs** (§2.10's bar), not a hunch.
+- **One execution lane**; Raptor and Lite confined to quoting and display, per their measured failures.
+- **Per-pair lane and per-pair hops share one predicate** (`isVerifiedQuoteMint`), so they cannot drift.
+- **Priority-fee delegation is correct**, because a DIY `getRecentPrioritizationFees` probe returns 0.
+- **The dead Ultra client is gone** — `jupiter-ultra.ts` no longer exists.
+- **The simulator agrees with the swap path** on the fee it assumes (this section, §10.2).

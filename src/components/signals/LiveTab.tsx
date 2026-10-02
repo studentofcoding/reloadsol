@@ -44,6 +44,7 @@ import { notifyTradingUpdate } from "@/utils/trading-notifications";
 import TradeOutcomeModal, { useTradeOutcome } from "@/components/TradeOutcomeModal";
 import { TrackerSocialLinks } from "@/components/signals/TrackerSocialLinks";
 import { useTokenPresence } from "@/hooks/useTokenPresence";
+import { TRACKER_AUTO_PRIORITY_FEE } from '@/utils/tracker-market-swap'
 
 interface TrendingToken {
   token_address: string;
@@ -826,7 +827,7 @@ export default function LiveTab() {
         outputMint: token.token_address,
         amount: inputAmount,
         slippageBps: quote.slippageBps ?? 300,
-        priorityFeeLamports: 30000,
+        priorityFeeLamports: TRACKER_AUTO_PRIORITY_FEE,
         connection,
         signTransaction,
       });
@@ -1028,7 +1029,7 @@ export default function LiveTab() {
         outputMint: sellQuote.outputMint,
         amount: sellQuote.inAmount,
         slippageBps: sellQuote.slippageBps ?? 300,
-        priorityFeeLamports: 30000,
+        priorityFeeLamports: TRACKER_AUTO_PRIORITY_FEE,
         connection,
         signTransaction: async (tx) => {
           const [signed] = await signAllTransactions!([tx]);
@@ -1265,7 +1266,7 @@ export default function LiveTab() {
         outputMint: quote.outputMint,
         amount: quote.inAmount,
         slippageBps: quote.slippageBps ?? 300,
-        priorityFeeLamports: 30000,
+        priorityFeeLamports: TRACKER_AUTO_PRIORITY_FEE,
         connection,
         signTransaction: async (tx) => {
           const [signed] = await signAllTransactions!([tx]);
