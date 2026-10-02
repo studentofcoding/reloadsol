@@ -36,6 +36,16 @@ export function isPlaceholderTokenIdentity(input: {
   return !symbolUsable && !nameUsable
 }
 
+/** Mints per POST. The route caps a request at 500; stay well under it. */
+export const METADATA_BATCH_CHUNK = 100
+
+/**
+ * Batch display metadata for `mints`, in POSTs of at most METADATA_BATCH_CHUNK.
+ *
+ * Throws when any POST fails (network error or non-2xx) so react-query treats
+ * the query as failed and retries, instead of caching an empty Map as a
+ * success for the whole staleTime.
+ */
 export async function fetchTokenMetadataBatch(
   mints: string[],
 ): Promise<Map<string, TokenDisplayMeta>> {
@@ -43,13 +53,16 @@ export async function fetchTokenMetadataBatch(
   const unique = Array.from(new Set(mints.filter(Boolean)))
   if (unique.length === 0) return map
 
-  try {
+  for (let i = 0; i < unique.length; i += METADATA_BATCH_CHUNK) {
+    const chunk = unique.slice(i, i + METADATA_BATCH_CHUNK)
     const response = await fetch('/api/jupiter/metadata', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mints: unique }),
+      body: JSON.stringify({ mints: chunk }),
     })
-    if (!response.ok) return map
+    if (!response.ok) {
+      throw new Error(`Token metadata batch failed: HTTP ${response.status}`)
+    }
 
     const json = await response.json()
     const results = (json?.results ?? {}) as Record<
@@ -65,8 +78,6 @@ export async function fetchTokenMetadataBatch(
         logoURI: typeof data.logoURI === 'string' ? data.logoURI : null,
       })
     }
-  } catch (error) {
-    console.warn('Token metadata batch fetch failed:', error)
   }
   return map
 }
