@@ -2671,6 +2671,32 @@ function WorkersTab({
                     <span className={`text-xs px-2 py-0.5 rounded ${workerStatusBadge(w.status)}`}>
                       {w.status}
                     </span>
+                    {/* T5: `status` says whether the last run went well; it cannot say whether the
+                        worker still has a purpose. Hence a separate lifecycle word, derived from what
+                        this row already carries — a retired worker reddens like a broken one, and
+                        fomo_ws has been 301ing since 07/09 without anything saying it is finished. */}
+                    {w.disabled ? (
+                      <span
+                        className="ml-2 font-mono text-[10px] text-gray-400"
+                        title="disabled — retired, not failing"
+                      >
+                        retired
+                      </span>
+                    ) : w.last_success_at ? (
+                      <span
+                        className="ml-2 font-mono text-[10px] text-emerald-300/80"
+                        title="enabled, and has succeeded"
+                      >
+                        active
+                      </span>
+                    ) : (
+                      <span
+                        className="ml-2 font-mono text-[10px] text-amber-300/80"
+                        title="enabled, has never succeeded — still being proven"
+                      >
+                        trial
+                      </span>
+                    )}
                     {w.last_error_msg ? (
                       <div className="text-xs text-red-400 mt-1 max-w-xs truncate" title={w.last_error_msg}>
                         {w.last_error_msg}
