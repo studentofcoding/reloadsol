@@ -600,8 +600,16 @@ function batchSendMinIntervalMs(): number {
 export async function sendBatchViaShyftRpc(
   encoded: string[],
 ): Promise<({ signature: string } | null)[] | null> {
-  const url = shyftBatchRpcUrl();
-  if (!url) return null;
+  // `SHYFT_RPC_URL` is server-only and Next inlines only NEXT_PUBLIC_* into client code, so in the
+  // browser this gate always returned null — the batch submit runs client-side, so every browser batch
+  // silently fell through to Shyft's `send_many_txns` REST lane. That lane is the worst of the three:
+  // measured **417, 1 of 3 landed, 61 s** to confirm, against THIS lane's **3 of 3 in 163 ms**, and it
+  // failed before per-tx reporting, which is how it hid a partial batch. The browser now reaches the
+  // same lane through a same-origin proxy that owns the env; the request body is unchanged.
+  const isBrowser = typeof window !== "undefined";
+  const directUrl = shyftBatchRpcUrl();
+  if (!isBrowser && !directUrl) return null;
+  const url = isBrowser ? "/api/shyft/transaction/send_rpc" : directUrl!;
 
   const gap = batchSendMinIntervalMs();
   const rows: ({ signature: string } | null)[] = [];
