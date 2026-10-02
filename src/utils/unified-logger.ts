@@ -171,8 +171,11 @@ function writeLog(entry: ApiLogEntry | TradeLogEntry): void {
         consoleFn(`${prefix} ${timestamp} ${operation} ${requestId} ${tokenInfo} ${duration} - ${entry.message}`)
     }
 
-    // Log additional details for errors and critical issues
-    if (entry.level === 'error' || entry.level === 'critical') {
+    // Metadata for `warn` too, not just error/critical. A warning's entire value is usually in its
+    // fields: gating this made `RH sim candidate funnel` print a line with no counts and
+    // `RH sim open SKIPPED by the brain risk layer` print without the reason it exists to carry —
+    // visible, and still unreadable, which is the same outcome as invisible.
+    if (entry.level === 'error' || entry.level === 'critical' || entry.level === 'warn') {
         if (entry.error) {
             console.error(`  ❌ Error: ${entry.error.message}`)
             if (entry.error.stack && process.env.NODE_ENV === 'development') {
