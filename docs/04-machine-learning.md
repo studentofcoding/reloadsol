@@ -8,7 +8,8 @@ Condensed from `docs/deep_dive_ml.md`, `docs/ML_GATE_PLAN.md`, `docs/ARCHITECTUR
 
 ReloadSOL ML is **supervised tabular classification with LightGBM**: models gate/rank token *entries* and are consumed by the strategy/sim runtime, not by a human analyst.
 
-- **Pattern-gate model (PRIMARY track)** — binary classifier over 24h mcap + social cohort labels; scores sim buys as a buy/entry filter (`pattern_class` winner=1 / loser=0). See `docs/ARCHITECTURE_SUMMARY.md` §4 Track B, `docs/mcap-tracker.md` "Pattern ML + sim-track".
+- **Pattern-gate model (served shadow)** — binary classifier over 24h mcap + social cohort labels; scores sim buys as a buy/entry filter (`pattern_class` winner=1 / loser=0). Temporary until the 4-class head is READY, then retire. Keep exporting and training it. See `docs/ARCHITECTURE_SUMMARY.md` §4 Track B, `docs/mcap-tracker.md` "Pattern ML + sim-track", and §7 below.
+- **4-class OHLC head (labels + train/eval only)** — loser / bep / winner / moonbag on Sol `token_mcap_tracking` growth. Shadow predict logs four probabilities. Not wired into paper size, sleeve math, or enforce. Spec: [SPEC-sol-first-spine-4class-ohlc-v1.md](./SPEC-sol-first-spine-4class-ohlc-v1.md).
 - **v2-gate (secondary, sim-outcome "Layer 2")** — binary `gate_class` 0=skip / 1=allow (win ≥20%) entry filter; and **v2-potential** — 4-tier upside bucket on winners, advisory exit-overlay. See `docs/ML_GATE_PLAN.md` Phase 1/2.
 - **Who consumes it:** strategies/TS workers. Runtime hook `attachMlEntryShadow()` in `src/strategies/ml-entry-shadow.ts` is called on sim-track opens (mcap, signals, trending, **gmgn**) and shadows scores onto `entry_features` (`ml_gate_*`, `ml_potential_*`, `ml_pattern_*`). Stage-1 Signals early alerts display Pattern ML `p_winner` for copy-trade display only (`src/strategies/signals-early-alerts.ts`). **Soft size** (`src/strategies/ml-soft-size.ts`) scales mcap/signals/gmgn size by `(1 − pBad) × confidence` with floor `SOL_ML_SIZE_FLOOR` (default 0.25); it does not skip. Trending/social skip that size path.
 - **Runtime inference:** ONNX scored in Node via `onnxruntime-node` inside the Next.js web container. `ml/artifacts/` is bind-mounted `./ml/artifacts:/app/ml/artifacts:ro` (`docker-compose.yml` web service), and env keys point at each model dir (`ML_PATTERN_ARTIFACT_DIR`, `ML_GATE_ARTIFACT_DIR`, `ML_POTENTIAL_ARTIFACT_DIR`). Training runs on the **host**, never in web/cron containers.
@@ -27,7 +28,9 @@ ReloadSOL ML is **supervised tabular classification with LightGBM**: models gate
 | `ml/train_pattern.py` | LightGBM + ONNX for pattern-gate (3-way split, threshold tuning) |
 | `ml/features.py` | Entry feature vector + tier/gate/potential label helpers (mirrors `src/strategies/ml-training-features.ts`) |
 | `ml/pattern_features.py` | Pattern feature vector + coverage report (mirrors `src/strategies/social/pattern-features.ts`) |
-| `ml/check_dataset.py` / `ml/check_pattern_dataset.py` | Local parquet readiness checks (row counts vs bars, meta compare) |
+| `ml/export_growth4_data.py` | 4-class Sol growth labels from `token_mcap_tracking.mcap_growth_percent` → `ml/data/growth4/training.parquet` (bep fills the old 0–20% gap). Binary Pattern export is separate and still runs. |
+| `ml/train_growth4.py` / `ml/predict_growth4.py` | Multiclass head (loser/bep/winner/moonbag) + shadow log of 4 probs. Artifact `ml/artifacts/growth4-ohlc/`. Not wired to paper size. |
+| `ml/check_dataset.py` / `ml/check_pattern_dataset.py` / `ml/check_growth4_dataset.py` | Local parquet readiness checks (row counts vs bars, meta compare) |
 | `ml/train_pattern_test.py`, `ml/mcap_strategy_search_optuna.py`, `ml/requirements.txt` | Test / strategy search utility / deps |
 | `ml/data/` | `v2/training.parquet`, `v2/dataset_manifest.json`, `v2/training_experimental.parquet`, `pattern/training.parquet`, `pattern/dataset_manifest.json`, legacy `training.parquet` |
 | `ml/artifacts/` | On disk today: `pattern-gate/` only (`model.lgb.txt`, `model.onnx`, `model.meta.json`); `v2-gate` / `v2-potential` are written here by the train npm scripts when run |
@@ -57,7 +60,8 @@ Feature schemas:
 ## 4. Labels and coverage logging
 
 - **Sim-outcome labels (Track A).** On close, strategy sims record `strategy_outcomes` (e.g. `recordMcapTrackerOutcome` in `src/strategies/outcomes.ts`, closed via `close-strategy-sim-position.ts`). Labels are **recomputed from `pnl_pct` + status**, not stored by hand: `computeTrainingClass()` in `src/strategies/outcome-labeling.ts` → `training_class` tiers 0–4 (0 = loss or win <20%; 1 = 20–50%; 2 = 50–100%; 3 = 100–300%; 4 = ≥300%); `gate_class` = 0 iff class 0 else 1; `potential_tier` = class 1–4 on gate=1 only. Python mirrors: `ml/features.py` (`compute_training_class`, `gate_class_from_training_class`, `potential_tier_from_training_class`). `ml:backfill-labels` / `POST /api/strategies/ml/backfill-labels` refresh stored labels after tier-rule changes. **How it runs:** one read, one in-memory pass that keeps only rows whose six label keys actually changed, then set-based writes in chunks of 500 plus one batched prediction resolution per chunk (`resolvePredictionsForClosedOutcomes`) — so the unscoped run over all ~82k outcomes takes seconds rather than minutes, and a second run reports `updated: 0` with everything `unchanged`. It used to write every row with 2–6 round trips each and no change check, which outlived nginx's 60 s read timeout and surfaced as an HTML gateway page parsed as JSON; the route now also declares `maxDuration = 300`, `location /api/` carries `proxy_read_timeout 120s`, and the UI checks status/content-type before parsing. Tracked-position history: `token_mcap_tracking` milestones + `mcap_social_pattern_24h` cohort tables feed pattern labels; `mcap-tracker.md` documents sim workers `mcap_tracker_sim_open` (phase=open ~15s) and `mcap_tracker_sim_track` (phase=manage ~120s) that open/manage sims and stamp `ml_pattern_*` shadow on entry.
-- **Pattern labels (Track B, primary).** Social rollup cron (~5m) writes `mcap_social_pattern_24h` for tokens first seen in the last 24h: **winner ≥120% growth, loser <80%** (neutral not stored). `pattern_class_from_cohort()` in `ml/pattern_features.py`; export reads `GET /api/mcap-patterns/training-export` (auth `TRENDING_TRACKER_SECRET`).
+- **Pattern labels (Track B, primary).** Social rollup cron (~5m) writes `mcap_social_pattern_24h` for tokens first seen in the last 24h: **winner ≥120% growth, loser <80%** (neutral not stored). `pattern_class_from_cohort()` in `ml/pattern_features.py`; export reads `GET /api/mcap-patterns/training-export` (auth `TRENDING_TRACKER_SECRET`). Keep exporting and training this path until the 4-class head is READY; do not delete it. The OHLC second head's labels are the 4-class cuts in §7.
+- **4-class growth labels (OHLC second head).** Every Sol row in `token_mcap_tracking` with finite `mcap_growth_percent` is labelable: **loser `<0%`**, **bep `≥0%` and `≤20%`**, **winner `>20%` and `<120%`**, **moonbag `≥120%`**. The old 0–20% gap is bep, not dropped. Export is `ml/export_growth4_data.py` (Postgres `COPY`, or CSV). It also stamps `pattern_shadow_class` with the binary Pattern rule so the two labels can be counted on the same table. See §7.
 - **Coverage / dataset-health logging:** export counts `incomplete`, `volume_imputed` (missing `volume_at_entry` → `log_volume_at_entry=0`, imputed not dropped), `incomplete_by_field`, `skipped_incomplete`; manifests in `ml/data/*/dataset_manifest.json`; `model.meta.json` records `train_rows`/`valid_rows`/`test_rows` and (pattern) `feature_coverage`. Tracking "menuju 200": use `stats.extractable_labeled` from the dataset-stats endpoint, not `ml:backfill-labels` preview or `ml:export` row count — the three count different things (`docs/OPERATOR_STATE.md` "Data hygiene").
 
 ## 5. Baselines / current state (per docs, Jul 2026)
@@ -72,6 +76,25 @@ Feature schemas:
 - **Potential exit overlay:** `ML_POTENTIAL_EXIT_MODE=shadow|apply|off`; `apply` (sim only) adjusts sim TP/SL through `potential-exit-overlay.ts` when `potential_ready`. Live capital is never gated by these models.
 - **Soft size is always on** for mcap/signals/gmgn (paper and live mcap). It is not enforce. Do **not** flip `ML_GATE_MODE` / `ML_PATTERN_MODE` to enforce while Pattern F1 is ~0.47.
 - Do-not list (`docs/OPERATOR_STATE.md` constraints, `docs/ML_GATE_PLAN.md` risks): don't gate live until `*_ready`; don't change frozen entry/exit rules mid-collection; reject live gating when `metrics.gate_ready` is false; review shadow `ml_gate_p_bad` histograms before flipping enforce. Current-state: [DECISION_MACHINE.md](./DECISION_MACHINE.md).
+
+## 7. 4-class growth (OHLC second head)
+
+Primary growth labels for the Sol spine / OHLC second head. Binary Pattern (§4) stays a parallel shadow: `npm run ml:export-patterns` and `npm run ml:train-pattern` are unchanged.
+
+| Class | `mcap_growth_percent` |
+|-------|------------------------|
+| loser | `< 0` |
+| bep | `≥ 0` and `≤ 20` |
+| winner | `> 20` and `< 120` |
+| moonbag | `≥ 120` |
+
+Export reads `token_mcap_tracking` where `chain = 'sol'` (research [#80](https://github.com/studentofcoding/reloadsol/issues/80)): every finite growth is a class, including the old 0–20% gap. Optional OHLC columns are the last ≤10 1m bars from `signal_ohlc_labels` (label/detect capture — **not** as-of `first_seen`; that clock is still blocked). Entry columns are `log_first_mcap`, organic score, top holders, `log_volume_5m`, plus missing flags. `mcap_growth_percent` is the label source and is not a feature.
+
+Train (`ml/train_growth4.py`) is a time-ordered holdout. Early stopping watches a validation tail, then test metrics are macro F1 and per-class F1. `model.meta.json` records class counts and the SPEC placeholder bars (macro F1 ≥ 0.40, per-class F1 ≥ 0.25 except support &lt; 30, train ≥ 1500, OOS ≥ 300). **`growth4_ready` is false.** Lead-time, calibration, and OOS sleeve-vs-CL are not this step. `predict_growth4.py` logs `p_loser p_bep p_winner p_moonbag` and `paper_size=off`.
+
+Artifact dir: `ml/artifacts/growth4-ohlc/` (`ML_GROWTH4_ARTIFACT_DIR` is the stub’s path; the web process does not load it).
+
+How to run (offline smoke and the full Sol table): [ml/README.md](../ml/README.md) section **4-class growth labels**.
 
 ## Operator research
 

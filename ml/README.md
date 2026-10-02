@@ -1,14 +1,83 @@
 # ML training pipeline
 
-**Primary focus: Pattern ML** (24h mcap + social cohort labels). **Secondary:** sim-outcome gate (Layer 2) below.
+**Served shadow:** Pattern ML (binary ≥120 / under 80) and the sim-outcome gate below. **OHLC second head (this step):** 4-class growth labels on the full Sol mcap table — export, train/eval, and a predict stub that logs four probabilities. Not wired to paper size. Pattern export/train stays.
+
+Spec: [docs/SPEC-sol-first-spine-4class-ohlc-v1.md](../docs/SPEC-sol-first-spine-4class-ohlc-v1.md). Research: [label coverage #80](https://github.com/studentofcoding/reloadsol/issues/80).
+
+---
+
+## 4-class growth labels (OHLC second head)
+
+Cuts on `token_mcap_tracking.mcap_growth_percent` (`chain = sol`):
+
+| Class | Rule |
+|-------|------|
+| loser | `&lt; 0%` |
+| bep | `≥ 0%` and `≤ 20%` (former unlabeled gap — **kept**) |
+| winner | `&gt; 20%` and `&lt; 120%` |
+| moonbag | `≥ 120%` |
+
+`pattern_shadow_class` on the same rows uses the existing binary Pattern rule (1 if growth is at least 120, 0 if growth is under 80, empty in the neutral band). That column is not a feature. `ml:export-patterns` / `ml:train-pattern` are unchanged.
+
+OHLC features, when present, are the last ≤10 1m bars from `signal_ohlc_labels` (label/detect capture). They are **not** as-of `first_seen`. Pass `--no-ohlc` for labels + entry columns only.
+
+### Test plan (local)
+
+Offline smoke (no database). From `ml/`:
+
+```bash
+python3 -m unittest growth4_labels_test.py train_growth4_test.py -v
+```
+
+That builds a synthetic Sol frame (all four classes, including 0% and 20% as bep), exports it, trains a short multiclass model, and checks the shadow predict line has four probabilities that sum to 1. `growth4_ready` stays false.
+
+CSV export without Postgres:
+
+```bash
+cd ml
+python3 export_growth4_data.py --source csv --csv /path/to/mcap_rows.csv \
+  --output /tmp/growth4/training.parquet
+python3 check_growth4_dataset.py /tmp/growth4/training.parquet
+python3 train_growth4.py --input /tmp/growth4/training.parquet \
+  --output-dir /tmp/growth4-art --features entry --min-rows 40
+python3 predict_growth4.py --artifact /tmp/growth4-art \
+  --json '{"log_first_mcap": 10.5, "organic_score": 40, "organic_score_missing": 0, "top_holders_pct": 20, "top_holders_pct_missing": 0, "log_volume_5m": 8, "volume_5m_missing": 0}'
+```
+
+The CSV needs `token_address` and `mcap_growth_percent`. Optional: `chain` (non-sol dropped), `first_mcap`, `first_seen_at`, `organic_score`, `top_holders_pct`, `volume_5m`, `bars` (JSON list of `{t,o,h,l,c}`).
+
+### Full Sol table (host Postgres)
+
+`psql` on PATH. `DATABASE_URL_DIRECT` (preferred) or `DATABASE_URL`. Docker hostnames `reloadsol-db` / `reloadsol-bouncer` are rewritten to `127.0.0.1`, same as the closed-loop trainer.
+
+```bash
+export DATABASE_URL_DIRECT='postgresql://...'   # reloadsol_db
+npm run ml:export-growth4    # → ml/data/growth4/training.parquet + dataset_manifest.json
+npm run ml:check-growth4
+npm run ml:train-growth4     # → ml/artifacts/growth4-ohlc/
+npm run ml:predict-growth4   # logs 20 shadow lines; does not change size
+```
+
+Manual equivalents, from `ml/`:
+
+```bash
+python3 export_growth4_data.py --output data/growth4/training.parquet
+python3 train_growth4.py --input data/growth4/training.parquet --version growth4-ohlc
+python3 check_growth4_dataset.py data/growth4/training.parquet \
+  --meta artifacts/growth4-ohlc/model.meta.json
+```
+
+Holdout metrics in `model.meta.json`: `class_counts`, `metrics.macro_f1`, `metrics.per_class.{loser,bep,winner,moonbag}.f1`. Placeholder bars (macro ≥ 0.40, per-class ≥ 0.25, train ≥ 1500, OOS ≥ 300) are recorded and **do not** set `growth4_ready`. Paper size stays on the existing path.
+
+`--features auto` (default) trains entry + OHLC columns when any row has bars, otherwise entry only. `--features entry` is the no-bar baseline. `--min-rows` defaults to 40 so a local frame can train; the 1,500-row bar is reported, not required, until you pass `--min-rows 1500`.
+
+---
+
+## Pattern ML (served shadow)
 
 **Learning deep dive:** [docs/deep_dive_ml.md](../docs/deep_dive_ml.md) — what we use (LightGBM → ONNX), what to study, references, todos.
 
 Production DB: Docker Postgres **`reloadsol_db`** only. Train on **host**, not in web/cron containers.
-
----
-
-## Pattern ML (primary)
 
 Labels from `mcap_social_pattern_24h` (winner ≥120% growth, loser &lt;80%). Shadow scores mcap sim entries (`ml_pattern_p_winner`, `ml_pattern_predicted`).
 
@@ -115,7 +184,9 @@ ML runs on the **host** (or a separate CI job), not in web/cron containers. Node
 | **`ml:export`** | Alias for `ml:export-entry-features` |
 | **`data/v2/`** | Dataset path for the v2 gate/potential pipeline |
 | **`v2-gate` / `v2-potential`** | Sim-outcome model artifact folders |
-| **`pattern-gate`** | Primary Pattern ML track (24h cohort) |
+| **`pattern-gate`** | Served binary Pattern shadow (24h cohort, ≥120 / under 80) |
+| **`ml:export-growth4`** | 4-class Sol mcap labels → `data/growth4/training.parquet` |
+| **`growth4-ohlc`** | 4-class train/eval artifact (`artifacts/growth4-ohlc/`). Shadow predict only |
 
 Legacy **v1 multiclass model** (`artifacts/v1/`, `--stage multiclass`) removed — use v2-gate + v2-potential only.
 
