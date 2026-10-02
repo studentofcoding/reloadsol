@@ -283,7 +283,38 @@ async function buySim(params: {
     strategyId: strategy.id,
     baseSol: strategy.buy_amount_native ?? strategy.buy_amount_sol,
   })
-  if (sized.skip) return
+  if (sized.skip) {
+    // LOUD, because this was the one path with no trace. `buySim` used to return here without a log
+    // and without a `skipped` entry, so a strategy whose every open the brain refuses looked exactly
+    // like one whose candidates were all filtered — and the two need opposite fixes. Found by
+    // elimination on 2026-10-02: 28 in-band candidates against a guard that could block at most 11,
+    // and `tracking: 0`.
+    log.warn('deviation_alert', 'RH sim open SKIPPED by the brain risk layer', {
+      strategyId: strategy.id,
+      chain: CHAIN,
+      tokenSymbol: token.token_symbol,
+      // WHICH of the two `resolveSimOpenSize` skips fired, and the values behind it.
+      //
+      // `standDown` and `scaleOpenSize` actually agree, and I first read this as an inconsistency —
+      // worth stating so nobody re-derives it: `applyRisk` hardcodes `applied: true`, so a cell that
+      // exists is applied, and `sizeScale <= 0` is then a genuine stand-down in both places
+      // (`brain-regime-risk.ts:147` and `:187`). A zero scale is not ambiguous.
+      //
+      // What the log still has to separate: a real cell saying stand-down (`recipeId`/`reason` set,
+      // `sizeScale: 0`) versus a cell that carried NO `sizeScale`, where the `: 0` fallback at `:143`
+      // coerces it — the second would be a malformed cell read as a policy decision.
+      standDown: sized.risk.standDown,
+      applied: sized.risk.applied,
+      source: sized.risk.source,
+      climateState: sized.risk.state,
+      sizeScale: sized.risk.sizeScale,
+      recipeId: sized.risk.recipeId ?? null,
+      reason: sized.risk.reason ?? null,
+      baseSol: strategy.buy_amount_native ?? strategy.buy_amount_sol,
+      resolvedSol: sized.sol,
+    })
+    return
+  }
   const nativeAmount = sized.sol
   const nativeUsd = await getNativeUsd(CHAIN)
   const priceUsd = token.price > 0 ? token.price : 0.000001
