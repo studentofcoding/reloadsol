@@ -8,6 +8,92 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — one verdict per token, on a fixed 10-minute block (rug signal)
+
+`rug_verdicts`: a token is judged **once**, at its own clock, on a 10-minute 1m block, features
+snapshotted and the label read forward. The detector previously re-judged the same token every sweep
+over a moving window, so 4,104 shadow rows were ~2,350 mints and the validation harness needed a
+per-mint dedupe to stop the rates from lying. One verdict per token makes the honest statistic the
+native one, and it is enforced by the primary key (`ON CONFLICT DO NOTHING`) rather than a guard
+someone could forget. `SPEC-rug-verdict-block-v1.md` holds the design; T1/T2/T3/T5 are shipped, T4 is
+shipped and awaiting its first completed sweep to execute.
+
+- **The clock is the mint's first *held* minute**, not `first_seen_at`. Measured: `first_seen_at` is
+  100% populated inside `token_mcap_tracking`, but that table covers only ~17% of the scored corpus
+  (1,943 of 2,353 mints absent), 49 mints read as a *negative* age against it, and the median lag from
+  first-seen to our first candle is **−18 min** (the 501-bar backfill precedes it). An age gate on it
+  was proposed and **withdrawn on this evidence**.
+- **The 1m basis is load-bearing, and measured.** Ten 1m bars is two 5m bars, so under the shipped 5m
+  basis a fresh token is `no_bars` — an unknown, never a low score. Fresh-token slice: **0 of 199
+  judged under 5m, 143 under the block**, paired per mint on identical bars. Scope stated honestly in
+  the SPEC: that slice is a bar-bearing sample (~8% of the 2,459 window mints) and the population
+  figure is **26%** (642/2,459 hold ten real minutes).
+- **The label** reuses the validator's forward rule (≥60% mcap drop within 30 min) through the same
+  `labelForward`, so corpus and validator cannot drift into two definitions. Never fabricated (NULL
+  when the forward window is missing, counted as *underivable*), written once (`WHERE label IS NULL`),
+  fail-open throughout.
+- Reader at `GET /api/rug-signal/verdicts` plus a panel section, and the rug page is in the nav now
+  (`/dev/rug-signal` was missing from `DEV_ROUTES`, so no chip could ever have rendered — which also
+  fixed `/dev/social`, silently absent for the same reason).
+
+### Fixed — the copier's lease, and its failures being invisible
+
+- **The job lock is a lease** (`renewJobLock` + heartbeat; TTL 600 → 180 s). `sweepOrphanedLocks` can
+  only reclaim a *same-host* owner and a container recreate gets a new hostname, so a deploy-killed
+  sweep left a lock the next process could not recognise and every tick waited the full TTL — one
+  death skipped a second 15-minute run.
+- **`copier_runs`** records every sweep: a `running` row at the start, a terminal row at the end. A
+  sweep killed mid-flight is a row that never finished; one the trigger never reached is an absent row.
+  Before this, failures existed only in the cron's stdout and the recorder that would have written them
+  to the DB went *through* the web app — the component that was down — which is why a 7-hour hole in
+  the 1m series was invisible.
+- **`scripts/check-copier-freshness.sh`** on the host crontab reads Postgres directly through the db
+  container, deliberately not through web, and reports rather than fixes.
+- Also: the symbol writer (`symbol: null` was hardcoded — 3,296 rows), a backfill for the history
+  (1,529 filled, the rest left NULL rather than guessed), and per-endpoint parking so a challenge on one
+  endpoint no longer discards a whole candle sweep.
+
+### Changed
+
+- `METRICS_COPY_RPS` 1 → **2**, the code's own default: the sweep's duration is rate-bound (~5 min of
+  pacing alone for 300 mints), so the floor halves. Added `RUG_SIG_WINDOW_1M` / `RUG_SIG_MIN_BARS_1M`
+  (10 / 6) for the block basis, keeping the 5m path byte-identical (pinned by test).
+
+### Findings recorded, not fixed
+
+- **The web process drops upstream connections** — nginx logged **134 `upstream prematurely closed
+  connection` in 4 hours**, ~90% with no deploy anywhere near, `oom=false` and socket dropped rather
+  than reaped. It cuts sweeps off mid-flight: 6 of 12 runs never closed, the rest a steady 356–363 s.
+  Belongs with the heap work above, whose "stable since" claim these numbers contradict.
+- **A cut sweep costs far more than a sweep.** After the 18:16 EOF the copier's cron entry stopped
+  firing for **85 minutes** while every other job ran normally. Mechanism narrowed in code, not
+  assumed: not a panic (`cron.New` installs no `Recover` chain, and the process demonstrably stayed
+  alive) and not configuration (`INTERVAL=900`, `KILL_SWITCH=0`, `TIMEOUT=480` verified in place). The
+  surviving candidate is the custom stagger parser's next-time computation, whose own comment warns
+  about leaving robfig with a `Next` that is never ahead of now. A restart re-bound it — a recovery,
+  not a fix.
+
+### Corrected during the day
+
+Recorded rather than quietly dropped, because each one was a conclusion drawn from a convenient
+measurement instead of the source of truth:
+
+- **`SUM(array_length(c_min,1))` counts NULL slots.** It reported 3,829 mints with 60+ minutes; the
+  truth is **355**, and 914 mints hold a complete 10-minute block rather than 2,266. `NULL` in those
+  arrays means *not observed*, never a minute — the rule the scorer documents, broken in my own
+  measurement.
+- **"0 verdicts have forward minutes"** came from comparing `hour_bucket > verdict_at` — an hour start
+  against a timestamp. At minute granularity: 94 verdicts, 66 past the window, **29 labellable**.
+- **"The deployed tree does not contain T4"** was read from a *stale* sweep summary; `git merge-base`
+  showed the commit was an ancestor of `origin/main` all along.
+- **"Sweeps take >10 minutes"** was a polling artifact. `copier_runs` — the table built for exactly
+  this — shows a steady 356–363 s.
+- **"The deploys destabilised the web process"** is only partly true: they explain ~8 of 134 premature
+  closes. They are the trigger for the worst consequence, not the cause.
+- **My watchdog fix made it worse** and was reverted: its SQL had a bare aggregate with no
+  `FROM copier_runs`, and `q()` pipes stderr to `/dev/null`, so a failing query looked identical to an
+  empty one — a **false negative**, which is the one failure mode a watchdog must never have.
+
 ### Fixed — the web process was dying every 90 seconds, and it presented as a database fault
 
 `FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory`, every ~90s.
