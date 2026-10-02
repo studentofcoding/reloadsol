@@ -139,7 +139,7 @@ Rank **descending** `organicScore` for potential. Short interval (`5m` / `1h`) f
 | GMGN security | `gmgn-security-gate.ts` `maxTop10HolderRate: 0.2` | Hard when enabled | Stricter top10 on GMGN path; **keep**. This filter does not replace it |
 | Jupiter organic in `assessTokenRisk` | `risk-assessment.ts` | Soft Discord/UI | Pre-grad: ≥85 LOW, ≥70 MED, else HIGH. **&lt;70 is the current non-graduated floor** for wash-leg fail |
 | Strategy `organicScoreMin` | `canonical-params.ts`, `mcap-sim-track.ts` | Hard when set | Orthogonal strategy band; do not conflate |
-| Axiom `organicScore` | `axiom.ts` `calculateFeeToMarketCapRatio` | Soft UI | **Fee heuristic — different name required in logs** (`axiom_fee_organic_score`) |
+| Axiom `organicScore` | `token-risk.ts` `calculateFeeToMarketCapRatio` | Soft UI | **Fee heuristic — different name required in logs** (`fee_organic_score`) |
 | DLMM `min_organic_score` | `dlmm/screener.ts` | Hard screen drop | **Meteora heuristic**, not Jupiter |
 | Entry-ML / pattern | `entry-ml-scorer.ts`, `ml-entry-shadow.ts` | Shadow default | Consume new features later; do not enforce from this spec |
 | OHLC rug | `ohlc-rug-rules.ts` | Shadow (`enforce: false`) | Out of scope |
@@ -149,7 +149,7 @@ Rank **descending** `organicScore` for potential. Short interval (`5m` / `1h`) f
 **Three “organic” meanings — never mix:**
 
 1. `jupiter_organic_score` — this spec.
-2. `axiom_fee_organic_score` — fees vs mcap; not Jupiter.
+2. `fee_organic_score` — fees vs mcap; not Jupiter.
 3. `meteora_organic_proxy` — DLMM holders/fee/TVL heuristic.
 
 ---

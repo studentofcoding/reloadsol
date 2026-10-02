@@ -25,6 +25,38 @@ cache hit 11 ms/7 ms, and every field `RiskAnalysis` renders is finite (GMGN ret
 
 **`/api/axiom/token-info` now has no callers.**
 
+### Changed — Axiom removed outright, once the delegation proved it was unused (`00713ad`)
+
+The delegation above left Axiom present but unreachable. This deletes it. Removed the
+`/api/axiom/token-info` route, `hooks/useAxiomRisk.ts`, the `'/api/axiom'` allow-list entry, and
+three one-off scripts that only ever exercised that route (`test-axiom.js`,
+`test-axiom-error-handling.js`, `test-graduated-pool-flow.js`). `utils/axiom.ts` became
+`utils/token-risk.ts` and now holds pure logic only — the fetcher had already been delegating.
+
+The two remaining callers moved to `useTokenRisk`, which **already existed for exactly this**. This
+was checked as a substitution rather than assumed: `mapGmgnSnapshotToRisk` computes
+`risk = getRiskIndicators(axiomData, marketCap)`, which is what the old hook did, and `axiomData`
+is byte-identical. The one real delta is that the surviving hook *also* applies the honeypot
+override (`isHoneypot` → `overallRisk`/`feeRisk` `HIGH`), so the chart panel gains honeypot
+detection.
+
+**A trap worth remembering: the two hooks' parameter orders differed.** The old hook's third
+argument was `enabled`; `useTokenRisk`'s third is `chain` and fourth is `enabled`. Passing the old
+call unchanged would have put a boolean where a chain string belongs. Both call sites now carry a
+comment saying so. `ChartBuyModal` also passes its real chain (`isRhToken ? 'robinhood' : 'sol'`)
+instead of implicitly Sol.
+
+Renamed throughout: `AxiomTokenInfo` → `TokenRiskInfo`, `mapGmgnSnapshotToAxiomData` →
+`mapGmgnSnapshotToRiskData`, `axiomData` → `riskData` (each value together with its setter), and
+the `'axiom'` member of the `assessmentMethod` union → `'token_risk'` (no stored record used the
+old string, so no migration). `RiskAnalysis`'s two props — the token data and the indicators
+— had been distinct; a blanket rename collapsed both onto `riskData`, which `tsc` caught as a
+duplicate identifier and a duplicate JSX attribute at two call sites. The indicators are now
+`riskIndicators`. The stale user-visible label "Risk analysis by Axiom" reads GMGN.
+
+`grep -ri axiom src/` now returns only explanatory comments. tsc clean, lint 0 errors, build,
+10 tests pass; shipped and smoke-checked on prod.
+
 ### Fixed — React #418 hydration mismatch from `localStorage` read during render (`c0ca7a5`, `9b70ba5`)
 
 `PnLTracker` held five preferences as lazy `useState(() => localStorage.getItem(...))` initialisers.

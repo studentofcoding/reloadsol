@@ -137,7 +137,7 @@ Wallet tokens: `useWalletTokens` → `GET /api/jupiter/portfolio` → `https://w
 | `/api/solprice` | GET | SOL/USD for UI |
 | `/api/tokens/prices` | GET | Token prices (supporting) |
 | `/api/trending/search` | GET | Token search in buyer UI |
-| `/api/gmgn/token-snapshot` | GET | Risk analysis panel (replaced `/api/axiom/token-info`, retired 2026-10-02) |
+| `/api/gmgn/token-snapshot` | GET | Risk analysis panel (replaced `/api/axiom/token-info`; route, hook and allow-list entry removed) |
 
 **External**
 
@@ -458,7 +458,7 @@ Server-side Jupiter Lite with configured keypair; not triggered from UI buttons.
 | `/api/solprice` | SOL/USD |
 | `/api/rpc/health`, `/api/rpc/diagnostics`, `/api/rpc/config` | RPC panel / auto-select |
 | `/api/signals` | LiveTab / BoardTab board state |
-| `/api/gmgn/token-snapshot` | Risk panel (superseded `/api/axiom/token-info`; the Axiom route is now uncalled) |
+| `/api/gmgn/token-snapshot` | Risk panel (superseded `/api/axiom/token-info`, and the route, hook and allow-list entry are now deleted) |
 | `/api/buy` | Legacy Jupiter Lite server buy (no UI) |
 | `/api/sl-tp-monitor` | Automated SL/TP sells (server keypair) |
 
