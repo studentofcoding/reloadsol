@@ -1,5 +1,10 @@
 import { query, queryOne } from '@/utils/db'
 import { isMissingSchemaError } from '@/utils/db-health'
+import {
+  readWalletRecordsCache,
+  walletRecordsCacheKey,
+  writeWalletRecordsCache,
+} from '@/utils/wallet-records-cache'
 import { getTrackingHealthStats, computeMcapSimPnlPct } from '@/utils/mcap-tracker'
 import { getOpenMcapSimPositions } from '@/utils/mcap-sim-track'
 import { readTokenSymbol, readTrainingClass } from './outcome-features'
@@ -3249,6 +3254,12 @@ export async function fetchTradingRecordsForWallet(
   walletAddress: string,
   opts?: { strategies?: string[]; sinceDays?: number; sinceLastClose?: boolean },
 ): Promise<import('@/utils/trading-tracker').TrackingRecord[]> {
+  // Same read, not repeated. Several callers ask for the same wallet several times in one pass;
+  // the value is unchanged, and every writer invalidates the wallet (see wallet-records-cache.ts
+  // for the measurement and the safety argument).
+  const cacheKey = walletRecordsCacheKey(walletAddress, opts)
+  const cached = readWalletRecordsCache<import('@/utils/trading-tracker').TrackingRecord>(cacheKey)
+  if (cached) return cached
   try {
     // `sinceLastClose` returns only the rows the position reconstruction actually needs.
     //
@@ -3305,11 +3316,13 @@ export async function fetchTradingRecordsForWallet(
           ORDER BY s.timestamp ASC`,
         [walletAddress, ...strategyValues],
       )
-      return rows.map((r) =>
+      const sinceLastCloseRecords = rows.map((r) =>
         typeof r.data === 'string'
           ? (JSON.parse(r.data) as import('@/utils/trading-tracker').TrackingRecord)
           : r.data,
       )
+      writeWalletRecordsCache(cacheKey, sinceLastCloseRecords)
+      return sinceLastCloseRecords
     }
 
     const conditions = ['wallet_address = $1']
@@ -3330,11 +3343,13 @@ export async function fetchTradingRecordsForWallet(
        ORDER BY timestamp ASC`,
       values,
     )
-    return rows.map((r) =>
+    const records = rows.map((r) =>
       typeof r.data === 'string'
         ? (JSON.parse(r.data) as import('@/utils/trading-tracker').TrackingRecord)
         : r.data,
     )
+    writeWalletRecordsCache(cacheKey, records)
+    return records
   } catch (error) {
     console.warn('[strategies/db] trading_records fetch failed:', errorMessage(error))
     return []
