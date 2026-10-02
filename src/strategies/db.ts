@@ -3250,6 +3250,33 @@ export async function getStrategyDomainHeartbeats(params?: {
  * (2026-09-29: oldest open att_rh position was 10 days, so 7 d would have been unsafe and
  * 14 d was not.)
  */
+/**
+ * Hard ceiling on how far back a `trading_records` read may go, in days.
+ *
+ * Why a floor rather than trusting each caller. The reconstruction read is bounded by "since the last
+ * close of this (strategy, mint)", which is correct but has no lower limit: a key that has never
+ * closed falls back to `to_timestamp(0)` — deliberately, since an INNER JOIN would drop never-closed
+ * keys and make still-open positions vanish — and that reads the wallet's ENTIRE history. Measured on
+ * 2026-10-03: `trading_records` is 164,382 rows / 270 MB and **one wallet holds 155,054 of them**.
+ * Those reads saturated the connection pool (`[db-pool] idle=0`, connections dying with "Connection
+ * terminated unexpectedly"), which slowed the SL/TP pass past its 120s client timeout and cost roughly
+ * three quarters of the exit throughput.
+ *
+ * A 4-day floor reads **1.09%** of that table (1,799 rows) and takes the offending wallet from 155,054
+ * rows to 92. It is only safe while every OPEN position is younger than the window — measured at the
+ * time of writing as 68.5 hours against a 96-hour window, a 27-hour margin. The watchdog asserts that
+ * margin separately, because a floor exceeding the oldest open position would silently stop
+ * reconstructing a live position.
+ *
+ * Env-tunable; delete the variable to return to the default. 0 disables the floor entirely, which
+ * restores the old behaviour and the old cost.
+ */
+function tradingRecordsMaxAgeDays(): number {
+  const raw = Number(process.env.TRADING_RECORDS_MAX_AGE_DAYS)
+  if (Number.isFinite(raw) && raw >= 0) return raw
+  return 4
+}
+
 export async function fetchTradingRecordsForWallet(
   walletAddress: string,
   opts?: { strategies?: string[]; sinceDays?: number; sinceLastClose?: boolean },
@@ -3290,6 +3317,16 @@ export async function fetchTradingRecordsForWallet(
       // against the previous query on one snapshot, both wallets: identical id sets
       // (trending-bot-sim-rh 1369/1369, mcap-tracker-sim 2609/2609, 0 rows differing either way).
       // 120,096ms -> 861ms, and the sort is now a 1.2MB quicksort instead of disk spills.
+      // The same hard floor as the unbounded branch below, applied with `greatest` so it can only
+      // RAISE the start of the window: the later of "since this key last closed" and "N days ago".
+      // The epoch fallback inside `coalesce` is what makes a never-closed key read everything, which
+      // is the shape that saturated the pool; `greatest` bounds it without dropping the key.
+      const maxAgeDaysForLastClose = tradingRecordsMaxAgeDays()
+      const maxAgeFloor =
+        maxAgeDaysForLastClose > 0
+          ? `NOW() - make_interval(days => ${maxAgeDaysForLastClose})`
+          : `to_timestamp(0)`
+
       const { rows } = await query<{ data: import('@/utils/trading-tracker').TrackingRecord }>(
         `WITH scoped AS (
            SELECT t.id, t.timestamp,
@@ -3312,7 +3349,19 @@ export async function fetchTradingRecordsForWallet(
            LEFT JOIN last_close lc
              ON lc.mint = s.mint
             AND lc.strategy = s.strategy
-          WHERE s.timestamp >= coalesce(lc.ts, to_timestamp(0))
+          WHERE s.timestamp >= CASE
+                  -- A key that HAS closed: bound it. The floor can only RAISE the start of the
+                  -- window, so the per-(strategy, mint) bound survives and the read is capped.
+                  WHEN lc.ts IS NOT NULL THEN greatest(lc.ts, ${maxAgeFloor})
+                  -- A key that has NEVER closed — i.e. a still-open position. Deliberately UNBOUNDED,
+                  -- unchanged from before: db-paper-capital.test.ts pins this ("the epoch fallback,
+                  -- unchanged: a (strategy, mint) with no recorded close keeps every row, so a
+                  -- still-open position cannot read as closed"). Applying the floor here is exactly
+                  -- the bug it prevents — a live position older than the window would reconstruct as
+                  -- absent. The note at db.ts:3250 records the same hazard from 29/09, when an open
+                  -- att_rh position was 10 days old.
+                  ELSE coalesce(lc.ts, to_timestamp(0))
+                END
           ORDER BY s.timestamp ASC`,
         [walletAddress, ...strategyValues],
       )
@@ -3334,6 +3383,15 @@ export async function fetchTradingRecordsForWallet(
     }
     if (opts?.sinceDays != null && opts.sinceDays > 0) {
       values.push(opts.sinceDays)
+      conditions.push(`timestamp >= NOW() - make_interval(days => $${values.length}::int)`)
+    }
+
+    // The floor, always. `sinceDays` can only TIGHTEN this — a caller asking for 1 day gets 1 day,
+    // and a caller asking for nothing gets the default rather than the whole wallet. `maxAgeDays <= 0`
+    // disables it, which is the old behaviour.
+    const maxAgeDays = tradingRecordsMaxAgeDays()
+    if (maxAgeDays > 0) {
+      values.push(maxAgeDays)
       conditions.push(`timestamp >= NOW() - make_interval(days => $${values.length}::int)`)
     }
 

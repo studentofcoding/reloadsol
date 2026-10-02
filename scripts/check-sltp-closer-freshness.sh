@@ -90,7 +90,36 @@ if [ -z "${LAST_SUCCESS:-}" ]; then
 fi
 
 REASON="$(decide "$AGE_MIN" "$MAX_AGE_MIN")"
-SUMMARY="last success: ${LAST_SUCCESS}${AGE_MIN:+ (${AGE_MIN}m ago)} | last error: ${LAST_ERROR} | last skip: ${LAST_SKIP}"
+
+# THE SECOND THING THAT CAN SILENTLY BREAK EXITS: the reconstruction window.
+#
+# `fetchTradingRecordsForWallet` is floored at TRADING_RECORDS_MAX_AGE_DAYS (default 4) so a wallet
+# read cannot pull its whole history — one wallet holds 155,054 of the table's 164,382 rows and those
+# reads saturated the connection pool, which is what slowed the pass past its client timeout.
+#
+# That floor is safe ONLY while every open position is younger than it. The moment one is older, its
+# rows fall outside the window, the reconstruction sees no history for it, and a LIVE position reads
+# as absent — the exact hazard db.ts:3250 records from 29/09 (an open att_rh position at 10 days).
+# It would be silent: nothing errors, the position simply stops being managed.
+#
+# So the margin is asserted here rather than assumed. This is the one check that has to exist for the
+# bound to be safe, and it alerts BEFORE the crossing, at 80% of the window.
+WINDOW_DAYS="${TRADING_RECORDS_MAX_AGE_DAYS:-4}"
+WARN_AT_HOURS=$(awk -v d="$WINDOW_DAYS" 'BEGIN { printf "%.1f", d * 24 * 0.8 }')
+
+IFS='|' read -r OLDEST_H OLDEST_SYM <<<"$(
+  q "SELECT COALESCE(ROUND(MAX(EXTRACT(EPOCH FROM (NOW() - created_at)) / 3600)::numeric, 1)::text, '0'),
+            COALESCE((SELECT token_symbol FROM sl_tp_positions
+                       WHERE is_active ORDER BY created_at ASC LIMIT 1), '-')
+       FROM sl_tp_positions WHERE is_active"
+)"
+
+if [ -n "${OLDEST_H:-}" ] && [ "${OLDEST_H%.*}" -ge "${WARN_AT_HOURS%.*}" ] 2>/dev/null; then
+  WINDOW_REASON="oldest OPEN position is ${OLDEST_H}h (${OLDEST_SYM}) against a ${WINDOW_DAYS}-day reconstruction window — it will stop being reconstructed, i.e. a live position will read as absent"
+  REASON="${REASON:+$REASON; }${WINDOW_REASON}"
+fi
+
+SUMMARY="last success: ${LAST_SUCCESS}${AGE_MIN:+ (${AGE_MIN}m ago)} | last error: ${LAST_ERROR} | last skip: ${LAST_SKIP} | oldest open: ${OLDEST_H:-?}h (${OLDEST_SYM:-?}) vs ${WINDOW_DAYS}d window"
 
 if [ -z "$REASON" ]; then
   log "OK ${SUMMARY}"

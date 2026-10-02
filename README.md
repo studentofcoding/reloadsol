@@ -264,6 +264,28 @@ Chart fetches (`GET {origin}/chart/{token}`, response `oclhv`) use `SOLANATRACKE
 | `TRENDING_DROP_RUGGED` | on | `false` disables dropping `token_rug_list` mints from the trending feed (list + bot candidates). |
 | `GMGN_TRENDING_LIMIT` | `100` | Volume-ranked rows requested per chain, before the local filters. The RH sim selects its candidates from this list. |
 
+### `trading_records` read bound
+
+`fetchTradingRecordsForWallet` is floored at `TRADING_RECORDS_MAX_AGE_DAYS` (default **4**). Before it,
+a wallet read with no window pulled the entire history — `trading_records` is 164,382 rows / 270 MB and
+**one wallet holds 155,054 of them** — which saturated the connection pool (`[db-pool] idle=0`,
+connections dying with "Connection terminated unexpectedly"), slowed the SL/TP pass past its 120s client
+timeout, and cost roughly three quarters of the exit throughput. A 4-day floor reads **1.09%** of the
+table and takes the offending wallet from 155,054 rows to 92.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TRADING_RECORDS_MAX_AGE_DAYS` | `4` | Hard floor on any `trading_records` read. `sinceDays` can only **tighten** it. `0` disables it (old behaviour, old cost). |
+
+**This is only safe while every OPEN position is younger than the window.** A position older than the
+floor has no rows inside it, so the reconstruction sees no history and a **live** position reads as
+absent — silently, with nothing in the logs. `db.ts:3250` records the one time it happened (an open
+`att_rh` position at 10 days, 29/09).
+
+`check-sltp-closer-freshness.sh` asserts the margin on every tick and alerts at 80% of the window,
+because this is the one invariant the bound depends on. It reads the same variable, so changing one
+without the other cannot leave the guard wrong.
+
 ### Robinhood sim levers
 
 The RH path picks candidates from the volume-ranked feed and filters them locally, so **this band decides

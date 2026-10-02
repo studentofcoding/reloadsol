@@ -20,15 +20,17 @@ describe('fetchTradingRecordsForWallet bounds', () => {
     mockQuery.mockResolvedValue({ rows: [], rowCount: 0 } as never)
   })
 
-  it('stays unbounded when no opts are given (historical behaviour)', async () => {
+  it('stays unbounded by WINDOW when no opts are given, but floored by max age', async () => {
     await fetchTradingRecordsForWallet('wallet-1')
     const [sql, params] = mockQuery.mock.calls[0]!
     expect(String(sql)).toContain('WHERE wallet_address = $1')
     expect(String(sql)).not.toContain('bot_strategy')
-    expect(String(sql)).not.toContain('make_interval')
+    // The hard floor added 2026-10-03 IS applied here — an unbounded wallet read of
+    // `trending-bot-sim-rh` is 155,054 of the table's 164,382 rows and saturates the pool.
+    expect(String(sql)).toContain('make_interval')
     // Still ascending: openPositionsFor and computeOpenSimCycles both walk by time.
     expect(String(sql)).toContain('ORDER BY timestamp ASC')
-    expect(params).toEqual(['wallet-1'])
+    expect(params).toEqual(['wallet-1', 4])
   })
 
   it('bounds by strategy and window when asked', async () => {
@@ -40,12 +42,15 @@ describe('fetchTradingRecordsForWallet bounds', () => {
     const text = String(sql)
     expect(text).toContain(`data->>'bot_strategy' = ANY($2::text[])`)
     expect(text).toContain('timestamp >= NOW() - make_interval(days => $3::int)')
-    expect(params).toEqual(['trending-bot-sim-rh', ['att_rh'], 14])
+    // The floor rides along as $4 — `sinceDays` can TIGHTEN it, never remove it.
+    expect(params).toEqual(['trending-bot-sim-rh', ['att_rh'], 14, 4])
   })
 
-  it('ignores a non-positive window', async () => {
+  it('a non-positive window does not remove the floor', async () => {
+    // `sinceDays: 0` used to mean "no window at all"; the floor is separate and still applies.
     await fetchTradingRecordsForWallet('w', { sinceDays: 0 })
-    expect(String(mockQuery.mock.calls[0]![0])).not.toContain('make_interval')
+    expect(String(mockQuery.mock.calls[0]![0])).toContain('make_interval')
+    expect(mockQuery.mock.calls[0]![1]).toEqual(['w', 4])
   })
 
   it('sinceLastClose bounds per (strategy, mint), not per mint', async () => {
@@ -55,16 +60,17 @@ describe('fetchTradingRecordsForWallet bounds', () => {
     })
     const [sql, params] = mockQuery.mock.calls[0]!
     const text = String(sql)
-    // The last-close CTE, the join that applies it, and no time window at all.
+    // The last-close CTE, the join that applies it, and no window on a NEVER-CLOSED key.
     expect(text).toContain('last_close AS')
     // Extracted in `scoped` and filtered as a column — same predicate, hashable form.
     expect(text).toContain(`t.data->>'close_position' AS closed`)
     expect(text).toContain(`closed = 'true'`)
     expect(text).toContain(`op = 'sell'`)
-    // The epoch fallback, unchanged: a (strategy, mint) with no recorded close keeps every row,
-    // so a still-open position cannot read as closed.
-    expect(text).toContain('s.timestamp >= coalesce(lc.ts, to_timestamp(0))')
-    expect(text).not.toContain('make_interval')
+    // The invariant, still pinned: a (strategy, mint) with no recorded close keeps every row, so a
+    // still-open position cannot read as closed. The max-age floor is applied ONLY in the OTHER arm
+    // of the CASE — a key that has closed — so this branch is still unbounded for never-closed keys.
+    expect(text).toContain('WHEN lc.ts IS NOT NULL THEN greatest(lc.ts,')
+    expect(text).toContain('ELSE coalesce(lc.ts, to_timestamp(0))')
     expect(text).toContain('ORDER BY s.timestamp ASC')
     // Keyed on the strategy as well: a close by ONE strategy must not truncate another
     // strategy's still-open cycle on the same mint. The per-mint key did exactly that and
