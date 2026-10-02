@@ -28,7 +28,11 @@ vi.mock('@/strategies/close-strategy-sim-position', async (importOriginal) => {
 
 // The idempotency guard reads `strategy_outcomes`. Mocked by default to "not closed" so the existing
 // cases keep exercising the close path; the guard's own tests override it.
-vi.mock('@/utils/db', () => ({ query: vi.fn(async () => ({ rows: [] })), queryOne: vi.fn(async () => null) }))
+// `query` is the per-position close claim (INSERT ... RETURNING): a returned row means "claimed".
+vi.mock('@/utils/db', () => ({
+  query: vi.fn(async () => ({ rows: [{ job_name: 'sltp_close:p1' }] })),
+  queryOne: vi.fn(async () => null),
+}))
 
 const { simCloseDomainForStrategy, closeSimulatedPositionFromWorker } = await import(
   './sl-tp-sim-close'
@@ -36,6 +40,7 @@ const { simCloseDomainForStrategy, closeSimulatedPositionFromWorker } = await im
 const { closeReasonForTrigger } = await import('@/strategies/close-strategy-sim-position')
 const closers = await import('@/strategies/close-strategy-sim-position')
 const swap = await import('@/utils/swap-executor')
+const db = await import('@/utils/db')
 
 function paperPosition(over: Partial<SLTPPosition> = {}): SLTPPosition {
   return {
@@ -249,5 +254,29 @@ describe('a trade that already closed cannot close twice', () => {
     expect(result.closed).toBe(true)
     expect(result.alreadyClosed).toBeUndefined()
     expect(closers.closePriceStrategySimPosition).toHaveBeenCalled()
+  })
+
+  it('writes NOTHING when another pass already holds the claim on this position', async () => {
+    vi.mocked(db.query).mockResolvedValueOnce({ rows: [] } as never)
+    const out = await closeSimulatedPositionFromWorker({
+      position: paperPosition({ strategy_id: 'gmgn_smartmoney_default' }),
+      triggerType: 'stop_loss',
+      currentPrice: 0.5,
+    })
+    expect(out).toMatchObject({ closed: false, claimedElsewhere: true })
+    expect(closers.closePriceStrategySimPosition).not.toHaveBeenCalled()
+    expect(closers.closeMcapStrategySimPositions).not.toHaveBeenCalled()
+  })
+
+  it('releases its claim when the close fails, so the next tick can retry', async () => {
+    vi.mocked(closers.closePriceStrategySimPosition).mockRejectedValueOnce(new Error('boom'))
+    const out = await closeSimulatedPositionFromWorker({
+      position: paperPosition({ strategy_id: 'gmgn_smartmoney_default' }),
+      triggerType: 'stop_loss',
+      currentPrice: 0.5,
+    })
+    expect(out.closed).toBe(false)
+    const sqls = vi.mocked(db.query).mock.calls.map((c) => String(c[0]))
+    expect(sqls.some((q) => q.includes('DELETE FROM bot_job_locks'))).toBe(true)
   })
 })

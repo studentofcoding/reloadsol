@@ -20,7 +20,8 @@ import {
   closeReasonForTrigger,
 } from '@/strategies/close-strategy-sim-position'
 import type { StrategyChain } from '@/strategies/types'
-import { queryOne } from '@/utils/db'
+import { query, queryOne } from '@/utils/db'
+import { INSTANCE_ID } from '@/utils/bot-job-lock'
 
 export type SimCloseDomain = 'mcap' | 'signals' | 'gmgn' | 'social'
 
@@ -50,6 +51,60 @@ export type SimCloseOutcome = {
    * the mirror and stop. Distinct from `closed: true`, which means this call wrote the close.
    */
   alreadyClosed?: boolean
+  /**
+   * True when another pass holds the claim on this position, so nothing was evaluated or written.
+   * NOT a shadow and NOT a failure: the caller must not count it as either.
+   */
+  claimedElsewhere?: boolean
+}
+
+/** Long enough to cover one slow close (a wallet hydration + two inserts); short enough to retry. */
+const CLOSE_CLAIM_TTL_SEC = 300
+
+/**
+ * Atomically claim the right to close ONE position.
+ *
+ * `outcomeAlreadyExists` is a read-then-write guard, so it only protects SEQUENTIAL passes. The
+ * `sltp_monitor` job lock cannot make passes sequential: it has a 120s TTL and no heartbeat (55e259e),
+ * a route handler is not cancelled when the Go client's 120s timeout abandons the request, and
+ * `releaseJobLock` deletes on `locked_by = INSTANCE_ID`, which is per PROCESS — so a finished slow
+ * pass releases the lock a newer pass is holding. Two passes can therefore be inside the close at the
+ * same time, both read "no outcome yet", and both insert a sell record for one trade.
+ *
+ * This is a single-statement upsert on the existing `bot_job_locks` primary key (no migration): it
+ * returns a row only when the key was absent or its previous claim has expired.
+ *
+ * Fail-open, like the guard it complements: if the claim itself errors, the close proceeds.
+ */
+export async function claimPositionClose(positionId: string): Promise<boolean> {
+  try {
+    const { rows } = await query<{ job_name: string }>(
+      `INSERT INTO bot_job_locks (job_name, locked_at, locked_by, expires_at)
+       VALUES ($1, now(), $2, now() + make_interval(secs => $3))
+       ON CONFLICT (job_name) DO UPDATE
+         SET locked_at = EXCLUDED.locked_at,
+             locked_by = EXCLUDED.locked_by,
+             expires_at = EXCLUDED.expires_at
+         WHERE bot_job_locks.expires_at < now()
+       RETURNING job_name`,
+      [`sltp_close:${positionId}`, INSTANCE_ID, CLOSE_CLAIM_TTL_SEC],
+    )
+    return rows.length > 0
+  } catch (error) {
+    console.warn(
+      '[sl-tp-sim-close] close claim failed; closing anyway:',
+      error instanceof Error ? error.message : error,
+    )
+    return true
+  }
+}
+
+async function releasePositionClose(positionId: string): Promise<void> {
+  try {
+    await query(`DELETE FROM bot_job_locks WHERE job_name = $1`, [`sltp_close:${positionId}`])
+  } catch {
+    // The claim expires on its own TTL.
+  }
 }
 
 /**
@@ -116,6 +171,12 @@ export async function closeSimulatedPositionFromWorker(params: {
   const sellPriceUsd =
     params.currentPrice > 0 ? params.currentPrice : undefined
 
+  // One closer per position at a time (see claimPositionClose). Taken before the idempotency check so
+  // the check-then-write below is no longer a race between concurrent passes.
+  if (!(await claimPositionClose(position.id))) {
+    return { closed: false, domain, claimedElsewhere: true }
+  }
+
   // Re-runnable by construction: if this trade already closed, retire the mirror (the caller does
   // that when `closed` is true) and write nothing else. See outcomeAlreadyExists for why the check
   // is keyed on the full identity and why it fails open.
@@ -137,6 +198,7 @@ export async function closeSimulatedPositionFromWorker(params: {
         mintAddress: position.token_address,
         sellPriceUsd,
       })
+      if (result.closed <= 0) await releasePositionClose(position.id)
       return { closed: result.closed > 0, domain }
     }
 
@@ -160,6 +222,8 @@ export async function closeSimulatedPositionFromWorker(params: {
       error instanceof Error ? error.message : error,
       { strategyId, mint: position.token_address, triggerType: params.triggerType },
     )
+    // A failed close must be retryable on the next tick, not parked behind its own claim.
+    await releasePositionClose(position.id)
     return { closed: false, domain }
   }
 }
