@@ -334,6 +334,13 @@ export function mapGmgnWebTokenRow(
     securityIn.suspected_insider_hold_rate,
     full.suspected_insider_hold_rate,
   ])
+  // GMGN's "Insiders" tile is the rat-trader share (see gmgn-token-snapshot.ts): same family as
+  // the bundler rate below, present on the live row next to it.
+  const ratRate = firstNumber([
+    securityIn.rat_trader_amount_rate,
+    full.rat_trader_amount_rate,
+    full.top_rat_trader_percentage,
+  ])
   const bundlerRate = firstNumber([
     securityIn.bundler_trader_amount_rate,
     full.top_bundler_trader_percentage,
@@ -352,6 +359,7 @@ export function mapGmgnWebTokenRow(
     creator_balance_rate: creatorRate,
     sniper_hold_rate: sniperRate,
     suspected_insider_hold_rate: insiderRate,
+    rat_trader_amount_rate: ratRate,
     bundler_trader_amount_rate: bundlerRate,
     pro_trader_hold_rate: proRate,
     renounced_mint: securityIn.renounced_mint ?? full.renounced_mint ?? null,
@@ -786,8 +794,11 @@ async function fulfillFresh(mints: string[], slots: Slot[], opts: FetchGmgnWebMu
     }
 
     const uncached: string[] = []
+    // The ledger freezes whatever it reads, once. A cached row from a mint-only fetch (no holder
+    // stat) would be frozen partial for the life of the token, so ledger writes always go upstream.
+    const bypassCache = opts?.ledgerWriteOnce === true
     for (const mint of mints) {
-      const hit = await readPositive(mint)
+      const hit = bypassCache ? null : await readPositive(mint)
       if (hit) {
         metrics.cacheHits += 1
         settleResolve(byMint.get(mint)!, hit)

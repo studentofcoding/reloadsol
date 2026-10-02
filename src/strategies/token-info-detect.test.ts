@@ -83,6 +83,9 @@ function rowFromParams(params: unknown[]): DbRow {
 
 describe('token_info_detect', () => {
   beforeEach(() => {
+    // These cases exercise write-once semantics with partial fixtures; the core-tile gate has its
+    // own file (token-info-detect-core-gate.test.ts).
+    process.env.TOKEN_INFO_LEDGER_CORE_GATE = 'off'
     stored = null
     vi.mocked(query).mockReset()
     vi.mocked(enqueueGmgnWebLedgerMints).mockReset()

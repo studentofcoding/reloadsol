@@ -81,11 +81,21 @@ export function buildGmgnTokenSnapshot(
       readNumber(readNested(info, ['dev', 'top_10_holder_rate'])),
   )
 
-  const devHold = asPercent(
+  const devHoldRaw = asPercent(
     readNumber(security.creator_balance_rate) ??
       readNumber(readNested(info, ['stat', 'creator_hold_rate'])) ??
       readNumber(readNested(info, ['stat', 'dev_team_hold_rate'])),
   )
+  // A 0 is a measurement ("dev sold out"), never a default. No source key → null (above). A 0 that
+  // contradicts GMGN's own `creator_token_status: 'creator_hold'` is an unfilled field, not a 0.
+  const creatorStatus =
+    typeof security.creator_token_status === 'string'
+      ? security.creator_token_status
+      : typeof readNested(info, ['dev', 'creator_token_status']) === 'string'
+        ? (readNested(info, ['dev', 'creator_token_status']) as string)
+        : null
+  const devHold =
+    devHoldRaw === 0 && creatorStatus === 'creator_hold' ? null : devHoldRaw
 
   const snipersHold = asPercent(
     readNumber(security.sniper_hold_rate) ??
@@ -111,9 +121,16 @@ export function buildGmgnTokenSnapshot(
       readNumber(readNested(info, ['stat', 'bot_degen_rate'])),
   )
 
+  // `suspected_insider_hold_rate` only exists on the GMGN OpenAPI security payload; the web
+  // multi endpoints never carry it, which is why this tile was NULL on every ledger row. GMGN's
+  // "Insiders" is the rat-trader share (`rat_trader_amount_rate` / `top_rat_trader_percentage`) —
+  // the same volume-share family the bundlers tile already reads — so it is the fallback.
   const insiders = asPercent(
     readNumber(security.suspected_insider_hold_rate) ??
-      readNumber(readNested(info, ['stat', 'suspected_insider_hold_rate'])),
+      readNumber(readNested(info, ['stat', 'suspected_insider_hold_rate'])) ??
+      readNumber(security.rat_trader_amount_rate) ??
+      readNumber(readNested(info, ['stat', 'top_rat_trader_percentage'])) ??
+      readNumber(readNested(info, ['stat', 'rat_trader_amount_rate'])),
   )
 
   const bundlers = asPercent(
@@ -133,4 +150,20 @@ export function buildGmgnTokenSnapshot(
     insidersHoldPct: insiders,
     bundlersHoldPct: bundlers,
   }
+}
+
+/**
+ * The tiles a ledger row must carry before it may occupy the write-once key: top-10, snipers,
+ * bundlers and both authority flags. A panel missing any of them (an upstream partial, or a cached
+ * mint-only fetch) would be frozen forever. Dev / insiders / pro-traders / boost may legitimately be
+ * unknown and are not required.
+ */
+export function missingCoreTiles(snapshot: GmgnTokenSnapshot): string[] {
+  const missing: string[] = []
+  if (snapshot.top10HoldPct == null) missing.push('top10HoldPct')
+  if (snapshot.snipersHoldPct == null) missing.push('snipersHoldPct')
+  if (snapshot.bundlersHoldPct == null) missing.push('bundlersHoldPct')
+  if (snapshot.freezeAuthActive == null) missing.push('freezeAuthActive')
+  if (snapshot.mintAuthActive == null) missing.push('mintAuthActive')
+  return missing
 }
