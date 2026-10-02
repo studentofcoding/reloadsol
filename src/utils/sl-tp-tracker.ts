@@ -16,6 +16,7 @@ import { getOpenPositionPrices } from '@/utils/open-position-prices'
 import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
 import { closeSimulatedPositionFromWorker } from '@/utils/sl-tp-sim-close'
 import { evaluateExit, toPersistedCloseReason } from '@/utils/exit-evaluator'
+import { evaluateSltpPassHealth, SltpPassUnhealthyError } from '@/utils/sl-tp-pass-health'
 
 /**
  * The backstop share above which the exit system is considered broken (S5).
@@ -657,31 +658,38 @@ export async function addSLTPPosition(params: {
  */
 async function getCurrentTokenPrices(
     positions: Array<{ token_address: string; chain?: string | null }>,
-): Promise<Map<string, number>> {
-    try {
-        const byChain = new Map<string, string[]>()
-        for (const position of positions) {
-            const chain = position.chain === 'robinhood' ? 'robinhood' : 'sol'
-            const mints = byChain.get(chain) ?? []
-            mints.push(position.token_address)
-            byChain.set(chain, mints)
-        }
+): Promise<{ prices: Map<string, number>; failedChains: string[] }> {
+    const priceMap = new Map<string, number>()
+    const failedChains: string[] = []
+    const byChain = new Map<string, string[]>()
+    for (const position of positions) {
+        const chain = position.chain === 'robinhood' ? 'robinhood' : 'sol'
+        const mints = byChain.get(chain) ?? []
+        mints.push(position.token_address)
+        byChain.set(chain, mints)
+    }
 
-        const priceMap = new Map<string, number>()
-        for (const [chain, mints] of Array.from(byChain.entries())) {
+    for (const [chain, mints] of Array.from(byChain.entries())) {
+        try {
             const prices = await getOpenPositionPrices(mints, chain as GmgnTradeChain)
             for (const [address, price] of Object.entries(prices)) {
                 if (typeof price === 'number' && price > 0) {
                     priceMap.set(address, price)
                 }
             }
+        } catch (error) {
+            // Still degrades to "unpriced" (the loop reports STALE and the backstops run), but the
+            // failure is RECORDED and returned so the pass can fail loudly instead of reading as a
+            // success — a swallowed error here is how a price outage looked like a healthy closer.
+            failedChains.push(chain)
+            log.error('price_tracking', 'Failed to fetch token prices', error as Error, {
+                chain,
+                mints: mints.length,
+            })
         }
-
-        return priceMap
-    } catch (error) {
-        log.error('price_tracking', 'Failed to fetch token prices', error as Error)
-        return new Map()
     }
+
+    return { prices: priceMap, failedChains }
 }
 
 /**
@@ -1477,7 +1485,7 @@ export async function monitorSLTPPositions(returnSummary: boolean = false): Prom
         log.info('price_tracking', 'Monitoring SL/TP positions', { count: filteredPositions.length })
 
         // Get current prices for all tokens
-        const currentPrices = await getCurrentTokenPrices(filteredPositions)
+        const { prices: currentPrices, failedChains } = await getCurrentTokenPrices(filteredPositions)
 
         await persistCurrentPrices(filteredPositions, currentPrices)
 
@@ -1589,12 +1597,31 @@ export async function monitorSLTPPositions(returnSummary: boolean = false): Prom
             shadow: shadowCount,
         })
 
+        // The pass did its work (backstops, closes). If it could not price its book, it is still not
+        // a success: fail it so the route answers 500, the worker records the error instead of a
+        // `last_success_at`, and the freshness watchdog sees the outage.
+        const health = evaluateSltpPassHealth({
+            positions: filteredPositions.length,
+            stale: staleCount,
+            failedChains,
+        })
+        if (!health.ok) {
+            log.error('price_tracking', 'SL/TP pass unhealthy — price outage', new Error(health.reason ?? 'unhealthy'), {
+                positions: filteredPositions.length,
+                stale: staleCount,
+                staleRatio: health.staleRatio,
+                failedChains,
+            })
+            throw new SltpPassUnhealthyError(health.reason ?? 'unhealthy', health.staleRatio)
+        }
+
         // Return summary if requested
         if (returnSummary) {
             return await getSLTPTrackingSummary()
         }
 
     } catch (error) {
+        if (error instanceof SltpPassUnhealthyError) throw error
         log.error('error_handling', 'Error monitoring SL/TP positions', error as Error)
         if (returnSummary) {
             // Return summary even on error for cronjob visibility
@@ -1634,7 +1661,7 @@ export async function runSLTPMonitorAndSummarize(): Promise<SLTPTrackingSummary>
         log.info('price_tracking', 'Monitoring SL/TP positions', { count: filteredPositions.length })
 
         // Get current prices for all tokens
-        const currentPrices = await getCurrentTokenPrices(filteredPositions)
+        const { prices: currentPrices, failedChains } = await getCurrentTokenPrices(filteredPositions)
 
         await persistCurrentPrices(filteredPositions, currentPrices)
 
@@ -1746,10 +1773,29 @@ export async function runSLTPMonitorAndSummarize(): Promise<SLTPTrackingSummary>
             shadow: shadowCount,
         })
 
+        // The pass did its work (backstops, closes). If it could not price its book, it is still not
+        // a success: fail it so the route answers 500, the worker records the error instead of a
+        // `last_success_at`, and the freshness watchdog sees the outage.
+        const health = evaluateSltpPassHealth({
+            positions: filteredPositions.length,
+            stale: staleCount,
+            failedChains,
+        })
+        if (!health.ok) {
+            log.error('price_tracking', 'SL/TP pass unhealthy — price outage', new Error(health.reason ?? 'unhealthy'), {
+                positions: filteredPositions.length,
+                stale: staleCount,
+                staleRatio: health.staleRatio,
+                failedChains,
+            })
+            throw new SltpPassUnhealthyError(health.reason ?? 'unhealthy', health.staleRatio)
+        }
+
         // Return summary
         return await getSLTPTrackingSummary()
 
     } catch (error) {
+        if (error instanceof SltpPassUnhealthyError) throw error
         log.error('error_handling', 'Error monitoring SL/TP positions', error as Error)
         // Try to return summary even on failure
         try {
