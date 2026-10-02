@@ -3283,6 +3283,15 @@ function McapTrackerCard({
   const e = strategy.config.execution;
   const x = strategy.config.exit;
   const en = strategy.config.entry;
+  // T4: at card scope, "equal to the code default" means *inherited* — this row never overrode the
+  // family default. Not in `SourceTag`: on the weights and shared-filter panels `defaults` is the
+  // correct word, so the vocabulary is mapped where the scope is.
+  const src = (path: string) =>
+    sources?.[path] === "stored"
+      ? ("stored" as const)
+      : sources?.[path]
+        ? ("inherited" as const)
+        : undefined;
   const [entryTemplate, setEntryTemplate] = useState(strategy.config.entryTemplate);
   const [recency, setRecency] = useState(String(q.recencyMinutes));
   const [limit, setLimit] = useState(String(q.limit ?? 300));
@@ -3326,27 +3335,27 @@ function McapTrackerCard({
       </label>
       <Section title="Query">
         <FieldGrid>
-          <NumberField label="recency (min)" value={recency} onChange={setRecency} step="1" source={sources?.[`${strategy.id}.config.query.recencyMinutes`]} />
-          <NumberField label="limit" value={limit} onChange={setLimit} step="1" source={sources?.[`${strategy.id}.config.query.limit`]} />
+          <NumberField label="recency (min)" value={recency} onChange={setRecency} step="1" source={src(`${strategy.id}.config.query.recencyMinutes`)} />
+          <NumberField label="limit" value={limit} onChange={setLimit} step="1" source={src(`${strategy.id}.config.query.limit`)} />
         </FieldGrid>
       </Section>
       <Section title="Execution">
         <FieldGrid>
-          <NumberField label="sim buy SOL" value={simBuy} onChange={setSimBuy} step="0.001" source={sources?.[`${strategy.id}.config.execution.simBuySol`]} />
-          <NumberField label="max open" value={maxOpen} onChange={setMaxOpen} step="1" source={sources?.[`${strategy.id}.config.execution.maxOpenPositions`]} />
+          <NumberField label="sim buy SOL" value={simBuy} onChange={setSimBuy} step="0.001" source={src(`${strategy.id}.config.execution.simBuySol`)} />
+          <NumberField label="max open" value={maxOpen} onChange={setMaxOpen} step="1" source={src(`${strategy.id}.config.execution.maxOpenPositions`)} />
         </FieldGrid>
       </Section>
       <Section title="Exit">
         <FieldGrid>
-          <NumberField label="stop loss %" value={stopLoss} onChange={setStopLoss} step="1" source={sources?.[`${strategy.id}.config.exit.stopLossPct`]} />
-          <NumberField label="take profit %" value={takeProfit} onChange={setTakeProfit} step="1" source={sources?.[`${strategy.id}.config.exit.takeProfitPct`]} />
-          <NumberField label="max hold (h)" value={maxHold} onChange={setMaxHold} step="1" source={sources?.[`${strategy.id}.config.exit.maxHoldHours`]} />
+          <NumberField label="stop loss %" value={stopLoss} onChange={setStopLoss} step="1" source={src(`${strategy.id}.config.exit.stopLossPct`)} />
+          <NumberField label="take profit %" value={takeProfit} onChange={setTakeProfit} step="1" source={src(`${strategy.id}.config.exit.takeProfitPct`)} />
+          <NumberField label="max hold (h)" value={maxHold} onChange={setMaxHold} step="1" source={src(`${strategy.id}.config.exit.maxHoldHours`)} />
         </FieldGrid>
       </Section>
       <Section title="Entry filters">
         <FieldGrid>
-          <NumberField label="mcap min" value={mcapMin} onChange={setMcapMin} step="1000" source={sources?.[`${strategy.id}.config.entry.mcapMin`]} />
-          <NumberField label="mcap max" value={mcapMax} onChange={setMcapMax} step="1000" source={sources?.[`${strategy.id}.config.entry.mcapMax`]} />
+          <NumberField label="mcap min" value={mcapMin} onChange={setMcapMin} step="1000" source={src(`${strategy.id}.config.entry.mcapMin`)} />
+          <NumberField label="mcap max" value={mcapMax} onChange={setMcapMax} step="1000" source={src(`${strategy.id}.config.entry.mcapMax`)} />
           <NumberField label="organic min" value={organicMin} onChange={setOrganicMin} step="1" />
           <NumberField label="holders max %" value={holdersMax} onChange={setHoldersMax} step="1" />
         </FieldGrid>
