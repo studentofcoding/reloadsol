@@ -225,8 +225,10 @@ function expandCloses(rows: Array<{ hour_bucket: string; c_min: number[] | null 
 export function labelForward(
   createdAt: string,
   series: Array<{ t: number; c: number }>,
-  eventDrop = SEPARATION.eventDrop,
-  eventWindowMin = SEPARATION.eventWindowMin,
+  // Explicitly `number`: `SEPARATION` is `as const`, so a bare default would narrow these to the
+  // literals `0.6` / `30` and callers tuning the rule could not pass their own value.
+  eventDrop: number = SEPARATION.eventDrop,
+  eventWindowMin: number = SEPARATION.eventWindowMin,
 ): boolean | null {
   const at = Math.floor(Date.parse(createdAt) / 1000)
   if (!Number.isFinite(at)) return null

@@ -30,7 +30,11 @@ import {
 } from '@/strategies/rug-signal'
 import { recordRugSignalShadow } from '@/strategies/rug-signal-shadow'
 import { finishCopierRun, startCopierRun } from '@/strategies/copier-runs'
-import { loadFirstHeldMinutes, recordRugVerdict } from '@/strategies/rug-verdicts'
+import {
+  labelPendingRugVerdicts,
+  loadFirstHeldMinutes,
+  recordRugVerdict,
+} from '@/strategies/rug-verdicts'
 import {
   DEFAULT_WATCH_MAX_MINTS,
   intEnv,
@@ -381,6 +385,11 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // T4 — label the verdicts whose outcome window has closed. The rule is the validator's, read
+    // forward from the verdict instant, and it only ever fills a NULL: a verdict cannot rewrite its
+    // own label as more data lands. Fail-open, like everything else on this path.
+    const labelResult = await labelPendingRugVerdicts()
+
     // Coverage must be loud: a watch set we could not score otherwise reads as "no rugs found".
     if (scored.length < mints.length) {
       const haveSeries = new Set(scored.map((s) => s.mint))
@@ -414,6 +423,8 @@ export async function POST(request: NextRequest) {
       scored: scored.length,
       shadow_rows: shadowRows,
       verdicts,
+      labelled: labelResult.labelled,
+      labels_underivable: labelResult.underivable,
       series_fed: seriesFed,
       not_judged: notJudged,
       blocks,

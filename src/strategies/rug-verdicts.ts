@@ -1,5 +1,5 @@
 import { query } from '@/utils/db'
-import { firstHeldMinute } from '@/strategies/rug-signal-separation'
+import { firstHeldMinute, labelForward } from '@/strategies/rug-signal-separation'
 
 /**
  * `rug_verdicts` — **one verdict per token, on a fixed 10-minute block** (SPEC-rug-verdict-block T3).
@@ -233,4 +233,129 @@ export async function rugVerdictHealth(): Promise<RugVerdictHealth> {
   } catch {
     return empty
   }
+}
+
+/**
+ * T4 — the label. **A verdict is features; the label is what happened next.**
+ *
+ * The rule is the one the validation harness already uses and is deliberately *independent of the
+ * scorer*: a ≥60% market-cap drop within 30 minutes of the verdict, read forward from the verdict
+ * instant. It is the same `labelForward` the harness is pinned by tests through, so the corpus and
+ * the validator cannot drift into two different definitions of "rug".
+ *
+ * Three properties that matter:
+ *   * **Never fabricated.** A verdict whose forward minutes do not exist stays `label = NULL` and is
+ *     counted as underivable — an unknown, not a `safe`. The whole point of the label is that it is
+ *     measured, and a missing window is the absence of a measurement.
+ *   * **Only once.** `WHERE label IS NULL` makes a re-run a no-op rather than a rewrite, so a verdict
+ *     cannot quietly change its own label as more data lands.
+ *   * **Fail-open.** Labelling is enrichment on rows written for other reasons; a failure here must
+ *     not fail the sweep that produces them.
+ */
+export const RUG_LABEL_DROP = 0.6
+export const RUG_LABEL_WINDOW_MIN = 30
+
+export type RugLabelResult = {
+  considered: number
+  labelled: number
+  collapsed: number
+  underivable: number
+}
+
+/** Minute closes for a mint, from the stored per-hour arrays. */
+function expandMinutes(rows: Array<{ hour_bucket: string; c_min: number[] | null }>): Array<{ t: number; c: number }> {
+  const out: Array<{ t: number; c: number }> = []
+  for (const row of rows) {
+    const hourMs = Date.parse(row.hour_bucket)
+    if (!Number.isFinite(hourMs) || !Array.isArray(row.c_min)) continue
+    for (let i = 0; i < row.c_min.length; i++) {
+      const c = row.c_min[i]
+      if (typeof c === 'number' && Number.isFinite(c) && c > 0) {
+        out.push({ t: Math.floor((hourMs + i * 60_000) / 1000), c })
+      }
+    }
+  }
+  return out.sort((a, b) => a.t - b.t)
+}
+
+export async function labelPendingRugVerdicts(
+  limit = 500,
+  windowMinutes = RUG_LABEL_WINDOW_MIN,
+): Promise<RugLabelResult> {
+  const result: RugLabelResult = { considered: 0, labelled: 0, collapsed: 0, underivable: 0 }
+  try {
+    await ensureTable()
+    // Only verdicts whose outcome window has already closed: labelling earlier would read a partial
+    // window and call it a safe.
+    const { rows: pending } = await query<{ token_address: string; chain: string; verdict_at: string }>(
+      `SELECT token_address, chain, verdict_at::text AS verdict_at
+         FROM rug_verdicts
+        WHERE label IS NULL
+          AND verdict_at < NOW() - make_interval(mins => $1::int)
+        ORDER BY verdict_at ASC
+        LIMIT $2`,
+      [windowMinutes, Math.min(Math.max(1, Math.floor(limit)), 2000)],
+    )
+    result.considered = pending.length
+    if (pending.length === 0) return result
+
+    const mints = [...new Set(pending.map((r) => r.token_address))]
+    const { rows: minuteRows } = await query<{
+      token_address: string
+      hour_bucket: string
+      c_min: number[] | null
+    }>(
+      `SELECT token_address, hour_bucket::text AS hour_bucket, c_min
+         FROM token_metrics_history
+        WHERE token_address = ANY($1::text[])
+          AND c_min IS NOT NULL
+          AND hour_bucket > NOW() - make_interval(mins => $2::int)
+        ORDER BY hour_bucket ASC`,
+      [mints, windowMinutes * 4],
+    )
+    const byMint = new Map<string, Array<{ hour_bucket: string; c_min: number[] | null }>>()
+    for (const row of minuteRows) {
+      const list = byMint.get(row.token_address) ?? []
+      list.push({ hour_bucket: row.hour_bucket, c_min: row.c_min })
+      byMint.set(row.token_address, list)
+    }
+    const series = new Map<string, Array<{ t: number; c: number }>>()
+    for (const [mint, rows] of byMint) series.set(mint, expandMinutes(rows))
+
+    for (const row of pending) {
+      const collapsed = labelForward(
+        row.verdict_at,
+        series.get(row.token_address) ?? [],
+        RUG_LABEL_DROP,
+        windowMinutes,
+      )
+      if (collapsed == null) {
+        result.underivable++
+        continue
+      }
+      await query(
+        `UPDATE rug_verdicts
+            SET label = $3, label_at = NOW()
+          WHERE token_address = $1 AND chain = $2 AND label IS NULL`,
+        [row.token_address, row.chain, collapsed ? 'rug' : 'safe'],
+      )
+      result.labelled++
+      if (collapsed) result.collapsed++
+    }
+    return result
+  } catch {
+    return result
+  }
+}
+
+/**
+ * The training set: labelled verdicts only, and **never `no_bars`**.
+ *
+ * A `no_bars` verdict is the absence of a judgement; feeding it in as a `pass` is how a precision
+ * figure becomes fiction, and it is the single easiest mistake to make from the consumer side. The
+ * exclusion lives here rather than in a comment on the table.
+ */
+export async function loadLabelledRugVerdicts(limit = 1000): Promise<RugVerdictRow[]> {
+  const rows = await loadRugVerdicts(limit)
+  return rows.filter((r) => r.label != null && r.decision !== 'no_bars')
 }
