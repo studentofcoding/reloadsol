@@ -63,11 +63,14 @@ export async function POST(request: NextRequest) {
 
   const workerId = typeof body.worker_id === 'string' ? body.worker_id.trim() : ''
   const event = body.event as CronWorkerRuntimeEvent
-  if (!workerId || !['begin', 'success', 'fail'].includes(event)) {
+  // `skipped` is the job lock working, not a failure — a pass that outlasts its interval is
+  // skipped by design. It was rejected here with a 400, so the sole closer's skips went
+  // unrecorded and "how often did it not run" had no answer.
+  if (!workerId || !['begin', 'success', 'fail', 'skipped'].includes(event)) {
     return NextResponse.json(
       {
         success: false,
-        error: 'worker_id and event (begin|success|fail) are required',
+        error: 'worker_id and event (begin|success|fail|skipped) are required',
       },
       { status: 400 },
     )

@@ -38,6 +38,7 @@ export type ExitDecision = {
     | 'take_profit_2'
     | 'take_profit_3'
     | 'max_hold_time'
+    | 'max_age'
     | null
   /** Partial sell, when the fired trigger is a ladder step. 100 otherwise. */
   sellPercentage: number
@@ -201,11 +202,52 @@ export function evaluateExit(input: EvaluateExitInput): ExitDecision {
         reason: 'max_age',
         pnlPct: gainPct,
         basisUsed,
-        triggerType: 'max_hold_time',
+        // Its own trigger, not `max_hold_time`. Both backstops used to return the same value, so a
+        // row could not say which one fired and `WORKER_CLOSE_REASONS`'s `max_age` entry was
+        // unreachable. S5's backstop share is uncomputable while they are indistinguishable.
+        triggerType: 'max_age',
         sellPercentage: 100,
       }
     }
   }
 
   return { ...HOLD, pnlPct: gainPct, basisUsed }
+}
+
+/**
+ * The values `sl_tp_positions.close_reason` may hold (S2's closed set, plus the non-trigger ways a
+ * row stops being active).
+ *
+ * Kept here, next to `ExitReason`, because the exit vocabulary is one thing. `closeReasonForTrigger`
+ * in `close-strategy-sim-position` maps the worker's trigger names onto these.
+ */
+export const PERSISTED_CLOSE_REASONS = [
+  'stop_loss',
+  'take_profit',
+  'max_hold',
+  'max_age',
+  'label_rugged',
+  'strategy_deactivated',
+  'tracking_stopped',
+  'no_balance',
+  'reconciled',
+  'removed',
+  'unknown',
+] as const
+
+export type PersistedCloseReason = (typeof PERSISTED_CLOSE_REASONS)[number]
+
+/**
+ * Coerce anything to a persistable reason.
+ *
+ * Unrecognised input becomes `'unknown'` rather than throwing, and that is deliberate: this runs on
+ * the close path, and a position left open past its stop because a diagnostic label did not match a
+ * list is a far worse failure than a missing reason. `'unknown'` is a member of the set so the
+ * `close_reason` CHECK can never reject a close, and an unexpected value is still visible in the
+ * data instead of silently absent.
+ */
+export function toPersistedCloseReason(value: string | null | undefined): PersistedCloseReason {
+  return (PERSISTED_CLOSE_REASONS as readonly string[]).includes(value ?? '')
+    ? (value as PersistedCloseReason)
+    : 'unknown'
 }

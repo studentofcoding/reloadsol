@@ -52,7 +52,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { acquireJobLock, releaseJobLock } = await import('@/utils/bot-job-lock')
+    const { acquireJobLock, releaseJobLock, startJobLockHeartbeat } = await import(
+      '@/utils/bot-job-lock'
+    )
     const jobLock = await acquireJobLock('sltp_monitor', 120)
     if (!jobLock.acquired) {
       return NextResponse.json(
@@ -60,6 +62,13 @@ export async function GET(request: NextRequest) {
         { status: 409 },
       )
     }
+
+    // The Go client's per-pass timeout is exactly 120s (main.go, runSLTPMonitor) and so was this
+    // lock's TTL. A pass that outlived its own timeout therefore LOST the lock while still running,
+    // and the next 60s tick acquired a fresh one and started a second pass over the same open
+    // positions. The heartbeat renews the lock while the pass is alive, so it can now only expire
+    // if the process actually dies — which is what the TTL is for.
+    const heartbeat = startJobLockHeartbeat('sltp_monitor', 120, 30)
 
     try {
       const summary = await runSLTPMonitorAndSummarize()
@@ -75,6 +84,7 @@ export async function GET(request: NextRequest) {
         summary,
       })
     } finally {
+      clearInterval(heartbeat)
       await releaseJobLock('sltp_monitor')
     }
 

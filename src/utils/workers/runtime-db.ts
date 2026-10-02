@@ -6,10 +6,12 @@ export type CronWorkerRuntimeRow = {
   last_success_at: string | null
   last_error_at: string | null
   last_error_msg: string | null
+  /** Last tick skipped because the job lock was held. A skip is the worker working, not failing. */
+  last_skipped_at: string | null
   updated_at: string | null
 }
 
-export type CronWorkerRuntimeEvent = 'begin' | 'success' | 'fail'
+export type CronWorkerRuntimeEvent = 'begin' | 'success' | 'fail' | 'skipped'
 
 const ENSURE_SQL = `
 CREATE TABLE IF NOT EXISTS cron_worker_runtime (
@@ -18,14 +20,22 @@ CREATE TABLE IF NOT EXISTS cron_worker_runtime (
   last_success_at TIMESTAMPTZ,
   last_error_at TIMESTAMPTZ,
   last_error_msg TEXT,
+  last_skipped_at TIMESTAMPTZ,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )`
+
+// `CREATE TABLE IF NOT EXISTS` is a no-op on a table that already exists, so the column has to be
+// added separately or every deployment against an existing volume keeps the old shape.
+const ENSURE_SKIPPED_COLUMN_SQL = `
+ALTER TABLE cron_worker_runtime
+  ADD COLUMN IF NOT EXISTS last_skipped_at TIMESTAMPTZ`
 
 let ensurePromise: Promise<void> | null = null
 
 export async function ensureCronWorkerRuntimeTable(): Promise<void> {
   if (!ensurePromise) {
     ensurePromise = query(ENSURE_SQL)
+      .then(() => query(ENSURE_SKIPPED_COLUMN_SQL))
       .then(() => undefined)
       .catch((err) => {
         ensurePromise = null
@@ -53,10 +63,11 @@ export async function listCronWorkerRuntime(): Promise<CronWorkerRuntimeRow[]> {
     last_success_at: unknown
     last_error_at: unknown
     last_error_msg: string | null
+    last_skipped_at: unknown
     updated_at: unknown
   }>(
     `SELECT worker_id, last_started_at, last_success_at, last_error_at,
-            last_error_msg, updated_at
+            last_error_msg, last_skipped_at, updated_at
      FROM cron_worker_runtime
      ORDER BY worker_id ASC`,
   )
@@ -66,6 +77,7 @@ export async function listCronWorkerRuntime(): Promise<CronWorkerRuntimeRow[]> {
     last_success_at: toIsoOrNull(r.last_success_at),
     last_error_at: toIsoOrNull(r.last_error_at),
     last_error_msg: r.last_error_msg ?? null,
+    last_skipped_at: toIsoOrNull(r.last_skipped_at),
     updated_at: toIsoOrNull(r.updated_at),
   }))
 }
@@ -105,6 +117,18 @@ export async function upsertCronWorkerRuntimeEvent(params: {
          updated_at = NOW()`,
       [workerId, at],
     )
+  } else if (params.event === 'skipped') {
+    // Deliberately touches neither the success nor the error timestamp: a held job lock means a
+    // previous pass is still running, which is the lock working. Before this branch existed the Go
+    // side's `skipped` event fell into the failure path below and was recorded as an error.
+    await query(
+      `INSERT INTO cron_worker_runtime (worker_id, last_skipped_at, updated_at)
+       VALUES ($1, $2::timestamptz, NOW())
+       ON CONFLICT (worker_id) DO UPDATE SET
+         last_skipped_at = EXCLUDED.last_skipped_at,
+         updated_at = NOW()`,
+      [workerId, at],
+    )
   } else {
     await query(
       `INSERT INTO cron_worker_runtime (
@@ -124,10 +148,11 @@ export async function upsertCronWorkerRuntimeEvent(params: {
     last_success_at: unknown
     last_error_at: unknown
     last_error_msg: string | null
+    last_skipped_at: unknown
     updated_at: unknown
   }>(
     `SELECT worker_id, last_started_at, last_success_at, last_error_at,
-            last_error_msg, updated_at
+            last_error_msg, last_skipped_at, updated_at
      FROM cron_worker_runtime WHERE worker_id = $1`,
     [workerId],
   )
@@ -138,6 +163,7 @@ export async function upsertCronWorkerRuntimeEvent(params: {
     last_success_at: toIsoOrNull(row.last_success_at),
     last_error_at: toIsoOrNull(row.last_error_at),
     last_error_msg: row.last_error_msg ?? null,
+    last_skipped_at: toIsoOrNull(row.last_skipped_at),
     updated_at: toIsoOrNull(row.updated_at),
   }
 }

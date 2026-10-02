@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { evaluateExit } from './exit-evaluator'
+import { PERSISTED_CLOSE_REASONS, evaluateExit, toPersistedCloseReason } from './exit-evaluator'
 
 /** A price-basis position entered at 1, stop -30, target +200. */
 function priceExit(over: Record<string, unknown> = {}) {
@@ -113,5 +115,76 @@ describe('evaluateExit — fail-closed and backstops', () => {
     })
     // The primary exit still wins: at the same age, a crossed TP reports take_profit.
     expect(priceExit({ live: 5, entryAt, maxHoldHours: 48 }).reason).toBe('take_profit')
+  })
+})
+
+describe('the persisted close reason', () => {
+  const fiftyHoursAgo = new Date(Date.now() - 50 * 3_600_000).toISOString()
+
+  it('gives max_age its own trigger, so a backstop is not filed as max_hold', () => {
+    // Both backstops used to return 'max_hold_time'. That made them indistinguishable in the row and
+    // left `WORKER_CLOSE_REASONS`'s `max_age` entry unreachable, which is exactly why S5's backstop
+    // share could not be computed.
+    expect(priceExit({ entryAt: fiftyHoursAgo, maxAgeHours: 48 })).toMatchObject({
+      close: true,
+      reason: 'max_age',
+      triggerType: 'max_age',
+    })
+    expect(priceExit({ entryAt: fiftyHoursAgo, maxHoldHours: 48 }).triggerType).toBe('max_hold_time')
+  })
+
+  it('passes through every reason the writers actually produce', () => {
+    for (const reason of [
+      'stop_loss',
+      'take_profit',
+      'max_hold',
+      'max_age',
+      'label_rugged',
+      'strategy_deactivated',
+      'tracking_stopped',
+      'no_balance',
+      'reconciled',
+      'removed',
+    ]) {
+      expect(toPersistedCloseReason(reason), reason).toBe(reason)
+    }
+  })
+
+  it('coerces an unrecognised reason to unknown rather than throwing', () => {
+    // This runs on the close path. Throwing here would leave a position open past its stop because a
+    // diagnostic label did not match a list — a far worse failure than a missing reason.
+    expect(toPersistedCloseReason('nonsense')).toBe('unknown')
+    expect(toPersistedCloseReason(undefined)).toBe('unknown')
+    expect(toPersistedCloseReason(null)).toBe('unknown')
+    expect(toPersistedCloseReason('')).toBe('unknown')
+  })
+
+  it('keeps unknown inside the set, so the CHECK can never reject a close', () => {
+    expect(PERSISTED_CLOSE_REASONS).toContain('unknown')
+    expect(PERSISTED_CLOSE_REASONS).toContain(toPersistedCloseReason('anything at all'))
+  })
+
+  it('cannot drift from the CHECK in the migration', () => {
+    // The column's CHECK enumerates the same set. If a writer emits a value the migration forbids,
+    // the CLOSE fails — so the two lists are pinned to each other here, read from the real file
+    // rather than from a copy of it.
+    const sql = readFileSync(
+      fileURLToPath(new URL('../../db/init/58-sl-tp-close-reason.sql', import.meta.url)),
+      'utf8',
+    )
+    const start = sql.indexOf('close_reason IN (')
+    const end = sql.indexOf(')', sql.indexOf("'unknown'", start))
+    const allowed = [...sql.slice(start, end).matchAll(/'([a-z_]+)'/g)]
+      .map((m) => m[1])
+      .filter((v): v is string => Boolean(v))
+
+    expect(start).toBeGreaterThan(-1)
+    expect(allowed.length).toBeGreaterThan(0)
+    for (const reason of PERSISTED_CLOSE_REASONS) {
+      expect(allowed, `${reason} must be allowed by the CHECK`).toContain(reason)
+    }
+    for (const reason of allowed) {
+      expect(PERSISTED_CLOSE_REASONS as readonly string[]).toContain(reason)
+    }
   })
 })

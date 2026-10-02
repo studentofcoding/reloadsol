@@ -15,7 +15,7 @@ import { fetchJupiterPortfolioDirect, mapPortfolioToUserTokens } from '@/utils/j
 import { getOpenPositionPrices } from '@/utils/open-position-prices'
 import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
 import { closeSimulatedPositionFromWorker } from '@/utils/sl-tp-sim-close'
-import { evaluateExit } from '@/utils/exit-evaluator'
+import { evaluateExit, toPersistedCloseReason } from '@/utils/exit-evaluator'
 
 /** Cached Shyft all_tokens, then Jupiter, then RPC token accounts. */
 async function fetchSlTpWalletTokens(
@@ -74,6 +74,13 @@ export interface SLTPPosition {
     created_at: string
     updated_at: string
     is_active: boolean
+    /**
+     * Why it closed (S2/S5), and when. NOT derivable from the `*_executed` flags below: those say
+     * which trigger fired, and a `max_age` / `max_hold` backstop used to be filed as `tp1_executed`.
+     * NULL on rows closed before migration 58.
+     */
+    close_reason?: string | null
+    closed_at?: string | null
     // TP levels for bot positions
     tp1_percentage?: number
     tp1_sell_percentage?: number
@@ -89,7 +96,9 @@ export interface SLTPPosition {
 
 export interface SLTPTriggerResult {
     triggered: boolean
-    trigger_type: 'stop_loss' | 'take_profit_1' | 'take_profit_2' | 'take_profit_3' | 'max_hold_time'
+    // `max_age` is separate from `max_hold_time`: two backstops that reported the same trigger could
+    // not be told apart in the row, which is what made S5's backstop share uncomputable.
+    trigger_type: 'stop_loss' | 'take_profit_1' | 'take_profit_2' | 'take_profit_3' | 'max_hold_time' | 'max_age'
     sell_percentage: number
     current_price: number
     trigger_price: number
@@ -770,7 +779,8 @@ async function reconcileClosedPositions(positions: SLTPPosition[]): Promise<{ fi
                 try {
                     await query(
                         `UPDATE sl_tp_positions
-                         SET is_active = false, updated_at = $2
+                         SET is_active = false, updated_at = $2,
+                             close_reason = 'reconciled', closed_at = $2
                          WHERE id = $1`,
                         [pos.id, new Date().toISOString()],
                     )
@@ -825,15 +835,29 @@ async function markSimulatedPositionClosed(
   triggerResult: SLTPTriggerResult,
 ): Promise<void> {
   try {
+    // `tp1_executed` is set only by an actual TP1. It used to be set by EVERY non-stop trigger, so a
+    // `max_age` / `max_hold` backstop was filed under take-profit — which inflated the TP count by
+    // exactly the closes that are not take-profits, and made S5's backstop share uncomputable.
     const isStop = triggerResult.trigger_type === 'stop_loss'
+    const isTp1 = triggerResult.trigger_type === 'take_profit_1'
+    const { closeReasonForTrigger } = await import('@/strategies/close-strategy-sim-position')
+    const now = new Date().toISOString()
     await query(
       `UPDATE sl_tp_positions SET
          is_active = false,
          sl_executed = CASE WHEN $2 THEN true ELSE sl_executed END,
-         tp1_executed = CASE WHEN $2 THEN tp1_executed ELSE true END,
-         updated_at = $3
+         tp1_executed = CASE WHEN $3 THEN true ELSE tp1_executed END,
+         close_reason = $4,
+         closed_at = $5,
+         updated_at = $5
        WHERE id = $1`,
-      [position.id, isStop, new Date().toISOString()],
+      [
+        position.id,
+        isStop,
+        isTp1,
+        toPersistedCloseReason(closeReasonForTrigger(triggerResult.trigger_type)),
+        now,
+      ],
     )
   } catch (error) {
     log.error('price_tracking', 'Failed to close simulated SL/TP position', error as Error, {
@@ -875,7 +899,8 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
         if (walletUiAmount <= ZERO_BALANCE_THRESHOLD) {
             await query(
                 `UPDATE sl_tp_positions
-                 SET is_active = false, updated_at = $2, current_price = $3
+                 SET is_active = false, updated_at = $2, current_price = $3,
+                     close_reason = 'no_balance', closed_at = $2
                  WHERE id = $1`,
                 [position.id, new Date().toISOString(), triggerResult.current_price],
             )
@@ -901,7 +926,8 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
             })
             await query(
                 `UPDATE sl_tp_positions
-                 SET is_active = false, updated_at = $2, current_price = $3
+                 SET is_active = false, updated_at = $2, current_price = $3,
+                     close_reason = 'no_balance', closed_at = $2
                  WHERE id = $1`,
                 [position.id, new Date().toISOString(), triggerResult.current_price],
             )
@@ -993,6 +1019,22 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
                 break
         }
 
+        // The reason, decided before the UPDATE so the row carries it in the same statement as the
+        // flags. `close_reason` is the only place a backstop is distinguishable from a stop-loss:
+        // the boolean flags say WHICH trigger fired, never whether it was the last resort.
+        const { closeReasonForTrigger: reasonForTrigger } = await import(
+            '@/strategies/close-strategy-sim-position'
+        )
+        const persistedReason = toPersistedCloseReason(
+            // A deactivation force-close arrives as a nominal `stop_loss` trigger, so reading the
+            // trigger alone would file it as a stop the market never hit.
+            triggerResult.reason === 'strategy_deactivated'
+                ? 'strategy_deactivated'
+                : reasonForTrigger(triggerResult.trigger_type),
+        )
+        const isFullClose = updateData.is_active === false
+        const nowIso = updateData.updated_at as string
+
         await query(
             `UPDATE sl_tp_positions SET
                updated_at = $2,
@@ -1001,7 +1043,9 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
                tp1_executed = COALESCE($5, tp1_executed),
                tp2_executed = COALESCE($6, tp2_executed),
                tp3_executed = COALESCE($7, tp3_executed),
-               is_active = COALESCE($8, is_active)
+               is_active = COALESCE($8, is_active),
+               close_reason = CASE WHEN $9 THEN $10 ELSE close_reason END,
+               closed_at = CASE WHEN $9 THEN $11::timestamptz ELSE closed_at END
              WHERE id = $1`,
             [
                 position.id,
@@ -1012,6 +1056,9 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
                 updateData.tp2_executed ?? null,
                 updateData.tp3_executed ?? null,
                 updateData.is_active ?? null,
+                isFullClose,
+                persistedReason,
+                nowIso,
             ],
         )
 
@@ -1036,7 +1083,6 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
             triggerType: triggerResult.trigger_type
         })
 
-        const isFullClose = updateData.is_active === false
         const closeReasonMap: Record<
           string,
           'sl' | 'tp1' | 'tp2' | 'tp3' | 'strategy_deactivated' | 'sltp_monitor'
@@ -1120,7 +1166,8 @@ export async function removeSLTPPosition(positionId: string): Promise<boolean> {
     try {
         await query(
             `UPDATE sl_tp_positions
-             SET is_active = false, updated_at = $2
+             SET is_active = false, updated_at = $2,
+                 close_reason = 'removed', closed_at = $2
              WHERE id = $1`,
             [positionId, new Date().toISOString()],
         )
@@ -1176,6 +1223,14 @@ export interface SLTPTrackingSummary {
             take_profit_2: number
             take_profit_3: number
         }
+        /**
+         * Exactly one bucket per finished row, keyed by `close_reason`. This is the mutually
+         * exclusive view — `finished_by_trigger` counts triggers, not positions, so a laddered
+         * position appears in more than one of its buckets. Compute the backstop share from here.
+         */
+        by_reason: Record<string, number>
+        /** The window `total_finished` counts over. Was silently 24h. */
+        window_hours: number
         total_tracked_tokens: number
         unique_wallets: number
     }
@@ -1183,8 +1238,11 @@ export interface SLTPTrackingSummary {
 }
 
 // ✅ NEW: Get comprehensive tracking summary
-export async function getSLTPTrackingSummary(): Promise<SLTPTrackingSummary> {
+export async function getSLTPTrackingSummary(windowHours = 24): Promise<SLTPTrackingSummary> {
     try {
+        // Epoch ms, not setHours: setHours mutates to local time, so "last 24h" shifted with the
+        // server's timezone. The window is now explicit and reported back in `window_hours`.
+        const windowStart = new Date(Date.now() - windowHours * 60 * 60 * 1000)
         // Get all active positions
         const { rows: activePositions } = await query<SLTPPosition>(
             `SELECT * FROM sl_tp_positions
@@ -1192,14 +1250,11 @@ export async function getSLTPTrackingSummary(): Promise<SLTPTrackingSummary> {
              ORDER BY updated_at DESC`,
         )
 
-        const last24h = new Date()
-        last24h.setHours(last24h.getHours() - 24)
-
         const { rows: finishedPositions } = await query<SLTPPosition>(
             `SELECT * FROM sl_tp_positions
-             WHERE is_active = false AND updated_at >= $1
-             ORDER BY updated_at DESC`,
-            [last24h.toISOString()],
+             WHERE is_active = false AND COALESCE(closed_at, updated_at) >= $1
+             ORDER BY COALESCE(closed_at, updated_at) DESC`,
+            [windowStart.toISOString()],
         )
 
         // Calculate statistics
@@ -1210,12 +1265,23 @@ export async function getSLTPTrackingSummary(): Promise<SLTPTrackingSummary> {
             activeByType[pos.position_type as 'manual' | 'bot']++
         })
 
+        // WHICH trigger fired, from the flags. These remain non-exclusive by design: a laddered
+        // position can legitimately touch more than one, so this counts triggers, not positions.
         finishedPositions.forEach(pos => {
             if (pos.sl_executed) finishedByTrigger.stop_loss++
             if (pos.tp1_executed) finishedByTrigger.take_profit_1++
             if (pos.tp2_executed) finishedByTrigger.take_profit_2++
             if (pos.tp3_executed) finishedByTrigger.take_profit_3++
         })
+
+        // WHY it closed, from close_reason. Exactly one bucket per row, so this is the view S5's
+        // backstop share and any alert have to be computed from. `unknown` counts rows closed before
+        // the column existed, or by a writer that has not been taught to stamp it.
+        const byReason: Record<string, number> = {}
+        for (const pos of finishedPositions) {
+            const reason = pos.close_reason ?? 'unknown'
+            byReason[reason] = (byReason[reason] ?? 0) + 1
+        }
 
         const uniqueWallets = new Set([
             ...activePositions.map(p => p.wallet_address),
@@ -1230,6 +1296,8 @@ export async function getSLTPTrackingSummary(): Promise<SLTPTrackingSummary> {
                 total_finished: finishedPositions.length,
                 active_by_type: activeByType,
                 finished_by_trigger: finishedByTrigger,
+                by_reason: byReason,
+                window_hours: windowHours,
                 total_tracked_tokens: activePositions.length + finishedPositions.length,
                 unique_wallets: uniqueWallets
             },
