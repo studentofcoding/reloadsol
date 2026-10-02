@@ -55,7 +55,10 @@ const WEB_HEADERS: Record<string, string> = {
 function webHeaders(): Record<string, string> {
   const headers = { ...WEB_HEADERS }
   const secret = process.env.GMGN_WEB_PROXY_SECRET?.trim()
-  if (secret) headers['X-Gmgn-Proxy-Secret'] = secret
+  // The secret authenticates us to OUR Worker. With GMGN_WEB_HOST unset (a rollback, a typo, a fresh
+  // env) the host is gmgn.ai itself, and attaching it would hand the proxy secret to a third party on
+  // every call. Only send it to a host that is not the public default.
+  if (secret && webHost() !== DEFAULT_HOST) headers['X-Gmgn-Proxy-Secret'] = secret
   return headers
 }
 
