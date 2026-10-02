@@ -203,6 +203,15 @@ export default function CombinedScoreWeightsPanel({ onNotify }: Props) {
             }
             value={draft[field.key]}
             step="0.01"
+            // T7: this panel is the one place both sides are already in scope, so the tag goes live
+            // here first. It compares the *stored* weights (`data.weights`) against the defaults, not
+            // the draft — the question is what the system is running, not what is typed in the box.
+            source={
+              (data.source ?? 'defaults') === 'defaults' ||
+              data.weights[field.key] === data.defaults[field.key]
+                ? 'defaults'
+                : 'stored'
+            }
             onChange={(v) =>
               setDraft((prev) => (prev ? { ...prev, [field.key]: v } : prev))
             }
