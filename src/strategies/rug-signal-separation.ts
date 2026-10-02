@@ -385,9 +385,9 @@ export async function loadRugSeriesMinutes(
     h_min: number[] | null
     l_min: number[] | null
     c_min: number[] | null
-    v_min: number[] | null
+    vol_min: number[] | null
   }>(
-    `SELECT hour_bucket::text AS hour_bucket, o_min, h_min, l_min, c_min, v_min
+    `SELECT hour_bucket::text AS hour_bucket, o_min, h_min, l_min, c_min, vol_min
        FROM token_metrics_history
       WHERE token_address = $1 AND hour_bucket > NOW() - make_interval(days => $2::int)
       ORDER BY hour_bucket ASC`,
@@ -409,7 +409,7 @@ export async function loadRugSeriesMinutes(
       const o = typeof row.o_min?.[i] === 'number' ? row.o_min[i] : c
       const h = typeof row.h_min?.[i] === 'number' ? row.h_min[i] : c
       const l = typeof row.l_min?.[i] === 'number' ? row.l_min[i] : c
-      const v = typeof row.v_min?.[i] === 'number' ? row.v_min[i] : undefined
+      const v = typeof row.vol_min?.[i] === 'number' ? row.vol_min[i] : undefined
       out.push({
         t: Math.floor((hourMs + i * 60_000) / 1000),
         o,
