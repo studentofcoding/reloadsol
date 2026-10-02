@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { resolveFreshMarketValue } from '@/utils/fresh-market-value'
 import { getActiveMcapTrackerStrategies } from '@/strategies/load-mcap-tracker'
 import { recordMcapTrackerOutcome } from '@/strategies/outcomes'
 import { registerSimExitContract, type SimExitThresholds } from '@/strategies/sim-exit-contract'
@@ -793,11 +794,28 @@ async function runSimTrack(request: NextRequest) {
           break
         }
 
-        const entry = resolveMcapSimEntry(strategy, snapshot)
-        if (!entry) {
+        const resolved = resolveMcapSimEntry(strategy, snapshot)
+        if (!resolved) {
           skipped.push(`${snapshot.token_symbol}: no_entry_mcap`)
           continue
         }
+
+        // The value booked at open must be the value observed AT OPEN. `resolveMcapSimEntry`
+        // returns `snapshot.current_mcap` from the candidate read, and that row can be as old as
+        // the 240-minute recency window — measured median 23.2 min across these very candidates,
+        // p90 3.2 h, worst 4.0 h, and 0 of 201 within 5s (see fresh-market-value.ts). Prod
+        // 2026-10-02: a token that crossed its 80% milestone at 13:20 was opened at 16:13 against
+        // a frozen $307.2K row and closed four minutes later at $171K, −44.2%.
+        //
+        // A null here is a SKIP, not a stale booking: the live read is fresh by construction, so
+        // there is nothing to age-check. `resolved.entryMcap`/`entryAt` are dropped rather than
+        // kept as a fallback — falling back is how the stale price got booked in the first place.
+        const live = await resolveFreshMarketValue(snapshot.token_address)
+        if (!live) {
+          skipped.push(`${snapshot.token_symbol}: stale_snapshot`)
+          continue
+        }
+        const entry = { entryMcap: live.value, entryAt: live.observedAtIso }
 
         if (execMode.skipOpen) {
           skipped.push(`${snapshot.token_symbol}: ${execMode.reason ?? 'live_unavailable'}`)
