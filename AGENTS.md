@@ -62,6 +62,21 @@ Report each step verbosely (exit code + failures). Confirm `npm run start` boots
 6. Migrations: `bash scripts/init-local-db.sh` applies `db/init/*.sql` idempotently, keeps going
    past a failing file, lists failures, and exits non-zero — so one bad file cannot silently skip
    the rest. `npm run db:check-migrations` applies the suite twice against a throwaway Postgres.
+7. **Migrations are NOT part of the deploy chain — apply them yourself, BEFORE the code lands.**
+   The post-merge hook runs `scripts/docker-deploy.sh`, which does not touch `db/init/`; only
+   `scripts/deploy-tencent.sh` calls `init-local-db.sh`. So a commit whose code writes a new column
+   will go live against a schema that lacks it, and the write fails at runtime — for the exit path
+   that means a position that cannot be closed. Apply the migration as its own step first:
+
+   ```bash
+   ssh flowey-vps 'docker exec -i reloadsol-db psql -U reloadsol -d reloadsol_db -v ON_ERROR_STOP=1' \
+     < db/init/<NN>-<name>.sql
+   ```
+
+   This is safe out of band because the repo's convention is that every migration is additive and
+   idempotent (`ADD COLUMN IF NOT EXISTS`, CHECKs guarded by a `pg_constraint` existence check), so
+   applying one early is a no-op for the running code. Verify the column and constraint exist, then
+   ship. `58-sl-tp-close-reason.sql` was applied this way on 2026-10-02 and re-applied to prove it.
 
 ## Notes
 
