@@ -609,6 +609,14 @@ export default function EarlyEnterNoulShadowPanel({ onNotify }: Props) {
               {' · '}var {compactVar(flip.overall.clScoreVariance)}
               {' · '}≥0.55 {flip.overall.clScoreGeGate ?? 0}
               {' · '}range {score(flip.overall.clScoreMin)}–{score(flip.overall.clScoreMax)}
+              {/* A gate that no member of the population can reach is not a gate — it is a constant
+                  wearing the costume of a decision. Say so where the number is printed, rather than
+                  leaving `≥0.55 0` to be read as "nothing qualified yet". */}
+              {(flip.overall.clScoreGeGate ?? 0) === 0 &&
+              flip.overall.clScoreMax != null &&
+              flip.overall.clScoreMax < 0.55
+                ? ' · gate unreachable (population max is below 0.55)'
+                : ''}
               . Rows already stored stay in this sample until new emits accumulate.
             </p>
           ) : null}
