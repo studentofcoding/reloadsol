@@ -377,6 +377,15 @@ type StrategyReportsData = {
   consensus: ConsensusResult | null;
   capital: PaperCapitalSummary[];
   timezone: string;
+  /**
+   * T7: per-family field provenance carried by `GET /api/strategies` —
+   * `sources.trending_bot["att.take_profit_pct"] === "stored" | "defaults"`.
+   *
+   * The hub fetches this payload itself (see the query at `:834`), so it is in scope everywhere the
+   * query data reaches and each editor can tag its fields with it. Optional because it is transported
+   * rather than computed here: a payload from an older build must render exactly as before, not throw.
+   */
+  sources?: Record<string, Record<string, "stored" | "defaults">>;
 };
 
 type WorkerRow = {
