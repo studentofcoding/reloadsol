@@ -26,6 +26,29 @@ export function FieldGrid({ children }: { children: React.ReactNode }) {
 }
 
 /**
+ * T4 step 2 of SPEC-config-taxonomy: the block every strategy in a family repeats renders once, above
+ * the family's grid, sourced from the family's `DEFAULT_*` export. Read-only by construction — there is
+ * no input here to wire, so it can only state what the code default is, never change it. A card's own
+ * section is then visibly the per-strategy override this row is the thing for.
+ */
+export function FamilyDefaultRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="mb-4 rounded border border-gray-700 bg-gray-800/50 px-3 py-2 text-xs text-gray-400">
+      <span className="font-mono text-[10px] uppercase tracking-wide text-gray-500 mr-2">
+        family default · {label}
+      </span>
+      {children}
+    </div>
+  );
+}
+
+/**
  * Where a field's current value came from — T7 of SPEC-config-taxonomy, and the rule the whole
  * taxonomy rests on: a number on this page must say whether the system is using the stored value or
  * falling back, because those read identically and mean completely different things. `inherited` is

@@ -20,6 +20,7 @@ import { DEFAULT_FILTER_CONFIG } from "@/strategies/registry";
 import {
   Section,
   FieldGrid,
+  FamilyDefaultRow,
   NumberField,
   CheckboxField,
   SourceTag,
@@ -53,7 +54,13 @@ import {
   readTrainingClass,
   readVolumeAtEntry,
 } from "@/strategies/outcome-features";
-import { DEFAULT_GMGN_RADAR } from "@/strategies/registry";
+import {
+  DEFAULT_GMGN_EXIT,
+  DEFAULT_GMGN_RADAR,
+  DEFAULT_GMGN_SECURITY,
+  DEFAULT_MCAP_TRACKER_EXIT,
+  DEFAULT_SIGNALS_SCORING,
+} from "@/strategies/registry";
 import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import { notifySyncForActive, readNotifyFlags } from "@/strategies/strategy-notify";
 import {
@@ -3215,7 +3222,7 @@ function SignalsCard({
           <NumberField label="max open positions" value={maxOpen} onChange={setMaxOpen} step="1" source={src(`${strategy.id}.config.execution.maxOpenPositions`)} />
         </FieldGrid>
       </Section>
-      <Section title="Scoring">
+      <Section title="Scoring — family default (editing adds a per-strategy override)">
         <FieldGrid>
           <NumberField label="milestone80" value={milestone80} onChange={setMilestone80} step="1" />
           <NumberField label="milestone120" value={milestone120} onChange={setMilestone120} step="1" />
@@ -3415,7 +3422,7 @@ function McapTrackerCard({
           <NumberField label="max open" value={maxOpen} onChange={setMaxOpen} step="1" source={src(`${strategy.id}.config.execution.maxOpenPositions`)} />
         </FieldGrid>
       </Section>
-      <Section title="Exit">
+      <Section title="Exit — family default (editing adds a per-strategy override)">
         <FieldGrid>
           <NumberField label="stop loss %" value={stopLoss} onChange={setStopLoss} step="1" source={src(`${strategy.id}.config.exit.stopLossPct`)} />
           <NumberField label="take profit %" value={takeProfit} onChange={setTakeProfit} step="1" source={src(`${strategy.id}.config.exit.takeProfitPct`)} />
@@ -3625,7 +3632,7 @@ function GmgnCard({
           />
         </FieldGrid>
       </Section>
-      <Section title="Security gate">
+      <Section title="Security gate — family default (editing adds a per-strategy override)">
         <FieldGrid>
           <NumberField label="min smart wallets" value={minSmart} onChange={setMinSmart} step="1" />
           <NumberField label="max top-10 rate" value={maxTop10} onChange={setMaxTop10} step="0.01" />
@@ -3639,7 +3646,7 @@ function GmgnCard({
           <NumberField label="max open" value={maxOpen} onChange={setMaxOpen} step="1" />
         </FieldGrid>
       </Section>
-      <Section title="Exit">
+      <Section title="Exit — family default (editing adds a per-strategy override)">
         <FieldGrid>
           <NumberField label="stop loss %" value={stopLoss} onChange={setStopLoss} step="1" />
           <NumberField label="take profit %" value={takeProfit} onChange={setTakeProfit} step="1" />
@@ -4253,6 +4260,16 @@ function StrategyConfigTab({
       {show("signals") ? (
       <section id="algo-config-signals" className="bg-gray-900 border border-gray-700 rounded-lg p-6">
         <h2 className="text-xl font-bold text-white mb-4">Signals strategies</h2>
+        {/* T4 step 2: the scoring block is family level — every signals strategy is seeded from
+            `DEFAULT_SIGNALS_SCORING`, the six values the SPEC measured as identical across the family.
+            Read-only, and the first provenance this block has had: the cards' Scoring sections are the
+            per-strategy override editors, and this row is the thing they override. */}
+        <FamilyDefaultRow label="scoring">
+          milestone 80/120/200 {DEFAULT_SIGNALS_SCORING.milestone80}/{DEFAULT_SIGNALS_SCORING.milestone120}/
+          {DEFAULT_SIGNALS_SCORING.milestone200} · stuck {DEFAULT_SIGNALS_SCORING.stuckPenalty} · stop loss{" "}
+          {DEFAULT_SIGNALS_SCORING.stopLossPenalty} · sell &gt;100{" "}
+          {DEFAULT_SIGNALS_SCORING.sellOver100LatePenalty}
+        </FamilyDefaultRow>
         <div className="grid gap-4 md:grid-cols-2">
           {signals.map((s) => (
             <SignalsCard
@@ -4277,6 +4294,15 @@ function StrategyConfigTab({
       {show("mcap_tracker") ? (
       <section id="algo-config-mcap_tracker" className="bg-gray-900 border border-gray-700 rounded-lg p-6">
         <h2 className="text-xl font-bold text-white mb-4">MCap tracker strategies</h2>
+        {/* T4 step 2: the exit block is family level — every mcap strategy is seeded from
+            `DEFAULT_MCAP_TRACKER_EXIT`; the `search_mcap_*` variants the SPEC counted differ from it only
+            in take-profit, which is exactly what each card's override count now shows. Read-only. Entry
+            filters are deliberately not shown here: the Robinhood rows override mcap min/max, so a single
+            family row would misstate them. */}
+        <FamilyDefaultRow label="exit">
+          SL {DEFAULT_MCAP_TRACKER_EXIT.stopLossPct}% · TP {DEFAULT_MCAP_TRACKER_EXIT.takeProfitPct}% · hold{" "}
+          {DEFAULT_MCAP_TRACKER_EXIT.maxHoldHours}h
+        </FamilyDefaultRow>
         <div className="grid gap-4 md:grid-cols-2">
           {mcapTracker.map((s) => (
             <McapTrackerCard
@@ -4309,20 +4335,27 @@ function StrategyConfigTab({
           Smart money / KOL discovery via gmgn-cli. Paper sim wallet:{" "}
           <code className="text-xs">gmgn-sim</code>. Requires GMGN_API_KEY + gmgn-cli on server.
         </p>
-        {/* T4 step 2: the family row. Radar is family-scoped — every card's `r` falls back to
-            `DEFAULT_GMGN_RADAR`, so until this existed the same numbers rendered once per strategy,
-            which is the duplication the census measured (GmgnStrategyConfig 32 vs GmgnRadarConfig 8).
-            Read-only and sourced from the code default: the cards' radar sections stay the per-strategy
-            override editors, and this row is the thing they override. */}
-        <div className="mb-4 rounded border border-gray-700 bg-gray-800/50 px-3 py-2 text-xs text-gray-400">
-          <span className="font-mono text-[10px] uppercase tracking-wide text-gray-500 mr-2">
-            family default · radar
-          </span>
+        {/* T4 step 2: the family rows. These three blocks are family-scoped — every card's `r` falls
+            back to `DEFAULT_GMGN_RADAR` and its security/exit blocks are seeded from the same exports —
+            so until these existed the same numbers rendered once per strategy, which is the duplication
+            the census measured (GmgnStrategyConfig 32 vs GmgnRadarConfig 8). Read-only and sourced from
+            the code default: the cards' sections stay the per-strategy override editors, and these rows
+            are the thing they override. */}
+        <FamilyDefaultRow label="radar">
           sticky pump {DEFAULT_GMGN_RADAR.stickyPumpPct}% · dump ban{" "}
           {DEFAULT_GMGN_RADAR.dumpBanPct}% · mcap ≥{" "}
           {DEFAULT_GMGN_RADAR.telegram?.minMcapUsd ?? "—"}
           {DEFAULT_GMGN_RADAR.telegram?.singleThread ? " · telegram single-thread" : ""}
-        </div>
+        </FamilyDefaultRow>
+        <FamilyDefaultRow label="security gate">
+          min smart wallets {DEFAULT_GMGN_SECURITY.minSmartWallets} · top-10 ≤{" "}
+          {DEFAULT_GMGN_SECURITY.maxTop10HolderRate} · min liquidity $
+          {DEFAULT_GMGN_SECURITY.minLiquidityUsd} · verdict ≥ {DEFAULT_GMGN_SECURITY.minVerdict}
+        </FamilyDefaultRow>
+        <FamilyDefaultRow label="exit">
+          SL {DEFAULT_GMGN_EXIT.stopLossPct}% · TP {DEFAULT_GMGN_EXIT.takeProfitPct}% · hold{" "}
+          {DEFAULT_GMGN_EXIT.maxHoldHours}h
+        </FamilyDefaultRow>
         <div className="grid gap-4 md:grid-cols-2">
           {gmgn.map((s) => (
             <GmgnCard
