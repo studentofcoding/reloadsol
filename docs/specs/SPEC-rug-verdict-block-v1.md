@@ -84,6 +84,39 @@ the earlier 98% counted NULL slots), and the catch rate is a scheduling artefact
 one. Anchoring the clock to our first held minute makes the verdict due whenever ten minutes exist —
 the cadence then only affects **latency**, never whether a token is judged.
 
+### The fresh-token slice — what T2 was measured on, and what it does NOT cover
+
+Measured 2026-10-02, reproducible across runs (199 mints, one drifting as the window ages):
+
+```
+                     judged   noBars   trips
+5m basis (shipped)        0      199       0
+1m block basis          143       56       4
+```
+
+Both bases are handed the **same `freshBars` array for the same mint**, so this is a paired
+comparison: ten 1m bars collapses to two 5m bars, below the floor of five, while the same minutes
+clear the 1m floor of six. Nothing else differs, which is why the result survives the sampling
+caveat below.
+
+**The caveat, stated rather than implied.** The slice is a **sample of ~400 replayed shadow rows**
+(~200 distinct mints), and the replay skips rows with no bars, so it is biased toward mints that
+*have* minutes. Counting the same window directly on the held-minute basis:
+
+```
+mints in the 3-day window with a held minute     2,459
+of which hold >=10 real minutes                    642   (26%)
+```
+
+The slice covers **199 of those 2,459 (~8%)**. So:
+
+- **"72% judged" is a rate within the sample, not the population.** The population figure is **26%**
+  (642/2,459) — and that is the number that governs how much corpus T3 will actually produce.
+- **The 0-vs-143 finding is unaffected**, because it is paired per mint and does not depend on which
+  mints were sampled.
+- The gap between 72% and 26% is the bias doing the work: the sample excludes every mint the replay
+  had to skip for having no bars.
+
 ## Data contract
 
 `rug_verdicts` — created on first use (the `rug_signal_shadow` / `copier_runs` pattern), one row per

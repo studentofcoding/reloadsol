@@ -30,6 +30,7 @@ import {
 } from '@/strategies/rug-signal'
 import { recordRugSignalShadow } from '@/strategies/rug-signal-shadow'
 import { finishCopierRun, startCopierRun } from '@/strategies/copier-runs'
+import { loadFirstHeldMinutes, recordRugVerdict } from '@/strategies/rug-verdicts'
 import {
   DEFAULT_WATCH_MAX_MINTS,
   intEnv,
@@ -77,6 +78,9 @@ const CACHE_READ_CONCURRENCY = 16
  */
 const DEFAULT_LOCK_TTL_SEC = 180
 const DEFAULT_LOCK_HEARTBEAT_SEC = 60
+/** T3 — the verdict block: real minutes required before a token is judged, and the floor to judge at all. */
+const RUG_VERDICT_WINDOW_MIN = 10
+const RUG_VERDICT_MIN_MINUTES = 6
 /** Prune a few times a day rather than on every sweep. */
 const PRUNE_EVERY_HOURS = 6
 /** How far back the 24h cache may legitimately reach (its own TTL, not the copy window). */
@@ -285,11 +289,16 @@ export async function POST(request: NextRequest) {
     //    rate from. It writes to the shadow log and never calls `markTokenRug`, so an `enforce`
     //    mode cannot turn a measurement sweep into a decision.
     let shadowRows = 0
+    let verdicts = 0
     let seriesFed = 0
     let notJudged = 0
     if (isRugSignalEnabled() && scored.length > 0) {
       const thresholds = resolveRugSignalThresholds()
       const mode = rugSignalMode()
+      // T3 — one verdict per token, at its own clock. The clock is the mint's first HELD minute
+      // (not first-seen, which covers ~17% of the corpus), so the block and its anchor cannot
+      // disagree. Batched, and fail-open: an unknown mint simply gets no verdict this sweep.
+      const firstMinutes = await loadFirstHeldMinutes(scored.map((s) => s.mint))
       for (const entry of scored) {
         const liquidityUsd = liquidityByMint.get(entry.mint) ?? null
         const result = evaluateRugSignalFrom1m(
@@ -327,6 +336,47 @@ export async function POST(request: NextRequest) {
           liquidityUsd,
           source: 'metrics_sweep',
         })
+        // T3 — the fixed 10-minute block, judged once. `entry.bars` are 1m, so filtering them to the
+        // clock's window IS the block: the same minutes the block basis was measured on. The write is
+        // `ON CONFLICT DO NOTHING` on `(token_address, chain)`, so one verdict per token is enforced
+        // by the schema rather than by a guard someone could forget.
+        const firstMinute = firstMinutes.get(entry.mint)
+        if (firstMinute != null) {
+          const blockEnd = firstMinute + RUG_VERDICT_WINDOW_MIN * 60
+          const blockBars = entry.bars.filter((b) => b.t >= firstMinute && b.t <= blockEnd)
+          if (blockBars.length >= RUG_VERDICT_MIN_MINUTES) {
+            const blockResult = evaluateRugSignalFrom1m(
+              { bars1m: blockBars, mcap: entry.mcap, liquidityUsd, ageHours: null },
+              thresholds,
+              { basis: '1m' },
+            )
+            const created = await recordRugVerdict(
+              {
+                chain: 'sol',
+                tokenAddress: entry.mint,
+                firstMinuteAt: firstMinute,
+                minutesUsed: blockBars.length,
+                score: blockResult.score,
+                // A short block is recorded as what it is; `no_bars` stays an unknown, never a pass.
+                decision: !blockResult.judged
+                  ? 'no_bars'
+                  : blockResult.isRug
+                    ? 'would_rug'
+                    : 'pass',
+                features: {
+                  ...(blockResult.breakdown as unknown as Record<string, number>),
+                  bars_scored: blockResult.barsScored,
+                  basis: '1m',
+                },
+                mcap: entry.mcap,
+                liquidityUsd,
+                source: 'metrics_sweep',
+              },
+              symbols.get(entry.mint) ?? null,
+            )
+            if (created) verdicts++
+          }
+        }
         shadowRows++
       }
     }
@@ -363,6 +413,7 @@ export async function POST(request: NextRequest) {
       liquidity_rows: liquidityRows,
       scored: scored.length,
       shadow_rows: shadowRows,
+      verdicts,
       series_fed: seriesFed,
       not_judged: notJudged,
       blocks,
