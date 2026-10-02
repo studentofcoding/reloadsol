@@ -3382,10 +3382,13 @@ function GmgnCard({
   strategy,
   saving,
   onSave,
+  sources,
 }: {
   strategy: GmgnStrategy;
   saving: boolean;
   onSave: (id: string, patch: Record<string, unknown>) => void;
+  /** T7: this strategy's fields, `config.discovery.limit -> stored | defaults`. */
+  sources?: Record<string, "stored" | "defaults">;
 }) {
   const d = strategy.config.discovery;
   const s = strategy.config.security;
@@ -3455,10 +3458,36 @@ function GmgnCard({
       </label>
       <Section title="Discovery">
         <FieldGrid>
-          <NumberField label="limit" value={limit} onChange={setLimit} step="1" />
-          <NumberField label="min trade USD" value={minUsd} onChange={setMinUsd} step="1" />
-          <NumberField label="max age (min)" value={maxAge} onChange={setMaxAge} step="1" />
-          <NumberField label="cluster min wallets" value={clusterMin} onChange={setClusterMin} step="1" />
+          {/* T7: `config.discovery.*` because the gmgn registry is keyed by id and the strategy nests
+              its knobs under `config`. */}
+          <NumberField
+            label="limit"
+            value={limit}
+            onChange={setLimit}
+            step="1"
+            source={sources?.[`${strategy.id}.config.discovery.limit`]}
+          />
+          <NumberField
+            label="min trade USD"
+            value={minUsd}
+            onChange={setMinUsd}
+            step="1"
+            source={sources?.[`${strategy.id}.config.discovery.minAmountUsd`]}
+          />
+          <NumberField
+            label="max age (min)"
+            value={maxAge}
+            onChange={setMaxAge}
+            step="1"
+            source={sources?.[`${strategy.id}.config.discovery.maxTradeAgeMinutes`]}
+          />
+          <NumberField
+            label="cluster min wallets"
+            value={clusterMin}
+            onChange={setClusterMin}
+            step="1"
+            source={sources?.[`${strategy.id}.config.discovery.clusterMinWallets`]}
+          />
         </FieldGrid>
       </Section>
       <Section title="Security gate">
@@ -4087,6 +4116,7 @@ function StrategyConfigTab({
             <GmgnCard
               key={`${s.id}-${s.is_active}-${s.execution_mode}-${s.config.radar?.stickyPumpPct}-${s.config.radar?.dumpBanPct}-${s.config.radar?.comeback?.allowSimReopen}-${s.config.radar?.telegram?.singleThread}-${s.config.radar?.telegram?.minMcapUsd}`}
               strategy={s}
+              sources={sources?.gmgn}
               saving={saving === s.id}
               onSave={onSave}
             />
