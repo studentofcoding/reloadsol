@@ -79,9 +79,15 @@ describe('simCloseDomainForStrategy', () => {
 })
 
 /**
- * Coverage (S7). Every strategy that has ever opened a paper position, taken from prod. The two
- * nulls are the known, deliberate gaps, not oversights:
- *   att_rh  — resolves no effective_exit at open, so it has no thresholds to stamp.
+ * Coverage (S7). Every strategy that has ever opened a paper position, taken from prod.
+ *
+ * The nulls here are deliberate, but they are NOT the same kind of thing:
+ *
+ *   att_rh  — **SHADOW.** It now registers its exit contract at open and the worker evaluates its
+ *             triggers every pass, but no closer owns the family, so nothing is acted on. That is
+ *             how its own `decideRhTrendingExit` ladder gets compared against `evaluateExit` before
+ *             anything enforces the comparison. It reads as `null` here on purpose; giving it a
+ *             domain is the enforce step, and that waits for the comparison.
  *   scalper — never opened a position (0 closes in 3d), so it has no exit contract to assert.
  */
 describe('coverage across the real strategy set', () => {

@@ -59,6 +59,15 @@ export type SimExitThresholds = {
   takeProfitPct: number
   stopLossPct: number
   maxHoldHours: number
+  /**
+   * How much of the position TP1 sells. Defaults to 100, which is what every family here wants — one
+   * target that closes the position.
+   *
+   * `att_rh` is the exception: it ladders (TP1 sells 90%, TP2 closes the rest). Registering it as 100
+   * would make the shadow compare a different strategy from the one running, which is the one thing a
+   * shadow must not do.
+   */
+  tp1SellPct?: number
 }
 
 /**
@@ -96,6 +105,11 @@ export function impactedEntryPriceUsd(params: {
  *
  * Returns null rather than throwing, and registers nothing when there is no usable price — the
  * sims' existing behaviour, kept deliberately: inventing a price would fabricate trigger data.
+ *
+ * A strategy that is registered but has no entry in `simCloseDomainForStrategy` is in SHADOW: the
+ * worker evaluates its triggers every pass and reports them, and then refuses to close because no
+ * closer owns the family. That is how `att_rh` is being brought onto the standard — it is compared
+ * against its own ladder before anything acts on the comparison.
  */
 export async function registerSimExitContract(params: {
   chain: string
@@ -160,7 +174,7 @@ export async function registerSimExitContract(params: {
       // recording what already happens. The tp2/tp3 columns stay for the manual path, which does
       // use them.
       tp1Percentage: Math.abs(thresholds.takeProfitPct),
-      tp1SellPercentage: 100,
+      tp1SellPercentage: thresholds.tp1SellPct ?? 100,
       tp3Enabled: false,
     })
   } catch (error) {

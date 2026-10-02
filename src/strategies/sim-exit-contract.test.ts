@@ -95,6 +95,28 @@ describe('registerSimExitContract — the contract every open stamps', () => {
     )
   })
 
+  it('carries a non-default TP1 sell percentage, so a LADDERED strategy is shadowed faithfully', async () => {
+    // `att_rh` sells 90% at TP1 and closes the rest at TP2. Registering it as 100 would compare a
+    // different strategy from the one running, which is the one thing a shadow must not do.
+    await registerSimExitContract({
+      ...base,
+      strategyId: 'att_rh',
+      thresholds: { ...base.thresholds, tp1SellPct: 90 },
+    })
+
+    expect(addSLTPPosition).toHaveBeenCalledWith(
+      expect.objectContaining({ tp1SellPercentage: 90 }),
+    )
+  })
+
+  it('defaults TP1 to a full sell when a strategy does not ladder', async () => {
+    await registerSimExitContract(base)
+
+    expect(addSLTPPosition).toHaveBeenCalledWith(
+      expect.objectContaining({ tp1SellPercentage: 100 }),
+    )
+  })
+
   it('refuses to register without a usable entry price, rather than inventing one', async () => {
     // Existing behaviour, kept: fabricating a price would fabricate trigger data.
     expect(await registerSimExitContract({ ...base, entryPriceUsd: 0 })).toBeNull()

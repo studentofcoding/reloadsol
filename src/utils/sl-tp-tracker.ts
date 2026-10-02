@@ -1489,6 +1489,7 @@ export async function monitorSLTPPositions(returnSummary: boolean = false): Prom
         // position with no readable price was dropped before it could be counted.
         let staleCount = 0
         let ruggedCount = 0
+        let shadowCount = 0
 
         // Check each position for triggers
         const triggerPromises = filteredPositions.map(async (position) => {
@@ -1541,6 +1542,22 @@ export async function monitorSLTPPositions(returnSummary: boolean = false): Prom
                         domain: closeResult.domain,
                         closed: closeResult.closed,
                     })
+                    if (!closeResult.closed) {
+                        // No closer owns this family, so this is a SHADOW: the worker evaluated the
+                        // position, the trigger fired, and it declines to act. That is how a strategy
+                        // gets compared against its own ladder before anything enforces the
+                        // comparison — `att_rh` today, whose `decideRhTrendingExit` ladder still owns
+                        // its exits. Reported with the fields needed to compare the two.
+                        shadowCount += 1
+                        log.info('deviation_alert', 'SHADOW — trigger fired, no closer owns this family', {
+                            positionId: position.id,
+                            strategyId: position.strategy_id,
+                            tokenSymbol: position.token_symbol,
+                            triggerType: triggerResult.trigger_type,
+                            sellPercentage: triggerResult.sell_percentage,
+                            gainPercentage: triggerResult.gain_percentage,
+                        })
+                    }
                     if (closeResult.alreadyClosed) {
                         // A pass killed between the outcome write and the mirror update leaves exactly
                         // this. Reported rather than silent, because it means the previous pass did
@@ -1569,6 +1586,7 @@ export async function monitorSLTPPositions(returnSummary: boolean = false): Prom
             positions: filteredPositions.length,
             stale: staleCount,
             rugged: ruggedCount,
+            shadow: shadowCount,
         })
 
         // Return summary if requested
@@ -1628,6 +1646,7 @@ export async function runSLTPMonitorAndSummarize(): Promise<SLTPTrackingSummary>
         // position with no readable price was dropped before it could be counted.
         let staleCount = 0
         let ruggedCount = 0
+        let shadowCount = 0
 
         // Check each position for triggers
         const triggerPromises = filteredPositions.map(async (position) => {
@@ -1680,6 +1699,22 @@ export async function runSLTPMonitorAndSummarize(): Promise<SLTPTrackingSummary>
                         domain: closeResult.domain,
                         closed: closeResult.closed,
                     })
+                    if (!closeResult.closed) {
+                        // No closer owns this family, so this is a SHADOW: the worker evaluated the
+                        // position, the trigger fired, and it declines to act. That is how a strategy
+                        // gets compared against its own ladder before anything enforces the
+                        // comparison — `att_rh` today, whose `decideRhTrendingExit` ladder still owns
+                        // its exits. Reported with the fields needed to compare the two.
+                        shadowCount += 1
+                        log.info('deviation_alert', 'SHADOW — trigger fired, no closer owns this family', {
+                            positionId: position.id,
+                            strategyId: position.strategy_id,
+                            tokenSymbol: position.token_symbol,
+                            triggerType: triggerResult.trigger_type,
+                            sellPercentage: triggerResult.sell_percentage,
+                            gainPercentage: triggerResult.gain_percentage,
+                        })
+                    }
                     if (closeResult.alreadyClosed) {
                         // A pass killed between the outcome write and the mirror update leaves exactly
                         // this. Reported rather than silent, because it means the previous pass did
@@ -1708,6 +1743,7 @@ export async function runSLTPMonitorAndSummarize(): Promise<SLTPTrackingSummary>
             positions: filteredPositions.length,
             stale: staleCount,
             rugged: ruggedCount,
+            shadow: shadowCount,
         })
 
         // Return summary

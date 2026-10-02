@@ -13,6 +13,7 @@ import {
 } from '@/utils/brain-regime-risk'
 import { fetchTradingRecordsForWallet } from './db'
 import { decideRhTrendingExit } from './exit-ladder'
+import { registerSimExitContract } from './sim-exit-contract'
 import { getActiveStrategiesWithState } from './load-strategy'
 import { loadClosedTrendingOutcomes, recordTrendingBotOutcome } from './outcomes'
 import { RH_MAX_OPEN_POSITIONS_DEFAULT } from './registry'
@@ -336,6 +337,38 @@ async function buySim(params: {
       },
     }),
   )
+
+  // Put this position on the exit standard, in SHADOW.
+  //
+  // `att_rh` has no entry in `simCloseDomainForStrategy`, so the worker will evaluate its triggers on
+  // every pass, report them, and then refuse to close because no closer owns the family. That is the
+  // point: it is the only way to compare this strategy's own `decideRhTrendingExit` ladder against
+  // `evaluateExit` on real positions without changing how the most active strategy exits.
+  //
+  // The two ladders DO differ, and exactly one case matters. TP3 is disabled here and both agree on
+  // the stop, the max-hold and TP1. But a position that gaps straight past TP2 (100%) before TP1 has
+  // fired closes 100% under `decideRhTrendingExit` (it checks TP2 before TP1) while `evaluateExit`
+  // would sell TP1's 90% and leave 10% open. So `tp1SellPct` carries the real 90 — registering 100
+  // would shadow a different strategy from the one running, which is the one thing a shadow must not
+  // do.
+  //
+  // Enforcing is a later step: it means giving `att_rh` a closer domain, and it waits until this
+  // comparison agrees.
+  await registerSimExitContract({
+    chain: CHAIN,
+    walletAddress: SIM_WALLET,
+    strategyId: strategy.id,
+    mintAddress: token.token_address,
+    symbol: token.token_symbol,
+    positionSize: nativeAmount,
+    entryPriceUsd: priceUsd,
+    thresholds: {
+      takeProfitPct: strategy.take_profit_levels.tp1_percentage,
+      stopLossPct: Math.abs(strategy.stop_loss_percentage),
+      maxHoldHours: strategy.max_hold_hours,
+      tp1SellPct: strategy.take_profit_levels.tp1_sell_percentage,
+    },
+  })
 }
 
 export async function runTrendingBotRhSimCycle(): Promise<RhTrendingSimResult[]> {
