@@ -10,6 +10,7 @@
  * tracker row vs a maximum hold), and a row that cannot say which fired makes S5's backstop share
  * uncomputable. Both used to report `max_hold_time`.
  */
+import { internalAuthHeaders } from './internal-api'
 export type SlTpTriggerType =
     | 'stop_loss'
     | 'take_profit_1'
@@ -59,7 +60,7 @@ export async function notifyTradingUpdate(
 
         const response = await fetch(`${baseUrl}/api/trading/subscribe`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...internalAuthHeaders() },
             body: JSON.stringify({
                 walletAddress,
                 type,

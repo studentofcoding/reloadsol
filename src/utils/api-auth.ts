@@ -100,45 +100,116 @@ export function isServiceAuthorizedRequest(req: NextRequest): boolean {
   return false;
 }
 
-export function enforceApiAccess(req: NextRequest): NextResponse | null {
+export type TierEnforceMode = 'enforce' | 'log' | 'off';
+
+/**
+ * `API_TIER_ENFORCE` (read per request, so flipping it needs a container restart/recreate but NO rebuild):
+ *   unset / anything else -> enforce (default)
+ *   `log`                 -> evaluate and log would-be 401s with route + caller, never block
+ *   `0` / `off` / `false` -> proxy tier checks disabled entirely (kill switch). Per-handler guards still apply.
+ */
+export function tierEnforceMode(env: Record<string, string | undefined> = process.env): TierEnforceMode {
+  const v = env.API_TIER_ENFORCE?.trim().toLowerCase();
+  if (v === '0' || v === 'off' || v === 'false') return 'off';
+  if (v === 'log') return 'log';
+  return 'enforce';
+}
+
+type TierDecision = {
+  blocked: NextResponse | null;
+  tier: ReturnType<typeof getApiAccessTier>;
+  reason: 'ok' | 'WALLET_SESSION_REQUIRED' | 'DEV_SESSION_REQUIRED';
+  session: 'none' | 'wallet' | 'dev';
+};
+
+function evaluateApiAccess(req: NextRequest): TierDecision | null {
   const pathname = req.nextUrl.pathname;
-  if (!pathname.startsWith('/api/')) {
-    return null;
-  }
-
-  if (req.method === 'OPTIONS') {
-    return null;
-  }
-
-  if (isServiceAuthorizedRequest(req)) {
-    return null;
-  }
+  if (!pathname.startsWith('/api/')) return null;
+  if (req.method === 'OPTIONS') return null;
+  if (isServiceAuthorizedRequest(req)) return null;
 
   const tier = getApiAccessTier(pathname, req.method);
   if (tier === 'public' || tier === 'open') {
-    return null;
+    return { blocked: null, tier, reason: 'ok', session: 'none' };
   }
 
   const session = getWalletSessionFromRequest(req);
   if (!session) {
-    return unauthorized(
-      'WALLET_SESSION_REQUIRED',
-      'Connect your wallet and sign in to use this API.',
-    );
+    return {
+      blocked: unauthorized('WALLET_SESSION_REQUIRED', 'Connect your wallet and sign in to use this API.'),
+      tier,
+      reason: 'WALLET_SESSION_REQUIRED',
+      session: 'none',
+    };
   }
+  if (tier === 'dev' && !session.dev) {
+    return {
+      blocked: unauthorized('DEV_SESSION_REQUIRED', 'Dev wallet session required for this API.'),
+      tier,
+      reason: 'DEV_SESSION_REQUIRED',
+      session: 'wallet',
+    };
+  }
+  return { blocked: null, tier, reason: 'ok', session: session.dev ? 'dev' : 'wallet' };
+}
 
-  if (tier === 'wallet') {
+const lastLogged = new Map<string, { at: number; suppressed: number }>();
+const LOG_EVERY_MS = 10_000;
+
+/** One line per (action, method, path) per 10 s: route + caller, no query string (it can carry `?key=`). */
+function logTierDecision(
+  action: 'would_block' | 'blocked',
+  req: NextRequest,
+  d: TierDecision,
+): void {
+  const path = req.nextUrl.pathname;
+  const key = `${action}|${req.method}|${path}`;
+  const now = Date.now();
+  const prev = lastLogged.get(key);
+  if (prev && now - prev.at < LOG_EVERY_MS) {
+    prev.suppressed += 1;
+    return;
+  }
+  if (lastLogged.size > 2000) lastLogged.clear();
+  lastLogged.set(key, { at: now, suppressed: 0 });
+
+  let referer = '';
+  try {
+    const r = req.headers.get('referer');
+    if (r) referer = new URL(r).pathname;
+  } catch {
+    // ignore malformed referer
+  }
+  const host = (req.headers.get('host') || '').split(':')[0];
+  const line = {
+    action,
+    tier: d.tier,
+    reason: d.reason,
+    session: d.session,
+    method: req.method,
+    path,
+    caller: host === 'web' ? 'internal' : req.headers.get('origin') || referer ? 'browser' : 'other',
+    referer,
+    ua: (req.headers.get('user-agent') || '').slice(0, 60),
+    ip: (req.headers.get('x-forwarded-for') || '').split(',')[0].trim(),
+    suppressedSince: prev?.suppressed ?? 0,
+  };
+  console.warn(`[api-tier] ${JSON.stringify(line)}`);
+}
+
+export function enforceApiAccess(req: NextRequest): NextResponse | null {
+  const mode = tierEnforceMode();
+  if (mode === 'off') return null;
+
+  const decision = evaluateApiAccess(req);
+  if (!decision || !decision.blocked) return null;
+
+  if (mode === 'log') {
+    logTierDecision('would_block', req, decision);
     return null;
   }
-
-  if (tier === 'dev' && !session.dev) {
-    return unauthorized(
-      'DEV_SESSION_REQUIRED',
-      'Dev wallet session required for this API.',
-    );
-  }
-
-  return null;
+  logTierDecision('blocked', req, decision);
+  return decision.blocked;
 }
 
 export function requireWalletSession(
@@ -188,4 +259,16 @@ export function assertSessionWallet(
     );
   }
   return null;
+}
+
+/**
+ * Handler-level twin of the proxy's wallet tier for routes that must not depend on the proxy alone
+ * (rh/rpc, kyber/*). Honours the API_TIER_ENFORCE kill switch / log mode so one flag controls everything,
+ * and lets a service-secret caller through just like the proxy does.
+ */
+export function guardWalletTier(req: NextRequest): NextResponse | null {
+  if (tierEnforceMode() !== 'enforce') return null;
+  if (isServiceAuthorizedRequest(req)) return null;
+  const result = requireWalletSession(req);
+  return result instanceof NextResponse ? result : null;
 }

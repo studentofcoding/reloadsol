@@ -1,6 +1,7 @@
 // Trading Operations Tracker - API Proxy Edition
 // Real-time syncing PnL tracker with offline support using API routes
 
+import { internalAuthHeaders } from './internal-api'
 export interface TrackingRecord {
   id: string
   walletAddress: string
@@ -341,6 +342,7 @@ class TradingTracker {
     const response = await fetch(`${baseUrl}/api/trading/records?id=${id}&wallet=${walletAddress}`, {
       method: 'DELETE',
       credentials: 'include',
+      headers: internalAuthHeaders(),
     });
 
     if (!response.ok) {

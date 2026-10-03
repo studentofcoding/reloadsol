@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { guardWalletTier } from '@/utils/api-auth'
 import {
   buildKyberRoute,
   type KyberRouteSummary,
@@ -6,6 +7,9 @@ import {
 
 
 export async function POST(request: NextRequest) {
+  const denied = guardWalletTier(request)
+  if (denied) return denied
+
   try {
     const body = (await request.json()) as {
       routeSummary?: KyberRouteSummary

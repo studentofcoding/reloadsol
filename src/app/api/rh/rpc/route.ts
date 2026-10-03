@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { guardWalletTier } from '@/utils/api-auth'
 import { getRhRpcUrls } from '@/utils/dlmm/rh-univ2'
 import { cacheGet, cacheSet } from '@/utils/redis-cache'
 
@@ -75,6 +76,9 @@ function respond(body: string | object, cached = false): NextResponse {
 }
 
 export async function POST(request: NextRequest) {
+  const denied = guardWalletTier(request)
+  if (denied) return denied
+
   const body = await request.text()
   const bypassCache = request.nextUrl.searchParams.get('fresh') === '1'
 
