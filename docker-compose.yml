@@ -94,10 +94,15 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    # 64M was too tight: kernel socket buffers for ~200 client conns + transaction
+    # pooling bursts counted against the cgroup (~68MB) and the OOM killer kept
+    # restarting pgbouncer (~270 restarts). 256M gives headroom; swap pinned equal
+    # to the limit so the container cannot spill into host swap.
+    memswap_limit: 256M
     deploy:
       resources:
         limits:
-          memory: 64M
+          memory: 256M
     networks:
       - reloadsol
 
