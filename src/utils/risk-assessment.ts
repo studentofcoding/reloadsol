@@ -386,22 +386,3 @@ export async function assessMultipleTokenRisks(
 
   return results
 }
-
-/**
- * Get risk level emoji for display
- * 
- * @param riskLevel - Risk level
- * @returns Emoji string
- */
-export function getRiskEmoji(riskLevel: 'LOW' | 'MED' | 'HIGH'): string {
-  switch (riskLevel) {
-    case 'LOW':
-      return '✅'
-    case 'MED':
-      return '⚡'
-    case 'HIGH':
-      return '⚠️'
-    default:
-      return '❓'
-  }
-}

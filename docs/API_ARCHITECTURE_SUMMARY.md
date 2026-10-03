@@ -14,8 +14,8 @@ This is the core of the application, responsible for identifying, tracking, and 
     - **Security**: Uses `TRADING_KEYPAIR_JSON` for server-side signing in real mode.
     - **Notifications**: Sends Discord alerts (differentiating "🔥 LIVE" vs "💻 SIMULATION").
 - **`trending/route.ts`**:
-  - **Function**: Runs background auto-notifications.
-  - **Key Features**: Uses a global timer to periodically fetch fresh data and alert Discord about new trending tokens.
+  - **Function**: Trending feed cache (Jupiter toptrending), mcap tracking and metric snapshots; `POST` force-refreshes it (cron).
+  - **Note**: The Discord list notification / global timer was removed in Oct 2026.
 - **`trending/prices/route.ts`**:
   - **Function**: Fetches raw trending data from Jupiter APIs.
 - **`trending/stats/route.ts`**:
