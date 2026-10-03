@@ -54,6 +54,44 @@ SL closes on 10-03). The pre-9371f3b route closer scoped the cycle; the worker-e
   entry median ≈ $150k live mcap).
 - Not done here (separate, needs approval): reconciling the existing orphan cycles. Ship this first, otherwise the next
   sibling close recreates them.
+### Added — evidence bar archive to Cloudflare R2 (map #140)
+
+- Daily `evidence_archive` cron worker (`EVIDENCE_ARCHIVE_INTERVAL`, default 86400) → `POST /api/evidence/archive` copies each
+  complete UTC day of `token_ohlc_bars` (1m) plus `token_info_detect`, `token_detect_snapshots`, `strategy_outcomes`,
+  `sl_tp_positions` and `trading_records` to gzip NDJSON in R2. Append-only: keys include the date, PUT sends
+  `If-None-Match: *`, an existing different object is a loud `conflict` and is never overwritten. Per-run manifest with row
+  counts, min/max timestamp and sha256. Hand-rolled SigV4 (`s3-sigv4.ts`, AWS vector test); no SDK dependency.
+- Inert until `EVIDENCE_ARCHIVE_ENABLED=1`; without `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `R2_BUCKET` the
+  route answers 503 naming the missing variables (never values). `db/init/63-evidence-archive-runs.sql` (apply before code).
+- `OHLC_PRUNE_REQUIRES_ARCHIVE=1` clamps the sampler prune so an un-archived day is never deleted (default off; retention default
+  stays 48 h). `npm run evidence:archive -- list|verify|replay|restore-bars` reads/verifies/replays the archive.
+- Docs: `docs/specs/SPEC-evidence-bar-archive-v1.md`. After PR #151 (default API tier = wallet) lands, `/api/evidence/archive`
+  must be added to `SELF_AUTH_API_PREFIXES` or the proxy will 401 the cron.
+
+### Fixed — keyed Jupiter Price V3 429s
+
+- `jupiter-api.ts` price calls now take a token from the shared gate (they bypassed it), share ONE 429 cooldown with
+  `usd-prices.ts` (sized from `x-ratelimit-reset`, then `Retry-After`, then 30 s), are single-flight per id-set with a
+  3 s result cache, and `fetchJupiterPriceRaw` is gated + cooldown-aware. `lite-api.jup.ag/swap/v1` probed live: 200/422,
+  not rate limited, so it is intentionally untouched (`docs/JUPITER_API_MAP.md`).
+- `JUPITER_BURST` code default **8 → 5** (also `.env.docker.example`, README, docs): 8 exceeded what the Free plan's ~10 req /
+  10 s window absorbs with the refill. Trade-off: bulk actions with >5 prepares queue the remainder at 0.5 rps. Prod `.env`
+  does not set `JUPITER_BURST`, so the new default applies on the next web ship; `JUPITER_BURST=8` restores the old value.
+
+### Fixed — Jupiter metadata stats line never reached prod logs
+
+- `[jupiter-metadata] stats` now uses `console.warn`: `next.config.js` `removeConsole` strips `console.log/info` in production builds (only `error`/`warn` survive), so the 10-minute counters were invisible after #136 shipped.
+
+### Removed — Discord trending list notifications
+
+- `POST /api/trending` and `POST /api/trending/filtered` no longer post to Discord; removed the route timers,
+  `sendDiscordNotification` / `sendFilteredTokensNotification` (and their per-token `assessTokenRisk` fan-out),
+  the `PUT` Discord test endpoints, daily-ranking embed builders, dedup slots (`acquireTrendingListNotificationSlot`)
+  and `getRiskEmoji`. `POST /api/trending` still force-refreshes the feed cache + mcap tracking + metric snapshots;
+  `POST /api/trending/filtered` is an authenticated no-op (cron worker keeps getting 200).
+- Env: `AUTO_NOTIFICATION_INTERVAL_MS` and `FILTERED_AUTO_NOTIFICATION_INTERVAL_MS` are gone (safe to delete from `.env`).
+  `TRENDING_LIST_DISCORD_VIA_CRON` stays but now only gates the track strategy's filtering-summary alerts.
+- Kept (other features): trade/auto-trade alerts, mcap-tracker growth alerts, strategy reports, Go ops `DiscordLogger`.
 
 ### Changed — Jupiter token metadata: cache → one paced batched keyless queue → keyed fallback
 

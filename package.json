@@ -20,6 +20,7 @@
     "postbuild": "node scripts/lock-next-env.js",
     "ml:backfill-labels": "npx tsx scripts/backfill-ml-labels.ts",
     "ohlc:seed-bars": "npx tsx scripts/seed-ohlc-bars.ts",
+    "evidence:archive": "npx tsx scripts/evidence-archive-restore.ts",
     "ml:train-closed-loop": "npx tsx scripts/train-closed-loop-ml.ts",
     "ml:eval-scan": "npx tsx scripts/eval-engine-scan.ts",
     "ml:export-schema": "npx tsx scripts/export-feature-schema.ts",

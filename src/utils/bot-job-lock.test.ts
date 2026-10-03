@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { queryMock } = vi.hoisted(() => ({ queryMock: vi.fn() }))
 vi.mock('@/utils/db', () => ({ query: queryMock }))
@@ -14,6 +14,8 @@ import {
   parseLockOwner,
   renewJobLock,
   startJobLockHeartbeat,
+  withJobLock,
+  JOB_LOCK_LEASE_SEC,
 } from './bot-job-lock'
 
 const HOST = 'web-1'
@@ -148,5 +150,41 @@ describe('isOrphanedLock', () => {
     expect(
       isOrphanedLock(`${HOST}:999:5000`, { ...opts, isPidAlive: alive }),
     ).toBe(false)
+  })
+})
+
+describe('withJobLock lease + heartbeat', () => {
+  beforeEach(() => {
+    queryMock.mockReset()
+    queryMock.mockResolvedValue({ rows: [], rowCount: 1 })
+    vi.useFakeTimers()
+  })
+  afterEach(() => vi.useRealTimers())
+
+  const insertExpiry = () => {
+    const call = queryMock.mock.calls.find((c) => String(c[0]).includes('INSERT INTO bot_job_locks'))
+    return call ? Date.parse(String((call[1] as unknown[])[3])) - Date.parse(String((call[1] as unknown[])[1])) : NaN
+  }
+
+  it('stores a short lease (not the 900 s route ttl), so a killed run frees the job within one lease', async () => {
+    await withJobLock('signals_sim_track', 900, async () => new Response('ok'))
+    expect(JOB_LOCK_LEASE_SEC).toBe(90)
+    expect(insertExpiry()).toBe(90_000)
+  })
+
+  it('renews while the run is alive, stops after the max hold, and releases at the end', async () => {
+    let done!: (r: Response) => void
+    const run = new Promise<Response>((r) => (done = r))
+    const p = withJobLock('j', 100, () => run)
+    await vi.advanceTimersByTimeAsync(31_000)
+    const renews = () => queryMock.mock.calls.filter((c) => String(c[0]).startsWith('UPDATE bot_job_locks')).length
+    expect(renews()).toBe(1)
+    await vi.advanceTimersByTimeAsync(60_000) // 91 s
+    expect(renews()).toBe(3)
+    await vi.advanceTimersByTimeAsync(60_000) // 151 s: past the 100 s max hold -> no more renewals
+    expect(renews()).toBe(3)
+    done(new Response('ok'))
+    await p
+    expect(queryMock.mock.calls.some((c) => String(c[0]).startsWith('DELETE FROM bot_job_locks WHERE job_name'))).toBe(true)
   })
 })

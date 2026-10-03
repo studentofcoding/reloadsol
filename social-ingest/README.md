@@ -62,7 +62,7 @@ Do **not** use `chmod 700` on the directory or `chmod 600` on the session file i
 
 ```bash
 SOCIAL_INGEST_URL=http://127.0.0.1:3000/api/social/ingest \
-SOCIAL_INGEST_SECRET=r3l0ads0l-trending \
+SOCIAL_INGEST_SECRET=<your TRENDING_TRACKER_SECRET value> \
 SESSION_DIR=social-ingest/sessions \
 python social-ingest/main.py
 ```

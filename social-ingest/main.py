@@ -56,10 +56,10 @@ INGEST_URL = os.getenv(
     "SOCIAL_INGEST_URL",
     "http://127.0.0.1:3000/api/social/ingest",
 )
-INGEST_SECRET = os.getenv(
-    "SOCIAL_INGEST_SECRET",
-    os.getenv("TRENDING_TRACKER_SECRET", "r3l0ads0l-trending"),
-)
+# No built-in default: the web app rejects an unknown/empty key, so a missing secret is a startup error.
+INGEST_SECRET = os.getenv("SOCIAL_INGEST_SECRET") or os.getenv("TRENDING_TRACKER_SECRET") or ""
+if not INGEST_SECRET:
+    raise SystemExit("SOCIAL_INGEST_SECRET or TRENDING_TRACKER_SECRET is required (no default). Set it in .env")
 CROSSCHECK_URL = os.getenv(
     "SIGNAL_CROSSCHECK_URL",
     INGEST_URL.replace("/api/social/ingest", "/api/social/crosscheck"),

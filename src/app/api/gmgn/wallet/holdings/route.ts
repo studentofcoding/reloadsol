@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse, connection } from 'next/server'
 import { walletHoldings, GmgnApiError } from '@/utils/gmgn-api'
 import { isGmgnTradeChain } from '@/utils/gmgn-currencies'
-import { resolveGmgnBoundWallets, boundAddressForChain } from '@/utils/gmgn-bound-wallets'
+import { boundAddressForChain } from '@/utils/gmgn-bound-wallets'
+import { resolveGmgnBoundWallets } from '@/utils/gmgn-bound-wallets.server'
 
 
 export async function GET(request: NextRequest) {

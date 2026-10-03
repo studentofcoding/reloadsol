@@ -139,7 +139,6 @@ Registered in [`worker_tracker.go`](../worker_tracker.go), scheduled in [`main.g
 | `signals_sim_track` | every 120s (env) | `POST /api/signals/sim-track` | algo |
 | `signals_refresh` | every 60s | `GET /api/trading/signals` | algo |
 | `trending_tracker` | every 5m | `POST /api/trending/track` | algo |
-| `filtered_trending` | every 2m | `POST /api/trending/filtered` | algo |
 | `unfiltered_trending` | every 2m | `POST /api/trending` | algo |
 | `dlmm_screen` | every 300s | `POST /api/dlmm/screen` | algo |
 | `dlmm_manage` | every 60s | `POST /api/dlmm/manage` | algo |
@@ -199,10 +198,13 @@ Enforced in [`src/utils/api-auth.ts`](../src/utils/api-auth.ts) + [`src/config/a
 
 | Tier | Who | Examples |
 |------|-----|----------|
-| **public** | Anyone | `/api/health`, `/api/rpc`, `/api/solprice` |
-| **wallet** | Signed wallet session | `/api/buy`, `/api/operations`, `/api/trading/records` |
-| **dev** | Whitelisted dev wallets | `/api/signals`, `/api/potential`, `/api/rug`, `/api/trending`, `/api/workers`, `/api/strategies`, `/api/dev/reputation`, `/api/gmgn/risk-chips` |
-| **service** | Cron secrets / bearer / UA | `/api/trending/track`, `/api/signals/sim-track`, `/api/pnl/update` |
+| **public** | Anyone (explicit list `PUBLIC_API_PREFIXES` / `PUBLIC_API_EXACT_GET_PATHS`) | `/api/health`, `/api/rpc`, `/api/solprice`, `/api/regime/climate`, `/api/scout/data-public` (GET), `/api/gmgn/bound-wallets`, `/api/rh/config`, `/api/ethprice` |
+| **wallet** (**default**) | Signed wallet session. Any `/api/*` route not listed elsewhere lands here | `/api/buy`, `/api/operations`, `/api/shyft/*`, `/api/solanatracker/*`, `/api/kyber/*`, `/api/rh/rpc`, `/api/gmgn/trade/{quote,order}` |
+| **dev** | Whitelisted dev wallets | `/api/signals`, `/api/rug`, `/api/trending`, `/api/sol-arb/*`, `/api/pnl/*`, `/api/mcap-patterns/*`, `/api/gmgn/trade/swap`, `PATCH /api/gmgn/roster` |
+| **open** (self-auth) | The handler authenticates itself (cron secret, Goldsky bearer, per-job secret); list `SELF_AUTH_API_PREFIXES` | `/api/rh/ledger/ingest`, `/api/rug-signal/*`, `/api/sl-tp-monitor`, `/api/mcap-patterns/refresh` |
+| **service** | A request carrying a valid cron secret (`?key=` / `Authorization: Bearer`) passes every tier | `/api/trending/track`, `/api/signals/sim-track`, `/api/sol-arb/scan` |
+
+New routes are `wallet` until classified. `src/config/api-access.default-tier.test.ts` holds an inventory snapshot of every route that is reachable without a session; changing it is a review decision.
 
 Wallet session: `WALLET_SESSION_SECRET` cookie after SIWS-style sign-in.
 
@@ -351,15 +353,15 @@ Env: see [`.env.docker.example`](../.env.docker.example) and README environment 
 
 Trade alerts on `DISCORD_WEBHOOK_AUTO_TRADE` (buys/sells) are separate from list alerts.
 
-**List notification env (Docker `.env`):**
+**List notifications removed (Oct 2026):** the list-style trending Discord posts from `POST /api/trending` and
+`POST /api/trending/filtered` (route timers, dedup slots, `AUTO_NOTIFICATION_INTERVAL_MS`,
+`FILTERED_AUTO_NOTIFICATION_INTERVAL_MS`) no longer exist. `POST /api/trending` still force-refreshes the feed cache,
+mcap tracking and metric snapshots; `POST /api/trending/filtered` is an authenticated no-op kept so the cron worker
+keeps getting 200.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `TRENDING_LIST_DISCORD_VIA_CRON` | `true` | Cron POST only; disables route timers + track filtering summary |
-| `AUTO_NOTIFICATION_INTERVAL_MS` | `120000` | Unfiltered list dedup cooldown |
-| `FILTERED_AUTO_NOTIFICATION_INTERVAL_MS` | `120000` | Filtered list dedup cooldown |
-
-Set `TRENDING_LIST_DISCORD_VIA_CRON=false` for local dev without cron (re-enables route timers).
+| `TRENDING_LIST_DISCORD_VIA_CRON` | `true` | Track strategy only: skip its filtering-summary Discord alerts (`false` re-enables them) |
 
 ---
 
@@ -371,7 +373,7 @@ Set `TRENDING_LIST_DISCORD_VIA_CRON=false` for local dev without cron (re-enable
 | **High** | Consolidate duplicate PnL paths | Done — removed inline PnL from track; `pnl_update` cron only |
 | **Medium** | Consolidate daily summary | Done — `daily_summary` cron only; inline track logic removed |
 | **Medium** | Auth on Go `/trigger/*` | Not used — `/trigger/*` open on cron port; rely on network/firewall |
-| **Medium** | Discord notification dedup | Done — cron-only list alerts + cooldown dedup; track filtering summary skipped when `TRENDING_LIST_DISCORD_VIA_CRON=true` |
+| **Medium** | Discord notification dedup | Superseded — list-style trending Discord alerts removed (Oct 2026); track filtering summary still skipped when `TRENDING_LIST_DISCORD_VIA_CRON=true` |
 | **Low** | Refresh [Overview.md](./Overview.md) | Still references removed pages (mcap-tracker nav, catch-the-coin) |
 
 ---

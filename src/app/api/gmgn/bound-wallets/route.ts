@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { resolveGmgnBoundWallets } from '@/utils/gmgn-bound-wallets'
+import { resolveGmgnBoundWallets } from '@/utils/gmgn-bound-wallets.server'
 
 
 /** Public bound addresses only — never PEM / API keys. */

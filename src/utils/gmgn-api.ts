@@ -6,6 +6,7 @@ import {
   type KeyObject,
 } from 'crypto'
 import { existsSync, readFileSync } from 'fs'
+import { cacheGet, cacheSet } from './redis-cache'
 import type { GmgnTrackResponse, GmgnTrackRow } from './gmgn-cli'
 
 const DEFAULT_HOST = 'https://openapi.gmgn.ai'
@@ -196,7 +197,34 @@ function markIpBan(resetAt?: number): void {
   if (untilMs > ipBan.untilMs) {
     ipBan.untilMs = untilMs
     ipBan.resetAt = resetAt
+    // Survive a web restart: a ship during a ban used to send the first request straight into it
+    // (and each extra request extends the ban). Fail-open: redis-cache falls back to memory.
+    void cacheSet(IP_BAN_CACHE_KEY, { untilMs, resetAt }, Math.max(1, Math.ceil((untilMs - now) / 1000))).catch(() => {})
   }
+}
+
+const IP_BAN_CACHE_KEY = 'gmgn:ip-ban'
+let ipBanHydration: Promise<void> | null = null
+
+/** Load a ban recorded by a previous process (once per process). Never throws. */
+export function hydrateGmgnIpBan(): Promise<void> {
+  ipBanHydration ??= (async () => {
+    try {
+      const saved = await cacheGet<{ untilMs?: number; resetAt?: number }>(IP_BAN_CACHE_KEY)
+      if (saved && typeof saved.untilMs === 'number' && saved.untilMs > ipBan.untilMs) {
+        ipBan.untilMs = saved.untilMs
+        ipBan.resetAt = saved.resetAt
+      }
+    } catch {
+      // fail-open
+    }
+  })()
+  return ipBanHydration
+}
+
+/** Test-only: record a ban exactly as a 429 RATE_LIMIT_BANNED would. */
+export function __markIpBanForTests(resetAt?: number): void {
+  markIpBan(resetAt)
 }
 
 /** Seconds left on the IP-wide ban (0 when none). Observability + tests. */
@@ -259,6 +287,12 @@ export function __resetRateLimitCooldownForTests(): void {
   pacing.slowUntilMs = 0
   ipBan.untilMs = 0
   ipBan.resetAt = undefined
+  ipBanHydration = Promise.resolve() // tests opt out of reading a ban left in the shared cache
+}
+
+/** Test-only: forget that this process already loaded the persisted ban. */
+export function __resetIpBanHydrationForTests(): void {
+  ipBanHydration = null
 }
 
 /** Test-only: is `path` currently cooling down? */
@@ -555,6 +589,7 @@ async function gmgnFetch(
 ): Promise<unknown> {
   const apiKey = getApiKey()
   const bodyStr = body != null ? JSON.stringify(body) : null
+  await hydrateGmgnIpBan()
   // Read-only GETs skip upstream while a rate-limit window is open.
   if (method === 'GET') await checkRateLimitCooldown(path)
   // Gate BEFORE stamping: GMGN rejects a timestamp older than ~20s
@@ -598,6 +633,7 @@ async function gmgnSignedFetch(
   const autoRetry = method !== 'POST'
   // Signed GETs (follow_wallet, wallet_holdings) used to skip the negative cache entirely, so a path that
   // always 429s (follow_wallet is weight 10 vs a free-tier bucket of 5) was re-hit every tick.
+  await hydrateGmgnIpBan()
   if (method === 'GET') await checkRateLimitCooldown(path)
   else checkIpBan()
   // Gate BEFORE stamping/signing: the signature covers the timestamp, and GMGN

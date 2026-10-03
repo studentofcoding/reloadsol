@@ -3215,7 +3215,7 @@ export async function getStrategyDomainHeartbeats(params?: {
   const workerById = params?.workerLastSuccessById ?? {}
 
   const domainPrimaryWorkers: Record<StrategyDomain, string[]> = {
-    mcap_tracker: ['mcap_tracker_sim_open', 'mcap_tracker_sim_track'],
+    mcap_tracker: ['mcap_tracker_sim_track'],
     signals: ['signals_sim_track', 'signals_refresh'],
     trending_bot: ['trending_tracker'],
     dlmm: ['dlmm_manage'],
@@ -3224,7 +3224,6 @@ export async function getStrategyDomainHeartbeats(params?: {
       'gmgn_activity_poll',
       'gmgn_radar_digest',
       'gmgn_wallet_digger',
-      'gmgn_roster_watch',
     ],
     social: ['social_sim_track'],
   }

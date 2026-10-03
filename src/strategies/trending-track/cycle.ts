@@ -70,6 +70,7 @@ import {
 } from './trade-ops'
 import { TRADING_HOURS_LABEL, isWithinTradingHours } from './schedule'
 import type { TrackedToken, TradingSimulation, PriceRecord, PriceTracking } from './types'
+import { secretsMatch } from '@/utils/secret-auth'
 
 async function simBrainBuyPlan(
   session: ReturnType<typeof createBrainRiskSession>,
@@ -138,7 +139,7 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
     // Validate authentication (server-side only)
     const { searchParams } = new URL(request.url)
     const secretKey = searchParams.get('key')
-    const expectedSecretKey = process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending'
+    const expectedSecretKey = process.env.TRENDING_TRACKER_SECRET
 
     // Allow calls from:
     // 1. Vercel cron jobs (internal calls)
@@ -149,7 +150,7 @@ export async function internalTrackPost(request: NextRequest, logger: any) {
 
     if (isDevelopment && isLocalhost && !secretKey) {
       console.log('🔓 Development mode: allowing combined tracking+summary API call without secret key')
-    } else if (secretKey !== expectedSecretKey) {
+    } else if (!secretsMatch(secretKey, expectedSecretKey)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 

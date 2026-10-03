@@ -230,12 +230,10 @@ type Config struct {
     SignalRefreshInterval int   // seconds
     SignalsSimInterval   int    // seconds
     McapTrackerSimInterval int  // seconds — manage/close path
-    McapTrackerSimOpenInterval int // seconds — open hot path; no longer scheduled separately (the open phase runs inside the phase=all job)
     GmgnSimInterval      int    // seconds
     GmgnActivityPollInterval int // seconds
     GmgnRadarDigestInterval int // seconds (0 = disabled)
     GmgnWalletDiggerInterval int // seconds (0 = disabled)
-    GmgnRosterWatchInterval int // seconds (0 = disabled)
     SocialSimInterval    int    // seconds
     StrategyReportInterval int  // seconds (0 = disabled)
     ReportPrecomputeInterval int // seconds (0 = disabled)
@@ -243,13 +241,12 @@ type Config struct {
     DLMMSimTrackInterval int // seconds
     DLMMManageInterval int    // seconds
     RhClmmManageInterval int  // seconds
-    RhLpScreenInterval int    // seconds (0 = disabled)
     StrategySearchInterval int // seconds (0 = disabled)
     DLMMSecret         string
     SolArbScanInterval int // seconds (0 = disabled)
     OhlcSampleInterval int // seconds — 1m OHLC sampler (0 = disabled)
     MetricsCopyInterval int // seconds — 1m volume copier (0 = disabled)
-    FomoWsEnabled      bool
+    EvidenceArchiveInterval int // seconds — daily evidence archive to R2 (0 = disabled)
 }
 
 type CronService struct {
@@ -257,7 +254,6 @@ type CronService struct {
 	cron    *cron.Cron
 	logger  *DiscordLogger
 	workers *WorkerTracker
-	mcapSimOpenMu   sync.Mutex
 	mcapSimManageMu sync.Mutex
 }
 
@@ -265,33 +261,30 @@ func NewCronService() *CronService {
     intervalResolutions = nil // the startup audit describes THIS construction, not an earlier one
     config := &Config{
         APIBaseURL:     getEnv("API_BASE_URL", "https://reloadsol.app"),
-        TrendingSecret: getEnv("TRENDING_TRACKER_SECRET", "r3l0ads0l-trending"),
+        TrendingSecret: getEnv("TRENDING_TRACKER_SECRET", ""),
         PnLSecret:      getEnv("PNL_UPDATE_SECRET", getEnv("PNL_UPDATE_TOKEN", "")),
         // Shared secret for the /trigger/* HTTP endpoints (X-Trigger-Secret
         // header). Falls back to the trending secret so existing deploys keep
         // working once the web proxy sends the same value.
-        TriggerSecret:  getEnv("TRIGGER_SECRET", getEnv("TRENDING_TRACKER_SECRET", "r3l0ads0l-trending")),
+        TriggerSecret:  getEnv("TRIGGER_SECRET", getEnv("TRENDING_TRACKER_SECRET", "")),
         DiscordWebhook: getEnv("DISCORD_WEBHOOK_URL", ""),
         SLTPMonitorInterval: intervalFor("SLTPMonitorInterval"),
         SignalRefreshInterval: intervalFor("SignalRefreshInterval"),
         SignalsSimInterval: intervalFor("SignalsSimInterval"),
         McapTrackerSimInterval: intervalFor("McapTrackerSimInterval"),
-        McapTrackerSimOpenInterval: intervalFor("McapTrackerSimOpenInterval"),
         GmgnSimInterval: intervalFor("GmgnSimInterval"),
         SocialSimInterval: intervalFor("SocialSimInterval"),
         GmgnActivityPollInterval: intervalFor("GmgnActivityPollInterval"),
         GmgnRadarDigestInterval: intervalFor("GmgnRadarDigestInterval"),
         GmgnWalletDiggerInterval: intervalFor("GmgnWalletDiggerInterval"),
-        GmgnRosterWatchInterval: intervalFor("GmgnRosterWatchInterval"),
         StrategyReportInterval: intervalFor("StrategyReportInterval"),
         ReportPrecomputeInterval: intervalFor("ReportPrecomputeInterval"),
         DLMMScreenInterval: intervalFor("DLMMScreenInterval"),
         DLMMSimTrackInterval: intervalFor("DLMMSimTrackInterval"),
         DLMMManageInterval: intervalFor("DLMMManageInterval"),
         RhClmmManageInterval: intervalFor("RhClmmManageInterval"),
-        RhLpScreenInterval: intervalFor("RhLpScreenInterval"),
         StrategySearchInterval: intervalFor("StrategySearchInterval"),
-        DLMMSecret: getEnv("DLMM_MANAGE_SECRET", getEnv("TRENDING_TRACKER_SECRET", "r3l0ads0l-trending")),
+        DLMMSecret: getEnv("DLMM_MANAGE_SECRET", getEnv("TRENDING_TRACKER_SECRET", "")),
         SolArbScanInterval: intervalFor("SolArbScanInterval"),
         // Own 1m OHLC series: 15s ticks give 4 samples per minute, which is what
         // makes a real intra-minute high/low possible.
@@ -300,7 +293,7 @@ func NewCronService() *CronService {
         // so the cadence governs snapshot freshness only, not slot completeness. Keep it well
         // under that window or the gap loses minutes permanently.
         MetricsCopyInterval: intervalFor("MetricsCopyInterval"),
-        FomoWsEnabled: envBool("FOMO_WS_ENABLED", true),
+        EvidenceArchiveInterval: intervalFor("EvidenceArchiveInterval"),
     }
 
 	c := newStaggeredCron()
@@ -341,14 +334,6 @@ func (cs *CronService) Start() {
 		log.Fatal("Failed to add trending tracker cron job:", err)
 	}
 	cs.workers.BindEntry(trendingEntryID, "trending_tracker")
-
-	// Filtered trending tracker - every 2 minutes
-	filteredEntryID, err := cs.cron.AddFunc("0 */2 * * * *", cs.runFilteredTrendingTracker)
-	if err != nil {
-		cs.logger.Error(fmt.Sprintf("Failed to add filtered trending tracker cron job: %v", err))
-		log.Fatal("Failed to add filtered trending tracker cron job:", err)
-	}
-	cs.workers.BindEntry(filteredEntryID, "filtered_trending")
 
 	// Trending tracker unfiltered - every 2 minutes
 	unfilteredEntryID, err := cs.cron.AddFunc("0 */2 * * * *", cs.runUnfilteredTrendingTracker)
@@ -396,6 +381,18 @@ func (cs *CronService) Start() {
             log.Fatal("Failed to add metrics copier cron job:", err)
         }
         cs.workers.BindEntry(metricsCopyEntryID, "metrics_copier")
+    }
+
+    // Evidence archive (Postgres -> append-only R2) – every N seconds (default 86400, 0 = disabled).
+    // The route is inert until EVIDENCE_ARCHIVE_ENABLED=1, so scheduling it is safe by default.
+    if cs.config.EvidenceArchiveInterval > 0 {
+        evidenceSpec := everySpec(cs.config.EvidenceArchiveInterval)
+        evidenceEntryID, err := cs.cron.AddFunc(evidenceSpec, cs.runEvidenceArchive)
+        if err != nil {
+            cs.logger.Error(fmt.Sprintf("Failed to add evidence archive cron job: %v", err))
+            log.Fatal("Failed to add evidence archive cron job:", err)
+        }
+        cs.workers.BindEntry(evidenceEntryID, "evidence_archive")
     }
 
     // Signals sim track – every N seconds (default 120)
@@ -463,16 +460,6 @@ func (cs *CronService) Start() {
             log.Fatal("Failed to add GMGN wallet digger cron job:", err)
         }
         cs.workers.BindEntry(gmgnWalletDiggerEntryID, "gmgn_wallet_digger")
-    }
-
-    if cs.config.GmgnRosterWatchInterval > 0 {
-        gmgnRosterWatchSpec := everySpec(cs.config.GmgnRosterWatchInterval)
-        gmgnRosterWatchEntryID, err := cs.cron.AddFunc(gmgnRosterWatchSpec, cs.runGmgnRosterWatch)
-        if err != nil {
-            cs.logger.Error(fmt.Sprintf("Failed to add GMGN roster watch cron job: %v", err))
-            log.Fatal("Failed to add GMGN roster watch cron job:", err)
-        }
-        cs.workers.BindEntry(gmgnRosterWatchEntryID, "gmgn_roster_watch")
     }
 
     socialRollupEntryID, err := cs.cron.AddFunc("@every 300s", cs.runSocialRollup)
@@ -552,17 +539,6 @@ func (cs *CronService) Start() {
     }
     cs.workers.BindEntry(rhClmmManageEntryID, "rh_clmm_manage")
 
-    // RH LP screen (paper) – every N seconds (default 300; 0 disables)
-    if cs.config.RhLpScreenInterval > 0 {
-        rhLpScreenSpec := everySpec(cs.config.RhLpScreenInterval)
-        rhLpScreenEntryID, err := cs.cron.AddFunc(rhLpScreenSpec, cs.runRhLpScreen)
-        if err != nil {
-            cs.logger.Error(fmt.Sprintf("Failed to add RH LP screen cron job: %v", err))
-            log.Fatal("Failed to add RH LP screen cron job:", err)
-        }
-        cs.workers.BindEntry(rhLpScreenEntryID, "rh_lp_screen")
-    }
-
     if cs.config.StrategySearchInterval > 0 {
         searchSpec := everySpec(cs.config.StrategySearchInterval)
         searchEntryID, err := cs.cron.AddFunc(searchSpec, cs.runStrategySearch)
@@ -611,10 +587,8 @@ func (cs *CronService) Start() {
 	http.HandleFunc("/trigger/signals-refresh", cs.requireTriggerSecret(cs.manualSignalsRefreshTrigger))
     http.HandleFunc("/trigger/signals-sim-track", cs.requireTriggerSecret(cs.manualSignalsSimTrackTrigger))
     http.HandleFunc("/trigger/mcap-tracker-sim-track", cs.requireTriggerSecret(cs.manualMcapTrackerSimTrackTrigger))
-    http.HandleFunc("/trigger/mcap-tracker-sim-open", cs.requireTriggerSecret(cs.manualMcapTrackerSimOpenTrigger))
     http.HandleFunc("/trigger/gmgn-sim-track", cs.requireTriggerSecret(cs.manualGmgnSimTrackTrigger))
     http.HandleFunc("/trigger/gmgn-wallet-digger", cs.requireTriggerSecret(cs.manualGmgnWalletDiggerTrigger))
-    http.HandleFunc("/trigger/gmgn-roster-watch", cs.requireTriggerSecret(cs.manualGmgnRosterWatchTrigger))
     http.HandleFunc("/trigger/social-sim-track", cs.requireTriggerSecret(cs.manualSocialSimTrackTrigger))
     http.HandleFunc("/trigger/gmgn-activity-poll", cs.requireTriggerSecret(cs.manualGmgnActivityPollTrigger))
     http.HandleFunc("/trigger/gmgn-radar-digest", cs.requireTriggerSecret(cs.manualGmgnRadarDigestTrigger))
@@ -627,12 +601,11 @@ func (cs *CronService) Start() {
     http.HandleFunc("/trigger/dlmm-sim-track", cs.requireTriggerSecret(cs.manualDLMMSimTrackTrigger))
     http.HandleFunc("/trigger/dlmm-manage", cs.requireTriggerSecret(cs.manualDLMMManageTrigger))
     http.HandleFunc("/trigger/rh-clmm-manage", cs.requireTriggerSecret(cs.manualRhClmmManageTrigger))
-    http.HandleFunc("/trigger/rh-lp-screen", cs.requireTriggerSecret(cs.manualRhLpScreenTrigger))
     http.HandleFunc("/trigger/strategy-search", cs.requireTriggerSecret(cs.manualStrategySearchTrigger))
     http.HandleFunc("/trigger/sol-arb-scan", cs.requireTriggerSecret(cs.manualSolArbScanTrigger))
     http.HandleFunc("/trigger/ohlc-sampler", cs.requireTriggerSecret(cs.manualOhlcSampleTrigger))
     http.HandleFunc("/trigger/metrics-copier", cs.requireTriggerSecret(cs.manualMetricsCopyTrigger))
-    http.HandleFunc("/trigger/fomo-ws", cs.requireTriggerSecret(cs.manualFomoWsTrigger))
+    http.HandleFunc("/trigger/evidence-archive", cs.requireTriggerSecret(cs.manualEvidenceArchiveTrigger))
     http.HandleFunc("/logs/test", cs.testDiscordLogs)
 
     cs.cron.Start()
@@ -659,9 +632,6 @@ func (cs *CronService) Start() {
     if cs.config.GmgnWalletDiggerInterval > 0 {
         cs.logger.Info(fmt.Sprintf("⛏️ GMGN wallet digger: every %d seconds", cs.config.GmgnWalletDiggerInterval))
     }
-    if cs.config.GmgnRosterWatchInterval > 0 {
-        cs.logger.Info(fmt.Sprintf("👀 GMGN roster watch: every %d seconds", cs.config.GmgnRosterWatchInterval))
-    }
     if cs.config.GmgnRadarDigestInterval > 0 {
         cs.logger.Info(fmt.Sprintf("📌 GMGN radar digest: every %d seconds", cs.config.GmgnRadarDigestInterval))
     } else {
@@ -683,12 +653,6 @@ func (cs *CronService) Start() {
         cs.logger.Info(fmt.Sprintf("⚡ SOL arb scan: every %d seconds", cs.config.SolArbScanInterval))
     } else {
         cs.logger.Info("⚡ SOL arb scan: disabled (SOL_ARB_SCAN_INTERVAL=0)")
-    }
-    if cs.config.FomoWsEnabled {
-        cs.logger.Info("📡 FOMO trenches WS: always-on")
-        go cs.runFomoWsLoop()
-    } else {
-        cs.logger.Info("📡 FOMO trenches WS: disabled (FOMO_WS_ENABLED=false)")
     }
 	cs.logger.Info("📋 Daily summary: daily at 00:00 UTC")
 	cs.logger.Info("💰 PnL update: daily at 02:00 UTC" )
@@ -791,27 +755,6 @@ func (cs *CronService) runSignalsSimTrack() {
     }
 }
 
-func (cs *CronService) runMcapTrackerSimOpen() {
-    if !cs.mcapSimOpenMu.TryLock() {
-        cs.logger.Info("⏭️ MCap tracker sim open skipped (still running)")
-        return
-    }
-    defer cs.mcapSimOpenMu.Unlock()
-
-    cs.workers.Begin("mcap_tracker_sim_open")
-    cs.logger.Info("📈 Running mcap tracker sim open (phase=open)...")
-    url := fmt.Sprintf("%s/api/mcap-tracking/sim-track?key=%s&phase=open", cs.config.APIBaseURL, cs.config.TrendingSecret)
-    resp, err := cs.makeRequest("POST", url, nil, 120)
-    if err != nil {
-        cs.logger.Error(fmt.Sprintf("❌ MCap tracker sim open failed: %v", err))
-        cs.workers.Fail("mcap_tracker_sim_open", err.Error())
-        return
-    }
-    if cs.finishSimJob("MCap tracker sim open", "mcap_tracker_sim_open", resp) {
-        return
-    }
-}
-
 func (cs *CronService) runMcapTrackerSimAll() {
     // Scheduled once per interval and also the manual full cycle: take the manage lock so we do
     // not overlap another full run.
@@ -905,20 +848,6 @@ func (cs *CronService) runGmgnWalletDigger() {
     }
     cs.logger.Success(fmt.Sprintf("✅ GMGN wallet digger completed (%d bytes)", len(resp)))
     cs.workers.Success("gmgn_wallet_digger")
-}
-
-func (cs *CronService) runGmgnRosterWatch() {
-    cs.workers.Begin("gmgn_roster_watch")
-    cs.logger.Info("👀 Running GMGN roster watch...")
-    url := fmt.Sprintf("%s/api/gmgn/roster-watch?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
-    resp, err := cs.makeRequest("POST", url, nil, 180)
-    if err != nil {
-        cs.logger.Error(fmt.Sprintf("❌ GMGN roster watch failed: %v", err))
-        cs.workers.Fail("gmgn_roster_watch", err.Error())
-        return
-    }
-    cs.logger.Success(fmt.Sprintf("✅ GMGN roster watch completed (%d bytes)", len(resp)))
-    cs.workers.Success("gmgn_roster_watch")
 }
 
 func (cs *CronService) runSocialRollup() {
@@ -1022,20 +951,6 @@ func (cs *CronService) manualMcapTrackerSimTrackTrigger(w http.ResponseWriter, r
     })
 }
 
-func (cs *CronService) manualMcapTrackerSimOpenTrigger(w http.ResponseWriter, r *http.Request) {
-    if r.Method != "POST" {
-        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-        return
-    }
-    cs.logger.Info("🔧 Manual mcap tracker sim open trigger")
-    go cs.runMcapTrackerSimOpen()
-    json.NewEncoder(w).Encode(map[string]interface{}{
-        "success": true,
-        "message": "MCap tracker sim open triggered",
-        "timestamp": time.Now().UTC().Format(time.RFC3339),
-    })
-}
-
 func (cs *CronService) manualGmgnSimTrackTrigger(w http.ResponseWriter, r *http.Request) {
     if r.Method != "POST" {
         http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1102,20 +1017,6 @@ func (cs *CronService) manualGmgnWalletDiggerTrigger(w http.ResponseWriter, r *h
     json.NewEncoder(w).Encode(map[string]interface{}{
         "success": true,
         "message": "GMGN wallet digger triggered",
-        "timestamp": time.Now().UTC().Format(time.RFC3339),
-    })
-}
-
-func (cs *CronService) manualGmgnRosterWatchTrigger(w http.ResponseWriter, r *http.Request) {
-    if r.Method != "POST" {
-        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-        return
-    }
-    cs.logger.Info("🔧 Manual GMGN roster watch trigger")
-    go cs.runGmgnRosterWatch()
-    json.NewEncoder(w).Encode(map[string]interface{}{
-        "success": true,
-        "message": "GMGN roster watch triggered",
         "timestamp": time.Now().UTC().Format(time.RFC3339),
     })
 }
@@ -1296,31 +1197,6 @@ func (cs *CronService) runTrendingTracker() {
 
 	cs.logger.Success(fmt.Sprintf("✅ Trending tracker completed: %s", resp))
 	cs.workers.Success("trending_tracker")
-}
-
-func (cs *CronService) runFilteredTrendingTracker() {
-    cs.workers.Begin("filtered_trending")
-    cs.logger.Info("🔍 Running filtered trending tracker...")
-    
-    url := fmt.Sprintf("%s/api/trending/filtered", cs.config.APIBaseURL)
-    
-    resp, err := cs.makeRequest("POST", url, map[string]string{
-        "key": cs.config.TrendingSecret,
-    })
-    
-    if err != nil {
-        cs.logger.Error(fmt.Sprintf("❌ Filtered trending tracker failed: %v", err))
-        cs.logger.SendImmediate(
-            "❌ Filtered Trending Tracker Failed",
-            fmt.Sprintf("Error: %v", err),
-            15158332, // Red
-        )
-        cs.workers.Fail("filtered_trending", err.Error())
-        return
-    }
-    
-    cs.logger.Success(fmt.Sprintf("✅ Filtered trending tracker completed: %s", resp))
-    cs.workers.Success("filtered_trending")
 }
 
 func (cs *CronService) runUnfilteredTrendingTracker() {
@@ -1665,41 +1541,6 @@ func (cs *CronService) manualRhClmmManageTrigger(w http.ResponseWriter, r *http.
     })
 }
 
-func (cs *CronService) runRhLpScreen() {
-    cs.workers.Begin("rh_lp_screen")
-    cs.logger.Info("🌊 Running RH LP screen (paper)...")
-    url := fmt.Sprintf("%s/api/dlmm/rh-lp-screen", cs.config.APIBaseURL)
-    resp, err := cs.makeRequest("POST", url, map[string]string{
-        "key": cs.config.DLMMSecret,
-    })
-    if err != nil {
-        cs.logger.Error(fmt.Sprintf("❌ RH LP screen failed: %v", err))
-        cs.workers.Fail("rh_lp_screen", err.Error())
-        return
-    }
-    if isSkippedBody(resp) {
-        cs.logger.Info("⏭️ RH LP screen skipped (job lock held)")
-        cs.workers.Skipped("rh_lp_screen")
-        return
-    }
-    cs.logger.Success(fmt.Sprintf("✅ RH LP screen completed: %s", resp))
-    cs.workers.Success("rh_lp_screen")
-}
-
-func (cs *CronService) manualRhLpScreenTrigger(w http.ResponseWriter, r *http.Request) {
-    if r.Method != "POST" {
-        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-        return
-    }
-    cs.logger.Info("🔧 Manual RH LP screen trigger")
-    cs.runRhLpScreen()
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(map[string]string{
-        "message":   "RH LP screen triggered manually",
-        "timestamp": time.Now().UTC().Format(time.RFC3339),
-    })
-}
-
 func (cs *CronService) runStrategySearch() {
     cs.workers.Begin("strategy_search")
     cs.logger.Info("🔎 Running strategy search cycle...")
@@ -1831,6 +1672,51 @@ func (cs *CronService) manualMetricsCopyTrigger(w http.ResponseWriter, r *http.R
     })
 }
 
+// evidenceArchiveTimeoutSec bounds one archive pass (a day of 1m bars is ~10 MB gz; R2 PUTs are seconds).
+func evidenceArchiveTimeoutSec() int {
+    if v := os.Getenv("EVIDENCE_ARCHIVE_TIMEOUT_SEC"); v != "" {
+        if n, err := strconv.Atoi(v); err == nil && n > 0 {
+            return n
+        }
+    }
+    return 600
+}
+
+// runEvidenceArchive copies complete UTC days of 1m bars + related evidence tables to R2.
+// 409 / {"skipped":true} (job lock held, or EVIDENCE_ARCHIVE_ENABLED unset) is a skip, not a failure;
+// a 5xx (R2 credentials missing, upload failed, hash conflict) is a loud failure on the worker row.
+func (cs *CronService) runEvidenceArchive() {
+    cs.workers.Begin("evidence_archive")
+    url := fmt.Sprintf("%s/api/evidence/archive?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
+    resp, err := cs.makeRequest("POST", url, nil, evidenceArchiveTimeoutSec())
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("❌ Evidence archive failed: %v", err))
+        cs.workers.Fail("evidence_archive", err.Error())
+        return
+    }
+    if isSkippedBody(resp) {
+        cs.logger.Info("⏭️ Evidence archive skipped (disabled or job lock held)")
+        cs.workers.Skipped("evidence_archive")
+        return
+    }
+    cs.logger.Success(fmt.Sprintf("✅ Evidence archive completed: %s", resp))
+    cs.workers.Success("evidence_archive")
+}
+
+func (cs *CronService) manualEvidenceArchiveTrigger(w http.ResponseWriter, r *http.Request) {
+    if r.Method != "POST" {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    cs.logger.Info("🔧 Manual evidence archive trigger")
+    cs.runEvidenceArchive()
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]string{
+        "message":   "evidence archive triggered manually",
+        "timestamp": time.Now().UTC().Format(time.RFC3339),
+    })
+}
+
 func (cs *CronService) manualSolArbScanTrigger(w http.ResponseWriter, r *http.Request) {
     if r.Method != "POST" {
         http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1935,7 +1821,7 @@ func (cs *CronService) persistWorkerRuntimeEvent(workerID, event, msg string) {
 	req.Header.Set("User-Agent", "reloadsol-cron-service/1.0")
 	resp, err := client.Do(req)
 	if err != nil {
-		cs.logger.Info(fmt.Sprintf("Worker runtime persist failed (%s/%s): %v", workerID, event, err))
+		cs.logger.Info(fmt.Sprintf("Worker runtime persist failed (%s/%s): %s", workerID, event, redactSecrets(err.Error())))
 		return
 	}
 	defer resp.Body.Close()
@@ -2057,7 +1943,7 @@ func (cs *CronService) makeRequest(method, url string, params map[string]string,
 
 	// 409 = job lock held by an in-flight tick (withJobLock). A skip, not a failure.
 	if resp.StatusCode == http.StatusConflict {
-		cs.logger.Info(fmt.Sprintf("⏭️ %s skipped: previous run still in progress", url))
+		cs.logger.Info(fmt.Sprintf("⏭️ %s skipped: previous run still in progress", redactSecrets(url)))
 		return string(body), nil
 	}
 
@@ -2356,5 +2242,8 @@ func main() {
 	startTime = time.Now()
 	
 	service := NewCronService()
+	if err := validateRequiredSecrets(service.config); err != nil {
+		log.Fatal(err)
+	}
 	service.Start()
 }
