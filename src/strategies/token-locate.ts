@@ -516,14 +516,14 @@ export async function locateTokenByAddress(
     section(
       'jupiter-v2-raw',
       'Jupiter Token API (raw)',
-      'lite-api.jup.ag/tokens/v2/search',
+      'api.jup.ag/tokens/v2/search',
       'raw',
       jupiterV2Raw,
     ),
     section(
       'jupiter-v2-normalized',
       'Jupiter Token (normalized)',
-      'lite-api.jup.ag/tokens/v2/search',
+      'api.jup.ag/tokens/v2/search',
       'jupiter_enriched',
       jupiterV2Normalized,
     ),

@@ -8,7 +8,7 @@
  */
 
 import { createdTokens, GmgnApiError } from '@/utils/gmgn-api'
-import { fetchJupiterV2SearchRaw } from '@/utils/jupiter-metadata'
+import { JUPITER_IMMUTABLE_MAX_AGE_MS, fetchJupiterV2SearchRaw } from '@/utils/jupiter-metadata'
 import { cacheGet, cacheSet } from '@/utils/redis-cache'
 import {
   scoreDevReputation,
@@ -77,7 +77,8 @@ export async function resolveCreatorAddress(params: {
   if (params.chain !== 'sol') return null
 
   try {
-    const raw = await fetchJupiterV2SearchRaw(params.mint)
+    // a mint's creator never changes: a cached record of any age answers this
+    const raw = await fetchJupiterV2SearchRaw(params.mint, { maxAgeMs: JUPITER_IMMUTABLE_MAX_AGE_MS })
     const arr = Array.isArray(raw) ? raw : [raw]
     const token =
       arr.find(

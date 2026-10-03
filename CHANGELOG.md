@@ -8,6 +8,24 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Jupiter token metadata: cache → one paced batched keyless queue → keyed fallback
+
+`lite-api.jup.ag` is being phased out and answered 429 on every probe from the VPS; ~38 single-mint
+requests/min from ~10 call sites (≈ 480 exhausting every retry per 50 min, rising). Probed live: the SAME
+`tokens/v2/search` on **`api.jup.ag` keyless** answers 200 in ~40 ms in a bucket nobody else uses, and the keyed
+org bucket is already ~half spent by Price/Swap — so metadata must not go there by default (`docs/JUPITER_API_MAP.md`).
+
+- `jupiter-metadata.ts`: L1 memory + L2 Postgres (`jupiter_token_meta`, lazily created, fail-open) caches
+  (metadata 10 min, identity fields up to 7 days, market hints 10 s, not-found 90 s, stale ≤ 6 h on outage);
+  one global queue coalescing concurrent callers into comma-separated requests (≤ 100 mints), in-flight de-duplicated,
+  gated at `JUPITER_META_RPS` (default 0.3, burst 2); keyless `api.jup.ag` first, keyed `api.jup.ag` only on a keyless
+  429 (shared keyed gate, background lane); per-lane cooldown from `x-ratelimit-reset`; names/symbols never hit the network.
+- `JupiterUnavailableError` vs `JupiterTokenNotFoundError`: `assessTokenRisk` no longer treats a 429 as "not graduated"
+  (it falls through to TokenRisk/organic/basic and sets `jupiterUnavailable`); `/api/jupiter/metadata` answers 503 /
+  `unavailable: true` (no data) instead of a fabricated decimals-6 `TOKEN`; the POST route no longer has its own batching loop.
+- One `[jupiter-metadata] stats 10m:` log line per 10 minutes.
+- New env (all optional): `JUPITER_META_RPS`, `JUPITER_META_BURST`, `JUPITER_META_NEGATIVE_TTL_MS`, `JUPITER_META_KEYLESS`, `JUPITER_META_DB_CACHE`.
+
 ### Fixed — `jupiter-metadata.ts`: shared 429 cooldown, in-flight dedupe, body timeout
 
 `lite-api.jup.ag/tokens/v2/search` (keyless) was answering 429; every caller retried 3x (400/800/1600 ms, no

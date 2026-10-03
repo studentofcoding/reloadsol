@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse, connection } from 'next/server'
-import { fetchTokenMetadataFromJupiter, fetchTokensFromJupiterV2 } from '@/utils/jupiter-metadata'
+import {
+  JUPITER_IMMUTABLE_MAX_AGE_MS,
+  fetchTokenMetadataFromJupiter,
+  isJupiterUnavailable,
+  lookupJupiterMetadata,
+} from '@/utils/jupiter-metadata'
 
 // Server-side cache with longer TTL since it's on the server
 const serverTokenCache = new Map<string, {
@@ -21,13 +26,6 @@ const serverTokenCache = new Map<string, {
 }>()
 
 const CACHE_DURATION = 1000 * 60 * 60 * 24 * 31 // 31 days cache on server
-const MAX_RETRIES = 3
-const RETRY_DELAYS = [400, 800, 1600]
-const REQUEST_TIMEOUT = 10000 // 10 seconds timeout
-
-// Rate limiting for server requests
-let lastRequestTime = 0
-const MIN_REQUEST_INTERVAL = 200 // 200ms between requests for batch calls
 
 export async function GET(request: NextRequest) {
   await connection()
@@ -69,7 +67,11 @@ export async function GET(request: NextRequest) {
 
     // Fetch from Jupiter API v2
     try {
-      const tokenData = await fetchTokenMetadataFromJupiter(mintAddress)
+      // Identity fields (symbol/name/decimals/logo) are immutable: accept a week-old answer and let
+      // the shared cache/queue decide whether Jupiter needs to be asked at all.
+      const tokenData = await fetchTokenMetadataFromJupiter(mintAddress, {
+        maxAgeMs: JUPITER_IMMUTABLE_MAX_AGE_MS,
+      })
 
       // Cache the result
       serverTokenCache.set(mintAddress, {
@@ -85,7 +87,18 @@ export async function GET(request: NextRequest) {
     } catch (error) {
       console.warn(`Failed to fetch token metadata for ${mintAddress}:`, error)
 
-      // Return default token data - include graduated pool
+      // Jupiter could not be asked (429 / timeout / 5xx): say so. Fabricating decimals 6 / "TOKEN" here
+      // made a rate limit look like a real token to every client that read `data`.
+      if (isJupiterUnavailable(error)) {
+        const retryAfterSec = Math.max(1, Math.ceil((error.retryAfterMs ?? 10_000) / 1000))
+        return NextResponse.json(
+          { error: 'jupiter_unavailable', unavailable: true, reason: error.reason, retryAfterSec },
+          { status: 503, headers: { 'Retry-After': String(retryAfterSec) } },
+        )
+      }
+
+      // Jupiter answered "no such token": keep the legacy placeholder, explicitly flagged
+      // (source 'default', never cached) - include graduated pool
       const defaultData = {
         decimals: 6,
         symbol: 'TOKEN',
@@ -187,72 +200,49 @@ export async function POST(request: NextRequest) {
       }
     })
 
-    // Fetch uncached mints from Jupiter API v2 with 100-token batches
+    // Fetch uncached mints through the shared cache/queue: it coalesces them into <=100-mint
+    // requests and paces them, so this route no longer runs its own batching loop.
     if (uncachedMints.length > 0) {
-      const BATCH_SIZE = 100 // Process 100 at a time (Jupiter v2 limit)
+      try {
+        const lookup = await lookupJupiterMetadata(uncachedMints, {
+          maxAgeMs: JUPITER_IMMUTABLE_MAX_AGE_MS,
+        })
+        const unavailableByMint = new Map(lookup.unavailable.map((u) => [u.mint, u.error]))
 
-      for (let i = 0; i < uncachedMints.length; i += BATCH_SIZE) {
-        const batch = uncachedMints.slice(i, i + BATCH_SIZE)
-
-        try {
-          const batchResults = await fetchTokensFromJupiterV2(batch)
-
-          // Process results and cache them
-          batch.forEach(mint => {
-            if (batchResults[mint]) {
-              // Cache the result
-              serverTokenCache.set(mint, {
-                data: batchResults[mint],
-                timestamp: Date.now()
-              })
-
-              results[mint] = {
-                data: batchResults[mint],
-                cached: false,
-                source: 'jupiter_api_v2'
-              }
-            } else {
-              // Token not found in batch results - include graduated pool
-              const defaultData = {
-                decimals: 6,
-                symbol: 'TOKEN',
-                name: 'Unknown Token',
-                graduatedPool: null
-              }
-
-              results[mint] = {
-                data: defaultData,
-                cached: false,
-                source: 'default',
-                error: 'Token not found in Jupiter API'
-              }
-            }
-          })
-        } catch (error) {
-          console.warn(`Failed to fetch batch of tokens:`, error)
-
-          // Handle failed batch - assign default data to all tokens in batch
-          batch.forEach(mint => {
-            const defaultData = {
-              decimals: 6,
-              symbol: 'TOKEN',
-              name: 'Unknown Token',
-              graduatedPool: null
-            }
-
+        uncachedMints.forEach(mint => {
+          const found = lookup.found[mint]
+          const unavailable = unavailableByMint.get(mint)
+          if (found) {
+            serverTokenCache.set(mint, { data: found, timestamp: Date.now() })
+            results[mint] = { data: found, cached: false, source: 'jupiter_api_v2' }
+          } else if (unavailable) {
+            // No `data`: a rate limit is not a token. Clients skip entries without data and retry later.
             results[mint] = {
-              data: defaultData,
+              cached: false,
+              source: 'unavailable',
+              unavailable: true,
+              error: unavailable.message,
+            }
+          } else {
+            // Jupiter answered and has no such token - include graduated pool
+            results[mint] = {
+              data: { decimals: 6, symbol: 'TOKEN', name: 'Unknown Token', graduatedPool: null },
               cached: false,
               source: 'default',
-              error: error instanceof Error ? error.message : 'Unknown error'
+              error: 'Token not found in Jupiter API'
             }
-          })
-        }
-
-        // Small delay between batches to be respectful to the API
-        if (i + BATCH_SIZE < uncachedMints.length) {
-          await new Promise(resolve => setTimeout(resolve, 300))
-        }
+          }
+        })
+      } catch (error) {
+        console.warn(`Failed to fetch batch of tokens:`, error)
+        uncachedMints.forEach(mint => {
+          results[mint] = {
+            cached: false,
+            source: 'unavailable',
+            unavailable: true,
+            error: error instanceof Error ? error.message : 'Unknown error'
+          }
+        })
       }
     }
 
