@@ -11,7 +11,46 @@ export const PUBLIC_API_PREFIXES = [
   '/api/trade/pools-test',
   '/api/gmgn/token-snapshot',
   '/api/logs',
+  // Header climate chip is rendered for signed-out visitors; the route only proxies a display payload.
+  '/api/regime/climate',
+  // Read before any wallet sign-in by WalletProvider / WalletConnectGate (GMGN-bound addresses are public
+  // on-chain; the route returns only addresses, never keys).
+  '/api/gmgn/bound-wallets',
+  // Static, non-sensitive reads used by EVM-only (Robinhood) visitors who have no Solana-signed session.
+  '/api/rh/config',
+  '/api/ethprice',
 ] as const;
+
+/**
+ * Exact-path public reads. Exact (not prefix) on purpose: `/api/scout/data-public/paper` writes to the DB
+ * and must stay behind a wallet session while the read-only feed behind the Insight strip stays public.
+ */
+export const PUBLIC_API_EXACT_GET_PATHS = ['/api/scout/data-public'] as const;
+
+/**
+ * Routes that authenticate themselves inside the handler (cron secret, Goldsky bearer, per-job secrets)
+ * or are webhooks. The proxy lets them through so their own check is the only gate; they are NOT public
+ * data. Everything not listed here, in PUBLIC, WALLET or DEV falls to the DEFAULT tier (`wallet`).
+ */
+export const SELF_AUTH_API_PREFIXES = [
+  '/api/gmgn/activity-poll',
+  '/api/gmgn/radar-digest',
+  '/api/gmgn/roster-watch',
+  '/api/gmgn/sim-track',
+  '/api/gmgn/wallet-digger',
+  '/api/mcap-patterns/refresh',
+  '/api/mcap-patterns/training-export',
+  '/api/metrics/copy',
+  '/api/ml/pattern/reload',
+  '/api/ohlc/sample',
+  '/api/report-precompute/refresh',
+  '/api/rh/ledger/ingest',
+  '/api/rug-signal',
+  '/api/sl-tp-monitor',
+] as const;
+
+/** Tier applied to any `/api/*` route that is not classified above. Fail closed: new routes need a session. */
+export const DEFAULT_API_ACCESS_TIER = 'wallet' as const;
 
 /** Any connected wallet session (buy/sell/swap analytics). Checked before dev prefixes. */
 export const WALLET_API_PREFIXES = [
@@ -42,10 +81,13 @@ export const DEV_API_PREFIXES = [
   '/api/analytics',
   '/api/trading/sync',
   '/api/capture',
-  '/api/pnl/update',
+  '/api/pnl',
   '/api/trade/test',
-  '/api/sol-arb/execute',
-  '/api/sol-arb/execute-atomic',
+  // quote/scan/execute: scan is driven by the Go cron with ?key= (service auth), the rest is the dev arbitrage page.
+  '/api/sol-arb',
+  // Spends from the server-held GMGN-bound wallet (GMGN_PRIVATE_KEY): operator only.
+  '/api/gmgn/trade/swap',
+  '/api/mcap-patterns',
   '/api/strategies',
   '/api/gmgn/token-snapshot',
   '/api/gmgn/detect-snapshot',
@@ -76,6 +118,7 @@ export const SERVICE_AUTH_API_PREFIXES = [
   '/api/social/wallet-poll',
 ] as const;
 
+/** `open` = the handler authenticates itself (see SELF_AUTH_API_PREFIXES); the proxy adds no check. */
 export type ApiAccessTier = 'public' | 'wallet' | 'dev' | 'open';
 
 export function matchesApiPrefix(
@@ -98,9 +141,30 @@ export function isPublicTrendingRead(pathname: string, method: string): boolean 
   );
 }
 
+/** Mutating verbs on routes whose GET is wallet-level. */
+export function isDevOnlyMutation(pathname: string, method: string): boolean {
+  // PATCH rewrites the GMGN roster that the cron and the trade UI both read.
+  return pathname === '/api/gmgn/roster' && method !== 'GET' && method !== 'HEAD';
+}
+
 export function getApiAccessTier(pathname: string, method: string): ApiAccessTier {
+  if (matchesApiPrefix(pathname, SELF_AUTH_API_PREFIXES)) {
+    return 'open';
+  }
+
   if (matchesApiPrefix(pathname, PUBLIC_API_PREFIXES)) {
     return 'public';
+  }
+
+  if (
+    method === 'GET' &&
+    (PUBLIC_API_EXACT_GET_PATHS as readonly string[]).includes(pathname)
+  ) {
+    return 'public';
+  }
+
+  if (isDevOnlyMutation(pathname, method)) {
+    return 'dev';
   }
 
   if (isPublicTrendingRead(pathname, method)) {
@@ -115,5 +179,5 @@ export function getApiAccessTier(pathname: string, method: string): ApiAccessTie
     return 'dev';
   }
 
-  return 'open';
+  return DEFAULT_API_ACCESS_TIER;
 }
