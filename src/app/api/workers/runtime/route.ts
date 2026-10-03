@@ -11,7 +11,7 @@ function getRuntimeSecret(): string {
   return (
     process.env.TRENDING_TRACKER_SECRET ||
     process.env.SOCIAL_ROLLUP_SECRET ||
-    'r3l0ads0l-trending'
+    ''
   )
 }
 

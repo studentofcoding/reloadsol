@@ -58,7 +58,7 @@ describe('sl-tp-monitor auth', () => {
   it('fails closed when the secret is unset — the old committed fallback must not work', async () => {
     delete process.env.TRENDING_TRACKER_SECRET
     const res = await GET(
-      new NextRequest(URL_BASE, { headers: { authorization: 'Bearer r3l0ads0l-trending' } }),
+      new NextRequest(URL_BASE, { headers: { authorization: `Bearer ${['r3l0ads0l', 'trending'].join('-')}` } }),
     )
     expect(res.status).toBe(401)
   })

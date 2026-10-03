@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { isDlmmApiAuthorized } from '@/utils/dlmm/config';
+import { isDlmmRequestAuthorized } from '@/utils/dlmm/request-auth';
 import { editPosition, removePosition } from '@/utils/dlmm/actions';
 import { getPositionById } from '@/utils/dlmm/db';
 
@@ -31,7 +31,7 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    if (!isDlmmApiAuthorized(getPassword(req))) {
+    if (!isDlmmRequestAuthorized(req, getPassword(req))) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     const { id } = await params;
@@ -57,7 +57,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    if (!isDlmmApiAuthorized(getPassword(req))) {
+    if (!isDlmmRequestAuthorized(req, getPassword(req))) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     const { id } = await params;

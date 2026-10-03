@@ -169,7 +169,8 @@ async function ingestHotEventHttp(params: {
   const key =
     process.env.SOCIAL_INGEST_SECRET ||
     process.env.TRENDING_TRACKER_SECRET ||
-    'r3l0ads0l-trending'
+    ''
+  if (!key) throw new Error('SOCIAL_INGEST_SECRET or TRENDING_TRACKER_SECRET is required (no default)')
 
   const res = await fetch(`${base}/api/social/ingest?key=${encodeURIComponent(key)}`, {
     method: 'POST',
@@ -230,7 +231,8 @@ async function ingestHotEventDirect(params: {
 
 async function triggerSimTrackHttp(walletName: string): Promise<void> {
   const base = process.env.API_BASE_URL?.replace(/\/$/, '') || 'http://127.0.0.1:3000'
-  const key = process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending'
+  const key = process.env.TRENDING_TRACKER_SECRET || ''
+  if (!key) throw new Error('TRENDING_TRACKER_SECRET is required (no default)')
   const paths: Record<string, string> = {
     mcap: '/api/mcap-tracking/sim-track',
     signals: '/api/signals/sim-track',

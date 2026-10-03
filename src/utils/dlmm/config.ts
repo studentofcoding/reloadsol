@@ -1,4 +1,5 @@
 import type { DlmmAgentConfig } from '@/types/dlmm';
+import { secretsMatch } from '@/utils/secret-auth';
 
 function parseFloatEnv(key: string, fallback: number): number {
   const v = process.env[key];
@@ -26,12 +27,13 @@ export const DLMM_CONFIG = {
   screenSecret:
     process.env.DLMM_SCREEN_SECRET ||
     process.env.TRENDING_TRACKER_SECRET ||
-    'r3l0ads0l-trending',
+    '',
   manageSecret:
     process.env.DLMM_MANAGE_SECRET ||
     process.env.TRENDING_TRACKER_SECRET ||
-    'r3l0ads0l-trending',
-  apiPassword: process.env.DLMM_API_PASSWORD || 'earlytrencher',
+    '',
+  /** No default: unset => password auth is disabled (every attempt is rejected). */
+  apiPassword: process.env.DLMM_API_PASSWORD || '',
   meteoraApiBase: 'https://dlmm.datapi.meteora.ag',
   screenIntervalMs: parseIntEnv('DLMM_SCREEN_INTERVAL_MS', 5 * 60 * 1000),
   manageIntervalMs: parseIntEnv('DLMM_MANAGE_INTERVAL_MS', 60 * 1000),
@@ -74,9 +76,9 @@ export function isAuthorizedRequest(
   secret?: string | null,
   expected = DLMM_CONFIG.manageSecret,
 ): boolean {
-  return !!secret && secret === expected;
+  return secretsMatch(secret, expected);
 }
 
 export function isDlmmApiAuthorized(password?: string | null): boolean {
-  return !!password && password === DLMM_CONFIG.apiPassword;
+  return secretsMatch(password, DLMM_CONFIG.apiPassword);
 }

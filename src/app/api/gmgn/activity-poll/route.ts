@@ -54,7 +54,7 @@ function getPollSecret(): string {
     process.env.GMGN_SIM_TRACK_SECRET ||
     process.env.SIGNALS_SIM_TRACK_SECRET ||
     process.env.TRENDING_TRACKER_SECRET ||
-    'r3l0ads0l-trending'
+    ''
   )
 }
 

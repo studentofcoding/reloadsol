@@ -6,7 +6,9 @@ const DLMM_PASSWORD_KEY = 'dlmmApiPassword';
 
 export function getDlmmPassword(): string {
   if (typeof window === 'undefined') return '';
-  return localStorage.getItem(DLMM_PASSWORD_KEY) || 'earlytrencher';
+  // No built-in default: the old literal shipped to every browser. Dev wallets authenticate by session;
+  // a password is only needed for scripted access (set it via localStorage / setDlmmPassword).
+  return localStorage.getItem(DLMM_PASSWORD_KEY) || '';
 }
 
 export function setDlmmPassword(password: string) {

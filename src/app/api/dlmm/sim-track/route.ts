@@ -16,7 +16,7 @@ function getSimTrackSecret(): string {
     process.env.DLMM_SIM_TRACK_SECRET ||
     process.env.DLMM_MANAGE_SECRET ||
     process.env.TRENDING_TRACKER_SECRET ||
-    'r3l0ads0l-trending'
+    ''
   )
 }
 
