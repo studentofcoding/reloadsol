@@ -1,4 +1,4 @@
-import { query } from "@/utils/db";
+import { query } from '@/utils/db'
 
 /**
  * Durable outcome record for the metrics copier — "is the backbone actually running?".
@@ -21,20 +21,20 @@ import { query } from "@/utils/db";
  * sweep would be worse than no recorder — that lesson was learned the hard way on the symbol lookup.
  */
 
-export type CopierRunOutcome = "running" | "completed" | "failed";
+export type CopierRunOutcome = 'running' | 'completed' | 'failed'
 
 export type CopierRunRow = {
-  id: string;
-  startedAt: string;
-  finishedAt: string | null;
-  source: string;
-  outcome: CopierRunOutcome;
-  detail: string | null;
-  summary: Record<string, unknown> | null;
-  durationMs: number | null;
-};
+  id: string
+  startedAt: string
+  finishedAt: string | null
+  source: string
+  outcome: CopierRunOutcome
+  detail: string | null
+  summary: Record<string, unknown> | null
+  durationMs: number | null
+}
 
-let ensurePromise: Promise<void> | null = null;
+let ensurePromise: Promise<void> | null = null
 
 /** Created on first use, like `rug_signal_shadow` — this is a log, not a fact about the schema. */
 function ensureTable(): Promise<void> {
@@ -50,31 +50,30 @@ function ensureTable(): Promise<void> {
            detail TEXT,
            summary JSONB
          )`,
-      );
+      )
       await query(
         `CREATE INDEX IF NOT EXISTS idx_copier_runs_started ON copier_runs(started_at DESC)`,
-      );
+      )
     })()
       .then(() => undefined)
       .catch((error) => {
         // Let a later call retry rather than caching the failure forever.
-        ensurePromise = null;
-        throw error;
-      });
+        ensurePromise = null
+        throw error
+      })
   }
-  return ensurePromise;
+  return ensurePromise
 }
 
 /** How old a `running` row must be before the reaper treats it as an orphan. */
-export const COPIER_ORPHAN_MIN_AGE_MINUTES = 15;
-export const COPIER_ORPHAN_DETAIL =
-  "orphaned: killed mid-flight by cron restart (auto-reaped)";
+export const COPIER_ORPHAN_MIN_AGE_MINUTES = 15
+export const COPIER_ORPHAN_DETAIL = 'orphaned: killed mid-flight by cron restart (auto-reaped)'
 
-let reapedThisProcess = false;
+let reapedThisProcess = false
 
 /** Test seam: the reaper runs once per process. */
 export function resetCopierReaperForTests(): void {
-  reapedThisProcess = false;
+  reapedThisProcess = false
 }
 
 /**
@@ -85,11 +84,9 @@ export function resetCopierReaperForTests(): void {
  * a lock that expired under a still-live sweep. Excludes `exceptId` (the run just started).
  * Fail-open and best-effort, like everything else here.
  */
-export async function reapStaleCopierRuns(
-  exceptId?: string | null,
-): Promise<number> {
+export async function reapStaleCopierRuns(exceptId?: string | null): Promise<number> {
   try {
-    await ensureTable();
+    await ensureTable()
     const { rows } = await query<{ id: string }>(
       `UPDATE copier_runs
           SET outcome = 'failed',
@@ -101,10 +98,10 @@ export async function reapStaleCopierRuns(
           AND ($3::bigint IS NULL OR id <> $3::bigint)
         RETURNING id`,
       [COPIER_ORPHAN_MIN_AGE_MINUTES, COPIER_ORPHAN_DETAIL, exceptId ?? null],
-    );
-    return rows.length;
+    )
+    return rows.length
   } catch {
-    return 0;
+    return 0
   }
 }
 
@@ -117,33 +114,30 @@ export async function reapStaleCopierRuns(
  */
 export async function startCopierRun(source: string): Promise<string | null> {
   try {
-    await ensureTable();
+    await ensureTable()
     const { rows } = await query<{ id: string }>(
       `INSERT INTO copier_runs (source, outcome) VALUES ($1, 'running') RETURNING id::text AS id`,
       [source],
-    );
-    const id = rows[0]?.id ?? null;
+    )
+    const id = rows[0]?.id ?? null
     if (!reapedThisProcess) {
-      reapedThisProcess = true;
-      const reaped = await reapStaleCopierRuns(id);
-      if (reaped > 0)
-        console.warn(
-          `[copier-runs] reaped ${reaped} stale running row(s) from a killed sweep`,
-        );
+      reapedThisProcess = true
+      const reaped = await reapStaleCopierRuns(id)
+      if (reaped > 0) console.warn(`[copier-runs] reaped ${reaped} stale running row(s) from a killed sweep`)
     }
-    return id;
+    return id
   } catch {
-    return null;
+    return null
   }
 }
 
 /** Closes a run. A null id (recording was unavailable at the start) is a no-op. */
 export async function finishCopierRun(
   id: string | null,
-  outcome: Exclude<CopierRunOutcome, "running">,
+  outcome: Exclude<CopierRunOutcome, 'running'>,
   detail?: { reason?: string | null; summary?: Record<string, unknown> | null },
 ): Promise<void> {
-  if (!id) return;
+  if (!id) return
   try {
     await query(
       `UPDATE copier_runs
@@ -152,13 +146,8 @@ export async function finishCopierRun(
               detail = $3,
               summary = $4::jsonb
         WHERE id = $1::bigint AND outcome = 'running'`,
-      [
-        id,
-        outcome,
-        detail?.reason ?? null,
-        detail?.summary ? JSON.stringify(detail.summary) : null,
-      ],
-    );
+      [id, outcome, detail?.reason ?? null, detail?.summary ? JSON.stringify(detail.summary) : null],
+    )
   } catch {
     // Ignored on purpose: see the header.
   }
@@ -167,16 +156,16 @@ export async function finishCopierRun(
 /** Last N runs, newest first — the raw material for the panel and for a watchdog. */
 export async function loadCopierRuns(limit = 50): Promise<CopierRunRow[]> {
   try {
-    await ensureTable();
+    await ensureTable()
     const { rows } = await query<{
-      id: string;
-      started_at: string;
-      finished_at: string | null;
-      source: string;
-      outcome: CopierRunOutcome;
-      detail: string | null;
-      summary: Record<string, unknown> | null;
-      duration_ms: string | null;
+      id: string
+      started_at: string
+      finished_at: string | null
+      source: string
+      outcome: CopierRunOutcome
+      detail: string | null
+      summary: Record<string, unknown> | null
+      duration_ms: string | null
     }>(
       `SELECT id::text AS id, started_at::text AS started_at, finished_at::text AS finished_at,
               source, outcome, detail, summary,
@@ -185,7 +174,7 @@ export async function loadCopierRuns(limit = 50): Promise<CopierRunRow[]> {
         ORDER BY started_at DESC
         LIMIT $1`,
       [Math.min(Math.max(1, Math.floor(limit)), 500)],
-    );
+    )
     return rows.map((r) => ({
       id: r.id,
       startedAt: r.started_at,
@@ -194,24 +183,23 @@ export async function loadCopierRuns(limit = 50): Promise<CopierRunRow[]> {
       outcome: r.outcome,
       detail: r.detail,
       summary: r.summary,
-      durationMs:
-        r.duration_ms == null ? null : Math.round(Number(r.duration_ms)),
-    }));
+      durationMs: r.duration_ms == null ? null : Math.round(Number(r.duration_ms)),
+    }))
   } catch {
-    return [];
+    return []
   }
 }
 
 export type CopierRunHealth = {
-  windowMinutes: number;
-  completed: number;
-  failed: number;
-  running: number;
+  windowMinutes: number
+  completed: number
+  failed: number
+  running: number
   /** Runs still marked running past the stuck threshold — the killed-mid-flight signature. */
-  stuck: number;
-  lastCompletedAt: string | null;
-  lastRunAt: string | null;
-};
+  stuck: number
+  lastCompletedAt: string | null
+  lastRunAt: string | null
+}
 
 /**
  * Health over a window. `stuckMinutes` separates "running right now" from "running three hours ago",
@@ -229,14 +217,14 @@ export async function copierRunHealth(
     stuck: 0,
     lastCompletedAt: null,
     lastRunAt: null,
-  };
+  }
   try {
-    await ensureTable();
+    await ensureTable()
     const { rows } = await query<{
-      outcome: CopierRunOutcome;
-      n: string;
-      stuck: string;
-      last_at: string | null;
+      outcome: CopierRunOutcome
+      n: string
+      stuck: string
+      last_at: string | null
     }>(
       `SELECT outcome,
               COUNT(*)::text AS n,
@@ -248,26 +236,23 @@ export async function copierRunHealth(
         WHERE started_at > NOW() - make_interval(mins => $1::int)
         GROUP BY outcome`,
       [windowMinutes, stuckMinutes],
-    );
+    )
     const { rows: completed } = await query<{ last: string | null }>(
       `SELECT MAX(finished_at)::text AS last FROM copier_runs WHERE outcome = 'completed'`,
-    );
-    const health = { ...empty, lastCompletedAt: completed[0]?.last ?? null };
+    )
+    const health = { ...empty, lastCompletedAt: completed[0]?.last ?? null }
     for (const row of rows) {
-      const n = Number(row.n);
-      if (row.outcome === "completed") health.completed = n;
-      else if (row.outcome === "failed") health.failed = n;
-      else if (row.outcome === "running") health.running = n;
-      health.stuck += Number(row.stuck);
-      if (
-        row.last_at &&
-        (!health.lastRunAt || row.last_at > health.lastRunAt)
-      ) {
-        health.lastRunAt = row.last_at;
+      const n = Number(row.n)
+      if (row.outcome === 'completed') health.completed = n
+      else if (row.outcome === 'failed') health.failed = n
+      else if (row.outcome === 'running') health.running = n
+      health.stuck += Number(row.stuck)
+      if (row.last_at && (!health.lastRunAt || row.last_at > health.lastRunAt)) {
+        health.lastRunAt = row.last_at
       }
     }
-    return health;
+    return health
   } catch {
-    return empty;
+    return empty
   }
 }
