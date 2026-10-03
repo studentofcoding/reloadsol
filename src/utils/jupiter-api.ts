@@ -1,4 +1,5 @@
 // Jupiter API utility with v2/v3 compatibility and centralized configuration
+import { throttleJupiterRps } from './jupiter-rps'
 
 // API Configuration
 const JUPITER_API_CONFIG = {
@@ -25,8 +26,21 @@ const RATE_LIMIT_BACKOFF_MIN_MS = 5_000
 const RATE_LIMIT_BACKOFF_MAX_MS = 60_000
 let rateLimitedUntilMs = 0
 
-/** Backoff ms for a 429 given its `Retry-After` header (seconds or HTTP date). Pure. */
-export function jupiterPriceBackoffMs(retryAfter: string | null, nowMs: number = Date.now()): number {
+/**
+ * Backoff ms for a 429. `x-ratelimit-reset` (absolute epoch seconds, the end of the 10 s sliding window)
+ * wins when present, so one window is waited out instead of a blind 30 s; otherwise `Retry-After`
+ * (seconds or HTTP date); otherwise the 30 s default. Clamped to the 5..60 s range, except a
+ * reset-derived wait which may be as short as 2 s. Pure.
+ */
+export function jupiterPriceBackoffMs(
+  retryAfter: string | null,
+  nowMs: number = Date.now(),
+  resetEpochSec: string | null = null,
+): number {
+  const resetSec = Number(resetEpochSec)
+  if (resetEpochSec && Number.isFinite(resetSec) && resetSec * 1000 > nowMs && resetSec * 1000 - nowMs <= 60_000) {
+    return Math.min(RATE_LIMIT_BACKOFF_MAX_MS, Math.max(2_000, Math.ceil(resetSec * 1000 - nowMs) + 500))
+  }
   let ms = RATE_LIMIT_BACKOFF_DEFAULT_MS
   if (retryAfter?.trim()) {
     const t = retryAfter.trim()
@@ -40,6 +54,19 @@ export function jupiterPriceBackoffMs(retryAfter: string | null, nowMs: number =
   return Math.min(RATE_LIMIT_BACKOFF_MAX_MS, Math.max(RATE_LIMIT_BACKOFF_MIN_MS, Math.ceil(ms)))
 }
 
+/**
+ * Record a 429 from ANY keyed Price V3 caller (this file and usd-prices.ts share one cooldown, so a
+ * 429 seen by one stops the others instead of each rediscovering it).
+ */
+export function noteJupiterPriceRateLimited(
+  headers: { get(name: string): string | null },
+  nowMs: number = Date.now(),
+): number {
+  const ms = jupiterPriceBackoffMs(headers.get('retry-after'), nowMs, headers.get('x-ratelimit-reset'))
+  rateLimitedUntilMs = Math.max(rateLimitedUntilMs, nowMs + ms)
+  return ms
+}
+
 /** Milliseconds of 429 backoff left (0 = free to call). */
 export function jupiterPriceBackoffRemainingMs(nowMs: number = Date.now()): number {
   return Math.max(0, rateLimitedUntilMs - nowMs)
@@ -47,7 +74,16 @@ export function jupiterPriceBackoffRemainingMs(nowMs: number = Date.now()): numb
 
 export function __resetJupiterPriceBackoffForTests(): void {
   rateLimitedUntilMs = 0
+  priceInflight.clear()
+  priceRecent.clear()
 }
+
+// Single-flight + short result cache for identical id sets: concurrent callers (and the 10+ call
+// sites that ask for the same SOL price) share one upstream request instead of each spending a token.
+const PRICE_RESULT_TTL_MS = 3_000
+const priceInflight = new Map<string, Promise<Record<string, TokenPriceData>>>()
+const priceRecent = new Map<string, { at: number; value: Record<string, TokenPriceData> }>()
+const priceKey = (tokens: string[]) => [...new Set(tokens)].sort().join(',')
 
 // Response type definitions
 interface JupiterV2Response {
@@ -163,8 +199,19 @@ export async function fetchTokenPrices(
   const primaryVersion = JUPITER_API_CONFIG.PRIMARY_VERSION
   const fallbackVersion = JUPITER_API_CONFIG.FALLBACK_VERSION
 
+  const key = priceKey(tokens)
+  const recent = priceRecent.get(key)
+  if (recent && Date.now() - recent.at < PRICE_RESULT_TTL_MS) return recent.value
+  const running = priceInflight.get(key)
+  if (running) return running
+
   try {
-    return await fetchTokenPricesWithVersion(tokens, primaryVersion, { timeout, retries, retryDelay })
+    const pending = fetchTokenPricesWithVersion(tokens, primaryVersion, { timeout, retries, retryDelay })
+    priceInflight.set(key, pending)
+    const result = await pending.finally(() => priceInflight.delete(key))
+    priceRecent.set(key, { at: Date.now(), value: result })
+    if (priceRecent.size > 200) priceRecent.delete(priceRecent.keys().next().value as string)
+    return result
   } catch (error: unknown) {
     // Since auto-fallback is disabled in v3-only mode, just throw the error
     // Log the error for monitoring
@@ -204,6 +251,8 @@ async function fetchTokenPricesWithVersion(
           true,
         )
       }
+      // Same bucket as Swap/`usd-prices`: take a token from the shared gate (this path used to skip it).
+      await throttleJupiterRps('background')
       console.log(`Fetching prices for ${tokens.length} tokens (attempt ${attempt + 1}/${retries + 1})`, {
         version,
         url: url.replace(/ids=[^&]*/, 'ids=...')
@@ -228,8 +277,7 @@ async function fetchTokenPricesWithVersion(
       clearTimeout(timeoutId)
 
       if (response.status === 429) {
-        const backoffMs = jupiterPriceBackoffMs(response.headers.get('retry-after'))
-        rateLimitedUntilMs = Math.max(rateLimitedUntilMs, Date.now() + backoffMs)
+        noteJupiterPriceRateLimited(response.headers)
         throw new JupiterAPIError('Rate limited by Jupiter API', 429, true)
       }
 
@@ -358,6 +406,11 @@ export function getJupiterApiConfig(): typeof JUPITER_API_CONFIG {
 
 /** Raw Price V3 JSON for token locate (unmapped). */
 export async function fetchJupiterPriceRaw(token: string): Promise<unknown> {
+  const backoffLeft = jupiterPriceBackoffRemainingMs()
+  if (backoffLeft > 0) {
+    throw new JupiterAPIError(`Jupiter price API in 429 backoff (${Math.ceil(backoffLeft / 1000)}s left)`, 429, true)
+  }
+  await throttleJupiterRps('background')
   const url = `${JUPITER_API_CONFIG.BASE_URL}/v3?ids=${encodeURIComponent(token)}`
   const headers: Record<string, string> = {
     accept: 'application/json',
@@ -368,6 +421,7 @@ export async function fetchJupiterPriceRaw(token: string): Promise<unknown> {
   const response = await fetch(url, {
     headers,
   })
+  if (response.status === 429) noteJupiterPriceRateLimited(response.headers)
   if (!response.ok) {
     throw new Error(`price HTTP ${response.status}`)
   }

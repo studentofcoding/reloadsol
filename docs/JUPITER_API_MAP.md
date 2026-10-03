@@ -61,3 +61,24 @@ Env: `JUPITER_META_RPS` (0.3), `JUPITER_META_BURST` (2), `JUPITER_META_NEGATIVE_
 `JUPITER_META_KEYLESS=0` (keyed only), `JUPITER_META_DB_CACHE=0` (disable L2).
 Observability: one `[jupiter-metadata] stats 10m: …` log line per 10 minutes (lookups, l1/l2/neg hits, upstream
 mints, keyless/keyed requests, 429s per lane, failed batches).
+
+## Oct 4 follow-up: lite-api probe + keyed Price V3 429s
+
+**`lite-api.jup.ag` swap v1 still works.** Probed from the VPS (3 requests, keyless, 4 s apart):
+`GET /swap/v1/quote` SOL→USDC → **200** in 78 ms; `POST /swap/v1/swap-instructions` with `{}` → **422**
+(validation reached, i.e. not rate limited). So `jupiter-lite-swap.ts` and `sol-arb/atomic.ts` are LIVE and
+healthy and were deliberately left alone. Only `lite-api…/tokens/v2/search` was 429ing (already migrated, #136).
+`datapi.jup.ag` (`pools/toptrending/1h`, `assets/search`) also answers 200. Migration, when it's needed, is a
+base-URL swap to `https://api.jup.ag/swap/v1` (+ `x-api-key`), same paths.
+
+**Why the keyed bucket still saw 429s (Price V3).** Three leaks, fixed in `fix(jupiter-price)`:
+1. `jupiter-api.ts` (`getTokenPrice`/`fetchTokenPrices`, SOL price, locate) never took a token from the shared
+   gate (`throttleJupiterRps`), so it competed with the gated Swap/usd-prices traffic on the same org bucket.
+2. `jupiter-api.ts` and `usd-prices.ts` kept *separate* 429 state: one learned of a 429 and the other kept firing.
+   They now share one cooldown (`noteJupiterPriceRateLimited`), sized from `x-ratelimit-reset` (end of the 10 s
+   window, min 2 s) → `Retry-After` → 30 s default.
+3. Identical concurrent lookups each spent a request. `fetchTokenPrices` is now single-flight per id-set with a 3 s
+   result cache; `fetchJupiterPriceRaw` (token locate) is gated and respects the cooldown.
+
+Unchanged: `JUPITER_BURST=8` is larger than the Free plan's ~10 requests / 10 s window can absorb together with the
+sustained refill — lowering it to ~5 is the next knob if 429s persist (a trade-latency tradeoff, so not changed here).

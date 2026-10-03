@@ -1,5 +1,10 @@
 import { cacheGet, cacheSet, cacheSetNx } from '@/utils/redis-cache'
 import {
+  __resetJupiterPriceBackoffForTests,
+  jupiterPriceBackoffRemainingMs,
+  noteJupiterPriceRateLimited,
+} from '@/utils/jupiter-api'
+import {
   jupiterApiHeaders,
   resetJupiterRpsForTests,
   throttleJupiterRps,
@@ -70,6 +75,7 @@ export function resetUsdPricesForTests(): void {
   memory.clear()
   inflight.clear()
   missingKeyLogged = false
+  __resetJupiterPriceBackoffForTests()
   resetJupiterRpsForTests()
 }
 
@@ -113,6 +119,13 @@ async function fetchChunkFromJupiter(chunk: string[]): Promise<void> {
     return
   }
 
+  // Shared with jupiter-api.ts: after any keyed Price V3 429 stand down for the rest of the window
+  // (callers fall back to the stale entry) instead of spending more tokens on guaranteed 429s.
+  const backoffLeft = jupiterPriceBackoffRemainingMs()
+  if (backoffLeft > 0) {
+    throw new Error(`Jupiter price in 429 backoff (${Math.ceil(backoffLeft / 1000)}s left)`)
+  }
+
   const lockKey = usdPriceLockKey(chunk)
   const gotLock = await cacheSetNx(lockKey, 1, USD_PRICE_LOCK_TTL_SEC)
   if (!gotLock) {
@@ -124,6 +137,7 @@ async function fetchChunkFromJupiter(chunk: string[]): Promise<void> {
   const url = `${JUPITER_PRICE_V3}?ids=${chunk.map(encodeURIComponent).join(',')}`
   const response = await fetch(url, { headers: jupiterApiHeaders() })
   if (response.status === 429) {
+    noteJupiterPriceRateLimited(response.headers)
     throw new Error('Jupiter price rate limited')
   }
   if (!response.ok) {
