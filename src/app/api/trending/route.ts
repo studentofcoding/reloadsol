@@ -3,6 +3,7 @@ import { NextRequest, connection } from 'next/server'
 import { JupiterBaseAsset, JupiterPool, JupiterResponse, TokenCache, TransformedToken } from '@/types'
 import { isInTrackingRange, bulkTrackTokenMcaps } from '@/utils/mcap-tracker'
 import { recordMetricSnapshots } from '@/strategies/token-metrics-history'
+import { firstConfiguredSecret, secretsMatch } from '@/utils/secret-auth';
 
 // Initialize token cache
 let tokenCache: TokenCache = {
@@ -54,10 +55,10 @@ export async function POST(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const secretKey = searchParams.get('key');
-    const expectedSecretKey = process.env.NOTIFICATION_SECRET_KEY || process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending';
+    const expectedSecretKey = firstConfiguredSecret(process.env.NOTIFICATION_SECRET_KEY, process.env.TRENDING_TRACKER_SECRET);
 
-    // Validate secret key if configured
-    if (expectedSecretKey && secretKey !== expectedSecretKey) {
+    // Fail closed: no configured secret means nobody is authorised (never skip the check).
+    if (!secretsMatch(secretKey, expectedSecretKey)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 

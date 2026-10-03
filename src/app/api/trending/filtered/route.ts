@@ -8,6 +8,7 @@ import { withUnifiedLogging } from '@/utils/unified-logger'
 import { TransformedToken } from '@/types'
 import { tokenCache, fetchAndUpdateCache } from '../route'
 import { attachFirstDetections } from '@/utils/first-detection'
+import { secretsMatch } from '@/utils/secret-auth'
 
 // POST: kept so the existing cron worker (filtered_trending) keeps getting 200.
 // The filtered Discord list notification was removed; there is nothing to send.
@@ -15,9 +16,9 @@ import { attachFirstDetections } from '@/utils/first-detection'
 export async function POST(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const secretKey = searchParams.get('key')
-    const expectedSecretKey = process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending'
+    const expectedSecretKey = process.env.TRENDING_TRACKER_SECRET
 
-    if (secretKey !== expectedSecretKey) {
+    if (!secretsMatch(secretKey, expectedSecretKey)) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 

@@ -18,7 +18,11 @@ const BASE_URL = process.env.VERCEL_URL
   ? `https://${process.env.VERCEL_URL}`
   : process.env.TEST_BASE_URL || 'https://reloadsol.app';
 
-const SECRET_KEY = process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending';
+const SECRET_KEY = process.env.TRENDING_TRACKER_SECRET;
+if (!SECRET_KEY) {
+  console.error('TRENDING_TRACKER_SECRET is required (no default).');
+  process.exit(1);
+}
 const CONTENT_TYPE = process.env.TEST_CONTENT_TYPE || 'application/json';
 const USER_AGENT = process.env.TEST_USER_AGENT || 'trending-tracker-test-script';
 const EXPECTED_UNAUTHORIZED_STATUS = parseInt(process.env.TEST_EXPECTED_UNAUTHORIZED_STATUS) || 401;

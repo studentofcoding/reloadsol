@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse, connection } from 'next/server';
 import { DbUnavailableError } from '@/utils/db-health';
-import { isDlmmApiAuthorized } from '@/utils/dlmm/config';
+import { isDlmmRequestAuthorized } from '@/utils/dlmm/request-auth';
 import { defaultAgentConfig } from '@/utils/dlmm/config';
 import { getAgentConfig, updateAgentConfig } from '@/utils/dlmm/db';
 import { getDlmmDbStatus } from '@/utils/dlmm/db-status';
@@ -44,7 +44,7 @@ export async function GET() {
 
 export async function PATCH(req: NextRequest) {
   try {
-    if (!isDlmmApiAuthorized(getPassword(req))) {
+    if (!isDlmmRequestAuthorized(req, getPassword(req))) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     const body = await req.json();

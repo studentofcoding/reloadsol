@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse, connection } from 'next/server'
 import { getLogs, getLogStats, clearLogs, LogLevel } from '@/utils/unified-logger'
 import { formatAppDateTime } from '@/utils/datetime'
+import { secretsMatch } from '@/utils/secret-auth'
 
 export async function GET(request: NextRequest) {
   await connection()
@@ -87,9 +88,9 @@ export async function DELETE(request: NextRequest) {
     // Simple authentication check
     const { searchParams } = new URL(request.url)
     const clearAuth = searchParams.get('auth')
-    const expectedAuth = process.env.LOGS_CLEAR_AUTH || 'clear-logs-secret'
+    const expectedAuth = process.env.LOGS_CLEAR_AUTH
 
-    if (clearAuth !== expectedAuth) {
+    if (!secretsMatch(clearAuth, expectedAuth)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 

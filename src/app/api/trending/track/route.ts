@@ -18,6 +18,7 @@ import {
 } from '@/strategies/trending-track/filtering'
 import { setTradingMode } from '@/strategies/trending-track/trading-mode'
 import { internalTrackPost } from '@/strategies/trending-track/cycle'
+import { secretsMatch } from '@/utils/secret-auth'
 
 // ====================================================================================================
 // REAL TRADING SETUP INSTRUCTIONS:
@@ -46,11 +47,11 @@ export const PUT = withUnifiedLogging(async (request: NextRequest, logger) => {
   try {
     const { searchParams } = new URL(request.url)
     const secretKey = searchParams.get('key')
-    const expectedSecretKey = process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending'
+    const expectedSecretKey = process.env.TRENDING_TRACKER_SECRET
     const testDiscord = searchParams.get('test') === 'discord'
     const testFilter = searchParams.get('test') === 'filter'
 
-    if (secretKey !== expectedSecretKey) {
+    if (!secretsMatch(secretKey, expectedSecretKey)) {
       logger.warn('api_request', 'Unauthorized attempt to change trading mode', {
         ip: request.headers.get('x-forwarded-for') ||
           request.headers.get('x-real-ip') ||
