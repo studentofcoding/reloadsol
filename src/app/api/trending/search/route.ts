@@ -1,31 +1,26 @@
-import { NextResponse, connection } from 'next/server';
+import { NextResponse, connection } from 'next/server'
+import { normalizeAssetSearchQuery, searchJupiterAssets } from '@/utils/jupiter-asset-search'
 
 export async function GET(request: Request) {
   await connection()
-  const { searchParams } = new URL(request.url);
-  const query = searchParams.get('query');
+  const { searchParams } = new URL(request.url)
+  const query = normalizeAssetSearchQuery(searchParams.get('query') ?? '')
 
   if (!query) {
-    return NextResponse.json({ error: 'Query parameter is required' }, { status: 400 });
+    return NextResponse.json({ error: 'Query parameter is required' }, { status: 400 })
   }
 
-  try {
-    const response = await fetch(`https://datapi.jup.ag/v1/assets/search?query=${encodeURIComponent(query)}`, {
-      headers: {
-        'accept': 'application/json',
-        'referer': 'https://jup.ag/',
-        'user-agent': 'Mozilla/5.0'
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`Jupiter API responded with status: ${response.status}`);
-    }
-
-    const data = await response.json();
-    return NextResponse.json(data);
-  } catch (error) {
-    console.error('Error fetching token data:', error);
-    return NextResponse.json({ error: 'Failed to fetch token data' }, { status: 500 });
+  const result = await searchJupiterAssets(query)
+  if (result.ok) {
+    return NextResponse.json(result.data, {
+      headers: { 'X-Cache': result.cache, 'Cache-Control': 'private, max-age=15' },
+    })
   }
+  if (result.status === 429) {
+    return NextResponse.json(
+      { error: 'Rate limited by Jupiter; retry shortly' },
+      { status: 429, headers: { 'Retry-After': String(result.retryAfterS) } },
+    )
+  }
+  return NextResponse.json({ error: 'Failed to fetch token data' }, { status: 500 })
 }

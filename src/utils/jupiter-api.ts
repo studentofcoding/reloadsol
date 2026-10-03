@@ -15,6 +15,40 @@ const JUPITER_API_CONFIG = {
   RETRY_DELAY: 1000,
 }
 
+/**
+ * After a 429 the price API is left alone for this long (Retry-After honoured, clamped). The old
+ * behaviour was 3 more attempts 1 s apart — three extra 429s inside the same throttle window, from every
+ * concurrent caller — which kept the limiter engaged. Callers already have a stale/other-source path.
+ */
+const RATE_LIMIT_BACKOFF_DEFAULT_MS = 30_000
+const RATE_LIMIT_BACKOFF_MIN_MS = 5_000
+const RATE_LIMIT_BACKOFF_MAX_MS = 60_000
+let rateLimitedUntilMs = 0
+
+/** Backoff ms for a 429 given its `Retry-After` header (seconds or HTTP date). Pure. */
+export function jupiterPriceBackoffMs(retryAfter: string | null, nowMs: number = Date.now()): number {
+  let ms = RATE_LIMIT_BACKOFF_DEFAULT_MS
+  if (retryAfter?.trim()) {
+    const t = retryAfter.trim()
+    const n = Number(t)
+    if (Number.isFinite(n) && n >= 0) ms = n * 1000
+    else {
+      const d = Date.parse(t)
+      if (Number.isFinite(d)) ms = d - nowMs
+    }
+  }
+  return Math.min(RATE_LIMIT_BACKOFF_MAX_MS, Math.max(RATE_LIMIT_BACKOFF_MIN_MS, Math.ceil(ms)))
+}
+
+/** Milliseconds of 429 backoff left (0 = free to call). */
+export function jupiterPriceBackoffRemainingMs(nowMs: number = Date.now()): number {
+  return Math.max(0, rateLimitedUntilMs - nowMs)
+}
+
+export function __resetJupiterPriceBackoffForTests(): void {
+  rateLimitedUntilMs = 0
+}
+
 // Response type definitions
 interface JupiterV2Response {
   data: Record<string, {
@@ -161,6 +195,15 @@ async function fetchTokenPricesWithVersion(
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
+      const backoffLeft = jupiterPriceBackoffRemainingMs()
+      if (backoffLeft > 0) {
+        // In a 429 window: don't touch the API at all (and don't retry — see RATE_LIMIT_BACKOFF_*).
+        throw new JupiterAPIError(
+          `Jupiter price API in 429 backoff (${Math.ceil(backoffLeft / 1000)}s left)`,
+          429,
+          true,
+        )
+      }
       console.log(`Fetching prices for ${tokens.length} tokens (attempt ${attempt + 1}/${retries + 1})`, {
         version,
         url: url.replace(/ids=[^&]*/, 'ids=...')
@@ -185,6 +228,8 @@ async function fetchTokenPricesWithVersion(
       clearTimeout(timeoutId)
 
       if (response.status === 429) {
+        const backoffMs = jupiterPriceBackoffMs(response.headers.get('retry-after'))
+        rateLimitedUntilMs = Math.max(rateLimitedUntilMs, Date.now() + backoffMs)
         throw new JupiterAPIError('Rate limited by Jupiter API', 429, true)
       }
 
@@ -206,11 +251,7 @@ async function fetchTokenPricesWithVersion(
       const isLastAttempt = attempt === retries
 
       if (error instanceof JupiterAPIError) {
-        if (error.isRateLimit && !isLastAttempt) {
-          console.warn(`Rate limited, retrying in ${retryDelay}ms...`)
-          await new Promise(resolve => setTimeout(resolve, retryDelay))
-          continue
-        }
+        // A rate limit is never retried in a burst: the backoff window above replaces it.
         throw error
       }
 
