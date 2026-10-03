@@ -65,7 +65,53 @@ function ensureTable(): Promise<void> {
   return ensurePromise
 }
 
-/** Marks the start of a sweep. Returns an id to finish with, or null if recording is unavailable. */
+/** How old a `running` row must be before the reaper treats it as an orphan. */
+export const COPIER_ORPHAN_MIN_AGE_MINUTES = 15
+export const COPIER_ORPHAN_DETAIL = 'orphaned: killed mid-flight by cron restart (auto-reaped)'
+
+let reapedThisProcess = false
+
+/** Test seam: the reaper runs once per process. */
+export function resetCopierReaperForTests(): void {
+  reapedThisProcess = false
+}
+
+/**
+ * Closes `running` rows left by sweeps that were killed mid-flight (deploy recreate, OOM, crash).
+ *
+ * Only safe to call while the caller holds the `metrics_copier` job lock: with the lock held no other
+ * sweep can be running, so any older `running` row is an orphan. The age floor is belt-and-braces for
+ * a lock that expired under a still-live sweep. Excludes `exceptId` (the run just started).
+ * Fail-open and best-effort, like everything else here.
+ */
+export async function reapStaleCopierRuns(exceptId?: string | null): Promise<number> {
+  try {
+    await ensureTable()
+    const { rows } = await query<{ id: string }>(
+      `UPDATE copier_runs
+          SET outcome = 'failed',
+              finished_at = NOW(),
+              detail = $2
+        WHERE outcome = 'running'
+          AND finished_at IS NULL
+          AND started_at < NOW() - make_interval(mins => $1::int)
+          AND ($3::bigint IS NULL OR id <> $3::bigint)
+        RETURNING id`,
+      [COPIER_ORPHAN_MIN_AGE_MINUTES, COPIER_ORPHAN_DETAIL, exceptId ?? null],
+    )
+    return rows.length
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * Marks the start of a sweep. Returns an id to finish with, or null if recording is unavailable.
+ *
+ * Must be called after the `metrics_copier` job lock is acquired: the first call in each process
+ * also reaps stale `running` rows left by a killed predecessor, so the freshness watchdog stops
+ * reporting them as stuck forever.
+ */
 export async function startCopierRun(source: string): Promise<string | null> {
   try {
     await ensureTable()
@@ -73,7 +119,13 @@ export async function startCopierRun(source: string): Promise<string | null> {
       `INSERT INTO copier_runs (source, outcome) VALUES ($1, 'running') RETURNING id::text AS id`,
       [source],
     )
-    return rows[0]?.id ?? null
+    const id = rows[0]?.id ?? null
+    if (!reapedThisProcess) {
+      reapedThisProcess = true
+      const reaped = await reapStaleCopierRuns(id)
+      if (reaped > 0) console.warn(`[copier-runs] reaped ${reaped} stale running row(s) from a killed sweep`)
+    }
+    return id
   } catch {
     return null
   }
