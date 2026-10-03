@@ -8,6 +8,10 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Jupiter metadata stats line never reached prod logs
+
+- `[jupiter-metadata] stats` now uses `console.warn`: `next.config.js` `removeConsole` strips `console.log/info` in production builds (only `error`/`warn` survive), so the 10-minute counters were invisible after #136 shipped.
+
 ### Changed — Jupiter token metadata: cache → one paced batched keyless queue → keyed fallback
 
 `lite-api.jup.ag` is being phased out and answered 429 on every probe from the VPS; ~38 single-mint
