@@ -249,6 +249,7 @@ type Config struct {
     SolArbScanInterval int // seconds (0 = disabled)
     OhlcSampleInterval int // seconds — 1m OHLC sampler (0 = disabled)
     MetricsCopyInterval int // seconds — 1m volume copier (0 = disabled)
+    EvidenceArchiveInterval int // seconds — daily evidence archive to R2 (0 = disabled)
     FomoWsEnabled      bool
 }
 
@@ -300,6 +301,7 @@ func NewCronService() *CronService {
         // so the cadence governs snapshot freshness only, not slot completeness. Keep it well
         // under that window or the gap loses minutes permanently.
         MetricsCopyInterval: intervalFor("MetricsCopyInterval"),
+        EvidenceArchiveInterval: intervalFor("EvidenceArchiveInterval"),
         FomoWsEnabled: envBool("FOMO_WS_ENABLED", true),
     }
 
@@ -396,6 +398,18 @@ func (cs *CronService) Start() {
             log.Fatal("Failed to add metrics copier cron job:", err)
         }
         cs.workers.BindEntry(metricsCopyEntryID, "metrics_copier")
+    }
+
+    // Evidence archive (Postgres -> append-only R2) – every N seconds (default 86400, 0 = disabled).
+    // The route is inert until EVIDENCE_ARCHIVE_ENABLED=1, so scheduling it is safe by default.
+    if cs.config.EvidenceArchiveInterval > 0 {
+        evidenceSpec := everySpec(cs.config.EvidenceArchiveInterval)
+        evidenceEntryID, err := cs.cron.AddFunc(evidenceSpec, cs.runEvidenceArchive)
+        if err != nil {
+            cs.logger.Error(fmt.Sprintf("Failed to add evidence archive cron job: %v", err))
+            log.Fatal("Failed to add evidence archive cron job:", err)
+        }
+        cs.workers.BindEntry(evidenceEntryID, "evidence_archive")
     }
 
     // Signals sim track – every N seconds (default 120)
@@ -632,6 +646,7 @@ func (cs *CronService) Start() {
     http.HandleFunc("/trigger/sol-arb-scan", cs.requireTriggerSecret(cs.manualSolArbScanTrigger))
     http.HandleFunc("/trigger/ohlc-sampler", cs.requireTriggerSecret(cs.manualOhlcSampleTrigger))
     http.HandleFunc("/trigger/metrics-copier", cs.requireTriggerSecret(cs.manualMetricsCopyTrigger))
+    http.HandleFunc("/trigger/evidence-archive", cs.requireTriggerSecret(cs.manualEvidenceArchiveTrigger))
     http.HandleFunc("/trigger/fomo-ws", cs.requireTriggerSecret(cs.manualFomoWsTrigger))
     http.HandleFunc("/logs/test", cs.testDiscordLogs)
 
@@ -1827,6 +1842,51 @@ func (cs *CronService) manualMetricsCopyTrigger(w http.ResponseWriter, r *http.R
     w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(map[string]string{
         "message":   "metrics copier triggered manually",
+        "timestamp": time.Now().UTC().Format(time.RFC3339),
+    })
+}
+
+// evidenceArchiveTimeoutSec bounds one archive pass (a day of 1m bars is ~10 MB gz; R2 PUTs are seconds).
+func evidenceArchiveTimeoutSec() int {
+    if v := os.Getenv("EVIDENCE_ARCHIVE_TIMEOUT_SEC"); v != "" {
+        if n, err := strconv.Atoi(v); err == nil && n > 0 {
+            return n
+        }
+    }
+    return 600
+}
+
+// runEvidenceArchive copies complete UTC days of 1m bars + related evidence tables to R2.
+// 409 / {"skipped":true} (job lock held, or EVIDENCE_ARCHIVE_ENABLED unset) is a skip, not a failure;
+// a 5xx (R2 credentials missing, upload failed, hash conflict) is a loud failure on the worker row.
+func (cs *CronService) runEvidenceArchive() {
+    cs.workers.Begin("evidence_archive")
+    url := fmt.Sprintf("%s/api/evidence/archive?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
+    resp, err := cs.makeRequest("POST", url, nil, evidenceArchiveTimeoutSec())
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("❌ Evidence archive failed: %v", err))
+        cs.workers.Fail("evidence_archive", err.Error())
+        return
+    }
+    if isSkippedBody(resp) {
+        cs.logger.Info("⏭️ Evidence archive skipped (disabled or job lock held)")
+        cs.workers.Skipped("evidence_archive")
+        return
+    }
+    cs.logger.Success(fmt.Sprintf("✅ Evidence archive completed: %s", resp))
+    cs.workers.Success("evidence_archive")
+}
+
+func (cs *CronService) manualEvidenceArchiveTrigger(w http.ResponseWriter, r *http.Request) {
+    if r.Method != "POST" {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    cs.logger.Info("🔧 Manual evidence archive trigger")
+    cs.runEvidenceArchive()
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]string{
+        "message":   "evidence archive triggered manually",
         "timestamp": time.Now().UTC().Format(time.RFC3339),
     })
 }
