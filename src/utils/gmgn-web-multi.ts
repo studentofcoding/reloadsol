@@ -18,6 +18,8 @@ const DEFAULT_MAX_POST_PER_SEC = 0.9
  * fresh for the consumers while cutting repeat upstream calls. */
 const DEFAULT_POSITIVE_TTL_S = 90
 const DEFAULT_NEGATIVE_COOLDOWN_S = 60
+/** Short per-path hold after the secondary (window) endpoint exhausts its 429 retry. */
+const WINDOW_SOFT_COOLDOWN_MS = 15_000
 const DEFAULT_LEDGER_DEBOUNCE_MS = 350
 /** Interim skip marker until `token_info_detect` exists. Not the durable SoT. */
 const LEDGER_SEEN_TTL_S = 30 * 24 * 60 * 60
@@ -494,11 +496,15 @@ async function readNegative(path: string): Promise<NegativeMark | null> {
   return null
 }
 
-async function markNegative(path: string, reason: NegativeMark['reason']): Promise<void> {
-  const untilMs = Date.now() + gmgnWebNegativeCooldownMs()
+async function markNegative(
+  path: string,
+  reason: NegativeMark['reason'],
+  cooldownMs: number = gmgnWebNegativeCooldownMs(),
+): Promise<void> {
+  const untilMs = Date.now() + cooldownMs
   const cur = negativeMem.get(path)
   if (!cur || untilMs > cur.untilMs) negativeMem.set(path, { untilMs, reason })
-  const ttlS = Math.max(1, Math.ceil(gmgnWebNegativeCooldownMs() / 1000))
+  const ttlS = Math.max(1, Math.ceil(cooldownMs / 1000))
   await cacheSet(negativeKey(path), { untilMs: negativeMem.get(path)?.untilMs ?? untilMs, reason }, ttlS)
 }
 
@@ -541,8 +547,8 @@ function noteUpstream(path: string, batch: number, status: number): void {
 type WebFetchOpts = {
   /**
    * Secondary enrichment call (the window endpoint). Its failures are counted
-   * as `windowMisses`, retried once on 429, and never arm the cooldown — the
-   * primary full_info call in the same chunk must still be able to run.
+   * as `windowMisses`, retried once on 429, and only arm a short cooldown on their
+   * own path — the primary full_info call in the same chunk must still be able to run.
    */
   secondary?: boolean
 }
@@ -593,6 +599,11 @@ async function webFetch(
             continue
           }
           noteWindowMiss(path)
+          // Retries exhausted: back this *secondary* path off briefly (keyed by path, so
+          // the primary full_info call is unaffected) instead of paying 2 more 429s on
+          // every chunk — ~28% of upstream calls were wasted on it. Callers treat the
+          // resulting RATE_LIMIT as a soft window miss.
+          await markNegative(path, 'RATE_LIMIT', Math.round(WINDOW_SOFT_COOLDOWN_MS * (1 + Math.random() * 0.25)))
           throw new GmgnWebMultiError('GMGN web window rate limited', 'RATE_LIMIT')
         }
         await markNegative(path, 'RATE_LIMIT')

@@ -107,4 +107,83 @@ describe('gmgn-api rate limiting + gate (public API)', () => {
     expect(err).toBeInstanceOf(GmgnApiError)
     expect(err.message).toMatch(/chain not supported/)
   })
+
+  it('keeps the cooldown per endpoint: a 429 on one path does not fail-fast another', async () => {
+    const { tokenInfo, trackSmartMoney, GmgnApiError, __isPathCoolingForTests } = await import('./gmgn-api')
+    const resetAt = Math.floor(Date.now() / 1000) + 30
+    responses = [
+      { status: 429, body: JSON.stringify({ code: 429, msg: 'rl', data: null }), headers: { 'X-RateLimit-Reset': String(resetAt) } },
+    ]
+    const err = (await trackSmartMoney({ chain: 'sol' }).catch((e) => e)) as GmgnApiError
+    expect(err).toBeInstanceOf(GmgnApiError)
+    expect(__isPathCoolingForTests('/v1/user/smartmoney')).toBe(true)
+    expect(__isPathCoolingForTests('/v1/token/info')).toBe(false)
+
+    // A different endpoint still reaches upstream.
+    responses = [{ status: 200, body: JSON.stringify({ code: 0, data: { symbol: 'OK' } }) }]
+    const info = await tokenInfo({ chain: 'sol', address: 'aaa' })
+    expect(info.symbol).toBe('OK')
+    expect(requestCount).toBe(2)
+
+    // The same endpoint is still cooling (no upstream hit).
+    const err2 = (await trackSmartMoney({ chain: 'sol' }).catch((e) => e)) as GmgnApiError
+    expect(err2.code).toBe('RATE_LIMIT')
+    expect(requestCount).toBe(2)
+  })
+
+  it('honors Retry-After (delta seconds) and widens the gate after a 429', async () => {
+    const { tokenInfo, gmgnEffectiveMinIntervalMs, gmgnMinIntervalMs } = await import('./gmgn-api')
+    expect(gmgnEffectiveMinIntervalMs()).toBe(gmgnMinIntervalMs())
+    // Retry-After 1s is within the retry window -> sleeps, retries, succeeds.
+    responses = [
+      { status: 429, body: JSON.stringify({ code: 429, msg: 'rl', data: null }), headers: { 'Retry-After': '1' } },
+      { status: 200, body: JSON.stringify({ code: 0, data: { symbol: 'RA' } }) },
+    ]
+    const info = await tokenInfo({ chain: 'sol', address: 'aaa' })
+    expect(info.symbol).toBe('RA')
+    expect(requestCount).toBe(2)
+    // Retry succeeded -> no cooldown armed, so no pacing penalty either.
+    expect(gmgnEffectiveMinIntervalMs()).toBe(gmgnMinIntervalMs())
+
+    // A Retry-After beyond the retry window fails fast, arms the cooldown, and slows the gate.
+    responses = [{ status: 429, body: '{}', headers: { 'Retry-After': '20' } }]
+    const err = await tokenInfo({ chain: 'sol', address: 'bbb' }).catch((e) => e)
+    expect(err.code).toBe('RATE_LIMIT')
+    expect(gmgnEffectiveMinIntervalMs()).toBe(gmgnMinIntervalMs() * 2)
+  })
+})
+
+describe('computeRateLimitCooldownMs / parseRetryAfter', () => {
+  it('backs off exponentially without a hint (5s, 10s, 20s, capped 30s), no jitter at random=0', async () => {
+    const { computeRateLimitCooldownMs } = await import('./gmgn-api')
+    const f = (strikes: number) => computeRateLimitCooldownMs({ strikes, random: 0 })
+    expect([f(1), f(2), f(3), f(4), f(9)]).toEqual([5000, 10000, 20000, 30000, 30000])
+  })
+
+  it('adds up to 25% jitter but never exceeds the 30s cap', async () => {
+    const { computeRateLimitCooldownMs } = await import('./gmgn-api')
+    expect(computeRateLimitCooldownMs({ strikes: 1, random: 0.999 })).toBeLessThanOrEqual(6250)
+    expect(computeRateLimitCooldownMs({ strikes: 1, random: 0.999 })).toBeGreaterThan(5000)
+    expect(computeRateLimitCooldownMs({ strikes: 6, random: 0.999 })).toBe(30000)
+  })
+
+  it('honors a reset hint (clamped to 1s..30s) over the ladder', async () => {
+    const { computeRateLimitCooldownMs } = await import('./gmgn-api')
+    const nowMs = 1_000_000_000_000
+    const at = (secsAhead: number) => nowMs / 1000 + secsAhead
+    expect(computeRateLimitCooldownMs({ strikes: 5, resetAt: at(8), nowMs, random: 0 })).toBe(8000)
+    expect(computeRateLimitCooldownMs({ strikes: 1, resetAt: at(-5), nowMs, random: 0 })).toBe(1000)
+    expect(computeRateLimitCooldownMs({ strikes: 1, resetAt: at(300), nowMs, random: 0 })).toBe(30000)
+  })
+
+  it('parses Retry-After as delta-seconds or HTTP date, and ignores junk', async () => {
+    const { parseRetryAfter } = await import('./gmgn-api')
+    const nowMs = Date.parse('2026-10-03T00:00:00Z')
+    expect(parseRetryAfter('7', nowMs)).toBeCloseTo(nowMs / 1000 + 7)
+    expect(parseRetryAfter('Sat, 03 Oct 2026 00:00:12 GMT', nowMs)).toBeCloseTo(nowMs / 1000 + 12)
+    expect(parseRetryAfter('', nowMs)).toBeUndefined()
+    expect(parseRetryAfter(null, nowMs)).toBeUndefined()
+    expect(parseRetryAfter('soon', nowMs)).toBeUndefined()
+    expect(parseRetryAfter('-3', nowMs)).toBeUndefined()
+  })
 })

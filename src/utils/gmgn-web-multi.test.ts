@@ -395,7 +395,7 @@ describe('fetchGmgnWebMultiTokenInfo', () => {
     expect(getGmgnWebMultiMetrics().ledgerSkips).toBe(1)
   })
 
-  it('treats a window 429 as a soft miss and does not cool down the primary endpoint', async () => {
+  it('treats a window 429 as a soft miss, cools only the window path, and keeps the primary endpoint live', async () => {
     let windowCalls = 0
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
       const href = String(url)
@@ -419,11 +419,15 @@ describe('fetchGmgnWebMultiTokenInfo', () => {
     expect(windowCalls).toBe(2)
     expect(getGmgnWebMultiMetrics().windowMisses).toBe(2)
 
-    // Crucially, no cooldown was armed: the next mint still reaches full_info.
+    // The window path now cools down briefly (keyed by path): the next mint is
+    // served by full_info alone and does NOT spend more 429s on the window path.
+    windowCalls = 0
     fetchMock.mockClear()
     const again = await fetchGmgnWebMultiTokenInfo([MINT_B])
     expect(again).toHaveLength(1)
     expect(postBatches('multi_token_full_info').length).toBeGreaterThan(0)
-    expect(getGmgnWebMultiMetrics().negativeSkips).toBe(0)
+    expect(windowCalls).toBe(0)
+    expect(postBatches('mutil_window_token_info')).toHaveLength(0)
+    expect(getGmgnWebMultiMetrics().negativeSkips).toBe(1)
   })
 })

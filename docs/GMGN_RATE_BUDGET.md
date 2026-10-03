@@ -218,3 +218,21 @@ rate is unquantified but plainly low enough to be a nuisance, not an outage.
 too low to tell), and whether `sol` should get an automatic fallback to the OpenAPI path (`GMGN_API_KEY` is
 present; `GMGN_TOKEN_INFO_SOURCE=web` currently makes that path unreachable for `sol`). Neither is load-bearing
 today.
+
+## Per-endpoint cooldown + backoff (2026-10-03)
+
+Prod showed `gmgn_activity_poll` / `gmgn_sim_track` failing 44–60 % of runs with `GMGN rate limit
+exceeded`. Findings from code + a 1 h log window:
+
+- The web-multi path (`gmgn-web-multi.ts`, Worker → gmgn.ai) and the OpenAPI path (`gmgn-api.ts`) do
+  **not** share a cooldown or a gate. The ~28 % `mutil_window_token_info` 429s are real but only
+  cost wasted upstream calls; they never fail sim/activity.
+- Sim/activity failures come from the OpenAPI client: one process-wide 30 s fail-fast cooldown was
+  armed by a 429 on **any** endpoint (smartmoney, kol, token info, roster, digger…), so every other
+  GET failed instantly for 30 s even when its own endpoint was fine.
+
+Change: the OpenAPI cooldown is keyed **per path**; length honors `Retry-After` /
+`X-RateLimit-Reset` (clamped 1–30 s) or climbs 5 s → 10 s → 20 s → 30 s per consecutive 429 on that
+path (reset by a success), with 0–25 % jitter; a 429 also widens the shared gate ×2 for 20 s so
+other consumers slow down instead of failing. The web window endpoint now holds a short (~15 s)
+per-path cooldown after its retry is exhausted (primary `multi_token_full_info` unaffected).
