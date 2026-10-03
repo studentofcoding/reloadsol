@@ -1,4 +1,5 @@
 import { cacheGet, cacheSet } from '@/utils/redis-cache'
+import { recordOpenAttempt, spineDecisionToAttempt } from '@/strategies/open-attempts'
 
 export const SPINE_TICK_CAP = 50
 const TTL_SEC = 60 * 60 * 24
@@ -38,6 +39,10 @@ export async function readSpineDecisions(
 export async function appendSpineDecision(
   decision: SpineDecision,
 ): Promise<void> {
+  // Durable copy of every stand-down / failed pricing (the ring below is 50 entries / 24 h).
+  // Best-effort and fire-and-forget: recording must never delay or fail an open. SPEC-open-attempts-reporting-v1.
+  const attempt = spineDecisionToAttempt(decision)
+  if (attempt) void recordOpenAttempt(attempt)
   const prev = await readSpineDecisions(decision.workerId)
   await cacheSet(
     spineTickKey(decision.workerId),

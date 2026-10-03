@@ -66,6 +66,8 @@ var intervalSpecs = []intervalSpec{
 	{Field: "MetricsCopyInterval", Env: "METRICS_COPY_INTERVAL", Default: 900, AllowZero: true, Workers: []string{"metrics_copier"}, Scheduled: true},
 	// Daily copy of complete UTC days of evidence to R2. The route no-ops until EVIDENCE_ARCHIVE_ENABLED=1.
 	{Field: "EvidenceArchiveInterval", Env: "EVIDENCE_ARCHIVE_INTERVAL", Default: 86400, AllowZero: true, Workers: []string{"evidence_archive"}, Scheduled: true},
+	// Hourly opens reporter tick (Telegram). The route no-ops when OPEN_REPORT_ENABLED is off.
+	{Field: "OpenReportInterval", Env: "OPEN_REPORT_INTERVAL", Default: 3600, AllowZero: true, Workers: []string{"open_report"}, Scheduled: true},
 }
 
 // intervalResolution is how one knob resolved, kept so the service can say so at startup.

@@ -33,6 +33,7 @@ export const PUBLIC_API_EXACT_GET_PATHS = ['/api/scout/data-public'] as const;
  * data. Everything not listed here, in PUBLIC, WALLET or DEV falls to the DEFAULT tier (`wallet`).
  */
 export const SELF_AUTH_API_PREFIXES = [
+  '/api/evidence/archive',
   '/api/gmgn/activity-poll',
   '/api/gmgn/radar-digest',
   '/api/gmgn/roster-watch',
@@ -43,6 +44,7 @@ export const SELF_AUTH_API_PREFIXES = [
   '/api/metrics/copy',
   '/api/ml/pattern/reload',
   '/api/ohlc/sample',
+  '/api/operations/open-report',
   '/api/report-precompute/refresh',
   '/api/rh/ledger/ingest',
   '/api/rug-signal',

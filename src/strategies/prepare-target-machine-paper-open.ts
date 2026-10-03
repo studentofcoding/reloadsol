@@ -17,6 +17,7 @@ import {
 import type { McapEffectiveExit } from '@/utils/mcap-sim-track'
 import type { SoftMlSize } from '@/strategies/ml-soft-size'
 import { impactedEntryPriceUsd, type ExitBasis } from './sim-exit-contract'
+import { isOpenRetryPolicyEnabled, runOpenWithRetry } from './open-attempts'
 
 export type PaperSpineStage = 'price' | 'rug' | 'size'
 
@@ -36,6 +37,10 @@ export type PrepareTargetMachinePaperOpenInput = {
   fallbackOwn1m?: boolean
   /** Caller already resolved the OHLC shadow (e.g. for a Noul state) — reuse it. */
   precomputedOhlc?: AttachOhlcRugShadowResult
+  /** Names the strategy in `position_open_attempts` / retry logs. Optional; defaults to 'spine'. */
+  strategyId?: string
+  /** Fresh spot price for the failed-open retry (OPEN_RETRY_POLICY=1). Default: Jupiter market hints. */
+  refetchPriceUsd?: () => Promise<number | null | undefined>
 }
 
 export type PrepareTargetMachinePaperOpenResult =
@@ -62,7 +67,31 @@ export type PrepareTargetMachinePaperOpenResult =
       ohlcSource: string
     }
 
+/**
+ * Entry point for every paper open. With `OPEN_RETRY_POLICY=1` a failed try (threw, or no price) is
+ * retried twice and a price that moved > 5 % since the last failed try fails loudly and skips
+ * (SPEC-open-attempts-reporting-v1). Off by default: identical to a single call.
+ */
 export async function prepareTargetMachinePaperOpen(
+  input: PrepareTargetMachinePaperOpenInput,
+): Promise<PrepareTargetMachinePaperOpenResult> {
+  if (!isOpenRetryPolicyEnabled()) return prepareTargetMachinePaperOpenOnce(input)
+  return runOpenWithRetry<PrepareTargetMachinePaperOpenResult>({
+    strategyId: input.strategyId ?? 'spine',
+    chain: input.chain,
+    mint: input.mint,
+    initialPriceUsd: input.priceUsd,
+    attempt: (priceUsd) => prepareTargetMachinePaperOpenOnce({ ...input, priceUsd }),
+    refetchPriceUsd:
+      input.refetchPriceUsd ??
+      (async () => {
+        const { fetchJupiterMarketHints } = await import('@/utils/jupiter-metadata')
+        return (await fetchJupiterMarketHints(input.mint))?.usdPrice ?? null
+      }),
+  })
+}
+
+async function prepareTargetMachinePaperOpenOnce(
   input: PrepareTargetMachinePaperOpenInput,
 ): Promise<PrepareTargetMachinePaperOpenResult> {
   const priceUsd = input.priceUsd
