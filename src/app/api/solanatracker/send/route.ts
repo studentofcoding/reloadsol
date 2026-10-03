@@ -3,9 +3,13 @@ import {
   RaptorAPIError,
   sendRaptorTransactionDirect,
 } from "@/utils/solanatracker-raptor";
+import { requireWalletSession } from "@/utils/api-auth";
 
 
 export async function POST(request: NextRequest) {
+  // Defence in depth: src/proxy.ts already gates this path (wallet tier); keep the check next to the handler.
+  const gate = requireWalletSession(request);
+  if (gate instanceof NextResponse) return gate;
   try {
     const body = (await request.json()) as { transaction?: string };
 
