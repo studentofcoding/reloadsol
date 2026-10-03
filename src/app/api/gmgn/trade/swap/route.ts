@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { tradeSwap, GmgnApiError } from '@/utils/gmgn-api'
 import { isGmgnTradeChain } from '@/utils/gmgn-currencies'
-import { resolveGmgnBoundWallets, boundAddressForChain } from '@/utils/gmgn-bound-wallets'
+import { boundAddressForChain } from '@/utils/gmgn-bound-wallets'
+import { resolveGmgnBoundWallets } from '@/utils/gmgn-bound-wallets.server'
 import { requireDevSession } from '@/utils/api-auth'
 
 
