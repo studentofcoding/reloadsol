@@ -14,6 +14,7 @@ const h = vi.hoisted(() => ({
   outcomes: [] as Array<Record<string, unknown>>,
   hasOutcome: vi.fn(async (_p: unknown) => false),
   logError: vi.fn(),
+  logWarn: vi.fn(),
   snapshot: vi.fn(async () => null as unknown),
 }))
 
@@ -46,7 +47,7 @@ vi.mock('@/utils/trading-records-db', () => ({
 vi.mock('@/utils/open-position-prices', () => ({ getOpenPositionPrices: vi.fn(async () => ({})) }))
 vi.mock('@/utils/native-usd', () => ({ getNativeUsd: async () => 100 }))
 vi.mock('@/utils/unified-logger', () => ({
-  log: { info: vi.fn(), warn: vi.fn(), error: h.logError },
+  log: { info: vi.fn(), warn: h.logWarn, error: h.logError },
 }))
 vi.mock('@/utils/mcap-tracker', () => ({
   buildMcapOutcomeFeatures: ({ exitMcap }: { exitMcap: number }) => ({ exit_mcap: exitMcap }),
@@ -113,6 +114,7 @@ beforeEach(() => {
   h.hasOutcome.mockReset()
   h.hasOutcome.mockResolvedValue(false)
   h.logError.mockClear()
+  h.logWarn.mockClear()
   h.snapshot.mockResolvedValue(null)
 })
 
@@ -284,5 +286,26 @@ describe('price-domain closer is scoped too', () => {
     ).toBe(2500)
     expect(getOpenStrategySimPositions(h.ledger as TrackingRecord[], G2).map((p) => p.mintAddress)).toEqual([MINT])
     expect(getOpenStrategySimPositions(h.ledger as TrackingRecord[], G1)).toHaveLength(0)
+  })
+
+  it('warns (does not silently no-op) when the strategy has nothing open for the mint', async () => {
+    h.ledger = [buy('gmgn_b', 1000)] // a sibling's buy only
+    const pnl = await closePriceStrategySimPosition({
+      domain: 'gmgn',
+      chain: 'sol',
+      strategyId: 'gmgn_a',
+      mintAddress: MINT,
+      symbol: 'SIB',
+      entryAt: null,
+      entryFeatures: {},
+      sellPriceUsd: 0.0007,
+    })
+    expect(pnl).toBe(0)
+    expect(h.ledger).toHaveLength(1)
+    expect(h.logWarn).toHaveBeenCalledWith(
+      'mcap_tracker',
+      expect.stringContaining('no open cycle'),
+      expect.objectContaining({ strategyId: 'gmgn_a', mint: MINT }),
+    )
   })
 })

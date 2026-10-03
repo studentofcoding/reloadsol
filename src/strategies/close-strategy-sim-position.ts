@@ -156,7 +156,17 @@ export async function closePriceStrategySimPosition(params: {
   // would sell (and book under this strategy) tokens a sibling bought.
   const scoped = scopeRecordsToStrategy(records, params.strategyId)
   const cycle = computeOpenSimCycle(scoped, params.mintAddress)
-  if (!cycle) return 0
+  if (!cycle) {
+    // Nothing open in THIS strategy's ledger. The worker treats a clean return as closed and retires
+    // the mirror, so say so loudly rather than silently: no sell and no outcome are written here.
+    log.warn('mcap_tracker', 'Paper close (price domain): no open cycle for strategy+mint — nothing written', {
+      domain: params.domain,
+      strategyId: params.strategyId,
+      mint: params.mintAddress,
+      chain: params.chain,
+    })
+    return 0
+  }
 
   const prices =
     params.sellPriceUsd == null
