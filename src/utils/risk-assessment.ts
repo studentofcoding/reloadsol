@@ -1,5 +1,5 @@
 import { fetchTokenRiskData, getRiskIndicators, calculateFeeToMarketCapRatio } from './token-risk'
-import { fetchTokenMetadataFromJupiter } from '@/utils/jupiter-metadata'
+import { fetchTokenMetadataFromJupiter, isJupiterUnavailable } from '@/utils/jupiter-metadata'
 
 // Types for risk assessment
 export interface RiskIndicators {
@@ -28,6 +28,12 @@ export interface RiskAssessmentResult {
   organicScore?: number
   volatility?: number
   error?: string
+  /**
+   * Jupiter could not be asked (429 / timeout / 5xx) — graduation status is UNKNOWN, which is not the
+   * same as "not graduated". The assessment then skips the Jupiter-metadata branch and falls through
+   * to TokenRisk / organic / basic.
+   */
+  jupiterUnavailable?: boolean
   // Add detailed TokenRisk data for Discord formatting
   riskData?: {
     insidersHoldPercent: number
@@ -87,8 +93,11 @@ export async function assessTokenRisk(
 
   // Step 0: Consult Jupiter metadata first to determine bonding curve and organic/audit fields
   let jupMeta: any | null = null
+  let jupiterUnavailable = false
   try {
-    jupMeta = await fetchTokenMetadataFromJupiter(token.token_address)
+    // graduation flips bondingCurve to 100 once and forever; a short max-age keeps a 99% token from
+    // being classed "not graduated" for ten minutes after it graduates.
+    jupMeta = await fetchTokenMetadataFromJupiter(token.token_address, { maxAgeMs: 120_000 })
     if (enableLogging) {
       console.log(`🛰️ Jupiter metadata for ${token.token_symbol}:`, {
         bondingCurve: jupMeta?.bondingCurve,
@@ -97,6 +106,8 @@ export async function assessTokenRisk(
       })
     }
   } catch (e) {
+    // A 429/timeout says nothing about the token: do NOT read it as "bondingCurve null => not graduated".
+    jupiterUnavailable = isJupiterUnavailable(e)
     if (enableLogging) {
       console.warn(`⚠️ Failed to fetch Jupiter metadata for ${token.token_symbol}:`, e instanceof Error ? e.message : 'Unknown error')
     }
@@ -104,8 +115,11 @@ export async function assessTokenRisk(
 
   const bondingCurve = typeof jupMeta?.bondingCurve === 'number' ? jupMeta.bondingCurve : null
 
-  // If bondingCurve is not 100 (i.e., not fully graduated), skip TokenRisk and use Jupiter's organicScore and audit data
-  if (bondingCurve === null || bondingCurve !== 100) {
+  const unavailableFlag = jupiterUnavailable ? { jupiterUnavailable: true as const } : {}
+
+  // If bondingCurve is not 100 (i.e., not fully graduated), skip TokenRisk and use Jupiter's organicScore and audit data.
+  // Only when Jupiter actually answered: if it was unavailable the graduation status is unknown.
+  if (!jupiterUnavailable && (bondingCurve === null || bondingCurve !== 100)) {
     const organicScore = typeof jupMeta?.organicScore === 'number' ? jupMeta.organicScore : (token.organic_score ?? null)
     const topHoldersPercentage = typeof jupMeta?.audit?.topHoldersPercentage === 'number' ? jupMeta.audit.topHoldersPercentage : null
 
@@ -169,6 +183,7 @@ export async function assessTokenRisk(
       }
 
       return {
+        ...unavailableFlag,
         riskLevel,
         riskIndicators,
         assessmentMethod: 'token_risk',
@@ -223,6 +238,7 @@ export async function assessTokenRisk(
     }
 
     return {
+      ...unavailableFlag,
       riskLevel,
       assessmentMethod: 'organic_volatility',
       organicScore: token.organic_score,
@@ -264,6 +280,7 @@ export async function assessTokenRisk(
     }
 
     return {
+      ...unavailableFlag,
       riskLevel,
       assessmentMethod: 'basic'
     }
@@ -276,6 +293,7 @@ export async function assessTokenRisk(
   }
 
   return {
+    ...unavailableFlag,
     riskLevel: 'HIGH',
     assessmentMethod: 'basic',
     error

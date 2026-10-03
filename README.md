@@ -221,6 +221,7 @@ Copy from [`.env.docker.example`](.env.docker.example). Key groups:
 | `RAPTOR_TOKEN_TOKEN_HOPS` | Hops for a token→token pair, where no direct pool exists (default `3`). **Do not raise `RAPTOR_MAX_HOPS` to fix a token→token quote** — at `1` Raptor answers `500 "No direct route found"`, which escalated to the Jupiter picker and spent the 0.5 rps execution budget. Resolved per pair by `src/utils/raptor-hops.ts`; set `=1` to restore the old behaviour exactly |
 | `JUPITER_MAX_RPS` | Sustained Jupiter rate (default `0.5`, the measured-clean rate) |
 | `JUPITER_BURST` | Bucket capacity (default `8`; measured tolerance is ~8 sequential before 429) |
+| `JUPITER_META_RPS` | Keyless `api.jup.ag/tokens/v2/search` queue rate for token metadata (default `0.3`; ≤ 100 mints per request; see `docs/JUPITER_API_MAP.md`) |
 | `JUPITER_TRADE_RESERVE` | Tokens held for the trade lane, never spent by background work (default `2`) |
 | `JUPITER_QUOTE_CACHE_MS` | Coalescing/quote cache window for non-taker quotes (default `4000`) |
 | `SWAP_PRIORITY_FEE_LAMPORTS` | Exact priority-fee tip for a swap build when the caller passes **no** fee. Unset (default) → auto-high, a 0.003 SOL *cap* rather than a flat charge; a caller-supplied fee always wins. A tx broadcast with no tip is how one lands nowhere |

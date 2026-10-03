@@ -1,6 +1,6 @@
 import { compareTradeQuotes, checkProviderHealth } from './trade-comparison'
 import { testSingleTrade, benchmarkProviders } from './trade-comparison-test'
-import { fetchTokenMetadataFromJupiter } from './jupiter-metadata'
+import { JUPITER_IMMUTABLE_MAX_AGE_MS, fetchTokenMetadataFromJupiter } from './jupiter-metadata'
 import type { TradeQuoteRequest, ProviderQuote } from '@/types'
 
 // Real Jupiter pools data fetched from https://datapi.jup.ag/v1/pools
@@ -843,11 +843,13 @@ export const searchTokenStats = async (tokenAddress: string): Promise<{
   }
 } | null> => {
   try {
-    // Basic token info via the shared Jupiter Token API v2 helper (lite-api.jup.ag), which
+    // Basic token info via the shared Jupiter Token API v2 helper (api.jup.ag), which
     // throttles and retries 429/504. The previous direct call to
     // https://tokens.jup.ag/token/<mint> used a retired host that no longer resolves
     // (getaddrinfo ENOTFOUND), so this function threw on every call and returned null.
-    const basicData = await fetchTokenMetadataFromJupiter(tokenAddress)
+    const basicData = await fetchTokenMetadataFromJupiter(tokenAddress, {
+      maxAgeMs: JUPITER_IMMUTABLE_MAX_AGE_MS,
+    })
 
     // Get price data from Jupiter price API
     let priceData = null
@@ -890,7 +892,8 @@ export const searchTokenStats = async (tokenAddress: string): Promise<{
         address: tokenAddress,
         symbol: basicData.symbol || 'UNKNOWN',
         name: basicData.name || 'Unknown Token',
-        decimals: basicData.decimals || 9,
+        // decimals 0 is real; only a missing value falls back
+        decimals: typeof basicData.decimals === 'number' ? basicData.decimals : 9,
         logoURI: basicData.logoURI
       },
       price: priceData ? {
