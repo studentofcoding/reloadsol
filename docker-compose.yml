@@ -14,11 +14,19 @@
 # 127.0.0.1:5432. Cutover-only host access: docker-compose.migrate.yml →
 # 127.0.0.1:5433. Never merge migrate.yml into steady-state deploy.
 
+# Rotate container logs (json-file has NO limit by default; /etc/docker/daemon.json is absent on the VPS).
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
 services:
   reloadsol-db:
     image: postgres:16-alpine
     container_name: reloadsol-db
     restart: unless-stopped
+    logging: *default-logging
     # Keep the DB resident: memory+swap capped at the limit => no container swap.
     memswap_limit: 1G
     environment:
@@ -56,6 +64,7 @@ services:
     image: redis:7-alpine
     container_name: reloadsol-redis
     restart: unless-stopped
+    logging: *default-logging
     command: redis-server --maxmemory 96mb --maxmemory-policy allkeys-lru
     volumes:
       - redis_data:/data
@@ -75,6 +84,7 @@ services:
     image: edoburu/pgbouncer:latest
     container_name: reloadsol-bouncer
     restart: unless-stopped
+    logging: *default-logging
     environment:
       DB_HOST: reloadsol-db
       DB_PORT: 5432
@@ -152,6 +162,9 @@ services:
       retries: 5
       start_period: 60s
     restart: unless-stopped
+    # Docker's default 10 s SIGKILLs a web that is still finishing a sim-track / SL-TP cycle (and its job lock).
+    stop_grace_period: 30s
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -182,6 +195,7 @@ services:
       retries: 3
       start_period: 20s
     restart: unless-stopped
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -193,11 +207,18 @@ services:
     image: nginx:1.27-alpine
     container_name: reloadsol-nginx
     restart: unless-stopped
+    logging: *default-logging
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ./nginx/certs:/etc/nginx/certs:ro
       - nginx_cache:/var/cache/nginx
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "--header=Host: reloadsol.app", "http://127.0.0.1/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     depends_on:
       web:
         condition: service_healthy
@@ -225,6 +246,7 @@ services:
       web:
         condition: service_healthy
     restart: unless-stopped
+    logging: *default-logging
     deploy:
       resources:
         limits:
