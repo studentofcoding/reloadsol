@@ -56,7 +56,7 @@ flowchart TB
 | Service | Role |
 |---------|------|
 | **web** | Next.js App Router, ~50+ API routes, strategy admin, sim-track, ONNX shadow scorers |
-| **cron** | Go worker scheduler (trending, sim-track, social rollup, DLMM, **`rh_lp_screen`**, **`strategy_search`**, **`fomo_ws`**, **`rh_clmm_manage`**, etc.) |
+| **cron** | Go worker scheduler (trending, sim-track, social rollup, DLMM, **`strategy_search`**, **`rh_clmm_manage`**, etc.) |
 | **nginx** | Public HTTP :80 → web (prod hides web :3000 from host) |
 | **postgres + pgbouncer** | All app data; init from `db/init/*.sql` |
 | **redis** | Caches (RH CLMM pool-state 15s TTL, live tiers), job locks, alert throttles |
@@ -175,7 +175,7 @@ flowchart LR
 
 ### Cron workers (Go → web API)
 
-Examples: `trending_track`, `signals_sim_track`, `mcap_tracker_sim_open`, `mcap_tracker_sim_track`, `social_rollup` (300s), `social_wallet_poll`, DLMM screen/manage, **`rh_clmm_manage`** (300s, alert-only). All `/trigger/*` need `X-Trigger-Secret`.
+Examples: `trending_track`, `signals_sim_track`, `mcap_tracker_sim_track`, `social_rollup` (300s), `social_wallet_poll`, DLMM screen/manage, **`rh_clmm_manage`** (300s, alert-only). All `/trigger/*` need `X-Trigger-Secret`.
 
 Workers tab: `/dev/strategies` → Workers (needs `CRON_SERVICE_URL`).
 

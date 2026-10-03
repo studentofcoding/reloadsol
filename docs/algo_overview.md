@@ -364,7 +364,7 @@ Process: [`main.go`](../main.go) — container `reloadsol-cron`, port **8080** (
 | `TRENDING_TRACKER_SECRET` | — | Auth for trending/signals/mcap sim |
 | `SIGNALS_SIM_INTERVAL` | 120 | signals sim-track |
 | `SIGNAL_REFRESH_INTERVAL` | 60 | signals refresh |
-| `MCAP_TRACKER_SIM_OPEN_INTERVAL` | 15 | **schedules nothing** — the open phase runs inside the `phase=all` job at `MCAP_TRACKER_SIM_INTERVAL` |
+| ~~`MCAP_TRACKER_SIM_OPEN_INTERVAL`~~ | — | removed (it scheduled nothing); the open phase runs inside the `phase=all` job at `MCAP_TRACKER_SIM_INTERVAL` |
 | `MCAP_TRACKER_SIM_INTERVAL` | 120 | mcap tracker sim (`phase=all`: open + manage) |
 | `SOCIAL_ROLLUP_INTERVAL` | 300 | social rollup + 24h patterns |
 | `SOCIAL_SIM_INTERVAL` | 900 (prod) | social sim-track (FOMO burst open) |

@@ -7,8 +7,9 @@ export default function FomoLivePage() {
       <h1 className="mb-2 text-2xl font-semibold text-white">FOMO tape</h1>
       <p className="mb-6 text-sm text-gray-400">
         Live robinhoodtrenches.com fill mirror (fomo.family wallets on Robinhood).
-        Cron worker <code className="text-gray-300">fomo_ws</code> writes{" "}
-        <code className="text-gray-300">fomo_fills</code>.
+        Historical rows in <code className="text-gray-300">fomo_fills</code>; the cron worker that
+        wrote them was removed, so no new fills arrive unless something posts to{" "}
+        <code className="text-gray-300">/api/fomo/ingest</code>.
       </p>
       <FomoMirrorPanel showPageLink={false} />
     </div>

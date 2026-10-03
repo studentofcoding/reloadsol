@@ -257,7 +257,7 @@ Shared:
 - **Workers:** `signals_refresh` (~60s) helps Stage 1; the mcap sim runs as **one `phase=all` job** (`mcap_tracker_sim_track`, prod interval **120s**) covering **opens only** — its manage phase and its mcap-growth closer were removed, so the 60s `sltp_monitor` worker is the sole owner of every exit. It deliberately shares a single job lock so two runs cannot both see "not open yet". Manual track trigger runs `phase=all`. Skip-if-running.
 - **`mcap_enter_at_80` freshness:** skips `milestone_too_old` outside `recencyMinutes` (default 240). **Entry mcap = live `current_mcap` at open** (copy-trade fill); milestone only gates eligibility. Telegram Entry is the buy-now reference.
 - **Mcap WR skew:** TP +200% / first_mcap (or live fill) baseline means winners often land near ~+200%; organic/holders gates off by default — compare other domains carefully.
-- **Env:** `MCAP_TRACKER_SIM_INTERVAL` (default 120, **open only** — this is the scheduled job) · `MCAP_TRACKER_SIM_OPEN_INTERVAL` (default 15, not scheduled separately).
+- **Env:** `MCAP_TRACKER_SIM_INTERVAL` (default 120, **open only** — this is the scheduled job) · `MCAP_TRACKER_SIM_OPEN_INTERVAL` was removed with the `mcap_tracker_sim_open` worker (the open phase runs inside the `phase=all` job).
   **Prod runs the scheduled job at 120** (`.env`), so the single `phase=all` job runs every 2 min —
   its open phase is dominated by the per-candidate OHLC entry gate, which is now loaded once per mint
   per run instead of once per strategy.
