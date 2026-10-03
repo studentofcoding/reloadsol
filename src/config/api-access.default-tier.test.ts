@@ -206,6 +206,7 @@ describe('route inventory', () => {
         "/api/metrics/copy",
         "/api/ml/pattern/reload",
         "/api/ohlc/sample",
+        "/api/operations/last-reload",
         "/api/operations/open-report",
         "/api/regime/climate",
         "/api/report-precompute/refresh",
@@ -232,6 +233,7 @@ describe('route inventory', () => {
         "/api/trade/pools-test",
         "/api/trending/filtered",
         "/api/trending/prices",
+        "/api/trending/search",
       ]
     `)
   })
