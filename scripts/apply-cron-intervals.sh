@@ -30,9 +30,7 @@ INTENDED=(
   "DLMM_SIM_TRACK_INTERVAL|300|dlmm_sim_track|"
   "DLMM_MANAGE_INTERVAL|60|dlmm_manage|FLAGGED for human review"
   "RH_CLMM_MANAGE_INTERVAL|300|rh_clmm_manage|"
-  "RH_LP_SCREEN_INTERVAL|300|rh_lp_screen|"
   "SOL_ARB_SCAN_INTERVAL|60|sol_arb_scan|FLAGGED for human review"
-  "GMGN_ROSTER_WATCH_INTERVAL|75|gmgn_roster_watch|"
   "GMGN_WALLET_DIGGER_INTERVAL|14400|gmgn_wallet_digger|"
   "GMGN_RADAR_DIGEST_INTERVAL|86400|gmgn_radar_digest|"
   "STRATEGY_SEARCH_INTERVAL|21600|strategy_search|"
@@ -40,7 +38,8 @@ INTENDED=(
 # Deliberately NOT touched (listed so the output is a complete picture):
 #   SOCIAL_SIM_INTERVAL=900 (intentional, docs/03), METRICS_COPY_INTERVAL=900 (intentional),
 #   SLTP_MONITOR_INTERVAL, STRATEGY_REPORT_INTERVAL, REPORT_PRECOMPUTE_INTERVAL, DLMM_SCREEN_INTERVAL,
-#   MCAP_TRACKER_SIM_INTERVAL, MCAP_TRACKER_SIM_OPEN_INTERVAL, OHLC_SAMPLE_INTERVAL.
+#   MCAP_TRACKER_SIM_INTERVAL, OHLC_SAMPLE_INTERVAL.
+#   (GMGN_ROSTER_WATCH_INTERVAL, RH_LP_SCREEN_INTERVAL and MCAP_TRACKER_SIM_OPEN_INTERVAL were removed with their workers.)
 
 RESTART_CMD='cd ~/reloadsol && docker compose up -d cron'
 
@@ -151,11 +150,9 @@ SOCIAL_SIM_INTERVAL=900
 GMGN_ACTIVITY_POLL_INTERVAL=900
 GMGN_RADAR_DIGEST_INTERVAL=600
 GMGN_WALLET_DIGGER_INTERVAL=600  # shed
-GMGN_ROSTER_WATCH_INTERVAL=600
 DLMM_SIM_TRACK_INTERVAL=900
 DLMM_MANAGE_INTERVAL=900
 RH_CLMM_MANAGE_INTERVAL=900
-RH_LP_SCREEN_INTERVAL=900
 STRATEGY_SEARCH_INTERVAL=600
 METRICS_COPY_INTERVAL=900
 OTHER_SECRET=hunter2
@@ -171,7 +168,6 @@ FIX
   ck "apply writes a dated backup identical to the original" 'cmp -s "$d"/.env.bak-* "$d/.env.orig"'
   ck "apply never prints a secret" '! grep -q "super-secret\|hunter2" "$d/apply.out"'
   ck "signals_refresh 900 -> 60" 'grep -qx "SIGNAL_REFRESH_INTERVAL=60" "$d/.env"'
-  ck "roster_watch 600 -> 75" 'grep -qx "GMGN_ROSTER_WATCH_INTERVAL=75" "$d/.env"'
   ck "wallet_digger keeps its trailing comment" 'grep -qx "GMGN_WALLET_DIGGER_INTERVAL=14400  # shed" "$d/.env"'
   ck "radar digest 600 -> 86400" 'grep -qx "GMGN_RADAR_DIGEST_INTERVAL=86400" "$d/.env"'
   ck "social sim stays 900" 'grep -qx "SOCIAL_SIM_INTERVAL=900" "$d/.env"'

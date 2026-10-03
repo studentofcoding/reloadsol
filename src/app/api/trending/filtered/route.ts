@@ -8,25 +8,6 @@ import { withUnifiedLogging } from '@/utils/unified-logger'
 import { TransformedToken } from '@/types'
 import { tokenCache, fetchAndUpdateCache } from '../route'
 import { attachFirstDetections } from '@/utils/first-detection'
-import { secretsMatch } from '@/utils/secret-auth'
-
-// POST: kept so the existing cron worker (filtered_trending) keeps getting 200.
-// The filtered Discord list notification was removed; there is nothing to send.
-// Trending cache refresh + mcap tracking are driven by POST /api/trending.
-export async function POST(request: NextRequest) {
-    const { searchParams } = new URL(request.url)
-    const secretKey = searchParams.get('key')
-    const expectedSecretKey = process.env.TRENDING_TRACKER_SECRET
-
-    if (!secretsMatch(secretKey, expectedSecretKey)) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    return NextResponse.json({
-        success: true,
-        message: 'Filtered Discord notifications were removed; nothing to do'
-    })
-}
 
 // Enhanced GET handler with unified logging
 export const GET = withUnifiedLogging(async (request: NextRequest, logger) => {

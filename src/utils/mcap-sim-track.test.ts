@@ -16,6 +16,8 @@ vi.mock('@/utils/unified-logger', () => ({
 
 import { MCAP_TRACKER_STRATEGIES } from '@/strategies/registry'
 import {
+  evaluateLiveEntryBrake,
+  liveTrackerMaxRatio,
   getMcapSimOpenSkipReason,
   resolveMcapSimEntry,
   shouldOpenMcapSim,
@@ -168,5 +170,62 @@ describe('mcap sim entry helpers', () => {
       'already_closed',
     )
     expect(getMcapSimOpenSkipReason(at80, snapshotT1, new Set(), new Set())).toBeNull()
+  })
+})
+
+describe('evaluateLiveEntryBrake (skip-only sanity brake on the live Jupiter entry)', () => {
+  const snap = { current_mcap: 400_000, first_mcap: 187_000 }
+
+  it('passes a live value that agrees with the tracker', () => {
+    expect(evaluateLiveEntryBrake({ liveMcap: 410_000, snapshot: snap })).toBeNull()
+    expect(evaluateLiveEntryBrake({ liveMcap: 150_000, snapshot: snap })).toBeNull() // 2.7x, under 5x
+  })
+
+  it('skips the INU/QUANT shape: live ~4k vs tracker ~400k (also below the 30k band)', () => {
+    const b = evaluateLiveEntryBrake({ liveMcap: 3_970, snapshot: snap })
+    expect(b?.reason).toBe('live_mcap_out_of_range')
+  })
+
+  it('skips a mismatch even when the live value is inside the band', () => {
+    const b = evaluateLiveEntryBrake({ liveMcap: 60_000, snapshot: snap }) // 6.7x below
+    expect(b).toMatchObject({ reason: 'live_tracker_mcap_mismatch', trackerMcap: 400_000 })
+    expect((b as { ratio: number }).ratio).toBeCloseTo(6.67, 1)
+    expect(evaluateLiveEntryBrake({ liveMcap: 1_900_000, snapshot: { current_mcap: 300_000, first_mcap: 1 } })).toMatchObject({
+      reason: 'live_tracker_mcap_mismatch',
+    })
+  })
+
+  it('re-runs the band on the live value, using the strategy bounds when given', () => {
+    expect(evaluateLiveEntryBrake({ liveMcap: 2_500_000, snapshot: { current_mcap: 2_400_000, first_mcap: 1 } })?.reason).toBe(
+      'live_mcap_out_of_range',
+    )
+    expect(
+      evaluateLiveEntryBrake({
+        liveMcap: 2_500_000,
+        snapshot: { current_mcap: 2_400_000, first_mcap: 1 },
+        entry: { mcapMax: 5_000_000 },
+      }),
+    ).toBeNull()
+  })
+
+  it('falls back to first_mcap, and applies only the band when the tracker has nothing', () => {
+    expect(evaluateLiveEntryBrake({ liveMcap: 50_000, snapshot: { current_mcap: 0, first_mcap: 40_000 } })).toBeNull()
+    expect(evaluateLiveEntryBrake({ liveMcap: 50_000, snapshot: { current_mcap: 0, first_mcap: 5_000 } })?.reason).toBe(
+      'live_tracker_mcap_mismatch',
+    )
+    expect(evaluateLiveEntryBrake({ liveMcap: 50_000, snapshot: { current_mcap: 0, first_mcap: 0 } })).toBeNull()
+  })
+
+  it('rejects non-finite / non-positive live values', () => {
+    expect(evaluateLiveEntryBrake({ liveMcap: NaN, snapshot: snap })?.reason).toBe('live_mcap_out_of_range')
+    expect(evaluateLiveEntryBrake({ liveMcap: 0, snapshot: snap })?.reason).toBe('live_mcap_out_of_range')
+  })
+
+  it('ratio is a constant, 5 by default, env-overridable, and never < 1', () => {
+    expect(liveTrackerMaxRatio({})).toBe(5)
+    expect(liveTrackerMaxRatio({ MCAP_LIVE_TRACKER_MAX_RATIO: '8' })).toBe(8)
+    expect(liveTrackerMaxRatio({ MCAP_LIVE_TRACKER_MAX_RATIO: '1' })).toBe(5)
+    expect(liveTrackerMaxRatio({ MCAP_LIVE_TRACKER_MAX_RATIO: 'abc' })).toBe(5)
+    expect(evaluateLiveEntryBrake({ liveMcap: 60_000, snapshot: snap, maxRatio: 8 })).toBeNull()
   })
 })

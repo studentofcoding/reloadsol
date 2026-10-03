@@ -143,12 +143,10 @@ describe('cron routes reject the old committed secret when the env is unset', ()
     ['/api/gmgn/sim-track', 'POST', () => import('@/app/api/gmgn/sim-track/route') as never],
     ['/api/gmgn/radar-digest', 'POST', () => import('@/app/api/gmgn/radar-digest/route') as never],
     ['/api/gmgn/wallet-digger', 'POST', () => import('@/app/api/gmgn/wallet-digger/route') as never],
-    ['/api/gmgn/roster-watch', 'POST', () => import('@/app/api/gmgn/roster-watch/route') as never],
     ['/api/report-precompute/refresh', 'POST', () => import('@/app/api/report-precompute/refresh/route') as never],
     ['/api/strategies/report-digest', 'POST', () => import('@/app/api/strategies/report-digest/route') as never],
     ['/api/workers/runtime', 'GET', () => import('@/app/api/workers/runtime/route') as never],
     ['/api/trending/track', 'PUT', () => import('@/app/api/trending/track/route') as never],
-    ['/api/trending/filtered', 'POST', () => import('@/app/api/trending/filtered/route') as never],
     ['/api/trending', 'POST', () => import('@/app/api/trending/route') as never],
     ['/api/logs', 'DELETE', () => import('@/app/api/logs/route') as never],
   ]

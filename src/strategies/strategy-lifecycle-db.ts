@@ -3,6 +3,7 @@
  * Read-only aggregate over `strategy_outcomes` (indexed on `strategy_id`); no writes.
  */
 import { query } from '@/utils/db'
+import { outcomeCountsAsTradeSql } from '@/strategies/outcome-exclusions'
 
 const TTL_MS = 60_000
 let cache: { at: number; value: Record<string, string> } | null = null
@@ -19,6 +20,7 @@ export async function getLastClosedOutcomeAtByStrategy(
     `SELECT strategy_id, MAX(exit_at) AS last_exit_at
        FROM strategy_outcomes
       WHERE strategy_id IS NOT NULL AND exit_at IS NOT NULL
+        AND ${outcomeCountsAsTradeSql()}
       GROUP BY strategy_id`,
   )
   const value: Record<string, string> = {}

@@ -28,20 +28,18 @@ var intendedIntervals = []intendedInterval{
 	{"SLTPMonitorInterval", "SLTP_MONITOR_INTERVAL", []string{"sltp_monitor"}, 60, 60, false},
 	{"SignalRefreshInterval", "SIGNAL_REFRESH_INTERVAL", []string{"signals_refresh"}, 60, 900, false},
 	{"SignalsSimInterval", "SIGNALS_SIM_INTERVAL", []string{"signals_sim_track"}, 120, 900, false},
-	{"McapTrackerSimInterval", "MCAP_TRACKER_SIM_INTERVAL", []string{"mcap_tracker_sim_track", "mcap_tracker_sim_open"}, 120, 120, false},
+	{"McapTrackerSimInterval", "MCAP_TRACKER_SIM_INTERVAL", []string{"mcap_tracker_sim_track"}, 120, 120, false},
 	{"GmgnSimInterval", "GMGN_SIM_INTERVAL", []string{"gmgn_sim_track"}, 120, 900, false},
 	{"SocialSimInterval", "SOCIAL_SIM_INTERVAL", []string{"social_sim_track"}, 90, 900, false}, // AMBIGUOUS: docs say 900 on prod is intended
 	{"GmgnActivityPollInterval", "GMGN_ACTIVITY_POLL_INTERVAL", []string{"gmgn_activity_poll"}, 180, 900, false},
 	{"GmgnRadarDigestInterval", "GMGN_RADAR_DIGEST_INTERVAL", []string{"gmgn_radar_digest"}, 86400, 600, false},
 	{"GmgnWalletDiggerInterval", "GMGN_WALLET_DIGGER_INTERVAL", []string{"gmgn_wallet_digger"}, 14400, 600, false},
-	{"GmgnRosterWatchInterval", "GMGN_ROSTER_WATCH_INTERVAL", []string{"gmgn_roster_watch"}, 75, 600, false},
 	{"StrategyReportInterval", "STRATEGY_REPORT_INTERVAL", []string{"strategy_report"}, 86400, 86400, false},
 	{"ReportPrecomputeInterval", "REPORT_PRECOMPUTE_INTERVAL", []string{"report_precompute"}, 21600, 21600, false},
 	{"DLMMScreenInterval", "DLMM_SCREEN_INTERVAL", []string{"dlmm_screen"}, 300, 300, false},
 	{"DLMMSimTrackInterval", "DLMM_SIM_TRACK_INTERVAL", []string{"dlmm_sim_track"}, 300, 900, false},
 	{"DLMMManageInterval", "DLMM_MANAGE_INTERVAL", []string{"dlmm_manage"}, 60, 900, false},
 	{"RhClmmManageInterval", "RH_CLMM_MANAGE_INTERVAL", []string{"rh_clmm_manage"}, 300, 900, false},
-	{"RhLpScreenInterval", "RH_LP_SCREEN_INTERVAL", []string{"rh_lp_screen"}, 300, 900, false},
 	{"StrategySearchInterval", "STRATEGY_SEARCH_INTERVAL", []string{"strategy_search"}, 21600, 600, false},
 	{"SolArbScanInterval", "SOL_ARB_SCAN_INTERVAL", []string{"sol_arb_scan"}, 60, 900, false},
 	{"OhlcSampleInterval", "OHLC_SAMPLE_INTERVAL", []string{"ohlc_sampler"}, 15, 15, false},
@@ -98,7 +96,7 @@ func TestRegisteredIntervalsMatchTheIntendedTableByDefault(t *testing.T) {
 	// Jobs with a fixed (non-env) cadence are pinned too, so a stray edit shows up here.
 	fixed := map[string]int{
 		"social_rollup": 300, "social_cleanup": 1800, "social_wallet_poll": 300, "trending_tracker": 300,
-		"filtered_trending": 120, "unfiltered_trending": 120, "daily_summary": 86400, "pnl_update": 86400,
+		"unfiltered_trending": 120, "daily_summary": 86400, "pnl_update": 86400,
 	}
 	for id, want := range fixed {
 		if got[id] != want {
@@ -138,8 +136,7 @@ func TestSpecTableAndIntendedTableAgree(t *testing.T) {
 		}
 	}
 	for _, s := range intervalSpecs {
-		// McapTrackerSimOpenInterval schedules nothing and is intentionally absent from the intended table.
-		if !seen[s.Field] && s.Field != "McapTrackerSimOpenInterval" {
+		if !seen[s.Field] {
 			t.Errorf("%s has an intervalSpec but no row in the intended table", s.Field)
 		}
 	}
@@ -289,15 +286,21 @@ func TestAuditSummaryFlagsEveryDeviation(t *testing.T) {
 	}
 }
 
-// mcap_tracker_sim_open has no cron entry; it must report the cadence that actually runs it.
-func TestMcapOpenWorkerReportsTheRealCadence(t *testing.T) {
+// The removed workers must not come back through the registry or the interval specs.
+func TestRemovedWorkersAreGone(t *testing.T) {
 	clearIntervalEnv(t)
 	captureLog(t)
-	t.Setenv("MCAP_TRACKER_SIM_INTERVAL", "240")
-	t.Setenv("MCAP_TRACKER_SIM_OPEN_INTERVAL", "15") // schedules nothing
 	got := workerIntervals(NewCronService())
-	if got["mcap_tracker_sim_open"] != 240 || got["mcap_tracker_sim_track"] != 240 {
-		t.Errorf("open/track = %d/%d, want 240/240 (the phase=all job)", got["mcap_tracker_sim_open"], got["mcap_tracker_sim_track"])
+	for _, id := range []string{"fomo_ws", "gmgn_roster_watch", "rh_lp_screen", "filtered_trending", "mcap_tracker_sim_open"} {
+		if _, ok := got[id]; ok {
+			t.Errorf("worker %s is still registered", id)
+		}
+	}
+	for _, s := range intervalSpecs {
+		switch s.Field {
+		case "GmgnRosterWatchInterval", "RhLpScreenInterval", "McapTrackerSimOpenInterval":
+			t.Errorf("interval spec %s should have been removed", s.Field)
+		}
 	}
 }
 

@@ -2718,7 +2718,7 @@ export function WorkersTab({
                     {/* T5: `status` says whether the last run went well; it cannot say whether the
                         worker still has a purpose. Hence a separate lifecycle word, derived from what
                         this row already carries — a retired worker reddens like a broken one, and
-                        fomo_ws has been 301ing since 07/09 without anything saying it is finished. */}
+                        a retired worker (fomo_ws, now removed) used to sit here 301ing for weeks. */}
                     {w.disabled ? (
                       <span
                         className="ml-2 font-mono text-[10px] text-gray-400"

@@ -1006,7 +1006,7 @@ export default function SocialAdminHub() {
                   <td colSpan={8} className="px-3 py-4 text-gray-500">
                     No {isRobinhood ? "FOMO" : "Telegram"} events in the last 24h
                     {isRobinhood
-                      ? " — cron fomo_ws must be ingesting cash_leg buys"
+                      ? " — the FOMO ingest cron worker was removed; nothing writes new events"
                       : " — check social-ingest is running and channels are active"}
                   </td>
                 </tr>
