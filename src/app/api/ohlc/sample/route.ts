@@ -3,6 +3,7 @@ import { query } from '@/utils/db'
 import { getUsdPrices } from '@/utils/usd-prices'
 import { log } from '@/utils/unified-logger'
 import { hasTrendingTrackerSecret } from '@/utils/api-auth'
+import { barsPruneFloor, pruneRequiresArchive } from '@/strategies/evidence-archive-guard'
 import {
   WATCH_RANGE_MAX,
   WATCH_RANGE_MIN,
@@ -95,10 +96,15 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // With the archive on, never delete a day that has not been copied out (OHLC_PRUNE_REQUIRES_ARCHIVE=1).
+    const archiveFloor = pruneRequiresArchive() ? await barsPruneFloor(query, Date.now()) : null
     const { rowCount } = await query(
       `DELETE FROM token_ohlc_bars
-        WHERE timestamp < now() - make_interval(hours => $1::int)`,
-      [retentionHours],
+        WHERE timestamp < LEAST(
+          now() - make_interval(hours => $1::int),
+          COALESCE($2::timestamptz, 'infinity'::timestamptz)
+        )`,
+      [retentionHours, archiveFloor ? archiveFloor.toISOString() : null],
     )
 
     return NextResponse.json({
@@ -109,6 +115,7 @@ export async function POST(request: NextRequest) {
       priced: priced.length,
       pruned: rowCount ?? 0,
       retention_hours: retentionHours,
+      archive_floor: archiveFloor ? archiveFloor.toISOString() : null,
     })
   } catch (error) {
     log.error('error_handling', 'OHLC sampler failed', error as Error)

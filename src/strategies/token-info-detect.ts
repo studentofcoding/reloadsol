@@ -8,6 +8,7 @@ import { getGmgnTokenSnapshotCached } from '@/utils/gmgn-snapshot-cache'
 import { withInsidersFromTokenStat } from '@/strategies/token-info-insiders'
 import { enqueueRiskShadow } from '@/strategies/risk-shadow-queue'
 import { log } from '@/utils/unified-logger'
+import { freezeEntryContext, isEntryContextEnabled } from '@/strategies/token-entry-context'
 import {
   buildGmgnTokenSnapshot,
   missingCoreTiles,
@@ -324,6 +325,7 @@ async function captureTokenInfoDetectBatchUnsafe(
 ): Promise<void> {
   const sol = firstByMint(items)
   if (sol.length === 0) return
+  const startedAt = new Date()
   // Shadow risk is independent of the GMGN panel: enqueue up front so RugCheck
   // (free, keyless) still runs when GMGN is rate-limited. The dev verdict then
   // degrades to 'inconclusive' instead of blocking the whole write.
@@ -338,23 +340,37 @@ async function captureTokenInfoDetectBatchUnsafe(
   try {
     if (usesGmgnWebTokenInfo('sol')) {
       await captureWeb(sol)
-      return
-    }
-    for (const item of sol) {
-      try {
-        await captureOpenApi(item)
-      } catch (error) {
-        log.warn('token_detection', 'token_info_detect capture skipped a mint', {
-          tokenAddress: item.tokenAddress,
-          source: item.source,
-          error: error instanceof Error ? error.message : String(error),
-        })
+    } else {
+      for (const item of sol) {
+        try {
+          await captureOpenApi(item)
+        } catch (error) {
+          log.warn('token_detection', 'token_info_detect capture skipped a mint', {
+            tokenAddress: item.tokenAddress,
+            source: item.source,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        }
       }
     }
   } catch (error) {
     log.warn('token_detection', 'token_info_detect capture failed', {
       error: error instanceof Error ? error.message : String(error),
     })
+  }
+  // Entry-time context freeze (SPEC-entry-context-freeze-v1): after the panel capture so the tiles it
+  // just wrote can be copied, and regardless of whether that capture succeeded. Own best-effort guard;
+  // makes no GMGN call. Off unless ENTRY_CONTEXT_FREEZE=1.
+  if (isEntryContextEnabled()) {
+    for (const item of sol) {
+      await freezeEntryContext({
+        chain: 'sol',
+        tokenAddress: item.tokenAddress,
+        detectingStrategy: item.detectingStrategy,
+        source: item.source,
+        detectedAt: item.detectedAt ?? startedAt,
+      })
+    }
   }
 }
 

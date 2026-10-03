@@ -60,6 +60,8 @@ var intervalSpecs = []intervalSpec{
 	// The one intentional 900: GMGN's candle endpoint returns a SERIES (~8.35h of minutes per call), so the
 	// cadence governs snapshot freshness only. Keep it well under that window or the gap loses minutes.
 	{Field: "MetricsCopyInterval", Env: "METRICS_COPY_INTERVAL", Default: 900, AllowZero: true, Workers: []string{"metrics_copier"}, Scheduled: true},
+	// Daily copy of complete UTC days of evidence to R2. The route no-ops until EVIDENCE_ARCHIVE_ENABLED=1.
+	{Field: "EvidenceArchiveInterval", Env: "EVIDENCE_ARCHIVE_INTERVAL", Default: 86400, AllowZero: true, Workers: []string{"evidence_archive"}, Scheduled: true},
 }
 
 // intervalResolution is how one knob resolved, kept so the service can say so at startup.
