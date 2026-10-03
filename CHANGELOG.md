@@ -8,6 +8,13 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — keyed Jupiter Price V3 429s
+
+- `jupiter-api.ts` price calls now take a token from the shared gate (they bypassed it), share ONE 429 cooldown with
+  `usd-prices.ts` (sized from `x-ratelimit-reset`, then `Retry-After`, then 30 s), are single-flight per id-set with a
+  3 s result cache, and `fetchJupiterPriceRaw` is gated + cooldown-aware. `lite-api.jup.ag/swap/v1` probed live: 200/422,
+  not rate limited, so it is intentionally untouched (`docs/JUPITER_API_MAP.md`).
+
 ### Fixed — Jupiter metadata stats line never reached prod logs
 
 - `[jupiter-metadata] stats` now uses `console.warn`: `next.config.js` `removeConsole` strips `console.log/info` in production builds (only `error`/`warn` survive), so the 10-minute counters were invisible after #136 shipped.
