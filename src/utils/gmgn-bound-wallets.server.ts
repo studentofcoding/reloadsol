@@ -1,4 +1,5 @@
-import 'server-only'
+// Server-only (gmgn-api -> redis-cache -> ioredis). Never import from a client component or hook;
+// the client-safe helpers live in ./gmgn-bound-wallets. (No `server-only` package installed.)
 import { userInfo } from './gmgn-api'
 import {
   getGmgnBoundWalletsFromEnv,
