@@ -258,3 +258,59 @@ export function shouldOpenMcapSim(
     ) === null
   )
 }
+
+/**
+ * Max factor by which the LIVE (Jupiter) entry mcap and the TRACKER mcap may disagree before the
+ * open is skipped. Env `MCAP_LIVE_TRACKER_MAX_RATIO`; default 5; values <= 1 or non-numeric fall back
+ * to the default (a ratio of 1 would skip everything).
+ *
+ * Why: since ec4b544 the fill is the live Jupiter mcap. For INU / QUANT / Bricks it read ~100x BELOW
+ * the tracker's series for the same instant (entries booked at ~$4k against a ~$400k tracker row), a
+ * units/supply mismatch in one of the two sources, and the +80% milestone that triggered those buys
+ * was then spurious. Normal drift between the two is ~1-5% (fresh-market-value.ts), so 5x never
+ * trips on a healthy pair.
+ */
+export const DEFAULT_LIVE_TRACKER_MAX_RATIO = 5
+
+export function liveTrackerMaxRatio(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const n = Number(env.MCAP_LIVE_TRACKER_MAX_RATIO)
+  return Number.isFinite(n) && n > 1 ? n : DEFAULT_LIVE_TRACKER_MAX_RATIO
+}
+
+export type LiveEntryBrake =
+  | { reason: 'live_mcap_out_of_range'; liveMcap: number }
+  | { reason: 'live_tracker_mcap_mismatch'; liveMcap: number; trackerMcap: number; ratio: number }
+
+/**
+ * Sanity brake on a live-sourced entry. A SKIP only: null means "no objection", it never creates or
+ * enlarges an open.
+ *  1. the live value must itself sit inside the strategy's mcap band (default 30k-2M), because the
+ *     band gate in `getMcapSimOpenSkipReason` ran on the TRACKER value, not the one that is booked;
+ *  2. live and tracker mcap must agree within `maxRatio` either way. The tracker reference is
+ *     `current_mcap`, else `first_mcap`; with neither, only (1) applies.
+ */
+export function evaluateLiveEntryBrake(params: {
+  liveMcap: number
+  snapshot: Pick<McapSnapshot, 'current_mcap' | 'first_mcap'>
+  entry?: { mcapMin?: number; mcapMax?: number }
+  maxRatio?: number
+}): LiveEntryBrake | null {
+  const { liveMcap, snapshot } = params
+  if (!Number.isFinite(liveMcap) || liveMcap <= 0 || !isInTrackingRange(liveMcap, params.entry)) {
+    return { reason: 'live_mcap_out_of_range', liveMcap }
+  }
+  const trackerMcap =
+    snapshot.current_mcap && snapshot.current_mcap > 0
+      ? snapshot.current_mcap
+      : snapshot.first_mcap && snapshot.first_mcap > 0
+        ? snapshot.first_mcap
+        : null
+  if (trackerMcap == null) return null
+  const ratio = Math.max(liveMcap / trackerMcap, trackerMcap / liveMcap)
+  if (ratio > (params.maxRatio ?? liveTrackerMaxRatio())) {
+    return { reason: 'live_tracker_mcap_mismatch', liveMcap, trackerMcap, ratio }
+  }
+  return null
+}

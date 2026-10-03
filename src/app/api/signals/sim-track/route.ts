@@ -24,7 +24,7 @@ import {
 import { annotateEntryFeatures, getSocialContext } from '@/strategies/social/context'
 import { appendSimPositionMonitorSnapshot, resolveTokenMonitorSnapshot } from '@/strategies/sim-monitor-snapshots'
 import { checkGmgnLiveBoostForOpenPosition } from '@/strategies/gmgn-live-boost'
-import { fetchTradingRecordsForWallet } from '@/strategies/db'
+import { tryFetchWalletRecords } from '@/strategies/safe-wallet-records'
 import { computeOpenSimCycle } from '@/utils/simulation-trades'
 import { buildTradingRecord, insertTradingRecords } from '@/utils/trading-records-db'
 import type { TrackingRecord } from '@/utils/trading-tracker'
@@ -77,7 +77,8 @@ async function runSimTrack(request: NextRequest) {
     const strategies = await getActiveSignalsForSim(chain)
     if (strategies.length === 0) continue
     const simWallet = simWalletForChain(SIGNALS_SIM_WALLET_LOCAL, chain)
-    const records = await fetchTradingRecordsForWallet(simWallet)
+    const records = await tryFetchWalletRecords(simWallet, { chain, phase: 'open_gate' })
+    if (!records) continue
 
     for (const strategy of strategies) {
       const openPositions = getOpenPositionsForStrategy(records, strategy.id)
@@ -142,7 +143,21 @@ async function runSimTrack(request: NextRequest) {
       // REL-20: flush close-phase writes before re-fetching records
       await flushPending('close')
 
-      const refreshedRecords = await fetchTradingRecordsForWallet(simWallet)
+      const refreshedRecords = await tryFetchWalletRecords(simWallet, {
+        strategyId: strategy.id,
+        chain,
+        phase: 'refresh',
+      })
+      if (!refreshedRecords) {
+        results.push({
+          strategyId: strategy.id,
+          chain,
+          opened,
+          closed,
+          skipped: [...skipped, 'ledger_read_failed'],
+        })
+        continue
+      }
       const currentOpen = getOpenPositionsForStrategy(refreshedRecords, strategy.id).length
       const maxOpen = strategy.config.execution.maxOpenPositions
 

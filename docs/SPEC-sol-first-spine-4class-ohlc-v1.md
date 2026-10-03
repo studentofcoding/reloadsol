@@ -34,7 +34,7 @@ Buy sides for this SPEC: **`mcap_enter_first_seen`** and **`mcap_enter_at_80`** 
 
 ### 1. Filter / candidates
 
-- Enter candidates from **first-seen** and **~80k** mcap strategies only for this spine’s buy side.
+- Enter candidates from **first-seen** and **`at_80`** (the **+80% growth milestone** over the tracker's `first_mcap`, i.e. `mcap_growth_percent >= 80` / `when_reach_80pct`; NOT an "80k" market cap — it fills at the *live* mcap when it opens, median ≈ $150k) mcap strategies only for this spine’s buy side.
 - Hard concentration ban (`CONCENTRATION_BAN_PCT`, live **65**) remains a **hard skip** outside soft size.
 - Other signals (social FOMO, trending, high-loss fires, etc.) may annotate / brake / label — they do **not** open a parallel buy path in v1.
 

@@ -1,4 +1,4 @@
-import { computeOpenSimCycle } from '@/utils/simulation-trades'
+import { computeOpenSimCycle, scopeRecordsToStrategy } from '@/utils/simulation-trades'
 import type { TrackingRecord } from '@/utils/trading-tracker'
 import {
   readEffectiveExit,
@@ -16,23 +16,31 @@ export type StrategySimOpenPosition = {
   effectiveExit: McapEffectiveExit | null
 }
 
-/** Open strategy sim cycles for a wallet filtered by bot_strategy. */
+/**
+ * Open strategy sim cycles for a wallet filtered by bot_strategy.
+ *
+ * The cycle is computed over THIS strategy's records only. A wallet-wide cycle nets every strategy's
+ * buys and sells for the mint, so a sibling's close zeroed this strategy's cycle (its position read
+ * as closed and dropped out of the open count) and, symmetrically, this strategy's open count
+ * included tokens another strategy bought. Same rule as `getOpenMcapPositions`.
+ */
 export function getOpenStrategySimPositions(
   records: TrackingRecord[],
   strategyId: string,
 ): StrategySimOpenPosition[] {
   const seen = new Set<string>()
   const open: StrategySimOpenPosition[] = []
+  const scoped = scopeRecordsToStrategy(records, strategyId)
 
-  for (const r of records) {
-    if (!r.is_simulation || r.bot_strategy !== strategyId) continue
+  for (const r of scoped) {
+    if (!r.is_simulation) continue
     for (const t of r.tokens ?? []) {
       if (seen.has(t.mintAddress)) continue
-      const cycle = computeOpenSimCycle(records, t.mintAddress)
+      const cycle = computeOpenSimCycle(scoped, t.mintAddress)
       if (!cycle || cycle.simulationType !== 'strategy') continue
       seen.add(t.mintAddress)
 
-      const buyRecord = records.find(
+      const buyRecord = scoped.find(
         (rec) =>
           rec.operationType === 'buy' &&
           rec.bot_strategy === strategyId &&
