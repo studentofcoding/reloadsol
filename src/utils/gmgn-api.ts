@@ -22,8 +22,15 @@ const DEFAULT_TIMEOUT_MS = 15_000
 const DEFAULT_MAX_REQ_PER_SEC = 1.4
 /** Cap on 429 retry sleeps — longer reset windows just fail fast (RATE_LIMIT). */
 const MAX_RETRY_WAIT_MS = 5_000
-/** How long a read-only GET respects a negative rate-limit cache (seconds). */
+/** Hard cap on a read-only GET's negative rate-limit cache (seconds). */
 const RATE_LIMIT_COOLDOWN_S = 30
+/** First cooldown after a 429 that carries no Retry-After/reset hint; doubles per strike. */
+const RATE_LIMIT_COOLDOWN_BASE_MS = 5_000
+/** Random extra (0..25%) on cooldowns and retry sleeps so workers don't re-fire in lockstep. */
+const RATE_LIMIT_JITTER = 0.25
+/** After any 429 the shared gate runs at half speed for this long (throttle, don't starve). */
+const PACE_SLOWDOWN_MS = 20_000
+const PACE_SLOWDOWN_FACTOR = 2
 const PKCS8_PRIVATE_KEY_RE =
   /(-----BEGIN PRIVATE KEY-----[\s\S]+?-----END PRIVATE KEY-----)/
 
@@ -84,7 +91,7 @@ async function pumpLanes(): Promise<void> {
   pumping = true
   try {
     while (laneHasWork()) {
-      const minIntervalMs = gmgnMinIntervalMs()
+      const minIntervalMs = gmgnEffectiveMinIntervalMs()
       const wait = Math.max(0, gate.lastAt + minIntervalMs - Date.now())
       // Wait FIRST, then pick: anything that arrives during the interval is
       // ordered by lane instead of being served in arrival order.
@@ -99,36 +106,85 @@ async function pumpLanes(): Promise<void> {
   }
 }
 
-/** Remember 429s so read-only GETs skip upstream during the reset window. */
-const rateLimitCooldown: { untilMs: number; resetAt?: number } = {
-  untilMs: 0,
-  resetAt: undefined,
+/**
+ * Gate pacing penalty armed by a 429 on any endpoint: every GMGN start is spaced
+ * `PACE_SLOWDOWN_FACTOR`x wider for `PACE_SLOWDOWN_MS`. The key's budget is shared, so
+ * the other consumers back off a little instead of being failed outright.
+ */
+const pacing: { slowUntilMs: number } = { slowUntilMs: 0 }
+
+/** Gate spacing in effect now (base gap, widened while a 429 penalty is open). */
+export function gmgnEffectiveMinIntervalMs(nowMs: number = Date.now()): number {
+  const base = gmgnMinIntervalMs()
+  return nowMs < pacing.slowUntilMs ? base * PACE_SLOWDOWN_FACTOR : base
 }
 
-async function checkRateLimitCooldown(): Promise<void> {
-  if (rateLimitCooldown.untilMs > Date.now()) {
+type EndpointCooldown = { untilMs: number; resetAt?: number; strikes: number }
+
+/**
+ * Per-endpoint negative cache. A 429 on `/v1/user/smartmoney` must not fail-fast
+ * `/v1/token/info` callers (sim track vs activity poll vs roster watch), so the
+ * mark is keyed by path instead of being one process-wide window.
+ */
+const rateLimitCooldowns = new Map<string, EndpointCooldown>()
+
+/**
+ * Cooldown length after a 429: honor the server's reset/Retry-After hint when present
+ * (clamped to 1s..cap), else exponential 5s,10s,20s.. capped at 30s; plus 0..25% jitter.
+ * Pure — `random` is injectable for tests.
+ */
+export function computeRateLimitCooldownMs(opts: {
+  strikes: number
+  resetAt?: number
+  nowMs?: number
+  random?: number
+}): number {
+  const capMs = RATE_LIMIT_COOLDOWN_S * 1000
+  const nowMs = opts.nowMs ?? Date.now()
+  const random = opts.random ?? Math.random()
+  const strikes = Math.max(1, Math.floor(opts.strikes))
+  const baseMs = opts.resetAt
+    ? Math.min(Math.max(opts.resetAt * 1000 - nowMs, 1000), capMs)
+    : Math.min(RATE_LIMIT_COOLDOWN_BASE_MS * 2 ** (strikes - 1), capMs)
+  return Math.min(capMs, Math.round(baseMs * (1 + random * RATE_LIMIT_JITTER)))
+}
+
+async function checkRateLimitCooldown(path: string): Promise<void> {
+  const cur = rateLimitCooldowns.get(path)
+  if (cur && cur.untilMs > Date.now()) {
     // Fail fast (429) instead of sleeping up to 30s inside a request.
-    throw new GmgnApiError(
-      'GMGN rate limit exceeded',
-      'RATE_LIMIT',
-      rateLimitCooldown.resetAt,
-    )
+    throw new GmgnApiError('GMGN rate limit exceeded', 'RATE_LIMIT', cur.resetAt)
   }
 }
 
-function markRateLimitCooldown(resetAt?: number): void {
-  const resetMs = resetAt ? resetAt * 1000 - Date.now() : RATE_LIMIT_COOLDOWN_S * 1000
-  const untilMs = Date.now() + Math.min(Math.max(resetMs, 1000), RATE_LIMIT_COOLDOWN_S * 1000)
-  if (untilMs > rateLimitCooldown.untilMs) {
-    rateLimitCooldown.untilMs = untilMs
-    rateLimitCooldown.resetAt = resetAt
-  }
+function markRateLimitCooldown(path: string, resetAt?: number): void {
+  const now = Date.now()
+  const prev = rateLimitCooldowns.get(path)
+  const strikes = (prev?.strikes ?? 0) + 1
+  const untilMs = now + computeRateLimitCooldownMs({ strikes, resetAt, nowMs: now })
+  rateLimitCooldowns.set(path, {
+    untilMs: Math.max(untilMs, prev?.untilMs ?? 0),
+    resetAt,
+    strikes,
+  })
+  pacing.slowUntilMs = Math.max(pacing.slowUntilMs, now + PACE_SLOWDOWN_MS)
+}
+
+/** A successful call on `path` ends its backoff ladder. */
+function clearRateLimitStrikes(path: string): void {
+  const cur = rateLimitCooldowns.get(path)
+  if (cur && cur.untilMs <= Date.now()) rateLimitCooldowns.delete(path)
 }
 
 /** Test-only hook to reset the negative rate-limit cache between tests. */
 export function __resetRateLimitCooldownForTests(): void {
-  rateLimitCooldown.untilMs = 0
-  rateLimitCooldown.resetAt = undefined
+  rateLimitCooldowns.clear()
+  pacing.slowUntilMs = 0
+}
+
+/** Test-only: is `path` currently cooling down? */
+export function __isPathCoolingForTests(path: string): boolean {
+  return (rateLimitCooldowns.get(path)?.untilMs ?? 0) > Date.now()
 }
 
 export class GmgnApiError extends Error {
@@ -214,12 +270,25 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+/** `Retry-After` (delta-seconds or HTTP date) as an epoch-seconds reset time. */
+export function parseRetryAfter(value: string | null, nowMs: number = Date.now()): number | undefined {
+  if (!value) return undefined
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+  const secs = Number(trimmed)
+  if (Number.isFinite(secs)) return secs >= 0 ? nowMs / 1000 + secs : undefined
+  const dateMs = Date.parse(trimmed)
+  return Number.isFinite(dateMs) ? dateMs / 1000 : undefined
+}
+
 function parseResetAt(headers: Headers, body: unknown): number | undefined {
   const headerReset = headers.get('X-RateLimit-Reset') ?? headers.get('x-ratelimit-reset')
   if (headerReset) {
     const n = Number(headerReset)
     if (Number.isFinite(n)) return n
   }
+  const retryAfter = parseRetryAfter(headers.get('Retry-After'))
+  if (retryAfter !== undefined) return retryAfter
   if (body && typeof body === 'object') {
     const record = body as Record<string, unknown>
     const data = record.data
@@ -351,13 +420,13 @@ async function gmgnHttp(
           // Long reset windows won't clear in time — fail fast instead of
           // holding the request (and the shared gate) for up to 30s.
           if (resetAt && resetAt * 1000 - Date.now() > MAX_RETRY_WAIT_MS) {
-            markRateLimitCooldown(resetAt)
+            markRateLimitCooldown(path, resetAt)
             throw new GmgnApiError('GMGN rate limit exceeded', 'RATE_LIMIT', resetAt)
           }
-          await sleep(waitMs)
+          await sleep(waitMs + Math.round(waitMs * RATE_LIMIT_JITTER * Math.random()))
           continue
         }
-        markRateLimitCooldown(resetAt)
+        markRateLimitCooldown(path, resetAt)
         throw new GmgnApiError('GMGN rate limit exceeded', 'RATE_LIMIT', resetAt)
       }
 
@@ -373,6 +442,7 @@ async function gmgnHttp(
         throw new GmgnApiError(msg)
       }
 
+      clearRateLimitStrikes(path)
       return body
     } catch (error) {
       if (error instanceof GmgnApiError) throw error
@@ -398,7 +468,7 @@ async function gmgnFetch(
   const apiKey = getApiKey()
   const bodyStr = body != null ? JSON.stringify(body) : null
   // Read-only GETs skip upstream while a rate-limit window is open.
-  if (method === 'GET') await checkRateLimitCooldown()
+  if (method === 'GET') await checkRateLimitCooldown(path)
   // Gate BEFORE stamping: GMGN rejects a timestamp older than ~20s
   // (AUTH_TIMESTAMP_EXPIRED), and the serial gate can hold a request behind a
   // queue of weight-2 calls from several concurrent workers.
