@@ -25,7 +25,13 @@ export const PUBLIC_API_PREFIXES = [
  * Exact-path public reads. Exact (not prefix) on purpose: `/api/scout/data-public/paper` writes to the DB
  * and must stay behind a wallet session while the read-only feed behind the Insight strip stays public.
  */
-export const PUBLIC_API_EXACT_GET_PATHS = ['/api/scout/data-public'] as const;
+export const PUBLIC_API_EXACT_GET_PATHS = [
+  '/api/scout/data-public',
+  // Landing-page "last reload" ticker (short wallet + SOL recovered): marketing widget shown signed-out.
+  '/api/operations/last-reload',
+  // Public chart page (/chart/[mint]) resolves the token through this read-only search before any sign-in.
+  '/api/trending/search',
+] as const;
 
 /**
  * Routes that authenticate themselves inside the handler (cron secret, Goldsky bearer, per-job secrets)

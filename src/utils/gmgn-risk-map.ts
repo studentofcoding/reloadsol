@@ -2,6 +2,7 @@
  * Map GMGN token-snapshot / security fields into TokenRisk-shaped risk for RiskAnalysis.
  */
 
+import { internalAuthHeaders } from './internal-api'
 import type { TokenRiskInfo, RiskIndicators } from '@/utils/token-risk'
 import { getRiskIndicators } from '@/utils/token-risk'
 
@@ -74,7 +75,7 @@ export async function fetchTokenRisk(
 ): Promise<{ success: boolean; data?: TokenRiskInfo; risk?: RiskIndicators; error?: string }> {
   try {
     const q = new URLSearchParams({ chain, address })
-    const res = await fetch(`${apiBaseUrl()}/api/gmgn/token-snapshot?${q}`)
+    const res = await fetch(`${apiBaseUrl()}/api/gmgn/token-snapshot?${q}`, { headers: internalAuthHeaders() })
     const json = (await res.json()) as Record<string, unknown>
     if (!res.ok || json.success !== true) {
       return { success: false, error: (json.error as string) || `HTTP ${res.status}` }

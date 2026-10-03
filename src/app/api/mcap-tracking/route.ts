@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse, connection } from 'next/server'
 import { trackTokenMcap, getMcapDisplayString, isInTrackingRange, cleanupOldMcapRecords, getTrackingHealthStats, STOP_LOSS_THRESHOLD, MAX_TRACKING_AGE_MS, TokenLabel, normalizeTrackingTimeline, type McapSnapshot } from '@/utils/mcap-tracker'
 import { query, queryOne } from '@/utils/db'
+import { withInternalAuth } from '@/utils/internal-api'
 import { getSolPriceUSD } from '@/utils/solana'
 import { getAppLocalParts } from '@/utils/datetime'
 import { log } from '@/utils/unified-logger'
@@ -87,7 +88,7 @@ export async function GET(request: NextRequest) {
           // Single-flight: one detached refresh at a time, and it never delays this response.
           if (await cacheSetNx(`${listCacheKey}:refresh`, '1', 120)) {
             void fetch(`${baseUrl}/api/mcap-tracking?${cacheQuery}&__refresh=1`, {
-              headers: { 'x-internal-refresh': '1' },
+              headers: withInternalAuth({ 'x-internal-refresh': '1' }),
             }).catch(() => {})
           }
           return NextResponse.json(staleList, { headers: { 'X-Mcap-Cache': 'stale' } })
@@ -615,7 +616,7 @@ export async function GET(request: NextRequest) {
       }>()
       try {
         const trendingResp = await fetch(`${baseUrl}/api/trending?cache=off&nocache=true`, {
-          headers: { 'x-no-cache': '1' },
+          headers: withInternalAuth({ 'x-no-cache': '1' }),
           next: { revalidate: 0 }
         })
         if (trendingResp.ok) {
@@ -902,7 +903,7 @@ export async function GET(request: NextRequest) {
         let trendingResponse;
         try {
           trendingResponse = await fetch(`${baseUrl}/api/trending?cache=off&nocache=true`, {
-            headers: { 'x-no-cache': '1' },
+            headers: withInternalAuth({ 'x-no-cache': '1' }),
             next: { revalidate: 0 }
           });
         } catch (fetchError) {

@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse, connection } from 'next/server'
+import { guardWalletTier } from '@/utils/api-auth'
 import { fetchKyberRoute } from '@/utils/kyber-aggregator'
 
 
 export async function GET(request: NextRequest) {
+  const denied = guardWalletTier(request)
+  if (denied) return denied
+
   await connection()
   try {
     const tokenIn = request.nextUrl.searchParams.get('tokenIn')?.trim() ?? ''

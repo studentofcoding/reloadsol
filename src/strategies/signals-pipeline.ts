@@ -1,4 +1,5 @@
 import { query } from '@/utils/db'
+import { withInternalAuth } from '@/utils/internal-api'
 import { normalizeTrackingTimeline, isInTrackingRange, type McapSnapshot } from '@/utils/mcap-tracker'
 import { getRugAddressSet } from '@/utils/rug-list/db'
 import { log } from '@/utils/unified-logger'
@@ -155,7 +156,7 @@ async function validateTokensAgainstRugPulls(
         try {
           const response = await fetch(
             `${baseUrl}/api/trending/search?query=${tokenAddress}`,
-            { headers: { 'User-Agent': 'TradingSignals/1.0' } },
+            { headers: withInternalAuth({ 'User-Agent': 'TradingSignals/1.0' }) },
           )
           if (response.ok) {
             const data = await response.json()

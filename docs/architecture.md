@@ -204,6 +204,8 @@ Enforced in [`src/utils/api-auth.ts`](../src/utils/api-auth.ts) + [`src/config/a
 | **open** (self-auth) | The handler authenticates itself (cron secret, Goldsky bearer, per-job secret); list `SELF_AUTH_API_PREFIXES` | `/api/rh/ledger/ingest`, `/api/rug-signal/*`, `/api/sl-tp-monitor`, `/api/mcap-patterns/refresh` |
 | **service** | A request carrying a valid cron secret (`?key=` / `Authorization: Bearer`) passes every tier | `/api/trending/track`, `/api/signals/sim-track`, `/api/sol-arb/scan` |
 
+**Enforcement lives in `src/proxy.ts`** (Next only registers a proxy at `src/proxy.ts` in this repo; at the repo root it is silently ignored). Server-to-self calls (`mcap-tracking` refresh, `signals-pipeline`, `gmgn-risk-map`, ...) must go through `src/utils/internal-api.ts`, which adds the service bearer. `API_TIER_ENFORCE` = unset (enforce) | `log` (log would-be 401s as `[api-tier] {...}`, never block) | `0` (kill switch). `src/config/api-signed-out-matrix.test.ts` pins the signed-out status of every route x method in `api-signed-out-matrix.json`; regenerate with `UPDATE_MATRIX=1` when you change a tier on purpose.
+
 New routes are `wallet` until classified. `src/config/api-access.default-tier.test.ts` holds an inventory snapshot of every route that is reachable without a session; changing it is a review decision.
 
 Wallet session: `WALLET_SESSION_SECRET` cookie after SIWS-style sign-in.
