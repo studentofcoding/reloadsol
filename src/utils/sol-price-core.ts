@@ -1,4 +1,4 @@
-import { getTokenPrice } from './jupiter-api'
+import { getTokenPrice, JupiterAPIError, jupiterPriceBackoffRemainingMs } from './jupiter-api'
 import { cacheGet, cacheSet } from './redis-cache'
 import { fetchBybitSpotLast } from './bybit-spot'
 
@@ -166,6 +166,15 @@ async function fetchWithRateLimit(
     return { price, source: apiName };
 
   } catch (error) {
+    // A Jupiter 429 gets the full rate-limit window (30-60s, Retry-After honoured), not the ~2s
+    // first-strike backoff: the stale cache / Bybit cover the gap, and retrying inside the window
+    // only extends the throttle.
+    if (error instanceof JupiterAPIError && error.isRateLimit) {
+      console.warn(`Rate limited by ${apiName} price API; backing off`);
+      state.consecutiveErrors++;
+      state.backoffUntil = Date.now() + Math.max(jupiterPriceBackoffRemainingMs(), 30_000);
+      return null;
+    }
     console.error(`Error fetching from ${apiName}:`, error);
 
     // Increase error count and set backoff
