@@ -129,6 +129,30 @@ describe('pure helpers', () => {
   })
 })
 
+describe('jupiter-metadata stats line', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+  it('logs one stats line per 10 minutes via console.warn (console.log is stripped in prod builds)', async () => {
+    vi.useFakeTimers()
+    __resetJupiterMetadataForTests()
+    resetJupiterRpsForTests()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    vi.stubGlobal('fetch', echoFetch())
+    await settle(fetchTokenMetadataFromJupiter(SOL))
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('[jupiter-metadata] stats'))).toBe(false)
+    await vi.advanceTimersByTimeAsync(11 * 60_000)
+    await settle(fetchTokenMetadataFromJupiter(USDC))
+    const lines = warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('[jupiter-metadata] stats'))
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toMatch(/upstream_mints=2 keyless_req=2 keyed_req=0 429_keyless=0 429_keyed=0/)
+    expect(log.mock.calls.some((c) => String(c[0]).includes('stats'))).toBe(false)
+  })
+})
+
 describe('jupiter-metadata queue / cache / gate', () => {
   beforeEach(() => {
     vi.useFakeTimers()

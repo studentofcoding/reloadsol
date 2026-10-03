@@ -299,7 +299,8 @@ function maybeLogStats(): void {
   if (now - s.statsSince < 10 * 60_000) return
   const c = s.counters
   const total = c.l1Hits + c.l2Hits + c.negativeHits + c.mintsRequested
-  console.log(
+  // console.warn on purpose: next.config removeConsole strips console.log/info in production builds
+  console.warn(
     `[jupiter-metadata] stats ${Math.round((now - s.statsSince) / 60_000)}m: ` +
       `lookups=${total} l1=${c.l1Hits} l2=${c.l2Hits} neg=${c.negativeHits} stale=${c.staleServed} ` +
       `upstream_mints=${c.mintsRequested} keyless_req=${c.requests.keyless} keyed_req=${c.requests.keyed} ` +
