@@ -247,6 +247,7 @@ type Config struct {
     OhlcSampleInterval int // seconds — 1m OHLC sampler (0 = disabled)
     MetricsCopyInterval int // seconds — 1m volume copier (0 = disabled)
     EvidenceArchiveInterval int // seconds — daily evidence archive to R2 (0 = disabled)
+    OpenReportInterval int // seconds — opens reporter tick (Telegram; 0 = disabled)
 }
 
 type CronService struct {
@@ -294,6 +295,7 @@ func NewCronService() *CronService {
         // under that window or the gap loses minutes permanently.
         MetricsCopyInterval: intervalFor("MetricsCopyInterval"),
         EvidenceArchiveInterval: intervalFor("EvidenceArchiveInterval"),
+        OpenReportInterval: intervalFor("OpenReportInterval"),
     }
 
 	c := newStaggeredCron()
@@ -393,6 +395,17 @@ func (cs *CronService) Start() {
             log.Fatal("Failed to add evidence archive cron job:", err)
         }
         cs.workers.BindEntry(evidenceEntryID, "evidence_archive")
+    }
+
+    // Opens reporter – every N seconds (default 3600, 0 = disabled). The route decides what is due
+    // (hourly / daily / alerts) and is a no-op when OPEN_REPORT_ENABLED is off.
+    if cs.config.OpenReportInterval > 0 {
+        openReportEntryID, err := cs.cron.AddFunc(everySpec(cs.config.OpenReportInterval), cs.runOpenReport)
+        if err != nil {
+            cs.logger.Error(fmt.Sprintf("Failed to add open report cron job: %v", err))
+            log.Fatal("Failed to add open report cron job:", err)
+        }
+        cs.workers.BindEntry(openReportEntryID, "open_report")
     }
 
     // Signals sim track – every N seconds (default 120)
@@ -606,6 +619,7 @@ func (cs *CronService) Start() {
     http.HandleFunc("/trigger/ohlc-sampler", cs.requireTriggerSecret(cs.manualOhlcSampleTrigger))
     http.HandleFunc("/trigger/metrics-copier", cs.requireTriggerSecret(cs.manualMetricsCopyTrigger))
     http.HandleFunc("/trigger/evidence-archive", cs.requireTriggerSecret(cs.manualEvidenceArchiveTrigger))
+    http.HandleFunc("/trigger/open-report", cs.requireTriggerSecret(cs.manualOpenReportTrigger))
     http.HandleFunc("/logs/test", cs.testDiscordLogs)
 
     cs.cron.Start()
@@ -1713,6 +1727,40 @@ func (cs *CronService) manualEvidenceArchiveTrigger(w http.ResponseWriter, r *ht
     w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(map[string]string{
         "message":   "evidence archive triggered manually",
+        "timestamp": time.Now().UTC().Format(time.RFC3339),
+    })
+}
+
+// runOpenReport asks the web app to post the paper-open success/fail report and any due alerts to
+// Telegram. {"skipped":true} (reporter disabled, Telegram not configured, or lock held) is a skip.
+func (cs *CronService) runOpenReport() {
+    cs.workers.Begin("open_report")
+    url := fmt.Sprintf("%s/api/operations/open-report?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
+    resp, err := cs.makeRequest("POST", url, nil, 60)
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("❌ Open report failed: %v", err))
+        cs.workers.Fail("open_report", err.Error())
+        return
+    }
+    if isSkippedBody(resp) {
+        cs.logger.Info("⏭️ Open report skipped (disabled, Telegram unconfigured, or lock held)")
+        cs.workers.Skipped("open_report")
+        return
+    }
+    cs.logger.Success(fmt.Sprintf("✅ Open report completed: %s", resp))
+    cs.workers.Success("open_report")
+}
+
+func (cs *CronService) manualOpenReportTrigger(w http.ResponseWriter, r *http.Request) {
+    if r.Method != "POST" {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    cs.logger.Info("🔧 Manual open report trigger")
+    cs.runOpenReport()
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]string{
+        "message":   "open report triggered manually",
         "timestamp": time.Now().UTC().Format(time.RFC3339),
     })
 }

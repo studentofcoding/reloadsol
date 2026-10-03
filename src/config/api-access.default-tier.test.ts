@@ -206,6 +206,7 @@ describe('route inventory', () => {
         "/api/metrics/copy",
         "/api/ml/pattern/reload",
         "/api/ohlc/sample",
+        "/api/operations/open-report",
         "/api/regime/climate",
         "/api/report-precompute/refresh",
         "/api/rh/config",

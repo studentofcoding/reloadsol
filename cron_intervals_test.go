@@ -45,6 +45,7 @@ var intendedIntervals = []intendedInterval{
 	{"OhlcSampleInterval", "OHLC_SAMPLE_INTERVAL", []string{"ohlc_sampler"}, 15, 15, false},
 	{"MetricsCopyInterval", "METRICS_COPY_INTERVAL", []string{"metrics_copier"}, 900, 900, false}, // the one intentional 900
 	{"EvidenceArchiveInterval", "EVIDENCE_ARCHIVE_INTERVAL", []string{"evidence_archive"}, 86400, 86400, false},
+	{"OpenReportInterval", "OPEN_REPORT_INTERVAL", []string{"open_report"}, 3600, 3600, false},
 }
 
 // clearIntervalEnv unsets every interval env var for the test and restores it afterwards.

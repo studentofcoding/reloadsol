@@ -67,6 +67,32 @@ SL closes on 10-03). The pre-9371f3b route closer scoped the cycle; the worker-e
   stays 48 h). `npm run evidence:archive -- list|verify|replay|restore-bars` reads/verifies/replays the archive.
 - Docs: `docs/specs/SPEC-evidence-bar-archive-v1.md`. After PR #151 (default API tier = wallet) lands, `/api/evidence/archive`
   must be added to `SELF_AUTH_API_PREFIXES` or the proxy will 401 the cron.
+### Added — entry-time context freeze (map #140, extends SPEC #91)
+
+- New insert-only `token_entry_context` (`db/init/64-token-entry-context.sql`, apply before code; UPDATE/DELETE rejected by trigger):
+  one row per Sol mint written at the first detect by any strategy, holding tracker first/current mcap, the live Jupiter
+  mcap/price/5m volume, a copy of the Token Info tiles from `token_info_detect`, and the last N (default 30) 1m bars before
+  the detect (`token_ohlc_bars` only keeps 48 h).
+- Hooked into `captureTokenInfoDetectBatch` (after the panel capture, whether or not it succeeded); best-effort, never rejects,
+  first writer wins with an existence check before any upstream work. Makes **no GMGN call**; Jupiter goes through the shared
+  paced queue with a 4 s timeout. Each failed part is recorded as a status on the row.
+- Off unless `ENTRY_CONTEXT_FREEZE=1` (also `ENTRY_CONTEXT_JUPITER`, `ENTRY_CONTEXT_JUPITER_TIMEOUT_MS`, `ENTRY_CONTEXT_BARS`).
+  Docs: `docs/specs/SPEC-entry-context-freeze-v1.md`.
+
+### Added — open-attempt record, failed-open policy and Telegram opens reporter (map #140)
+
+- New `position_open_attempts` (`db/init/65-position-open-attempts.sql`, apply before code): one row per attempt with outcome
+  `success|failed|skipped`, stage, reason, attempt number and prices. Written best-effort from `appendSpineDecision` (every
+  sim-track route, `gmgn-open-sim`, social cross-check) so the spine's 50-entry / 24 h Redis ring now has a durable copy.
+  Route-level brakes (at cap, live-mcap range) are not wired until #138 merges (`recordOpenAttempt` is the one-line hook).
+- Failed-open policy in the shared `prepareTargetMachinePaperOpen`: retry twice; if the price moved > 5 % (either direction)
+  since the last failed try, fail loudly (`log.error` + `price_moved_gt_5pct` row) and skip. Rug/size stand-downs are never
+  retried. **Off** unless `OPEN_RETRY_POLICY=1` (`OPEN_RETRY_MAX`, `OPEN_RETRY_MAX_MOVE_PCT`, `OPEN_RETRY_DELAY_MS`).
+- Opens reporter `/api/operations/open-report` + Go worker `open_report` (`OPEN_REPORT_INTERVAL`, default 3600): hourly and daily
+  success/fail % to the existing Telegram alert chat; alerts for a stuck `bot_job_locks` row and stale 1m bars / mcap tracker /
+  copier, and a `registerOpenStallProvider` hook for "at cap, no opens for 6h" (#138's cap-stall monitor plugs in after it
+  merges). Cooldowns in `watchdog_alert_state`. Default **on** (`OPEN_REPORT_ENABLED=0` to silence). Docs:
+  `docs/specs/SPEC-open-attempts-reporting-v1.md`. `/api/operations/open-report` and `/api/evidence/archive` (merged without its entry) are added to `SELF_AUTH_API_PREFIXES` (PR #151 made the default API tier `wallet`, which would 401 both cron calls).
 
 ### Fixed — keyed Jupiter Price V3 429s
 
