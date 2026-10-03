@@ -4,124 +4,184 @@ const MIN_REQUEST_INTERVAL = 200 // 200ms between requests for batch calls
 
 const MAX_RETRIES = 3
 const RETRY_DELAYS = [400, 800, 1600]
-const REQUEST_TIMEOUT = 10000 // 10 seconds timeout
+const REQUEST_TIMEOUT = 10000 // 10 seconds timeout (covers headers AND body)
 
-// New function to fetch multiple tokens using v2 search endpoint
-async function fetchTokensFromJupiterV2(mintAddresses: string[], retryCount = 0): Promise<Record<string, any>> {
-  try {
-    // Rate limiting: ensure minimum interval between requests
-    const now = Date.now()
-    const timeSinceLastRequest = now - lastRequestTime
+const SEARCH_URL = 'https://lite-api.jup.ag/tokens/v2/search'
 
-    if (timeSinceLastRequest < MIN_REQUEST_INTERVAL) {
-      await new Promise(resolve =>
-        setTimeout(resolve, MIN_REQUEST_INTERVAL - timeSinceLastRequest)
-      )
+/**
+ * Shared 429 cooldown. A 429 from lite-api used to be retried 3x (400/800/1600 ms, no jitter, no
+ * Retry-After) by *every* concurrent caller, so a burst of N callers produced 4N requests inside the
+ * same limiter window and kept it engaged (prod 2026-10-03: ~480 calls exhausting all retries in 50 min).
+ * Now the first 429 opens a process-wide window (Retry-After honoured, clamped, jittered) during which
+ * every caller fails fast — exactly as `jupiter-api.ts` does for the price API since #133. All callers
+ * already treat a throw / null as "no metadata".
+ */
+const COOLDOWN_DEFAULT_MS = 15_000
+const COOLDOWN_MIN_MS = 5_000
+const COOLDOWN_MAX_MS = 60_000
+let rateLimitedUntilMs = 0
+
+/** Cooldown ms for a 429 given `Retry-After` (seconds or HTTP date): clamped, +0–20% jitter. Pure. */
+export function jupiterMetadataCooldownMs(
+  retryAfter: string | null,
+  nowMs: number = Date.now(),
+  random: () => number = Math.random,
+): number {
+  let ms = COOLDOWN_DEFAULT_MS
+  const t = retryAfter?.trim()
+  if (t) {
+    const n = Number(t)
+    if (Number.isFinite(n) && n >= 0) ms = n * 1000
+    else {
+      const d = Date.parse(t)
+      if (Number.isFinite(d)) ms = d - nowMs
     }
+  }
+  const clamped = Math.min(COOLDOWN_MAX_MS, Math.max(COOLDOWN_MIN_MS, Math.ceil(ms)))
+  return Math.ceil(clamped * (1 + 0.2 * random()))
+}
 
-    // Create AbortController for timeout handling
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT)
+/** Milliseconds of 429 cooldown left (0 = free to call). */
+export function jupiterMetadataCooldownRemainingMs(nowMs: number = Date.now()): number {
+  return Math.max(0, rateLimitedUntilMs - nowMs)
+}
 
-    // Prepare query string with comma-separated mint addresses
-    const query = mintAddresses.join(',')
-    const url = `https://lite-api.jup.ag/tokens/v2/search?query=${encodeURIComponent(query)}`
+/** Backoff for transient (5xx/network) retries: base delay ±25% so concurrent callers de-synchronise. */
+export function jitteredRetryDelayMs(attempt: number, random: () => number = Math.random): number {
+  const base = RETRY_DELAYS[attempt] ?? 1600
+  return Math.round(base * (0.75 + 0.5 * random()))
+}
 
+const inflight = new Map<string, Promise<unknown>>()
+
+export function __resetJupiterMetadataForTests(): void {
+  rateLimitedUntilMs = 0
+  lastRequestTime = 0
+  inflight.clear()
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+class TransientError extends Error {}
+
+async function fetchSearchJsonOnce(query: string): Promise<unknown> {
+  const left = jupiterMetadataCooldownRemainingMs()
+  if (left > 0) {
+    throw new Error(`Rate limited: Jupiter metadata in 429 cooldown (${Math.ceil(left / 1000)}s left)`)
+  }
+
+  const sinceLast = Date.now() - lastRequestTime
+  if (sinceLast < MIN_REQUEST_INTERVAL) await sleep(MIN_REQUEST_INTERVAL - sinceLast)
+
+  // One timer for the whole exchange: it must outlive `response.json()` or a stalled body hangs forever.
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT)
+  try {
     let response: Response
     try {
-      response = await fetch(url, {
+      response = await fetch(`${SEARCH_URL}?query=${encodeURIComponent(query)}`, {
         signal: controller.signal,
-        headers: {
-          'Accept': 'application/json',
-          'User-Agent': 'ReloadSol-API/1.0'
-        }
+        headers: { Accept: 'application/json', 'User-Agent': 'ReloadSol-API/1.0' },
       })
-      lastRequestTime = Date.now()
-      clearTimeout(timeoutId)
     } catch (fetchError) {
-      clearTimeout(timeoutId)
       if (fetchError instanceof Error && fetchError.name === 'AbortError') {
-        throw new Error('Request timeout after 10 seconds')
+        throw new TransientError('Request timeout after 10 seconds')
       }
-      throw new Error(`Network error: ${fetchError}`)
+      throw new TransientError(`Network error: ${fetchError}`)
+    } finally {
+      lastRequestTime = Date.now()
     }
 
     if (response.status === 429) {
-      // Rate limited - implement exponential backoff
-      if (retryCount < MAX_RETRIES) {
-        const delay = RETRY_DELAYS[retryCount] || 1600
-        console.warn(`Rate limited for batch request, retrying in ${delay}ms (attempt ${retryCount + 1}/${MAX_RETRIES})`)
-
-        await new Promise(resolve => setTimeout(resolve, delay))
-        return fetchTokensFromJupiterV2(mintAddresses, retryCount + 1)
-      } else {
-        throw new Error(`Rate limit exceeded after ${MAX_RETRIES} retries`)
+      const wasOpen = jupiterMetadataCooldownRemainingMs() > 0
+      const cooldown = jupiterMetadataCooldownMs(response.headers.get('retry-after'))
+      rateLimitedUntilMs = Math.max(rateLimitedUntilMs, Date.now() + cooldown)
+      if (!wasOpen) {
+        console.warn(`[jupiter-metadata] 429 from lite-api; failing fast for ${Math.ceil(cooldown / 1000)}s`)
       }
+      throw new Error(`Rate limited by Jupiter (HTTP 429); cooling down ${Math.ceil(cooldown / 1000)}s`)
     }
+    if (response.status === 504) throw new TransientError('Gateway timeout (HTTP 504)')
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`)
 
-    if (response.status === 504) {
-      // Gateway timeout - retry with backoff
-      if (retryCount < MAX_RETRIES) {
-        const delay = RETRY_DELAYS[retryCount] || 1600
-        console.warn(`Gateway timeout for batch request, retrying in ${delay}ms (attempt ${retryCount + 1}/${MAX_RETRIES})`)
-
-        await new Promise(resolve => setTimeout(resolve, delay))
-        return fetchTokensFromJupiterV2(mintAddresses, retryCount + 1)
-      } else {
-        throw new Error(`Gateway timeout after ${MAX_RETRIES} retries`)
+    try {
+      return await response.json()
+    } catch (bodyError) {
+      if (bodyError instanceof Error && bodyError.name === 'AbortError') {
+        throw new TransientError('Request timeout after 10 seconds')
       }
+      throw bodyError
     }
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-    }
-
-    const tokensData = await response.json()
-
-    // Convert array response to object keyed by mint address - include graduated pool
-    const results: Record<string, any> = {}
-
-    if (Array.isArray(tokensData)) {
-      tokensData.forEach(token => {
-        if (token.id) {
-          results[token.id] = {
-            decimals: token.decimals,
-            symbol: token.symbol,
-            name: token.name,
-            logoURI: token.icon,
-            graduatedPool: token.graduatedPool || null, // Include graduated pool if available
-            bondingCurve: typeof token.bondingCurve === 'number' ? token.bondingCurve : null,
-            organicScore: typeof token.organicScore === 'number' ? token.organicScore : null,
-            audit: token.audit ? { topHoldersPercentage: typeof token.audit.topHoldersPercentage === 'number' ? token.audit.topHoldersPercentage : null } : undefined,
-            graduatedAt: token.graduatedAt ? Number(token.graduatedAt) : null,
-            launchpad: token.launchpad,
-            // Creator wallet address (plain base58 string) + mint count. Jupiter has
-            // no coin history/performance — that's GMGN created_tokens.
-            dev: typeof token.dev === 'string' ? token.dev : (token.dev?.address ?? null),
-            devMints: typeof token.audit?.devMints === 'number' ? token.audit.devMints : null
-          }
-        }
-      })
-    }
-
-    return results
-  } catch (error) {
-    if (retryCount < MAX_RETRIES && error instanceof Error &&
-      (error.message.includes('Network error') ||
-        error.message.includes('ECONNREFUSED') ||
-        error.message.includes('ETIMEDOUT') ||
-        error.message.includes('timeout') ||
-        (error as any).name === 'TypeError')) {
-      // Network error - retry with backoff
-      const delay = RETRY_DELAYS[retryCount] || 1600
-      console.warn(`Network error for batch request, retrying in ${delay}ms`)
-
-      await new Promise(resolve => setTimeout(resolve, delay))
-      return fetchTokensFromJupiterV2(mintAddresses, retryCount + 1)
-    }
-
-    throw error
+  } finally {
+    clearTimeout(timeoutId)
   }
+}
+
+async function fetchSearchJsonWithRetry(query: string): Promise<unknown> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fetchSearchJsonOnce(query)
+    } catch (error) {
+      if (!(error instanceof TransientError) || attempt >= MAX_RETRIES) {
+        if (error instanceof TransientError && attempt >= MAX_RETRIES) {
+          throw new Error(`${error.message} (after ${MAX_RETRIES} retries)`)
+        }
+        throw error
+      }
+      await sleep(jitteredRetryDelayMs(attempt))
+    }
+  }
+}
+
+/**
+ * lite-api v2 search JSON for `query` (one mint, or comma-separated mints). Concurrent identical
+ * queries share one upstream call: token-locate asked for the same mint three times in parallel and
+ * entry-hints twice (meta + volume), each paying the rate limit separately.
+ */
+function fetchSearchJson(query: string): Promise<unknown> {
+  const existing = inflight.get(query)
+  if (existing) return existing
+  const p = fetchSearchJsonWithRetry(query).finally(() => {
+    inflight.delete(query)
+  })
+  inflight.set(query, p)
+  return p
+}
+
+// New function to fetch multiple tokens using v2 search endpoint
+// (`retryCount` is kept for call-site compatibility; retries are handled internally.)
+async function fetchTokensFromJupiterV2(mintAddresses: string[], _retryCount = 0): Promise<Record<string, any>> {
+  void _retryCount
+  if (mintAddresses.length === 0) return {}
+  const tokensData = await fetchSearchJson(mintAddresses.join(','))
+
+  // Convert array response to object keyed by mint address - include graduated pool
+  const results: Record<string, any> = {}
+
+  if (Array.isArray(tokensData)) {
+    tokensData.forEach((token) => {
+      if (token.id) {
+        results[token.id] = {
+          decimals: token.decimals,
+          symbol: token.symbol,
+          name: token.name,
+          logoURI: token.icon,
+          graduatedPool: token.graduatedPool || null, // Include graduated pool if available
+          bondingCurve: typeof token.bondingCurve === 'number' ? token.bondingCurve : null,
+          organicScore: typeof token.organicScore === 'number' ? token.organicScore : null,
+          audit: token.audit ? { topHoldersPercentage: typeof token.audit.topHoldersPercentage === 'number' ? token.audit.topHoldersPercentage : null } : undefined,
+          graduatedAt: token.graduatedAt ? Number(token.graduatedAt) : null,
+          launchpad: token.launchpad,
+          // Creator wallet address (plain base58 string) + mint count. Jupiter has
+          // no coin history/performance — that's GMGN created_tokens.
+          dev: typeof token.dev === 'string' ? token.dev : (token.dev?.address ?? null),
+          devMints: typeof token.audit?.devMints === 'number' ? token.audit.devMints : null
+        }
+      }
+    })
+  }
+
+  return results
 }
 
 // Legacy function for single token (now uses v2 search)
@@ -240,59 +300,10 @@ export async function fetchJupiterMarketHints(
 /** Full lite-api v2 search JSON (unmapped) for a single mint. */
 export async function fetchJupiterV2SearchRaw(
   mintAddress: string,
-  retryCount = 0,
+  _retryCount = 0,
 ): Promise<unknown> {
-  const now = Date.now()
-  const timeSinceLastRequest = now - lastRequestTime
-  if (timeSinceLastRequest < MIN_REQUEST_INTERVAL) {
-    await new Promise((resolve) =>
-      setTimeout(resolve, MIN_REQUEST_INTERVAL - timeSinceLastRequest),
-    )
-  }
-
-  const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT)
-  const url = `https://lite-api.jup.ag/tokens/v2/search?query=${encodeURIComponent(mintAddress)}`
-
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        Accept: 'application/json',
-        'User-Agent': 'ReloadSol-API/1.0',
-      },
-    })
-    lastRequestTime = Date.now()
-    clearTimeout(timeoutId)
-
-    if (response.status === 429 && retryCount < MAX_RETRIES) {
-      await new Promise((resolve) =>
-        setTimeout(resolve, RETRY_DELAYS[retryCount] ?? 1600),
-      )
-      return fetchJupiterV2SearchRaw(mintAddress, retryCount + 1)
-    }
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-    }
-
-    return response.json()
-  } catch (error) {
-    clearTimeout(timeoutId)
-    if (
-      retryCount < MAX_RETRIES &&
-      error instanceof Error &&
-      (error.message.includes('Network error') ||
-        error.name === 'AbortError' ||
-        error.name === 'TypeError')
-    ) {
-      await new Promise((resolve) =>
-        setTimeout(resolve, RETRY_DELAYS[retryCount] ?? 1600),
-      )
-      return fetchJupiterV2SearchRaw(mintAddress, retryCount + 1)
-    }
-    throw error
-  }
+  void _retryCount
+  return fetchSearchJson(mintAddress)
 }
 
 /** datapi.jup.ag assets search — raw JSON for token locate. */
