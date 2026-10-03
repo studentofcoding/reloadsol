@@ -14,6 +14,9 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `usd-prices.ts` (sized from `x-ratelimit-reset`, then `Retry-After`, then 30 s), are single-flight per id-set with a
   3 s result cache, and `fetchJupiterPriceRaw` is gated + cooldown-aware. `lite-api.jup.ag/swap/v1` probed live: 200/422,
   not rate limited, so it is intentionally untouched (`docs/JUPITER_API_MAP.md`).
+- `JUPITER_BURST` code default **8 → 5** (also `.env.docker.example`, README, docs): 8 exceeded what the Free plan's ~10 req /
+  10 s window absorbs with the refill. Trade-off: bulk actions with >5 prepares queue the remainder at 0.5 rps. Prod `.env`
+  does not set `JUPITER_BURST`, so the new default applies on the next web ship; `JUPITER_BURST=8` restores the old value.
 
 ### Fixed — Jupiter metadata stats line never reached prod logs
 
