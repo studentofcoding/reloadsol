@@ -8,6 +8,16 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — `jupiter-metadata.ts`: shared 429 cooldown, in-flight dedupe, body timeout
+
+`lite-api.jup.ag/tokens/v2/search` (keyless) was answering 429; every caller retried 3x (400/800/1600 ms, no
+jitter, no `Retry-After`), so bursts multiplied (~480 calls exhausting all retries in 50 min on prod, in bursts
+of 8–9 per second). Now a 429 opens a process-wide cooldown (`Retry-After` honoured, 5–60 s, +0–20 % jitter)
+during which all entry points fail fast — callers already treat a throw/null as "no metadata", same model as the
+price API since #133. Concurrent identical queries share one request (token-locate made 3, entry-hints 2 per
+mint). The 10 s timeout now also covers `response.json()` (a stalled body used to hang forever); 504/network
+retries are jittered. Public signatures unchanged.
+
 ### Ops — `rh_lp_screen` disabled in production (`RH_LP_SCREEN_INTERVAL=0`)
 
 The paper-only RH LP screen failed every 5 min since 2026-09-07: its default indexer `robinhoodpools.lol` no
