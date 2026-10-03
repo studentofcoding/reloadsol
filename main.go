@@ -1935,7 +1935,7 @@ func (cs *CronService) persistWorkerRuntimeEvent(workerID, event, msg string) {
 	req.Header.Set("User-Agent", "reloadsol-cron-service/1.0")
 	resp, err := client.Do(req)
 	if err != nil {
-		cs.logger.Info(fmt.Sprintf("Worker runtime persist failed (%s/%s): %v", workerID, event, err))
+		cs.logger.Info(fmt.Sprintf("Worker runtime persist failed (%s/%s): %s", workerID, event, redactSecrets(err.Error())))
 		return
 	}
 	defer resp.Body.Close()
@@ -2057,7 +2057,7 @@ func (cs *CronService) makeRequest(method, url string, params map[string]string,
 
 	// 409 = job lock held by an in-flight tick (withJobLock). A skip, not a failure.
 	if resp.StatusCode == http.StatusConflict {
-		cs.logger.Info(fmt.Sprintf("⏭️ %s skipped: previous run still in progress", url))
+		cs.logger.Info(fmt.Sprintf("⏭️ %s skipped: previous run still in progress", redactSecrets(url)))
 		return string(body), nil
 	}
 
