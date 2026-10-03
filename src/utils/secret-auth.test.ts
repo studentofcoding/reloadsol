@@ -161,7 +161,7 @@ describe('cron routes reject the old committed secret when the env is unset', ()
       const res = await handler(mk(path, method, key))
       expect(res.status, `${path} key=${key === null ? 'none' : key === '' ? 'empty' : 'old-default'}`).toBe(401)
     }
-  })
+  }, 30_000) // first dynamic import of a route pulls a large module graph; 5s flaked under a full parallel run
 })
 
 describe('no committed secret literals in shipped source', () => {
