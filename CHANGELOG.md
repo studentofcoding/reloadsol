@@ -8,6 +8,18 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — entry-time context freeze (map #140, extends SPEC #91)
+
+- New insert-only `token_entry_context` (`db/init/64-token-entry-context.sql`, apply before code; UPDATE/DELETE rejected by trigger):
+  one row per Sol mint written at the first detect by any strategy, holding tracker first/current mcap, the live Jupiter
+  mcap/price/5m volume, a copy of the Token Info tiles from `token_info_detect`, and the last N (default 30) 1m bars before
+  the detect (`token_ohlc_bars` only keeps 48 h).
+- Hooked into `captureTokenInfoDetectBatch` (after the panel capture, whether or not it succeeded); best-effort, never rejects,
+  first writer wins with an existence check before any upstream work. Makes **no GMGN call**; Jupiter goes through the shared
+  paced queue with a 4 s timeout. Each failed part is recorded as a status on the row.
+- Off unless `ENTRY_CONTEXT_FREEZE=1` (also `ENTRY_CONTEXT_JUPITER`, `ENTRY_CONTEXT_JUPITER_TIMEOUT_MS`, `ENTRY_CONTEXT_BARS`).
+  Docs: `docs/specs/SPEC-entry-context-freeze-v1.md`.
+
 ### Fixed — keyed Jupiter Price V3 429s
 
 - `jupiter-api.ts` price calls now take a token from the shared gate (they bypassed it), share ONE 429 cooldown with
