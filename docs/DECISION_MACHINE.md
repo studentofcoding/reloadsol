@@ -16,7 +16,7 @@ Honest snapshot of Solana + Robinhood algo after the RH LP indexer work and the 
 
 ### Robinhood LP + Trenches
 
-- Indexer: `https://robinhoodpools.lol` (`/api/lp/pools` + `/api/lp/status`) → `rh-pools-indexer.ts`. Confidence: lag / deferred enrichment / reorg / errors; `noTrade` below 0.35.
+- Indexer: `https://robinhoodpools.lol` (**NXDOMAIN since 2026-09-07; `rh_lp_screen` is disabled in prod via `RH_LP_SCREEN_INTERVAL=0` until a live indexer is configured**) (`/api/lp/pools` + `/api/lp/status`) → `rh-pools-indexer.ts`. Confidence: lag / deferred enrichment / reorg / errors; `noTrade` below 0.35.
 - Paper LP: worker `rh_lp_screen` (300s) → `scoreRhPool` (hard floors + feeEff/feeApr/demand/stability × confidence) → `dlmm_candidates` / `dlmm_positions` `chain='robinhood'`. Singleton v4 TVL rescued via DexScreener `fetchPairLiquidityUsd`.
 - UI: LP pools table sorts by score; LPs / churn / demand; indexer chip.
 - Trenches: `fomo_ws.go` snapshots traders+closed; ingest upserts; synthetic/airdrop flags dropped; `fomoTokenDemand24h` / `fomoWalletEdge` feed LP score + social boost.

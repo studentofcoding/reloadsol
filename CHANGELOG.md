@@ -8,6 +8,14 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Ops — `rh_lp_screen` disabled in production (`RH_LP_SCREEN_INTERVAL=0`)
+
+The paper-only RH LP screen failed every 5 min since 2026-09-07: its default indexer `robinhoodpools.lol` no
+longer resolves (NXDOMAIN) and `lp-terminal.xyz` answers 410. Production `.env` now sets
+`RH_LP_SCREEN_INTERVAL=0` (cron `/workers` shows `rh_lp_screen` `disabled`, nothing else changed).
+`.env.docker.example` and the ops docs now say so and no longer advertise a dead indexer URL; set a live
+`LP_TERMINAL_INDEXER_URL` before re-enabling. Docs/env only — the Go code default (300) is unchanged.
+
 ### Changed — the Config tab now says what each value is, who owns it, and what a save reaches
 
 `SPEC-config-taxonomy-v1`, T1–T4 and T6. The config surface rendered three substrates (config, deploy-time
