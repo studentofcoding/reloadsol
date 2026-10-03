@@ -52,10 +52,12 @@ export function resolveJupiterBurstCapacity(
   env: Record<string, string | undefined> = process.env,
 ): number {
   const parsed = Number(env.JUPITER_BURST)
-  // 8, not 4: the measured tolerance is "~6 rps sequential — 8 ok, then 429", and a bulk action makes
-  // one prepare per selected token. At 4, a 5-token batch dribbled out the rest at 2s each (measured
-  // 0.23 / 0.39 / 2.17 / 4.23 / 6.00s); at 8 the batch fits one burst while the sustained rate holds.
-  return Number.isFinite(parsed) && parsed >= 1 ? Math.floor(parsed) : 8
+  // 5. History: 4 made a 5-token bulk batch dribble out the rest at 2s each (measured 0.23 / 0.39 / 2.17 /
+  // 4.23 / 6.00s); 8 followed the measured "~6 rps sequential — 8 ok, then 429" tolerance. But the Free plan
+  // window is ~10 requests / 10 s (docs/JUPITER_API_MAP.md), and an 8-deep burst plus the 0.5 rps refill can
+  // exceed it, which produced the price-V3 429 storms. 5 still fits a typical 5-token bulk batch in one
+  // burst while leaving headroom under the window. Override with JUPITER_BURST.
+  return Number.isFinite(parsed) && parsed >= 1 ? Math.floor(parsed) : 5
 }
 
 /** Tokens held back for the trade lane; never the whole bucket. */

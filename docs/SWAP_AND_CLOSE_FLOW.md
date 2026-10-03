@@ -89,7 +89,7 @@ Jupiter-budget decision, not a UI detail.
 ### Rate control (`src/utils/jupiter-rps.ts`)
 
 One **token bucket** refilled at `JUPITER_MAX_RPS` (default **0.5**, the measured-clean rate), capacity
-`JUPITER_BURST` (default **8** — the measured tolerance: *"~6 rps sequential — 8 ok, then 429"*), with
+`JUPITER_BURST` (default **5**; was 8, the measured tolerance *"~6 rps sequential — 8 ok, then 429"*, lowered to stay under the Free plan's ~10 req / 10 s window), with
 **priority lanes**:
 
 - **trade** — a taker-scoped `/order` prepare, `/execute`, a Lite `/swap` build — may spend the whole

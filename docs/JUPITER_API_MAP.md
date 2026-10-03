@@ -80,5 +80,6 @@ base-URL swap to `https://api.jup.ag/swap/v1` (+ `x-api-key`), same paths.
 3. Identical concurrent lookups each spent a request. `fetchTokenPrices` is now single-flight per id-set with a 3 s
    result cache; `fetchJupiterPriceRaw` (token locate) is gated and respects the cooldown.
 
-Unchanged: `JUPITER_BURST=8` is larger than the Free plan's ~10 requests / 10 s window can absorb together with the
-sustained refill — lowering it to ~5 is the next knob if 429s persist (a trade-latency tradeoff, so not changed here).
+`JUPITER_BURST` default is now **5** (was 8): 8 was larger than the Free plan's ~10 requests / 10 s window can absorb
+together with the sustained refill. Trade-off: a bulk action with more than ~5 prepares queues the rest behind the
+0.5 rps refill (2 s each) instead of going out in one burst. Set `JUPITER_BURST=8` to restore the old behaviour.
