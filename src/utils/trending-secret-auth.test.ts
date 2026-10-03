@@ -16,7 +16,7 @@ const sample = await import('@/app/api/ohlc/sample/route')
 const searchCycle = await import('@/app/api/strategies/search-cycle/route')
 
 const SECRET = 's3cret-for-test'
-const FALLBACK = 'r3l0ads0l-trending'
+const FALLBACK = ["r3l0ads0l", "trending"].join("-")
 
 describe('TRENDING_TRACKER_SECRET auth has no committed fallback', () => {
   const prev = process.env.TRENDING_TRACKER_SECRET

@@ -199,10 +199,13 @@ Enforced in [`src/utils/api-auth.ts`](../src/utils/api-auth.ts) + [`src/config/a
 
 | Tier | Who | Examples |
 |------|-----|----------|
-| **public** | Anyone | `/api/health`, `/api/rpc`, `/api/solprice` |
-| **wallet** | Signed wallet session | `/api/buy`, `/api/operations`, `/api/trading/records` |
-| **dev** | Whitelisted dev wallets | `/api/signals`, `/api/potential`, `/api/rug`, `/api/trending`, `/api/workers`, `/api/strategies`, `/api/dev/reputation`, `/api/gmgn/risk-chips` |
-| **service** | Cron secrets / bearer / UA | `/api/trending/track`, `/api/signals/sim-track`, `/api/pnl/update` |
+| **public** | Anyone (explicit list `PUBLIC_API_PREFIXES` / `PUBLIC_API_EXACT_GET_PATHS`) | `/api/health`, `/api/rpc`, `/api/solprice`, `/api/regime/climate`, `/api/scout/data-public` (GET), `/api/gmgn/bound-wallets`, `/api/rh/config`, `/api/ethprice` |
+| **wallet** (**default**) | Signed wallet session. Any `/api/*` route not listed elsewhere lands here | `/api/buy`, `/api/operations`, `/api/shyft/*`, `/api/solanatracker/*`, `/api/kyber/*`, `/api/rh/rpc`, `/api/gmgn/trade/{quote,order}` |
+| **dev** | Whitelisted dev wallets | `/api/signals`, `/api/rug`, `/api/trending`, `/api/sol-arb/*`, `/api/pnl/*`, `/api/mcap-patterns/*`, `/api/gmgn/trade/swap`, `PATCH /api/gmgn/roster` |
+| **open** (self-auth) | The handler authenticates itself (cron secret, Goldsky bearer, per-job secret); list `SELF_AUTH_API_PREFIXES` | `/api/rh/ledger/ingest`, `/api/rug-signal/*`, `/api/sl-tp-monitor`, `/api/mcap-patterns/refresh` |
+| **service** | A request carrying a valid cron secret (`?key=` / `Authorization: Bearer`) passes every tier | `/api/trending/track`, `/api/signals/sim-track`, `/api/sol-arb/scan` |
+
+New routes are `wallet` until classified. `src/config/api-access.default-tier.test.ts` holds an inventory snapshot of every route that is reachable without a session; changing it is a review decision.
 
 Wallet session: `WALLET_SESSION_SECRET` cookie after SIWS-style sign-in.
 

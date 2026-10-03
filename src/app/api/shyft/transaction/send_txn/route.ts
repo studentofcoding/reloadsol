@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getShyftApiKey, ShyftAPIError } from "@/utils/shyft-api";
 import { sendShyftTransactionDirect } from "@/utils/shyft-transaction";
+import { requireWalletSession } from "@/utils/api-auth";
 
 
 const VALID_NETWORKS = new Set(["mainnet-beta", "testnet", "devnet"]);
 
 export async function POST(request: NextRequest) {
+  // Defence in depth: src/proxy.ts already gates this path (wallet tier); keep the check next to the handler.
+  const gate = requireWalletSession(request);
+  if (gate instanceof NextResponse) return gate;
   try {
     const apiKey = getShyftApiKey();
     if (!apiKey) {

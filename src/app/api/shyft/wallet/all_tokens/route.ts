@@ -2,8 +2,12 @@ import { NextRequest, NextResponse, connection } from "next/server";
 import { PublicKey } from "@solana/web3.js";
 import { getShyftApiKey, ShyftAPIError } from "@/utils/shyft-api";
 import { fetchShyftAllTokensCached } from "@/utils/shyft-wallet-cache";
+import { requireWalletSession } from "@/utils/api-auth";
 
 export async function GET(request: NextRequest) {
+  // Defence in depth: src/proxy.ts already gates this path (wallet tier); keep the check next to the handler.
+  const gate = requireWalletSession(request);
+  if (gate instanceof NextResponse) return gate;
   await connection();
   try {
     const apiKey = getShyftApiKey();

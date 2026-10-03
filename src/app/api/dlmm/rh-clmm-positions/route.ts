@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse, connection } from 'next/server'
 import { rejectWrongNetwork } from '@/utils/app-network-api'
 import { DbUnavailableError } from '@/utils/db-health'
-import { isDlmmApiAuthorized } from '@/utils/dlmm/config'
+import { isDlmmRequestAuthorized } from '@/utils/dlmm/request-auth'
 import {
   getRhClmmPosition,
   insertRhClmmPosition,
@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
   const wrong = rejectWrongNetwork(req, 'robinhood')
   if (wrong) return wrong
   try {
-    if (!isDlmmApiAuthorized(getPassword(req))) {
+    if (!isDlmmRequestAuthorized(req, getPassword(req))) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
     const body = await req.json()
@@ -110,7 +110,7 @@ export async function POST(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   try {
-    if (!isDlmmApiAuthorized(getPassword(req))) {
+    if (!isDlmmRequestAuthorized(req, getPassword(req))) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
     const body = await req.json()

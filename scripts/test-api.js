@@ -2,6 +2,12 @@
 
 // Configuration
 const API_HOST = 'https://reloadsol.app';
+
+const TRENDING_SECRET = process.env.TRENDING_TRACKER_SECRET;
+if (!TRENDING_SECRET) {
+  console.error('TRENDING_TRACKER_SECRET is required (no default).');
+  process.exit(1);
+}
 const TEST_WALLET = 'DGJqRtDKdBiKfXGwgQbaC5YJW3PGd5TtE2tGmKSLtVwx'; // Example wallet for testing
 const TEST_TOKEN = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'; // USDC token for testing
 const SOL_TOKEN = 'So11111111111111111111111111111111111111112';
@@ -356,7 +362,7 @@ async function runTests() {
   await testEndpoint('Risk Assessment - Format Validation', '/api/trending/track', {
     method: 'PUT',
     params: {
-      key: 'r3l0ads0l-trending',
+      key: TRENDING_SECRET,
       test: 'risk-format'
     },
     timeout: 20000, // Longer timeout for risk assessment
@@ -374,7 +380,7 @@ async function runTests() {
   await testEndpoint('Risk Assessment - Fallback Format', '/api/trending/track', {
     method: 'PUT',
     params: {
-      key: 'r3l0ads0l-trending',
+      key: TRENDING_SECRET,
       test: 'risk-fallback'
     },
     timeout: 15000,
@@ -453,7 +459,7 @@ async function runTests() {
   await testEndpoint('Track Discord Test', '/api/trending/track', {
     method: 'PUT',
     params: {
-      key: 'r3l0ads0l-trending', // Required secret key
+      key: TRENDING_SECRET, // Required secret key
       test: 'discord' // Required to trigger Discord testing mode
     },
     validator: (data) => {
@@ -470,7 +476,7 @@ async function runTests() {
   await testEndpoint('Track Filter Test', '/api/trending/track', {
     method: 'PUT',
     params: {
-      key: 'r3l0ads0l-trending', // Required secret key
+      key: TRENDING_SECRET, // Required secret key
       test: 'filter' // Required to trigger filter testing mode
     },
     timeout: 30000, // Longer timeout for filtering operations
@@ -495,7 +501,7 @@ async function runTests() {
   const filterTestResult = await testEndpoint('Track Filter Test - Display Results', '/api/trending/track', {
     method: 'PUT',
     params: {
-      key: 'r3l0ads0l-trending',
+      key: TRENDING_SECRET,
       test: 'filter'
     },
     timeout: 30000,
@@ -589,7 +595,7 @@ async function runTests() {
   await testEndpoint('Trading Time Window - Current Status', '/api/trending/track', {
     method: 'POST',
     params: {
-      key: 'r3l0ads0l-trending'
+      key: TRENDING_SECRET
     },
     expectError: !timeInfo.isWithinTradingHours,
     expectedStatus: timeInfo.isWithinTradingHours ? 200 : 403,
@@ -617,7 +623,7 @@ async function runTests() {
   const timeWindowResult = await testEndpoint('Trading Time Window - Detailed Check', '/api/trending/track', {
     method: 'POST',
     params: {
-      key: 'r3l0ads0l-trending'
+      key: TRENDING_SECRET
     },
     expectError: !timeInfo.isWithinTradingHours,
     expectedStatus: timeInfo.isWithinTradingHours ? 200 : 403,
@@ -673,7 +679,7 @@ async function runTests() {
     await testEndpoint('Trading Time Window - Discord Notification', '/api/trending/track', {
       method: 'POST',
       params: {
-        key: 'r3l0ads0l-trending'
+        key: TRENDING_SECRET
       },
       expectError: true,
       expectedStatus: 403,
@@ -930,7 +936,7 @@ runTests().catch(error => {
   await testEndpoint('MCap Tracking - Range Filter (30k-2M)', '/api/trending/track', {
     method: 'PUT',
     params: {
-      key: 'r3l0ads0l-trending',
+      key: TRENDING_SECRET,
       test: 'mcap-range'
     },
     timeout: 20000,
@@ -947,7 +953,7 @@ runTests().catch(error => {
   await testEndpoint('MCap Tracking - Database Operations', '/api/trending/track', {
     method: 'PUT',
     params: {
-      key: 'r3l0ads0l-trending',
+      key: TRENDING_SECRET,
       test: 'mcap-db'
     },
     timeout: 15000,

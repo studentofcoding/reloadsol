@@ -9,6 +9,7 @@ import {
   type FollowStatus,
   type RosterStatus,
 } from '@/strategies/wallet-digger/db'
+import { requireDevSession } from '@/utils/api-auth'
 
 
 export async function GET(request: NextRequest) {
@@ -54,6 +55,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function PATCH(request: NextRequest) {
+  // Defence in depth: src/proxy.ts already gates this path (dev tier); keep the check next to the handler.
+  const gate = requireDevSession(request)
+  if (gate instanceof NextResponse) return gate
   try {
     const body = (await request.json()) as {
       address?: string

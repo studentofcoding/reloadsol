@@ -5,6 +5,7 @@ import {
   countTrackerOutcomeStats,
   resolveCompletedOutcome,
 } from '@/utils/trending-profit'
+import { secretsMatch } from '@/utils/secret-auth'
 
 const TRACKER_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_tracker_dev' : 'trending_token_tracker'
 const SUMMARY_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_summary_dev' : 'trending_token_summary'
@@ -69,7 +70,7 @@ export async function POST(request: NextRequest) {
       console.log('🤖 Vercel cron job detected: allowing summary API call')
     } else if (isDevelopment && isLocalhost && !secretKey) {
       console.log('🔓 Development mode: allowing summary API call without secret key')
-    } else if (secretKey !== expectedSecretKey) {
+    } else if (!secretsMatch(secretKey, expectedSecretKey)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
