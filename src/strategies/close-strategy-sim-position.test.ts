@@ -8,9 +8,17 @@ const m = vi.hoisted(() => ({
   prices: vi.fn(async () => ({}) as Record<string, number>),
   insert: vi.fn(async (_r: unknown) => undefined),
   outcome: vi.fn(async (_o: unknown) => undefined),
+  hasOutcome: vi.fn(async () => false),
+  logError: vi.fn(),
 }))
 
-vi.mock('@/strategies/db', () => ({ fetchTradingRecordsForWallet: m.records }))
+vi.mock('@/strategies/db', () => ({
+  fetchTradingRecordsForWallet: m.records,
+  hasStrategyOutcome: m.hasOutcome,
+}))
+vi.mock('@/utils/unified-logger', () => ({
+  log: { info: vi.fn(), warn: vi.fn(), error: m.logError },
+}))
 vi.mock('@/strategies/outcomes', () => ({
   recordGmgnOutcome: vi.fn(),
   recordMcapTrackerOutcome: m.outcome,
@@ -26,6 +34,7 @@ vi.mock('@/strategies/resolve-entry-snapshot', () => ({
 vi.mock('@/utils/simulation-trades', () => ({
   computeOpenSimCycle: vi.fn(),
   computeOpenTradeCycle: m.cycle,
+  scopeRecordsToStrategy: (r: unknown) => r,
 }))
 vi.mock('@/utils/trading-records-db', () => ({
   buildTradingRecord: (r: unknown) => r,
@@ -62,6 +71,7 @@ beforeEach(() => {
   m.cycle.mockReturnValue(CYCLE)
   m.snapshot.mockResolvedValue(null)
   m.prices.mockResolvedValue({})
+  m.hasOutcome.mockResolvedValue(false)
 })
 
 describe('resolveMcapExit', () => {
@@ -136,8 +146,25 @@ describe('closeMcapStrategySimPositions', () => {
     expect(out.features.exit_price_source).toBe('entry_fallback')
   })
 
-  it('reports an already-closed mint as closed so the mirror retires, writing nothing', async () => {
+  const SELL = {
+    operationType: 'sell',
+    is_simulation: true,
+    successCount: 1,
+    timestamp: 2,
+    tokens: [{ mintAddress: 'MINT' }],
+  }
+  const BUY = {
+    operationType: 'buy',
+    is_simulation: true,
+    successCount: 1,
+    timestamp: 1,
+    tokens: [{ mintAddress: 'MINT' }],
+  }
+
+  it('reports already-closed ONLY with an own sell AND an outcome row, writing nothing', async () => {
     m.open.mockReturnValue([])
+    m.records.mockResolvedValue([BUY, SELL])
+    m.hasOutcome.mockResolvedValue(true)
     const res = await closeMcapStrategySimPositions('s1', 'sol', {
       mintAddress: 'MINT',
       sellPriceUsd: 0.002,
@@ -147,11 +174,74 @@ describe('closeMcapStrategySimPositions', () => {
     expect(m.outcome).not.toHaveBeenCalled()
   })
 
-  it('counts an open position with no remaining cycle as already closed', async () => {
+  it('does NOT silently retire when the strategy has no own sell (sibling swallowed it / never booked)', async () => {
+    m.open.mockReturnValue([])
+    m.records.mockResolvedValue([BUY])
+    m.hasOutcome.mockResolvedValue(true)
+    const res = await closeMcapStrategySimPositions('s1', 'sol', { mintAddress: 'MINT' })
+    expect(res.closed).toBe(0)
+    expect(res.alreadyClosed).toBe(0)
+    expect(res.failed).toEqual([{ token: 'MINT', error: 'no_own_sell_and_no_open_cycle' }])
+    expect(m.logError).toHaveBeenCalled()
+    expect(m.insert).not.toHaveBeenCalled()
+  })
+
+  it('does NOT retire a mint the strategy never bought', async () => {
+    m.open.mockReturnValue([])
+    m.records.mockResolvedValue([])
+    const res = await closeMcapStrategySimPositions('s1', 'sol', { mintAddress: 'MINT' })
+    expect(res).toMatchObject({ closed: 0, alreadyClosed: 0 })
+    expect(res.failed[0]).toEqual({ token: 'MINT', error: 'no_buy_in_strategy_ledger' })
+  })
+
+  it('does not count a position listed open with an empty scoped cycle as closed', async () => {
     m.cycle.mockReturnValue(null)
     const res = await closeMcapStrategySimPositions('s1', 'sol', { mintAddress: 'MINT' })
-    expect(res).toMatchObject({ closed: 1, alreadyClosed: 1 })
+    expect(res).toMatchObject({ closed: 0, alreadyClosed: 0 })
+    expect(res.failed).toEqual([{ token: 'MINT', error: 'open_without_cycle' }])
     expect(m.insert).not.toHaveBeenCalled()
+    expect(m.logError).toHaveBeenCalled()
+  })
+
+  it('refuses a sell larger than the strategy-owned open quantity and logs an error', async () => {
+    // First call = the cycle the sell is built from (inflated, as an unscoped read would be);
+    // second call = the independent scoped recomputation.
+    m.cycle
+      .mockReturnValueOnce({ ...CYCLE, remainingTokenAmount: 5000 })
+      .mockReturnValueOnce({ ...CYCLE, remainingTokenAmount: 1000 })
+    const res = await closeMcapStrategySimPositions('s1', 'sol', {
+      mintAddress: 'MINT',
+      sellPriceUsd: 0.002,
+    })
+    expect(res.closed).toBe(0)
+    expect(res.failed).toEqual([{ token: 'MINT', error: 'sell_qty_exceeds_own_open_qty' }])
+    expect(m.insert).not.toHaveBeenCalled()
+    expect(m.outcome).not.toHaveBeenCalled()
+    expect(m.logError).toHaveBeenCalledWith(
+      'error_handling',
+      expect.stringContaining('Sell refused'),
+      expect.any(Error),
+      expect.objectContaining({ strategyId: 's1', mintAddress: 'MINT', sellQty: 5000, ownOpenQty: 1000 }),
+    )
+  })
+
+  it('propagates an unreadable ledger to the caller instead of treating it as empty', async () => {
+    m.records.mockRejectedValueOnce(new Error('pool exhausted'))
+    await expect(
+      closeMcapStrategySimPositions('s1', 'sol', { mintAddress: 'MINT' }),
+    ).rejects.toThrow('pool exhausted')
+    expect(m.insert).not.toHaveBeenCalled()
+  })
+
+  it('a failed outcome write fails the close (sell written, outcome throws)', async () => {
+    m.outcome.mockRejectedValueOnce(new Error('outcome db down'))
+    const res = await closeMcapStrategySimPositions('s1', 'sol', {
+      mintAddress: 'MINT',
+      sellPriceUsd: 0.002,
+    })
+    expect(res.closed).toBe(0)
+    expect(res.failed).toEqual([{ token: 'MINT', error: 'outcome db down' }])
+    expect(m.logError).toHaveBeenCalled()
   })
 
   it('does not treat an empty strategy-wide close as a close (deactivation, nothing open)', async () => {

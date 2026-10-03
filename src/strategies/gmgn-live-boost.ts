@@ -389,12 +389,20 @@ export async function applyGmgnLiveBoost(params: {
 
   let simPositionsBoosted = 0
   for (const wallet of SIM_WALLETS()) {
-    simPositionsBoosted += await boostOpenSimForWallet({
-      walletAddress: wallet,
-      tokenAddress: params.tokenAddress,
-      hotEvent: params.hotEvent,
-      source: params.source,
-    })
+    // One unreadable wallet must not abort the others (the ledger read throws on a DB error).
+    try {
+      simPositionsBoosted += await boostOpenSimForWallet({
+        walletAddress: wallet,
+        tokenAddress: params.tokenAddress,
+        hotEvent: params.hotEvent,
+        source: params.source,
+      })
+    } catch (error) {
+      log.error('error_handling', 'GMGN live boost: wallet boost failed — continuing', error as Error, {
+        wallet,
+        token: params.tokenAddress,
+      })
+    }
   }
 
   let trackedBoosted = false

@@ -215,3 +215,33 @@ describe('getOpenStrategySimPositions', () => {
     expect(getOpenStrategySimPositions([buy], 'other')).toHaveLength(0)
   })
 })
+
+describe('getOpenStrategySimPositions is scoped to the strategy', () => {
+  const rec = (strategy: string, op: 'buy' | 'sell', ts: number, qty: number): TrackingRecord =>
+    ({
+      id: `${strategy}-${op}-${ts}`,
+      timestamp: ts,
+      walletAddress: 'gmgn-sim',
+      operationType: op,
+      is_simulation: true,
+      simulation_type: 'strategy',
+      bot_strategy: strategy,
+      close_position: op === 'sell',
+      successCount: 1,
+      failureCount: 0,
+      totalTokens: 1,
+      solAmount: 0.1,
+      tokens: [{ mintAddress: 'M', symbol: 'M', tokenAmount: qty, solAmount: 0.1, priceUsd: 1 }],
+    }) as unknown as TrackingRecord
+
+  it('a sibling\'s mint-wide sell does not close this strategy\'s position', () => {
+    const records = [rec('a', 'buy', 1, 10), rec('b', 'buy', 2, 20), rec('a', 'sell', 3, 30)]
+    expect(getOpenStrategySimPositions(records, 'a')).toHaveLength(0)
+    expect(getOpenStrategySimPositions(records, 'b').map((p) => p.mintAddress)).toEqual(['M'])
+  })
+
+  it('a sibling\'s open buy does not make this strategy look open', () => {
+    const records = [rec('a', 'buy', 1, 10), rec('b', 'buy', 2, 20), rec('a', 'sell', 3, 10)]
+    expect(getOpenStrategySimPositions(records, 'a')).toHaveLength(0)
+  })
+})

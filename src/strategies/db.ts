@@ -9,6 +9,7 @@ import { getTrackingHealthStats, computeMcapSimPnlPct } from '@/utils/mcap-track
 import { getOpenMcapSimPositions } from '@/utils/mcap-sim-track'
 import { readTokenSymbol, readTrainingClass } from './outcome-features'
 import { dedupeStrategyOutcomeRows } from './outcome-dedupe'
+import { outcomeCountsAsTradeSql } from './outcome-exclusions'
 import { resolveStrategyFamily } from './strategy-family'
 import { toNum, type TokenPnlRow } from './token-pnl-export'
 import { buildShadowExecutionRecordForCost } from './sim-fill'
@@ -175,6 +176,11 @@ type OutcomeFilterParams = {
   pnlMax?: number
   entryMcapBand?: string
   tokenAddress?: string
+  /**
+   * Bookkeeping rows (`features.close_reason = 'orphan_reconcile'`, see outcome-exclusions.ts) are
+   * EXCLUDED unless this is true. They are administrative closes, not trade results.
+   */
+  includeNonTrade?: boolean
 }
 
 function buildOutcomeWhereClause(params: OutcomeFilterParams): {
@@ -264,6 +270,8 @@ function buildOutcomeWhereClause(params: OutcomeFilterParams): {
       }
     }
   }
+
+  if (!params.includeNonTrade) conditions.push(outcomeCountsAsTradeSql())
 
   const sql = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
   return { sql, values }
@@ -528,6 +536,26 @@ async function deriveStakeFromLedger(params: {
   return Number.isFinite(stake) && stake > 0 ? stake : 0
 }
 
+/**
+ * Does ANY outcome row exist for this (chain, strategy, mint)? Used by the paper closer to decide
+ * whether a trade whose scoped ledger cycle is empty is genuinely closed (own sell AND an outcome),
+ * or half-closed. Mint-level on purpose: the mcap strategies are one-shot per (strategy, mint)
+ * (`loadMcapSimClosedOutcomeKeys`). Throws on a DB error — a failed read must not read as "none".
+ */
+export async function hasStrategyOutcome(params: {
+  chain: StrategyChain
+  strategyId: string
+  tokenAddress: string
+}): Promise<boolean> {
+  const row = await queryOne<{ id: string }>(
+    `SELECT id FROM strategy_outcomes
+      WHERE chain = $1 AND strategy_id = $2 AND token_address = $3
+      LIMIT 1`,
+    [params.chain, params.strategyId, params.tokenAddress],
+  )
+  return row != null
+}
+
 export async function insertStrategyOutcome(params: {
   strategy_id: string
   domain: StrategyDomain
@@ -693,10 +721,22 @@ export async function insertStrategyOutcome(params: {
     }
   } catch (error) {
     if (isMissingSchemaError(error)) {
+      // Schema not deployed yet: nothing can be written, and this is a deploy-order condition, not
+      // a transient fault. Still loud, and still `false` so a caller can tell it from success.
+      console.error('[strategies/db] outcome insert skipped: strategy_outcomes schema missing', {
+        strategy: params.strategy_id,
+        token: params.token_address,
+      })
       return false
     }
-    console.warn('[strategies/db] outcome insert failed:', errorMessage(error))
-    return false
+    // PROPAGATE. This used to `console.warn` and return false, and the mcap closer ignored the
+    // return value, so a sell record was written with no outcome (Reggie[tp150]) and the close
+    // reported success. A failed outcome write must fail the close so it is retried and seen.
+    console.error('[strategies/db] outcome insert failed:', errorMessage(error), {
+      strategy: params.strategy_id,
+      token: params.token_address,
+    })
+    throw error
   }
   return true
 }
@@ -718,6 +758,8 @@ export async function listStrategyOutcomes(params: {
   trainingClassOnly?: boolean
   trainingClassMin?: number
   recomputeLabels?: boolean
+  /** Include bookkeeping closes (`close_reason = 'orphan_reconcile'`). Default: excluded. */
+  includeNonTrade?: boolean
   limit?: number
   offset?: number
 }): Promise<{ rows: StrategyOutcomeRow[]; total: number }> {
@@ -3421,8 +3463,14 @@ export async function fetchTradingRecordsForWallet(
     writeWalletRecordsCache(cacheKey, records)
     return records
   } catch (error) {
-    console.warn('[strategies/db] trading_records fetch failed:', errorMessage(error))
-    return []
+    // THROW. This used to return `[]`, and every caller reads `[]` as "this wallet has no records":
+    // the closer concluded "nothing open, already closed" and retired the mirror with no sell and
+    // no outcome (Snoopy[tp300], 2026-10-03), and the open gate saw zero open positions. An
+    // unreadable ledger is not an empty ledger. Callers catch per position / per strategy.
+    console.error('[strategies/db] trading_records fetch failed:', errorMessage(error), {
+      wallet: walletAddress,
+    })
+    throw error
   }
 }
 

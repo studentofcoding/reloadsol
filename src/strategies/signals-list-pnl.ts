@@ -1,5 +1,6 @@
 import { query } from '@/utils/db'
 import { isMissingSchemaError } from '@/utils/db-health'
+import { outcomeCountsAsTradeSql } from '@/strategies/outcome-exclusions'
 import { signalsListStrategyIds } from '@/utils/signals-strategy-id'
 import type { SignalsListPnlRow } from './signals-strategy-list'
 import type { StrategyChain, StrategyDomain } from './types'
@@ -32,6 +33,7 @@ export async function aggregateSignalsListPnl(
        WHERE chain = $1
          AND is_simulated = true
          AND strategy_id = ANY($2::text[])
+         AND ${outcomeCountsAsTradeSql()}
        GROUP BY strategy_id, domain`,
       [chain, strategyIds],
     )

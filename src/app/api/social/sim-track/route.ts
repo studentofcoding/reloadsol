@@ -14,7 +14,7 @@ import {
 } from '@/strategies/resolve-entry-snapshot'
 import { recordSocialOutcome } from '@/strategies/outcomes'
 import { closeOutcomeStatusFromPnl } from '@/strategies/close-outcome-status'
-import { fetchTradingRecordsForWallet } from '@/strategies/db'
+import { tryFetchWalletRecords } from '@/strategies/safe-wallet-records'
 import { computeOpenSimCycle } from '@/utils/simulation-trades'
 import { buildTradingRecord, insertTradingRecord } from '@/utils/trading-records-db'
 import { fetchTokenPricesForTracking } from '@/utils/trading-tracker'
@@ -171,7 +171,13 @@ async function runSimTrack(request: NextRequest) {
 
   try {
     const strategies = await getActiveSocialForSim()
-    const records = await fetchTradingRecordsForWallet(SOCIAL_SIM_WALLET)
+    const records = await tryFetchWalletRecords(SOCIAL_SIM_WALLET, { phase: 'open_gate' })
+    if (!records) {
+      return NextResponse.json(
+        { success: false, error: 'ledger_read_failed' },
+        { status: 500 },
+      )
+    }
     const results: Array<{
       strategyId: string
       discovered: number
@@ -235,7 +241,20 @@ async function runSimTrack(request: NextRequest) {
         })),
       )
 
-      const refreshedRecords = await fetchTradingRecordsForWallet(SOCIAL_SIM_WALLET)
+      const refreshedRecords = await tryFetchWalletRecords(SOCIAL_SIM_WALLET, {
+        strategyId: strategy.id,
+        phase: 'refresh',
+      })
+      if (!refreshedRecords) {
+        results.push({
+          strategyId: strategy.id,
+          discovered: rollups.length,
+          opened,
+          closed,
+          skipped: [...skipped, 'ledger_read_failed'],
+        })
+        continue
+      }
       const currentOpen = getOpenPositionsForStrategy(refreshedRecords, strategy.id).length
       const maxOpen = strategy.config.execution.maxOpenPositions
 

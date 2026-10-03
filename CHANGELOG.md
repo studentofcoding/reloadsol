@@ -8,6 +8,53 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — paper closer: one strategy closing a mint no longer sells its siblings' tokens (the `maxOpenPositions` stall)
+
+Five mcap strategies (`mcap_enter_first_seen`, `mcap_enter_at_80`, three `search_mcap_*` clones) sat at
+`maxOpenPositions` for ~2 days with only 2 live positions (PUSH, VRAXWEEN). The cap counts *ledger* cycles
+(`trading_records` buys minus sells, scoped per strategy); the other ~50 "open" cycles were orphans that could never
+close. Root cause: since the worker became the sole closer, `closeMcapStrategySimPositions` computed the sell from the
+**wallet-wide** cycle for the mint, so whichever sibling closed first sold *all* siblings' tokens and booked it under
+itself; 57b3b6e then made the siblings' later close a silent "already closed — retiring the mirror only" (the 8 no-outcome
+SL closes on 10-03). The pre-9371f3b route closer scoped the cycle; the worker-era closer lost that.
+
+- **Scoped closes.** `closeMcapStrategySimPositions` and `closePriceStrategySimPosition` compute the sell from
+  `scopeRecordsToStrategy(records, strategyId)`; `getOpenStrategySimPositions` (signals / gmgn / social open count,
+  algo-positions) is scoped the same way as `getOpenMcapPositions` already was.
+- **No silent retire.** "Already closed" now requires this strategy's own sell AND an outcome row. A sell with no outcome
+  gets its outcome recovered from that sell (no second sell). Anything else (no buy, no own sell and nothing open) is
+  logged at ERROR with strategy + mint and the mirror stays active (`failed[]`), instead of being retired with nothing
+  written.
+- **Invariant guard.** A sell larger than the strategy's own open quantity (recomputed from its scoped records) is
+  refused and logged at error level (`strategyId`, `mintAddress`, `sellQty`, `ownOpenQty`); it never throws out of a cron
+  loop (worker keeps the mirror and retries; deactivation reports `failed[]`).
+- **Failures are loud.** `insertStrategyOutcome` rethrows DB errors (it returned `false` and the mcap closer ignored it —
+  Reggie[tp150] has a sell and no outcome). `fetchTradingRecordsForWallet` throws on a DB error instead of returning `[]`,
+  which every caller read as "no records" (closer: "already closed"; open gate: zero open → duplicate opens). Cron loops go
+  through `tryFetchWalletRecords` (error log, skip that strategy/chain, continue); the trending-bot and DLMM outcome writers
+  keep their old log-and-return-false contract so live close paths cannot be broken by this.
+- **Stall alert.** An active strategy that hits the max-positions `break` on ≥ 3 consecutive passes with no new buy for
+  ≥ 6 h logs `strategy_at_cap_no_opens` (warn, structured; in-process counters in `cap-stall-monitor.ts`; no table).
+  Env: `CAP_STALL_WARN_HOURS`, `CAP_STALL_MIN_PASSES`, `CAP_STALL_WARN_EVERY_MIN`.
+- **Entry sanity brake (skip only).** The mcap open books the live Jupiter mcap; INU / QUANT / Bricks entered at ~$4k live
+  against a ~$400k tracker row. The open is now skipped (`live_mcap_out_of_range`, `live_tracker_mcap_mismatch`, logged)
+  when the live value is outside the strategy's 30k–2M band or differs from the tracker mcap by more than 5× either way
+  (`MCAP_LIVE_TRACKER_MAX_RATIO`). It can only remove an open, never add one.
+- **`orphan_reconcile`.** `ORPHAN_RECONCILE_CLOSE_REASON` / `outcomeCountsAsTradeSql()` / `isTradeOutcome()`
+  (`src/strategies/outcome-exclusions.ts`). `close_reason` is unconstrained JSON on `strategy_outcomes.features` and
+  `trading_records.trading_simulation` (only `sl_tp_positions.close_reason` has a CHECK; use its existing `reconciled`
+  there). `listStrategyOutcomes` and the other `buildOutcomeWhereClause` readers, the lifecycle last-outcome read and the
+  signals list PnL aggregate exclude it by default (`includeNonTrade: true` opts in). Nothing writes it yet. Other raw
+  `FROM strategy_outcomes` aggregates should AND in `outcomeCountsAsTradeSql()` when the reconcile step ships.
+- **"Ledger basis" for outcome PnL** means the *per-unit price ratio*: sell `priceUsd` ÷ **the strategy's own** buy
+  `priceUsd` − 1 (this is what `resolveMcapExit` / `computeMcapSimPnlPct` book since 57b3b6e). It is NOT SOL proceeds over
+  cost: sibling-swallow inflated a swallowing sell's `solAmount` (mint-wide tokens × price), so SOL proceeds / stake are
+  contaminated for every close before this fix. Compare price ratios, not SOL PnL, across that window.
+- Docs: `at_80` is the **+80% growth milestone over tracker `first_mcap`**, not "~80k" (SPEC-sol-first-spine-4class-ohlc-v1,
+  entry median ≈ $150k live mcap).
+- Not done here (separate, needs approval): reconciling the existing orphan cycles. Ship this first, otherwise the next
+  sibling close recreates them.
+
 ### Changed — Jupiter token metadata: cache → one paced batched keyless queue → keyed fallback
 
 `lite-api.jup.ag` is being phased out and answered 429 on every probe from the VPS; ~38 single-mint
@@ -1345,7 +1392,7 @@ So the estimate was 2.46 SOL (38%) low *and* unexecutable — `SWAP_QUOTE_MAX_IM
 ### Changed — mcap / signals kanban tag `potential` is now `rising`
 
 - The gold chip on `/dev/signals` is a tracking tag (auto when peak growth > 0), not a buy path. Stored label is `rising` on `token_mcap_tracking`, synced `trading_signals`, and OHLC cards keyed by that tag (`db/init/41-rename-tracking-label-rising.sql`). Reads still accept legacy `potential` for one release.
-- Unchanged: first-seen / ~80k buy sides, ML `v2-potential` / `ML_POTENTIAL_*`, detect-snapshot `rug_label`, and `dlmm_potential_list` membership.
+- Unchanged: first-seen / `at_80` (+80% growth milestone over tracker `first_mcap`, not an "80k" mcap) buy sides, ML `v2-potential` / `ML_POTENTIAL_*`, detect-snapshot `rug_label`, and `dlmm_potential_list` membership.
 
 ### Fixed — three production bugs found by the /debug pass + log observability
 

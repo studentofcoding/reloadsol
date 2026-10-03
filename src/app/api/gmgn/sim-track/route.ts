@@ -6,6 +6,7 @@ import { ensureCompleteBuyFeaturesForOutcome } from '@/strategies/resolve-entry-
 import { recordGmgnOutcome } from '@/strategies/outcomes'
 import { closeOutcomeStatusFromPnl } from '@/strategies/close-outcome-status'
 import { fetchTradingRecordsForWallet } from '@/strategies/db'
+import { tryFetchWalletRecords } from '@/strategies/safe-wallet-records'
 import {
   GMGN_SIM_WALLET,
   openGmgnSimPosition,
@@ -111,7 +112,8 @@ async function runSimTrack(request: NextRequest) {
     const simWallet = simWalletForChain(GMGN_SIM_WALLET, chain)
     // Unbounded on purpose — see the mcap-tracking route for the buffer measurement. The bound
     // makes Postgres detoast every row's `data` server-side; this wallet is 836 rows.
-    const records = await fetchTradingRecordsForWallet(simWallet)
+    const records = await tryFetchWalletRecords(simWallet, { chain, phase: 'open_gate' })
+    if (!records) continue
 
     for (const strategy of strategies) {
       let opened = 0
@@ -142,7 +144,22 @@ async function runSimTrack(request: NextRequest) {
         recentMints,
       })
 
-      const refreshedRecords = await fetchTradingRecordsForWallet(simWallet)
+      const refreshedRecords = await tryFetchWalletRecords(simWallet, {
+        strategyId: strategy.id,
+        chain,
+        phase: 'refresh',
+      })
+      if (!refreshedRecords) {
+        results.push({
+          strategyId: strategy.id,
+          chain,
+          discovered,
+          opened,
+          closed,
+          skipped: [...skipped, 'ledger_read_failed'],
+        })
+        continue
+      }
       const currentOpen = getOpenPositionsForStrategy(refreshedRecords, strategy.id).length
       const maxOpen = strategy.config.execution.maxOpenPositions
 

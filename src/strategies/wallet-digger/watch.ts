@@ -60,9 +60,18 @@ function marketCapUsd(info: Record<string, unknown>): number | null {
 }
 
 async function hasOpenSim(mint: string): Promise<boolean> {
-  const records = await fetchTradingRecordsForWallet(GMGN_SIM_WALLET)
-  const cycle = computeOpenSimCycle(records, mint)
-  return Boolean(cycle)
+  try {
+    const records = await fetchTradingRecordsForWallet(GMGN_SIM_WALLET)
+    const cycle = computeOpenSimCycle(records, mint)
+    return Boolean(cycle)
+  } catch (error) {
+    // The ledger read throws on a DB error. Unreadable is not "nothing open": answer "open" so no
+    // duplicate position is opened on a blind read.
+    log.error('error_handling', 'roster-watch: ledger read failed — treating mint as already open', error as Error, {
+      mint,
+    })
+    return true
+  }
 }
 
 export async function runRosterWatch(params?: {

@@ -41,6 +41,8 @@ import type { McapTrackerStrategy, StrategyChain } from '@/strategies/types'
 import { STRATEGY_CHAINS } from '@/strategies/types'
 import { captureTokenInfoDetectBatch } from '@/strategies/token-info-detect'
 import { simWalletForChain } from '@/strategies/sim-wallets'
+import { lastSimBuyAtMs, noteCapPass } from '@/strategies/cap-stall-monitor'
+import { tryFetchWalletRecords } from '@/strategies/safe-wallet-records'
 import { getNativeUsd } from '@/utils/native-usd'
 import {
   annotateEntryFeatures,
@@ -91,6 +93,7 @@ import {
 } from '@/utils/mcap-tracker'
 import {
   getMcapSimOpenSkipReason,
+  evaluateLiveEntryBrake,
   getOpenMcapPositions,
   resolveMcapSimEntry,
   shouldOpenMcapSim,
@@ -666,7 +669,23 @@ async function runSimTrack(request: NextRequest) {
       // this replaces. `SELECT data` defers that detoast to the client instead.
       // The bound is worth it only where the payload is huge; this wallet is 6,302 rows. Do not
       // "optimise" this into a bound without re-measuring buffers.
-      const records = await fetchTradingRecordsForWallet(walletAddress)
+      const records = await tryFetchWalletRecords(walletAddress, {
+        strategyId: strategy.id,
+        chain,
+        phase: 'open_gate',
+      })
+      if (!records) {
+        // An unreadable ledger is not an empty one: opening against `[]` re-opens every position.
+        results.push({
+          strategyId: strategy.id,
+          chain,
+          opened: 0,
+          closed: 0,
+          skipped: ['ledger_read_failed'],
+          mode: execMode.isSimulated ? 'sim' : 'live',
+        })
+        continue
+      }
       const openPositions = getOpenPositionsForStrategy(
         records,
         strategy.id,
@@ -718,6 +737,7 @@ async function runSimTrack(request: NextRequest) {
       // same unmodified `records` with the same arguments. `openPositions` is that same value.
       const currentOpen = openPositions.length
       const maxOpen = strategy.config.execution.maxOpenPositions
+      let hitCap = false
 
       const openRows =
         execMode.isSimulated && brainUniverse.applied
@@ -791,6 +811,7 @@ async function runSimTrack(request: NextRequest) {
         }
         if (currentOpen + opened >= maxOpen) {
           skipped.push(`${snapshot.token_symbol}: max positions`)
+          hitCap = true
           break
         }
 
@@ -813,6 +834,27 @@ async function runSimTrack(request: NextRequest) {
         const live = await resolveFreshMarketValue(snapshot.token_address)
         if (!live) {
           skipped.push(`${snapshot.token_symbol}: stale_snapshot`)
+          continue
+        }
+        // Brake (skip only): the live value is what gets booked, but the band and milestone gates ran
+        // on the tracker value. Re-run the band on the live value and refuse a live/tracker pair that
+        // disagrees by more than a constant factor (INU/QUANT entered at ~4k live vs ~400k tracker).
+        const brake = evaluateLiveEntryBrake({
+          liveMcap: live.value,
+          snapshot,
+          entry: strategy.config.entry,
+        })
+        if (brake) {
+          skipped.push(`${snapshot.token_symbol}: ${brake.reason}`)
+          log.warn('mcap_tracker', 'Live entry mcap rejected by sanity brake', {
+            strategyId: strategy.id,
+            chain,
+            mint: snapshot.token_address,
+            symbol: snapshot.token_symbol,
+            trackerMcap: snapshot.current_mcap,
+            firstMcap: snapshot.first_mcap,
+            ...brake,
+          })
           continue
         }
         const entry = { entryMcap: live.value, entryAt: live.observedAtIso }
@@ -1060,6 +1102,15 @@ async function runSimTrack(request: NextRequest) {
       // REL-20: flush open-phase writes before the next strategy re-fetches
       // records. Open insert errors previously propagated (500), so throw.
       await flushPending('open')
+      noteCapPass({
+        strategyId: strategy.id,
+        chain,
+        hitCap,
+        opened,
+        openCount: currentOpen,
+        maxOpen,
+        lastBuyAtMs: lastSimBuyAtMs(records, strategy.id),
+      })
       }
 
       results.push({

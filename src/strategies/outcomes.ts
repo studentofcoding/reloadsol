@@ -8,6 +8,29 @@ import { notifyStrategyClose } from './strategy-telegram-notify'
 import { closeOutcomeStatusFromPnl } from './close-outcome-status'
 import type { StrategyChain } from './types'
 
+/**
+ * `insertStrategyOutcome` now THROWS on a DB error (it used to swallow it and return false). The
+ * paper-sim families (mcap / signals / gmgn / social) want that: their closers fail the close and
+ * retry. The trending-bot and DLMM writers sit on live-position close paths and a backfill loop that
+ * were written against the old contract, so they keep it: log at ERROR level and report `false`,
+ * never throw into a position-close or sweep loop.
+ */
+async function insertOutcomeKeepingLegacyContract(
+  params: Parameters<typeof insertStrategyOutcome>[0],
+): Promise<boolean> {
+  try {
+    return await insertStrategyOutcome(params)
+  } catch (error) {
+    console.error('[strategies/outcomes] outcome insert failed (not propagated for this domain):', {
+      strategy: params.strategy_id,
+      domain: params.domain,
+      token: params.token_address,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    return false
+  }
+}
+
 export async function recordTrendingBotOutcome(params: {
   strategyId: string
   tokenAddress: string
@@ -19,7 +42,7 @@ export async function recordTrendingBotOutcome(params: {
   isSimulated?: boolean
   features?: Record<string, unknown> | null
 }): Promise<void> {
-  await insertStrategyOutcome({
+  await insertOutcomeKeepingLegacyContract({
     strategy_id: params.strategyId,
     domain: 'trending_bot',
     chain: params.chain ?? 'sol',
@@ -104,7 +127,7 @@ export async function recordDlmmOutcome(params: {
     features.domain_features = domainBag
   }
 
-  const inserted = await insertStrategyOutcome({
+  const inserted = await insertOutcomeKeepingLegacyContract({
     strategy_id: params.strategyId ?? 'dlmm_default',
     domain: 'dlmm',
     // Prefer mint for token-centric spine; keep pool in features.pool_address
