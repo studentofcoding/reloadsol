@@ -351,15 +351,15 @@ Env: see [`.env.docker.example`](../.env.docker.example) and README environment 
 
 Trade alerts on `DISCORD_WEBHOOK_AUTO_TRADE` (buys/sells) are separate from list alerts.
 
-**List notification env (Docker `.env`):**
+**List notifications removed (Oct 2026):** the list-style trending Discord posts from `POST /api/trending` and
+`POST /api/trending/filtered` (route timers, dedup slots, `AUTO_NOTIFICATION_INTERVAL_MS`,
+`FILTERED_AUTO_NOTIFICATION_INTERVAL_MS`) no longer exist. `POST /api/trending` still force-refreshes the feed cache,
+mcap tracking and metric snapshots; `POST /api/trending/filtered` is an authenticated no-op kept so the cron worker
+keeps getting 200.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `TRENDING_LIST_DISCORD_VIA_CRON` | `true` | Cron POST only; disables route timers + track filtering summary |
-| `AUTO_NOTIFICATION_INTERVAL_MS` | `120000` | Unfiltered list dedup cooldown |
-| `FILTERED_AUTO_NOTIFICATION_INTERVAL_MS` | `120000` | Filtered list dedup cooldown |
-
-Set `TRENDING_LIST_DISCORD_VIA_CRON=false` for local dev without cron (re-enables route timers).
+| `TRENDING_LIST_DISCORD_VIA_CRON` | `true` | Track strategy only: skip its filtering-summary Discord alerts (`false` re-enables them) |
 
 ---
 
@@ -371,7 +371,7 @@ Set `TRENDING_LIST_DISCORD_VIA_CRON=false` for local dev without cron (re-enable
 | **High** | Consolidate duplicate PnL paths | Done — removed inline PnL from track; `pnl_update` cron only |
 | **Medium** | Consolidate daily summary | Done — `daily_summary` cron only; inline track logic removed |
 | **Medium** | Auth on Go `/trigger/*` | Not used — `/trigger/*` open on cron port; rely on network/firewall |
-| **Medium** | Discord notification dedup | Done — cron-only list alerts + cooldown dedup; track filtering summary skipped when `TRENDING_LIST_DISCORD_VIA_CRON=true` |
+| **Medium** | Discord notification dedup | Superseded — list-style trending Discord alerts removed (Oct 2026); track filtering summary still skipped when `TRENDING_LIST_DISCORD_VIA_CRON=true` |
 | **Low** | Refresh [Overview.md](./Overview.md) | Still references removed pages (mcap-tracker nav, catch-the-coin) |
 
 ---
