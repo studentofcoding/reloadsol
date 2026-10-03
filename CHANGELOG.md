@@ -8,6 +8,20 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — evidence bar archive to Cloudflare R2 (map #140)
+
+- Daily `evidence_archive` cron worker (`EVIDENCE_ARCHIVE_INTERVAL`, default 86400) → `POST /api/evidence/archive` copies each
+  complete UTC day of `token_ohlc_bars` (1m) plus `token_info_detect`, `token_detect_snapshots`, `strategy_outcomes`,
+  `sl_tp_positions` and `trading_records` to gzip NDJSON in R2. Append-only: keys include the date, PUT sends
+  `If-None-Match: *`, an existing different object is a loud `conflict` and is never overwritten. Per-run manifest with row
+  counts, min/max timestamp and sha256. Hand-rolled SigV4 (`s3-sigv4.ts`, AWS vector test); no SDK dependency.
+- Inert until `EVIDENCE_ARCHIVE_ENABLED=1`; without `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `R2_BUCKET` the
+  route answers 503 naming the missing variables (never values). `db/init/63-evidence-archive-runs.sql` (apply before code).
+- `OHLC_PRUNE_REQUIRES_ARCHIVE=1` clamps the sampler prune so an un-archived day is never deleted (default off; retention default
+  stays 48 h). `npm run evidence:archive -- list|verify|replay|restore-bars` reads/verifies/replays the archive.
+- Docs: `docs/specs/SPEC-evidence-bar-archive-v1.md`. After PR #151 (default API tier = wallet) lands, `/api/evidence/archive`
+  must be added to `SELF_AUTH_API_PREFIXES` or the proxy will 401 the cron.
+
 ### Fixed — keyed Jupiter Price V3 429s
 
 - `jupiter-api.ts` price calls now take a token from the shared gate (they bypassed it), share ONE 429 cooldown with
