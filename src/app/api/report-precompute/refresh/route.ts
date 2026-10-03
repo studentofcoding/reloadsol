@@ -10,7 +10,7 @@ function getPrecomputeSecret(): string {
   return (
     process.env.STRATEGY_REPORT_SECRET ||
     process.env.TRENDING_TRACKER_SECRET ||
-    'r3l0ads0l-trending'
+    ''
   )
 }
 

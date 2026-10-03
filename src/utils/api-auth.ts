@@ -5,6 +5,7 @@ import {
   matchesApiPrefix,
   SERVICE_AUTH_API_PREFIXES,
 } from '@/config/api-access';
+import { secretsMatch } from '@/utils/secret-auth';
 import { getWalletSessionFromRequest } from '@/utils/wallet-session';
 
 function secretsEqual(provided: string, expected: string): boolean {
@@ -84,14 +85,16 @@ export function isServiceAuthorizedRequest(req: NextRequest): boolean {
     }
   }
 
-  const dlmmPassword =
-    req.headers.get('x-dlmm-password') ||
-    req.nextUrl.searchParams.get('password');
-  if (
-    dlmmPassword &&
-    dlmmPassword === (process.env.DLMM_API_PASSWORD || 'earlytrencher')
-  ) {
-    return true;
+  // The DLMM dashboard password is only meaningful on /api/dlmm/*. It used to bypass EVERY tier on every
+  // route (and the old default was a literal shipped in the client bundle). Scoped + fails closed when
+  // DLMM_API_PASSWORD is unset.
+  if (pathname === '/api/dlmm' || pathname.startsWith('/api/dlmm/')) {
+    const dlmmPassword =
+      req.headers.get('x-dlmm-password') ||
+      req.nextUrl.searchParams.get('password');
+    if (secretsMatch(dlmmPassword, process.env.DLMM_API_PASSWORD)) {
+      return true;
+    }
   }
 
   return false;

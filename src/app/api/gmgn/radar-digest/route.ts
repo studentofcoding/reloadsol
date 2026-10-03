@@ -10,7 +10,7 @@ function getDigestSecret(): string {
     process.env.GMGN_RADAR_DIGEST_SECRET ||
     process.env.GMGN_ACTIVITY_POLL_SECRET ||
     process.env.TRENDING_TRACKER_SECRET ||
-    'r3l0ads0l-trending'
+    ''
   )
 }
 

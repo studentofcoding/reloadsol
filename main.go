@@ -260,12 +260,12 @@ func NewCronService() *CronService {
     intervalResolutions = nil // the startup audit describes THIS construction, not an earlier one
     config := &Config{
         APIBaseURL:     getEnv("API_BASE_URL", "https://reloadsol.app"),
-        TrendingSecret: getEnv("TRENDING_TRACKER_SECRET", "r3l0ads0l-trending"),
+        TrendingSecret: getEnv("TRENDING_TRACKER_SECRET", ""),
         PnLSecret:      getEnv("PNL_UPDATE_SECRET", getEnv("PNL_UPDATE_TOKEN", "")),
         // Shared secret for the /trigger/* HTTP endpoints (X-Trigger-Secret
         // header). Falls back to the trending secret so existing deploys keep
         // working once the web proxy sends the same value.
-        TriggerSecret:  getEnv("TRIGGER_SECRET", getEnv("TRENDING_TRACKER_SECRET", "r3l0ads0l-trending")),
+        TriggerSecret:  getEnv("TRIGGER_SECRET", getEnv("TRENDING_TRACKER_SECRET", "")),
         DiscordWebhook: getEnv("DISCORD_WEBHOOK_URL", ""),
         SLTPMonitorInterval: intervalFor("SLTPMonitorInterval"),
         SignalRefreshInterval: intervalFor("SignalRefreshInterval"),
@@ -283,7 +283,7 @@ func NewCronService() *CronService {
         DLMMManageInterval: intervalFor("DLMMManageInterval"),
         RhClmmManageInterval: intervalFor("RhClmmManageInterval"),
         StrategySearchInterval: intervalFor("StrategySearchInterval"),
-        DLMMSecret: getEnv("DLMM_MANAGE_SECRET", getEnv("TRENDING_TRACKER_SECRET", "r3l0ads0l-trending")),
+        DLMMSecret: getEnv("DLMM_MANAGE_SECRET", getEnv("TRENDING_TRACKER_SECRET", "")),
         SolArbScanInterval: intervalFor("SolArbScanInterval"),
         // Own 1m OHLC series: 15s ticks give 4 samples per minute, which is what
         // makes a real intra-minute high/low possible.
@@ -2182,5 +2182,8 @@ func main() {
 	startTime = time.Now()
 	
 	service := NewCronService()
+	if err := validateRequiredSecrets(service.config); err != nil {
+		log.Fatal(err)
+	}
 	service.Start()
 }

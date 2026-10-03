@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse, connection } from 'next/server';
 import { rejectWrongNetwork } from '@/utils/app-network-api';
 import { DbUnavailableError } from '@/utils/db-health';
-import { isDlmmApiAuthorized } from '@/utils/dlmm/config';
+import { isDlmmRequestAuthorized } from '@/utils/dlmm/request-auth';
 import { deployPosition } from '@/utils/dlmm/actions';
 import { getPositions, getRecentLessons } from '@/utils/dlmm/db';
 import { getDlmmDbStatus } from '@/utils/dlmm/db-status';
@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
   const wrong = rejectWrongNetwork(req, 'sol');
   if (wrong) return wrong;
   try {
-    if (!isDlmmApiAuthorized(getPassword(req))) {
+    if (!isDlmmRequestAuthorized(req, getPassword(req))) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
