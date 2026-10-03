@@ -186,7 +186,6 @@ describe('route inventory', () => {
         "/api/gmgn/activity-poll",
         "/api/gmgn/bound-wallets",
         "/api/gmgn/radar-digest",
-        "/api/gmgn/roster-watch",
         "/api/gmgn/sim-track",
         "/api/gmgn/token-snapshot",
         "/api/gmgn/trending/filtered",

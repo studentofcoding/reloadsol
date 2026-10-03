@@ -139,7 +139,6 @@ Registered in [`worker_tracker.go`](../worker_tracker.go), scheduled in [`main.g
 | `signals_sim_track` | every 120s (env) | `POST /api/signals/sim-track` | algo |
 | `signals_refresh` | every 60s | `GET /api/trading/signals` | algo |
 | `trending_tracker` | every 5m | `POST /api/trending/track` | algo |
-| `filtered_trending` | every 2m | `POST /api/trending/filtered` | algo |
 | `unfiltered_trending` | every 2m | `POST /api/trending` | algo |
 | `dlmm_screen` | every 300s | `POST /api/dlmm/screen` | algo |
 | `dlmm_manage` | every 60s | `POST /api/dlmm/manage` | algo |

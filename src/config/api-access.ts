@@ -35,7 +35,6 @@ export const PUBLIC_API_EXACT_GET_PATHS = ['/api/scout/data-public'] as const;
 export const SELF_AUTH_API_PREFIXES = [
   '/api/gmgn/activity-poll',
   '/api/gmgn/radar-digest',
-  '/api/gmgn/roster-watch',
   '/api/gmgn/sim-track',
   '/api/gmgn/wallet-digger',
   '/api/mcap-patterns/refresh',
