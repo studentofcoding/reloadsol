@@ -9,6 +9,7 @@ import {
 } from '@/utils/swap-executor'
 import { notifySlTpTrigger } from './trading-notifications'
 import { getConnection } from '@/utils/solana'
+import { isOnChainWalletAddress } from '@/utils/solana-address'
 import { fetchShyftAllTokensCached } from '@/utils/shyft-wallet-cache'
 import { mapShyftTokensToUserTokens } from '@/utils/shyft-wallet'
 import { fetchJupiterPortfolioDirect, mapPortfolioToUserTokens } from '@/utils/jupiter-portfolio'
@@ -43,11 +44,19 @@ export function getExitMaxInputAgeSec(): number {
     return Number.isFinite(raw) && raw > 0 ? raw : 180
 }
 
-/** Cached Shyft all_tokens, then Jupiter, then RPC token accounts. */
-async function fetchSlTpWalletTokens(
+/**
+ * Cached Shyft all_tokens, then Jupiter, then RPC token accounts.
+ *
+ * Sim wallets (`gmgn-sim`, `mcap-tracker-sim`, ...) are labels, not on-chain accounts: there is
+ * nothing to look up, so return no holdings without calling Shyft/Jupiter/RPC (which could only
+ * answer 400 "Non-base58" / "Missing address"). Real wallets keep the full fallback chain.
+ */
+export async function fetchSlTpWalletTokens(
   walletAddress: string,
   fresh = false,
 ): Promise<UserToken[]> {
+  if (!isOnChainWalletAddress(walletAddress)) return []
+
   try {
     const shyft = await fetchShyftAllTokensCached(walletAddress, 'mainnet-beta', {
       fresh,
