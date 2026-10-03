@@ -219,22 +219,47 @@ export function startJobLockHeartbeat(
   return timer
 }
 
-/** Run a cron route body under a job lock; overlapping ticks get 409 `skipped`. */
+/**
+ * Lease length for `withJobLock`. The route-level `ttlSeconds` (900 s for the sim-track routes) used to be
+ * the lease itself, so a web restart that killed a run left the lock held for up to 15 min — and a
+ * container recreate gets a NEW hostname, so `sweepOrphanedLocks` can't prove the owner is dead.
+ * Observed on prod: `signals_sim_track` had no successful run for ~15 min after each web ship.
+ * Now the lock is a short lease renewed by a heartbeat while the run is alive.
+ */
+export const JOB_LOCK_LEASE_SEC = Math.max(
+  30,
+  parseInt(process.env.BOT_JOB_LOCK_LEASE_SEC || '90', 10) || 90,
+)
+
+/**
+ * Run a cron route body under a job lock; overlapping ticks get 409 `skipped`.
+ *
+ * `ttlSeconds` is now the MAXIMUM hold time (a hung run still frees the job after it); the stored lease
+ * is `min(ttlSeconds, JOB_LOCK_LEASE_SEC)`, renewed every third of a lease until then. A dead owner's
+ * lock therefore lapses within one lease instead of one `ttlSeconds`.
+ */
 export async function withJobLock(
   jobName: string,
   ttlSeconds: number,
   run: () => Promise<Response>,
 ): Promise<Response> {
-  const lock = await acquireJobLock(jobName, ttlSeconds)
+  const lease = Math.min(ttlSeconds, JOB_LOCK_LEASE_SEC)
+  const lock = await acquireJobLock(jobName, lease)
   if (!lock.acquired) {
     return Response.json(
       { success: false, skipped: true, reason: lock.reason },
       { status: 409 },
     )
   }
+  const startedAt = Date.now()
+  const heartbeat = setInterval(() => {
+    if (Date.now() - startedAt < ttlSeconds * 1000) void renewJobLock(jobName, lease)
+  }, Math.max(5, Math.floor(lease / 3)) * 1000)
+  heartbeat.unref?.()
   try {
     return await run()
   } finally {
+    clearInterval(heartbeat)
     await releaseJobLock(jobName)
   }
 }
