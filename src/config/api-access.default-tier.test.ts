@@ -183,6 +183,7 @@ describe('route inventory', () => {
         "/api/auth/wallet/logout",
         "/api/auth/wallet/session",
         "/api/ethprice",
+        "/api/evidence/archive",
         "/api/gmgn/activity-poll",
         "/api/gmgn/bound-wallets",
         "/api/gmgn/radar-digest",
