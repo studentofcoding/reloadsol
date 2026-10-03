@@ -236,3 +236,36 @@ Change: the OpenAPI cooldown is keyed **per path**; length honors `Retry-After` 
 path (reset by a success), with 0–25 % jitter; a 429 also widens the shared gate ×2 for 20 s so
 other consumers slow down instead of failing. The web window endpoint now holds a short (~15 s)
 per-path cooldown after its retry is exhausted (primary `multi_token_full_info` unaffected).
+
+## Root cause of the sim_track / activity_poll 100 % failures — 2026-10-03 (IP ban loop, not the Worker)
+
+**Not the Worker, not `mutil_window_token_info`.** `gmgn_sim_track` and `gmgn_activity_poll` only call
+OpenAPI `GET /v1/user/smartmoney` + `/v1/user/kol` (+ `token/info|security` for Robinhood) **directly
+from the VPS** (Singapore is *not* Cloudflare-blocked on `openapi.gmgn.ai`). The web path
+(Worker → `gmgn.ai`, `mutil_window_token_info`) is a soft enrichment: ~25 % 429s on ~23 calls/hour, swallowed
+as `windowMisses`, and its errors read `GMGN web …` — never the `GMGN rate limit exceeded` that fails the jobs.
+
+**What the 429 actually says** (probed from `reloadsol-web`, one request each, key never printed):
+
+```
+GET /v1/trade/follow_wallet  → 429 {"error":"RATE_LIMIT_EXCEEDED","message":"IP rate limit exceeded","tier":"free","reset_at":+30s}
+GET /v1/user/smartmoney      → 429 {"error":"RATE_LIMIT_BANNED","message":"IP is temporarily banned due to repeated rate limit violations","tier":"free","reset_at":+37s}
+GET /v1/user/kol             → 429 {"error":"RATE_LIMIT_BANNED", …}
+```
+
+GMGN's tracking routes use a leaky bucket (free tier 5/5 = rate/capacity). `follow_wallet` weighs **10**
+(`smartmoney`/`kol` weigh 1) — more than the whole free bucket, so a `follow_wallet` call can **never**
+succeed on this key (`alpha_roster_trade_events` has 0 rows ever). Every `roster-watch` tick (75 s × 2
+chains) was therefore a guaranteed violation, and repeated violations promote the IP to
+`RATE_LIMIT_BANNED` — an **IP-wide** ban (all endpoints, ~5 min) that every further request **extends**
+(+5 s each, up to 5 min). Our own code then kept extending it: signed GETs had no cooldown check at all,
+the per-path cooldown was capped at 30 s (< the 5 min ban), and sim/activity retried into the ban.
+
+Fixed in code: `RATE_LIMIT_BANNED` arms a process-wide ban gate (no request of any kind is sent until
+`reset_at`, ≤ 5 min), signed GETs honour the per-path cooldown, requests queued behind the one that got
+banned are dropped after the gate, a path with ≥ 4 consecutive 429s escalates 60 s → 10 min, roster-watch
+stops after the first rate-limited chain, and every 429 now logs `[gmgn-api] 429 path= kind= reset_in_s=`.
+
+Operational: `GMGN_ROSTER_WATCH_INTERVAL=0` (disabled) until the key is on a tier whose bucket ≥ 10
+(Plus 20/20 → 2 rps, burst 2). The `.env` fix of 2026-10-03 had moved it 600 → 75 s, which is what made the
+ban continuous. Call volume otherwise is tiny (≈ 3 OpenAPI req/min vs a 5-unit/s bucket).

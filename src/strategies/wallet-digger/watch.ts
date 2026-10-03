@@ -11,6 +11,7 @@ import {
   tokenSecurity,
   trackFollowWallet,
 } from '@/utils/gmgn-cli'
+import { GmgnApiError } from '@/utils/gmgn-api'
 import { log } from '@/utils/unified-logger'
 import { findConcurrenceClusters } from './concurrence'
 import {
@@ -88,13 +89,22 @@ export async function runRosterWatch(params?: {
     return { ingested: 0, clusters: 0, fired: 0, skipped: ['no followed roster wallets'] }
   }
 
+  const skipped: string[] = []
   let ingested = 0
+  let rateLimited = false
   for (const chain of cfg.chains) {
+    // One 429 on follow_wallet is account/IP-wide for this endpoint: don't spend the next chain's
+    // request (another violation) in the same tick.
+    if (rateLimited) {
+      skipped.push(`${chain}: follow_wallet skipped (rate limited)`)
+      continue
+    }
     const rows = await trackFollowWallet({
       chain,
       side: 'buy',
       limit: 100,
     }).catch((e) => {
+      if (e instanceof GmgnApiError && e.code === 'RATE_LIMIT') rateLimited = true
       log.warn('api_request', 'roster-watch trackFollowWallet failed', {
         chain,
         err: String(e),
@@ -136,7 +146,6 @@ export async function runRosterWatch(params?: {
     byChain.set(chain, list)
   }
 
-  const skipped: string[] = []
   let fired = 0
   let clusterCount = 0
 
