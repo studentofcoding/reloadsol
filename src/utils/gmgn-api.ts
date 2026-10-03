@@ -31,6 +31,17 @@ const RATE_LIMIT_JITTER = 0.25
 /** After any 429 the shared gate runs at half speed for this long (throttle, don't starve). */
 const PACE_SLOWDOWN_MS = 20_000
 const PACE_SLOWDOWN_FACTOR = 2
+/**
+ * GMGN answers a 429 with `error: RATE_LIMIT_EXCEEDED` (bucket empty) or, after repeated violations,
+ * `error: RATE_LIMIT_BANNED` — an IP-wide ban (every endpoint, ~5 min) that each further request EXTENDS
+ * (+5 s, up to 5 min). So during a ban the only safe move is to send nothing.
+ */
+const IP_BAN_MAX_MS = 5 * 60 * 1000 + 15_000
+const IP_BAN_FALLBACK_MS = 60_000
+/** After this many consecutive 429s on one path (no success between) the path is "chronic". */
+const CHRONIC_STRIKES = 4
+const CHRONIC_BASE_MS = 60_000
+const CHRONIC_CAP_MS = 10 * 60 * 1000
 const PKCS8_PRIVATE_KEY_RE =
   /(-----BEGIN PRIVATE KEY-----[\s\S]+?-----END PRIVATE KEY-----)/
 
@@ -149,7 +160,70 @@ export function computeRateLimitCooldownMs(opts: {
   return Math.min(capMs, Math.round(baseMs * (1 + random * RATE_LIMIT_JITTER)))
 }
 
+/** IP-wide ban armed by `RATE_LIMIT_BANNED`. Blocks every GMGN call (any path, any method). */
+const ipBan: { untilMs: number; resetAt?: number } = { untilMs: 0 }
+
+export type GmgnRateLimitKind = 'banned' | 'exceeded'
+
+/** `RATE_LIMIT_BANNED` / `RATE_LIMIT_EXCEEDED` from the 429 body (`error` or `code` field). */
+export function parseRateLimitKind(body: unknown): GmgnRateLimitKind | undefined {
+  if (!body || typeof body !== 'object') return undefined
+  const record = body as Record<string, unknown>
+  for (const v of [record.error, record.code, record.reason]) {
+    if (typeof v !== 'string') continue
+    const t = v.toUpperCase()
+    if (t.includes('RATE_LIMIT_BANNED')) return 'banned'
+    if (t.includes('RATE_LIMIT_EXCEEDED')) return 'exceeded'
+  }
+  return undefined
+}
+
+/**
+ * Cooldown for a path that keeps 429ing with no success in between (e.g. `follow_wallet`, weight 10
+ * against a free-tier bucket of 5, can never succeed): 60s, 2m, 4m, 8m, 10m. Pure.
+ */
+export function chronicCooldownMs(strikes: number): number {
+  if (strikes < CHRONIC_STRIKES) return 0
+  return Math.min(CHRONIC_CAP_MS, CHRONIC_BASE_MS * 2 ** (strikes - CHRONIC_STRIKES))
+}
+
+function markIpBan(resetAt?: number): void {
+  const now = Date.now()
+  const hinted = resetAt ? resetAt * 1000 - now : IP_BAN_FALLBACK_MS
+  const span = Math.min(Math.max(hinted, 1000), IP_BAN_MAX_MS)
+  // +1s slack so the first request after the ban lands past the server-side reset.
+  const untilMs = now + span + 1000
+  if (untilMs > ipBan.untilMs) {
+    ipBan.untilMs = untilMs
+    ipBan.resetAt = resetAt
+  }
+}
+
+/** Seconds left on the IP-wide ban (0 when none). Observability + tests. */
+export function gmgnIpBanRemainingMs(nowMs: number = Date.now()): number {
+  return Math.max(0, ipBan.untilMs - nowMs)
+}
+
+function checkIpBan(): void {
+  if (ipBan.untilMs > Date.now()) {
+    throw new GmgnApiError(
+      `GMGN IP ban in effect (RATE_LIMIT_BANNED) — ${Math.ceil((ipBan.untilMs - Date.now()) / 1000)}s left, not sending`,
+      'RATE_LIMIT',
+      ipBan.resetAt,
+    )
+  }
+}
+
+/** One warn per 429 (console.warn survives removeConsole) — previously a 429 left no trace at all. */
+function noteRateLimit(path: string, kind: GmgnRateLimitKind | undefined, resetAt?: number): void {
+  const inS = resetAt ? Math.round(resetAt - Date.now() / 1000) : null
+  console.warn(
+    `[gmgn-api] 429 path=${path} kind=${kind ?? 'unknown'} reset_in_s=${inS ?? 'n/a'}`,
+  )
+}
+
 async function checkRateLimitCooldown(path: string): Promise<void> {
+  checkIpBan()
   const cur = rateLimitCooldowns.get(path)
   if (cur && cur.untilMs > Date.now()) {
     // Fail fast (429) instead of sleeping up to 30s inside a request.
@@ -161,7 +235,10 @@ function markRateLimitCooldown(path: string, resetAt?: number): void {
   const now = Date.now()
   const prev = rateLimitCooldowns.get(path)
   const strikes = (prev?.strikes ?? 0) + 1
-  const untilMs = now + computeRateLimitCooldownMs({ strikes, resetAt, nowMs: now })
+  const untilMs = now + Math.max(
+    computeRateLimitCooldownMs({ strikes, resetAt, nowMs: now }),
+    chronicCooldownMs(strikes),
+  )
   rateLimitCooldowns.set(path, {
     untilMs: Math.max(untilMs, prev?.untilMs ?? 0),
     resetAt,
@@ -180,6 +257,8 @@ function clearRateLimitStrikes(path: string): void {
 export function __resetRateLimitCooldownForTests(): void {
   rateLimitCooldowns.clear()
   pacing.slowUntilMs = 0
+  ipBan.untilMs = 0
+  ipBan.resetAt = undefined
 }
 
 /** Test-only: is `path` currently cooling down? */
@@ -413,6 +492,15 @@ async function gmgnHttp(
 
       if (response.status === 429) {
         const resetAt = parseResetAt(response.headers, body)
+        const kind = parseRateLimitKind(body)
+        noteRateLimit(path, kind, resetAt)
+        if (kind === 'banned') {
+          // IP-wide ban: every endpoint is refused and each extra request extends it. No retry,
+          // and the gate in front of every other caller now fails fast until it lifts.
+          markIpBan(resetAt)
+          markRateLimitCooldown(path, resetAt)
+          throw new GmgnApiError('GMGN rate limit exceeded (IP banned)', 'RATE_LIMIT', resetAt)
+        }
         if (attempt < maxAttempts) {
           const waitMs = resetAt
             ? Math.min(Math.max(resetAt * 1000 - Date.now(), 1000), MAX_RETRY_WAIT_MS)
@@ -473,6 +561,9 @@ async function gmgnFetch(
   // (AUTH_TIMESTAMP_EXPIRED), and the serial gate can hold a request behind a
   // queue of weight-2 calls from several concurrent workers.
   await gmgnRateGate(priority)
+  // A request queued behind the one that got banned must not go out (it would extend the ban).
+  if (method === 'GET') await checkRateLimitCooldown(path)
+  else checkIpBan()
   const params = {
     ...query,
     timestamp: String(Math.floor(Date.now() / 1000)),
@@ -505,9 +596,15 @@ async function gmgnSignedFetch(
   const bodyStr = body != null ? JSON.stringify(body) : ''
   // Never auto-retry POSTs that spend (swap) on 429.
   const autoRetry = method !== 'POST'
+  // Signed GETs (follow_wallet, wallet_holdings) used to skip the negative cache entirely, so a path that
+  // always 429s (follow_wallet is weight 10 vs a free-tier bucket of 5) was re-hit every tick.
+  if (method === 'GET') await checkRateLimitCooldown(path)
+  else checkIpBan()
   // Gate BEFORE stamping/signing: the signature covers the timestamp, and GMGN
   // rejects a timestamp older than ~20s (AUTH_TIMESTAMP_EXPIRED).
   await gmgnRateGate(priority)
+  if (method === 'GET') await checkRateLimitCooldown(path)
+  else checkIpBan()
   const timestamp = Math.floor(Date.now() / 1000)
   const params = {
     ...query,

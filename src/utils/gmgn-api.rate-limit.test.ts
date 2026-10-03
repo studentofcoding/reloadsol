@@ -187,3 +187,95 @@ describe('computeRateLimitCooldownMs / parseRetryAfter', () => {
     expect(parseRetryAfter('-3', nowMs)).toBeUndefined()
   })
 })
+
+describe('RATE_LIMIT_BANNED (IP-wide ban) + signed GET cooldown', () => {
+  const bannedBody = (resetAt: number) =>
+    JSON.stringify({
+      code: 429,
+      error: 'RATE_LIMIT_BANNED',
+      message: 'IP is temporarily banned due to repeated rate limit violations',
+      reset_at: resetAt,
+      tier: 'free',
+    })
+
+  it('parseRateLimitKind reads error/code/reason', async () => {
+    const { parseRateLimitKind } = await import('./gmgn-api')
+    expect(parseRateLimitKind({ error: 'RATE_LIMIT_BANNED' })).toBe('banned')
+    expect(parseRateLimitKind({ error: 'RATE_LIMIT_EXCEEDED' })).toBe('exceeded')
+    expect(parseRateLimitKind({ code: 429, msg: 'x' })).toBeUndefined()
+    expect(parseRateLimitKind(null)).toBeUndefined()
+  })
+
+  it('a ban on one path blocks every other path without any upstream request', async () => {
+    const { tokenInfo, trackSmartMoney, trackKol, gmgnIpBanRemainingMs } = await import('./gmgn-api')
+    const resetAt = Math.floor(Date.now() / 1000) + 120
+    responses = [{ status: 429, body: bannedBody(resetAt), headers: { 'X-RateLimit-Reset': String(resetAt) } }]
+    const first = await trackSmartMoney({ chain: 'sol' }).catch((e) => e)
+    expect(first.code).toBe('RATE_LIMIT')
+    expect(requestCount).toBe(1) // banned => no in-request retry either
+    expect(gmgnIpBanRemainingMs()).toBeGreaterThan(100_000)
+
+    // Other endpoints are blocked locally: they would only extend the ban.
+    const a = await trackKol({ chain: 'sol' }).catch((e) => e)
+    const b = await tokenInfo({ chain: 'sol', address: 'aaa' }).catch((e) => e)
+    expect(a.code).toBe('RATE_LIMIT')
+    expect(b.code).toBe('RATE_LIMIT')
+    expect(a.message).toMatch(/IP ban/)
+    expect(requestCount).toBe(1)
+  })
+
+  it('caps a ban at ~5 minutes even if the hint is far out', async () => {
+    const { trackSmartMoney, gmgnIpBanRemainingMs } = await import('./gmgn-api')
+    const resetAt = Math.floor(Date.now() / 1000) + 3600
+    responses = [{ status: 429, body: bannedBody(resetAt) }]
+    await trackSmartMoney({ chain: 'sol' }).catch(() => undefined)
+    expect(gmgnIpBanRemainingMs()).toBeLessThanOrEqual(5 * 60 * 1000 + 16_000)
+  })
+
+  it('a request already queued behind the one that got banned is not sent', async () => {
+    const { trackSmartMoney, trackKol } = await import('./gmgn-api')
+    process.env.GMGN_MAX_REQ_PER_SEC = '20'
+    const resetAt = Math.floor(Date.now() / 1000) + 60
+    responses = [{ status: 429, body: bannedBody(resetAt) }]
+    const [a, b] = await Promise.all([
+      trackSmartMoney({ chain: 'sol' }).catch((e) => e),
+      trackKol({ chain: 'sol' }).catch((e) => e),
+    ])
+    expect(a.code).toBe('RATE_LIMIT')
+    expect(b.code).toBe('RATE_LIMIT')
+    expect(requestCount).toBe(1)
+  })
+
+  it('signed GETs (follow_wallet) honour the per-path cooldown instead of re-hitting upstream', async () => {
+    const { generateKeyPairSync } = await import('node:crypto')
+    process.env.GMGN_PRIVATE_KEY = generateKeyPairSync('ed25519')
+      .privateKey.export({ type: 'pkcs8', format: 'pem' })
+      .toString()
+    try {
+      const { trackFollowWallet, __isPathCoolingForTests } = await import('./gmgn-api')
+      const resetAt = Math.floor(Date.now() / 1000) + 30
+      responses = [
+        {
+          status: 429,
+          body: JSON.stringify({ code: 429, error: 'RATE_LIMIT_EXCEEDED', reset_at: resetAt }),
+          headers: { 'X-RateLimit-Reset': String(resetAt) },
+        },
+      ]
+      const e1 = await trackFollowWallet({ chain: 'sol' }).catch((e) => e)
+      expect(e1.code).toBe('RATE_LIMIT')
+      expect(__isPathCoolingForTests('/v1/trade/follow_wallet')).toBe(true)
+      const before = requestCount
+      const e2 = await trackFollowWallet({ chain: 'robinhood' }).catch((e) => e)
+      expect(e2.code).toBe('RATE_LIMIT')
+      expect(requestCount).toBe(before) // no second request in the same cooldown
+    } finally {
+      delete process.env.GMGN_PRIVATE_KEY
+    }
+  })
+
+  it('chronic ladder: 4+ consecutive 429s on a path escalate to 60s .. 10min', async () => {
+    const { chronicCooldownMs } = await import('./gmgn-api')
+    expect([1, 2, 3].map(chronicCooldownMs)).toEqual([0, 0, 0])
+    expect([4, 5, 6, 7, 8, 12].map(chronicCooldownMs)).toEqual([60_000, 120_000, 240_000, 480_000, 600_000, 600_000])
+  })
+})
