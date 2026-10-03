@@ -16,3 +16,13 @@ export function normalizeSolanaAddress(raw: string): string | null {
 export function isValidSolanaAddress(raw: string): boolean {
   return normalizeSolanaAddress(raw) !== null
 }
+
+/**
+ * True only for a real base58 Solana wallet. Paper-trading "wallets" are labels (`gmgn-sim`,
+ * `mcap-tracker-sim`, `trending-bot-sim-rh`, `social-sim`, ...) with no on-chain account: asking
+ * Shyft/Jupiter/RPC for their holdings can only 400 ("Non-base58", "Missing address") and, at ~120
+ * SL/TP lookups an hour, was most of the error log.
+ */
+export function isOnChainWalletAddress(raw: string | null | undefined): boolean {
+  return typeof raw === 'string' && isValidSolanaAddress(raw)
+}
